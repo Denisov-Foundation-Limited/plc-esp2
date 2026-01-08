@@ -1,0 +1,131 @@
+/**********************************************************************/
+/*                                                                    */
+/* Programmable Logic Controller for ESP microcontrollers             */
+/*                                                                    */
+/* Copyright (C) 2026 Denisov Foundation Limited                      */
+/* License: GPLv3                                                     */
+/* Written by Sergey Denisov aka LittleBuster                         */
+/* Email: DenisovFoundationLtd@gmail.com                              */
+/*                                                                    */
+/**********************************************************************/
+
+#pragma once
+
+#include <Arduino.h>
+#include <WiFi.h>
+
+#include "utils/logger.hpp"
+
+class WifiManager
+{
+public:
+    explicit WifiManager(Logger &log)
+        : _log(log)
+    {
+    }
+
+    bool begin()
+    {
+        _last_status = (wl_status_t)0xFF;
+        _last_ap_clients = 0xFF;
+
+        if (_ap)
+        {
+            WiFi.mode(WIFI_AP);
+            const bool ok = WiFi.softAP(_ap_ssid.c_str(), _ap_password.c_str());
+            if (ok && _log.ready())
+            {
+                const String ip = WiFi.softAPIP().toString();
+                _log.info(F("WIFI"), F("AP IP %s"), ip.c_str());
+            }
+            return ok;
+        }
+
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(_ssid.c_str(), _password.c_str());
+        return true;
+    }
+
+    void tick()
+    {
+        if (_ap)
+        {
+            const uint8_t clients = WiFi.softAPgetStationNum();
+            if (clients != _last_ap_clients)
+            {
+                _last_ap_clients = clients;
+                if (_log.ready())
+                    _log.info(F("WIFI"), F("AP clients: %u"), clients);
+            }
+            return;
+        }
+
+        const wl_status_t st = WiFi.status();
+        if (st != _last_status)
+        {
+            _last_status = st;
+            if (_log.ready())
+                _log.info(F("WIFI"), F("STA %s"), statusToString_(st));
+            if (st == WL_CONNECTED && _log.ready())
+            {
+                const String ip = WiFi.localIP().toString();
+                _log.info(F("WIFI"), F("STA IP %s"), ip.c_str());
+            }
+        }
+    }
+
+    void setSsid(const String &ssid) { _ssid = ssid; }
+    void setPassword(const String &password) { _password = password; }
+    void setAp(bool ap) { _ap = ap; }
+    void setApSsid(const String &ssid) { _ap_ssid = ssid; }
+    void setApPassword(const String &password) { _ap_password = password; }
+
+    const String &ssid() const { return _ssid; }
+    const String &password() const { return _password; }
+    bool ap() const { return _ap; }
+    const String &apSsid() const { return _ap_ssid; }
+    const String &apPassword() const { return _ap_password; }
+
+private:
+    static const char *statusToString_(wl_status_t st)
+    {
+        static const char kIdle[] PROGMEM = "IDLE";
+        static const char kNoSsid[] PROGMEM = "NO_SSID";
+        static const char kScanDone[] PROGMEM = "SCAN_DONE";
+        static const char kConnected[] PROGMEM = "CONNECTED";
+        static const char kConnectFailed[] PROGMEM = "CONNECT_FAILED";
+        static const char kConnectionLost[] PROGMEM = "CONNECTION_LOST";
+        static const char kDisconnected[] PROGMEM = "DISCONNECTED";
+        static const char kUnknown[] PROGMEM = "UNKNOWN";
+
+        switch (st)
+        {
+        case WL_IDLE_STATUS:
+            return kIdle;
+        case WL_NO_SSID_AVAIL:
+            return kNoSsid;
+        case WL_SCAN_COMPLETED:
+            return kScanDone;
+        case WL_CONNECTED:
+            return kConnected;
+        case WL_CONNECT_FAILED:
+            return kConnectFailed;
+        case WL_CONNECTION_LOST:
+            return kConnectionLost;
+        case WL_DISCONNECTED:
+            return kDisconnected;
+        default:
+            return kUnknown;
+        }
+    }
+
+    String _ssid;
+    String _password;
+    bool _ap = false;
+    String _ap_ssid;
+    String _ap_password;
+
+    wl_status_t _last_status = (wl_status_t)0xFF;
+    uint8_t _last_ap_clients = 0xFF;
+    Logger &_log;
+};
