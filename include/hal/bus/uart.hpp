@@ -13,6 +13,7 @@
 #include <Arduino.h>
 
 #include "boards/board_profile.hpp"
+#include "hal/gpio/portio.hpp"
 
 class UartManager
 {
@@ -44,7 +45,11 @@ public:
             return false;
         const auto u = ActiveBoardProfile::UARTS[idx];
 #if defined(ESP32)
-        ser.begin(u.baud, config, u.rx, u.tx);
+        uint8_t tx_gpio = 0;
+        uint8_t rx_gpio = 0;
+        if (!uartPinsFromPorts_(u.tx, u.rx, tx_gpio, rx_gpio))
+            return false;
+        ser.begin(u.baud, config, rx_gpio, tx_gpio);
         return true;
 #else
         (void)ser;
@@ -62,10 +67,31 @@ public:
         if (!ser)
             return nullptr;
 #if defined(ESP32)
-        ser->begin(u.baud, config, u.rx, u.tx);
+        uint8_t tx_gpio = 0;
+        uint8_t rx_gpio = 0;
+        if (!uartPinsFromPorts_(u.tx, u.rx, tx_gpio, rx_gpio))
+            return nullptr;
+        ser->begin(u.baud, config, rx_gpio, tx_gpio);
         return ser;
 #else
         return nullptr;
 #endif
+    }
+
+private:
+    static bool uartPinsFromPorts_(uint8_t tx_port, uint8_t rx_port,
+                                   uint8_t &out_tx_gpio, uint8_t &out_rx_gpio)
+    {
+        if (tx_port >= PortIO::PORT_COUNT || rx_port >= PortIO::PORT_COUNT)
+            return false;
+        const auto &ptx = ActiveBoardProfile::PORTS[tx_port];
+        const auto &prx = ActiveBoardProfile::PORTS[rx_port];
+        if (ptx.backend != PortIO::Backend::Esp32 || prx.backend != PortIO::Backend::Esp32)
+            return false;
+        if (ptx.u.esp.gpio == 0xFF || prx.u.esp.gpio == 0xFF)
+            return false;
+        out_tx_gpio = ptx.u.esp.gpio;
+        out_rx_gpio = prx.u.esp.gpio;
+        return true;
     }
 };

@@ -16,6 +16,7 @@
 
 #include "boards/board_profile.hpp"
 #include "boards/board_profile_base.hpp"
+#include "hal/gpio/portio.hpp"
 
 class SPIManager
 {
@@ -23,7 +24,8 @@ public:
     enum class Error : uint8_t
     {
         Ok = 0,
-        InvalidBus
+        InvalidBus,
+        InvalidPins
     };
 
     bool beginAll()
@@ -43,10 +45,19 @@ public:
             }
 
 #if defined(ESP32)
-            s->begin(c.sck < 0 ? -1 : c.sck,
-                     c.miso < 0 ? -1 : c.miso,
-                     c.mosi < 0 ? -1 : c.mosi,
-                     c.cs < 0 ? -1 : c.cs);
+            int sck_gpio = -1;
+            int miso_gpio = -1;
+            int mosi_gpio = -1;
+            int cs_gpio = -1;
+            if (!spiPinFromPort_(c.sck, sck_gpio) ||
+                !spiPinFromPort_(c.miso, miso_gpio) ||
+                !spiPinFromPort_(c.mosi, mosi_gpio) ||
+                !spiPinFromPort_(c.cs, cs_gpio))
+            {
+                _err = Error::InvalidPins;
+                return false;
+            }
+            s->begin(sck_gpio, miso_gpio, mosi_gpio, cs_gpio);
 #else
             (void)c;
             s->begin();
@@ -72,6 +83,24 @@ public:
 
 private:
     Error _err = Error::Ok;
+
+    static bool spiPinFromPort_(int8_t port, int &out_gpio)
+    {
+        if (port < 0)
+        {
+            out_gpio = -1;
+            return true;
+        }
+        if (port >= PortIO::PORT_COUNT)
+            return false;
+        const auto &p = ActiveBoardProfile::PORTS[(uint8_t)port];
+        if (p.backend != PortIO::Backend::Esp32)
+            return false;
+        if (p.u.esp.gpio == 0xFF)
+            return false;
+        out_gpio = p.u.esp.gpio;
+        return true;
+    }
 
     static SPIClass *spiPtr_(uint8_t bus_num)
     {

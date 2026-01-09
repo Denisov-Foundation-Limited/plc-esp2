@@ -17,6 +17,7 @@
 #include "hal/gpio/extender.hpp"
 #include "hal/gpio/gpio_caps.hpp"
 #include "hal/gpio/portio.hpp"
+
 struct BoardProfileCommon
 {
     // Shared defaults could go here

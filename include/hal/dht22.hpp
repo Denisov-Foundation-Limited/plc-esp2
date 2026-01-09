@@ -13,6 +13,7 @@
 
 #include <Arduino.h>
 #include <stdint.h>
+
 class DHT22
 {
 public:

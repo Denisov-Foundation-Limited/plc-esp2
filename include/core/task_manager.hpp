@@ -102,7 +102,7 @@ public:
         return add(&memberThunk_<Method, T>, (void *)&obj, opt);
     }
 
-    void tick(uint32_t budget_us = 0)
+    void loop(uint32_t budget_us = 0)
     {
         const uint32_t start_us = micros_();
         const uint32_t now = nowMs_();

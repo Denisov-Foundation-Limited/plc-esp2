@@ -12,25 +12,19 @@
 #pragma once
 
 #include <Arduino.h>
+#include <OneWire.h>
 #include <stdint.h>
-
-#include "hal/bus/onewire.hpp"
 
 class IButton
 {
 public:
-    explicit IButton(OneWireManager &ow)
-        : _ow(&ow)
-    {
-    }
+    IButton() = default;
+    explicit IButton(OneWire &bus) : _bus(&bus) {}
 
-    bool begin(OneWireManager::OwBusType b = OneWireManager::OwBusType::iButton)
+    bool begin(OneWire &bus)
     {
-        _bus_id = b;
-        OneWire *bus = bus_();
-        if (!bus)
-            return false;
-        bus->reset_search();
+        _bus = &bus;
+        _bus->reset_search();
         return true;
     }
 
@@ -99,11 +93,7 @@ public:
     }
 
 private:
-    OneWire *bus_()
-    {
-        return _ow ? _ow->busPtrById(_bus_id) : nullptr;
-    }
+    OneWire *bus_() { return _bus; }
 
-    OneWireManager *_ow = nullptr;
-    OneWireManager::OwBusType _bus_id = OneWireManager::OwBusType::iButton;
+    OneWire *_bus = nullptr;
 };

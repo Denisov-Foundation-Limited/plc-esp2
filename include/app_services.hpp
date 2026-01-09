@@ -19,6 +19,8 @@
 #include "core/task_binder.hpp"
 #include "core/task_manager.hpp"
 #include "core/wifi_manager.hpp"
+#include "core/rtc.hpp"
+#include "core/display.hpp"
 
 #include "hal/dht22.hpp"
 #include "hal/at24lc512.hpp"
@@ -35,6 +37,8 @@
 #include "hal/bus/onewire.hpp"
 #include "hal/bus/spi.hpp"
 #include "hal/bus/uart.hpp"
+#include "hal/hal.hpp"
+#include "ftest.hpp"
 
 #include "utils/logger.hpp"
 
@@ -50,33 +54,43 @@ struct AppServices
     IButton ibutton;
     Ds18b20 ds18b20;
     DHT22 dht22;
-    Ds3231Mz rtc;
+    Ds3231Mz ds3231;
+    RTC rtc;
     At24lc512 eeprom;
-    Lcd1602I2c lcd;
+    Lcd1602I2c lcd_hal;
+    Display display;
     Lm75ad lm75ad;
     Sim800l sim800l;
 
     Extender ext;
     PortIO portio;
     Gpio gpio;
+    Hal hal;
 
     TaskManager<TASK_MGR_TSK_COUNT> tm;
     TaskBinder<TASK_MGR_TSK_COUNT> task_binder;
+    Ftest ftest;
 
     AppServices()
         : logs(uart),
           wifi(logs),
-          ext(ActiveBoardProfile::EXT_DEVS),
+          ibutton(),
+          ds18b20(),
+          dht22(),
+          ds3231(),
+          rtc(i2c, ds3231),
+          eeprom(),
+          lcd_hal(),
+          display(i2c, lcd_hal),
+          lm75ad(),
+          sim800l(),
+          ext(i2c, ActiveBoardProfile::EXT_DEVS),
           portio(ActiveBoardProfile::PORTS, &ext),
           gpio(portio),
-          ibutton(ow),
-          ds18b20(ow),
-          dht22(),
-          rtc(i2c),
-          eeprom(i2c),
-          lcd(i2c),
-          lm75ad(i2c),
-          task_binder(tm, wifi)
+          hal(ow, i2c, spi, uart, gpio),
+          tm(),
+          task_binder(tm, wifi),
+          ftest(logs, portio, tm, task_binder)
     {
     }
 
@@ -94,91 +108,93 @@ struct AppServices
 
         bool ok = true;
 
-        if (!i2c.beginAll())
+        if (!hal.begin())
         {
-            logs.error(F("APP"), F("I2C Init failed"));
-            ok = false;
-        }
-        else if (!rtc.begin())
-        {
-            logs.error(F("APP"), F("RTC Init failed"));
-            ok = false;
-        }
-        else if (!eeprom.begin())
-        {
-            logs.error(F("APP"), F("EEPROM Init failed"));
-            ok = false;
-        }
-        else if (!lcd.begin())
-        {
-            logs.error(F("APP"), F("LCD Init failed"));
-            ok = false;
-        }
-        if (!spi.beginAll())
-        {
-            logs.error(F("APP"), F("SPI Init failed"));
-            ok = false;
-        }
-        if (!ow.beginAll())
-        {
-            logs.error(F("APP"), F("OW Init failed"));
-            ok = false;
-        }
-        else if (!ibutton.begin(OneWireManager::OwBusType::iButton))
-        {
-            logs.error(F("APP"), F("OW iButton bus missing"));
-            ok = false;
-        }
-        else if (!ds18b20.begin(OneWireManager::OwBusType::Temp))
-        {
-            logs.error(F("APP"), F("OW DS18B20 bus missing"));
+            switch (hal.lastError())
+            {
+            case Hal::Error::I2c:
+                logs.error(F("APP"), F("HAL I2C Init failed"));
+                break;
+            case Hal::Error::Gpio:
+                logs.error(F("APP"), F("HAL GPIO Init failed"));
+                break;
+            case Hal::Error::Spi:
+                logs.error(F("APP"), F("HAL SPI Init failed"));
+                break;
+            case Hal::Error::OneWire:
+                logs.error(F("APP"), F("HAL OW Init failed"));
+                break;
+            case Hal::Error::Uart:
+                logs.error(F("APP"), F("HAL UART Init failed"));
+                break;
+            default:
+                logs.error(F("APP"), F("HAL Init failed"));
+                break;
+            }
             ok = false;
         }
 
-        HardwareSerial *sim_ser = uart.beginSerialForIndex(0);
-        if (!sim_ser)
+        if (ok && !rtc.begin())
         {
-            logs.error(F("APP"), F("SIM UART index 0 not available"));
+            switch (rtc.lastError())
+            {
+            case RTC::Error::NoBus:
+                logs.error(F("APP"), F("RTC I2C bus missing"));
+                break;
+            case RTC::Error::InvalidConfig:
+                logs.error(F("APP"), F("RTC config invalid"));
+                break;
+            case RTC::Error::I2c:
+                logs.error(F("APP"), F("RTC I2C error"));
+                break;
+            default:
+                logs.error(F("APP"), F("RTC Init failed"));
+                break;
+            }
             ok = false;
         }
-        else if (!sim800l.begin(*sim_ser))
+
+        if (ok && !display.begin())
         {
-            logs.error(F("APP"), F("SIM Init failed"));
+            switch (display.lastError())
+            {
+            case Display::Error::NoBus:
+                logs.error(F("APP"), F("LCD I2C bus missing"));
+                break;
+            case Display::Error::InvalidConfig:
+                logs.error(F("APP"), F("LCD config invalid"));
+                break;
+            case Display::Error::I2c:
+                logs.error(F("APP"), F("LCD I2C error"));
+                break;
+            default:
+                logs.error(F("APP"), F("LCD Init failed"));
+                break;
+            }
             ok = false;
         }
-        else
-        {
-            sim800l.setEcho(false);
-            sim800l.setSmsTextMode();
-            sim800l.setCallerId(true);
-        }
 
-        ext.begin(i2c);
-
-        if (!gpio.begin())
-        {
-            logs.error(F("APP"), F("GPIO Init failed"));
-            ok = false;
-        }
-        else
-        {
-            logs.info(F("APP"), F("GPIO Init OK"));
-        }
-
-        if (!wifi.begin())
+        if (ok && !wifi.begin())
         {
             logs.error(F("APP"), F("WIFI Init failed"));
             ok = false;
         }
 
+        task_binder.bindFtest(ftest);
         task_binder.bindAll();
+
+        if (ok) {
+            logs.info(F("APP"), F("Application init OK"));
+        } else {
+            ftest.start();
+        }      
 
         return ok;
     }
 
-    void tick()
+    void loop()
     {
-        gpio.tick();
-        tm.tick();
+        gpio.loop();
+        tm.loop();
     }
 };

@@ -23,8 +23,21 @@
 class PortIO
 {
 public:
-    static constexpr uint8_t PORT_COUNT = 23;
+    static constexpr uint8_t PORT_COUNT = 43;
     using PortId = uint8_t;
+
+    enum class PinType : uint8_t
+    {
+        Unknown = 0,
+        System,
+        Relay,
+        Led,
+        Sensor,
+        Button,
+        DInput,
+        Buzzer,
+        Fan
+    };
 
     enum class PortMode : uint8_t
     {
@@ -64,6 +77,7 @@ public:
         Backend backend;
         Cap caps;
         PortMode mode;
+        PinType type;
         bool initial_level;
 
         bool pwm_enable;
@@ -148,7 +162,7 @@ public:
         return true;
     }
 
-    void tick()
+    void loop()
     {
         if (_ext)
             _ext->flushAll();
@@ -166,6 +180,12 @@ public:
     }
 
     const PortDesc &desc(PortId id) const { return _ports[id]; }
+    PinType type(PortId id) const
+    {
+        if (id >= PORT_COUNT)
+            return PinType::Unknown;
+        return _ports[id].type;
+    }
 
     void pinMode(PortId id, PortMode mode)
     {
@@ -330,6 +350,13 @@ private:
     Extender *_ext;
     Error _err = Error::Ok;
 
+    static constexpr uint8_t kMaxPin =
+#if defined(ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S3)
+        48;
+#else
+        39;
+#endif
+
     bool _last[PORT_COUNT] = {};
     bool _hasLast[PORT_COUNT] = {};
 
@@ -373,7 +400,7 @@ private:
 
         if (p.backend == Backend::Esp32)
         {
-            if (p.u.esp.gpio != 0xFF && p.u.esp.gpio > 39)
+            if (p.u.esp.gpio != 0xFF && p.u.esp.gpio > kMaxPin)
             {
                 _err = Error::InvalidPin;
                 return false;

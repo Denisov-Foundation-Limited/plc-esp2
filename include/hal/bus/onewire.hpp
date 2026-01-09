@@ -16,6 +16,8 @@
 
 #include "boards/board_profile.hpp"
 #include "boards/board_profile_base.hpp"
+#include "hal/gpio/portio.hpp"
+
 class OneWireManager
 {
 public:
@@ -51,13 +53,14 @@ public:
         for (uint8_t i = 0; i < ActiveBoardProfile::ONEWIRE_COUNT; ++i)
         {
             const OneWireCfg &c = ActiveBoardProfile::ONEWIRES[i];
-            if (c.pin < 0 || c.pin > 39)
+            uint8_t gpio = 0;
+            if (!oneWirePinFromPort_(c.pin, gpio))
             {
                 _err = Error::InvalidPin;
                 return false;
             }
             _cfg[i] = c;
-            _bus[i] = OneWire((uint8_t)c.pin);
+            _bus[i] = OneWire(gpio);
         }
         _count = ActiveBoardProfile::ONEWIRE_COUNT;
         return true;
@@ -93,4 +96,17 @@ private:
     OneWireCfg _cfg[MAX_BUSES] = {};
     uint8_t _count = 0;
     Error _err = Error::Ok;
+
+    static bool oneWirePinFromPort_(int8_t port, uint8_t &out_gpio)
+    {
+        if (port < 0 || port >= PortIO::PORT_COUNT)
+            return false;
+        const auto &p = ActiveBoardProfile::PORTS[(uint8_t)port];
+        if (p.backend != PortIO::Backend::Esp32)
+            return false;
+        if (p.u.esp.gpio == 0xFF)
+            return false;
+        out_gpio = p.u.esp.gpio;
+        return true;
+    }
 };

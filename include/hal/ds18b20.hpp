@@ -12,22 +12,19 @@
 #pragma once
 
 #include <Arduino.h>
+#include <OneWire.h>
 #include <stdint.h>
 #include <vector>
-
-#include "hal/bus/onewire.hpp"
 
 class Ds18b20
 {
 public:
-    explicit Ds18b20(OneWireManager &ow)
-        : _ow(&ow)
-    {
-    }
+    Ds18b20() = default;
+    explicit Ds18b20(OneWire &bus) : _bus(&bus) {}
 
-    bool begin(OneWireManager::OwBusType bus = OneWireManager::OwBusType::Temp)
+    bool begin(OneWire &bus)
     {
-        _bus_id = bus;
+        _bus = &bus;
         _has_addr = false;
         return findFirst_();
     }
@@ -126,10 +123,7 @@ private:
     static constexpr uint8_t kFamily = 0x28;
     static constexpr uint16_t kDefaultConvMs = 750;
 
-    OneWire *bus_()
-    {
-        return _ow ? _ow->busPtrById(_bus_id) : nullptr;
-    }
+    OneWire *bus_() { return _bus; }
 
     bool findFirst_()
     {
@@ -242,8 +236,7 @@ private:
         return -1;
     }
 
-    OneWireManager *_ow = nullptr;
-    OneWireManager::OwBusType _bus_id = OneWireManager::OwBusType::Temp;
+    OneWire *_bus = nullptr;
     uint8_t _addr[8] = {};
     bool _has_addr = false;
     uint32_t _last_conv_ms = 0;

@@ -28,15 +28,29 @@ public:
         bindWiFiManager();
     }
 
+    template <typename FtestT>
+    typename TaskManager<N>::Handle bindFtest(FtestT &ftest)
+    {
+        typename TaskManager<N>::Options opt;
+        opt.interval_ms = 500;
+        opt.priority = TaskManager<N>::Priority::Normal;
+        opt.enabled = false;
+        _ftest_task = _tm.template add<&FtestT::task>(ftest, opt);
+        return _ftest_task;
+    }
+
+    typename TaskManager<N>::Handle getFtestTask() const { return _ftest_task; }
+
 private:
     typename TaskManager<N>::Handle bindWiFiManager()
     {
         typename TaskManager<N>::Options opt;
         opt.interval_ms = 1000;
         opt.priority = TaskManager<N>::Priority::Normal;
-        return _tm.template add<&WifiManager::tick>(_wifi, opt);
+        return _tm.template add<&WifiManager::task>(_wifi, opt);
     }
 
     TaskManager<N> &_tm;
     WifiManager &_wifi;
+    typename TaskManager<N>::Handle _ftest_task{};
 };

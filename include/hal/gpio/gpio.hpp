@@ -25,7 +25,7 @@ public:
   explicit Gpio(PortIO& io) : _io(io) {}
 
   bool begin() { return _io.begin(); }
-  void tick() { _io.tick(); }
+  void loop() { _io.loop(); }
 
   template<uint8_t P>
   inline void write(bool v) {

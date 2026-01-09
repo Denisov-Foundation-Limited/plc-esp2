@@ -91,6 +91,21 @@ private:
         return (p >= 0 && p <= kMaxPin);
     }
 
+    static constexpr bool port_to_gpio_(int8_t port, uint8_t &out_gpio)
+    {
+        if (port < 0 || port >= PortIO::PORT_COUNT)
+            return false;
+        const auto &p = Profile::PORTS[(uint8_t)port];
+        if (p.backend != PortIO::Backend::Esp32)
+            return false;
+        if (p.u.esp.gpio == 0xFF)
+            return false;
+        if (!pin_ok_(p.u.esp.gpio))
+            return false;
+        out_gpio = p.u.esp.gpio;
+        return true;
+    }
+
     static constexpr bool arrays_sane_()
     {
         return (Profile::PORTS.size() == PortIO::PORT_COUNT) &&
@@ -108,9 +123,11 @@ private:
             const I2cCfg c = Profile::I2CS[i];
             if (c.freq == 0)
                 return false;
-            if (!pin_ok_(c.sda) || !pin_ok_(c.scl))
+            uint8_t sda_gpio = 0;
+            uint8_t scl_gpio = 0;
+            if (!port_to_gpio_(c.sda, sda_gpio) || !port_to_gpio_(c.scl, scl_gpio))
                 return false;
-            if (c.sda == c.scl)
+            if (c.sda == c.scl || sda_gpio == scl_gpio)
                 return false;
         }
         return true;
@@ -131,9 +148,11 @@ private:
             const UartCfg u = Profile::UARTS[i];
             if (u.baud == 0)
                 return false;
-            if (!pin_ok_(u.tx) || !pin_ok_(u.rx))
+            uint8_t tx_gpio = 0;
+            uint8_t rx_gpio = 0;
+            if (!port_to_gpio_(u.tx, tx_gpio) || !port_to_gpio_(u.rx, rx_gpio))
                 return false;
-            if (u.tx == u.rx)
+            if (u.tx == u.rx || tx_gpio == rx_gpio)
                 return false;
         }
         return true;
@@ -154,13 +173,14 @@ private:
             const SpiCfg s = Profile::SPIS[i];
             if (s.freq == 0)
                 return false;
-            if (s.sck >= 0 && !pin_ok_(s.sck))
+            uint8_t gpio = 0;
+            if (s.sck >= 0 && !port_to_gpio_(s.sck, gpio))
                 return false;
-            if (s.miso >= 0 && !pin_ok_(s.miso))
+            if (s.miso >= 0 && !port_to_gpio_(s.miso, gpio))
                 return false;
-            if (s.mosi >= 0 && !pin_ok_(s.mosi))
+            if (s.mosi >= 0 && !port_to_gpio_(s.mosi, gpio))
                 return false;
-            if (s.cs >= 0 && !pin_ok_(s.cs))
+            if (s.cs >= 0 && !port_to_gpio_(s.cs, gpio))
                 return false;
         }
         return true;
@@ -179,7 +199,8 @@ private:
         for (uint8_t i = 0; i < Profile::ONEWIRE_COUNT; ++i)
         {
             const OneWireCfg w = Profile::ONEWIRES[i];
-            if (!pin_ok_(w.pin))
+            uint8_t gpio = 0;
+            if (!port_to_gpio_(w.pin, gpio))
                 return false;
         }
         return true;
@@ -246,12 +267,14 @@ private:
             const auto &p = Profile::PORTS[i];
             if (p.caps == Cap::None)
                 continue;
+            if (p.type == PortIO::PinType::Unknown)
+                return false;
 
             if (p.backend == PortIO::Backend::Esp32)
             {
                 if (p.u.esp.gpio == 0xFF)
                     return false;
-                if (p.u.esp.gpio > 39)
+                if (p.u.esp.gpio > kMaxPin)
                     return false;
             }
             else
@@ -307,10 +330,14 @@ private:
         for (uint8_t i = 0; i < Profile::UART_COUNT; ++i)
         {
             const auto u = Profile::UARTS[i];
-            auto c1 = tryClaim((uint8_t)u.tx, {OwnerKind::UartTx, i});
+            uint8_t tx_gpio = 0;
+            uint8_t rx_gpio = 0;
+            if (!port_to_gpio_(u.tx, tx_gpio) || !port_to_gpio_(u.rx, rx_gpio))
+                continue;
+            auto c1 = tryClaim(tx_gpio, {OwnerKind::UartTx, i});
             if (c1.has)
                 return c1;
-            auto c2 = tryClaim((uint8_t)u.rx, {OwnerKind::UartRx, i});
+            auto c2 = tryClaim(rx_gpio, {OwnerKind::UartRx, i});
             if (c2.has)
                 return c2;
         }
@@ -318,10 +345,14 @@ private:
         for (uint8_t i = 0; i < Profile::I2C_COUNT; ++i)
         {
             const auto c = Profile::I2CS[i];
-            auto c1 = tryClaim((uint8_t)c.sda, {OwnerKind::I2cSda, i});
+            uint8_t sda_gpio = 0;
+            uint8_t scl_gpio = 0;
+            if (!port_to_gpio_(c.sda, sda_gpio) || !port_to_gpio_(c.scl, scl_gpio))
+                continue;
+            auto c1 = tryClaim(sda_gpio, {OwnerKind::I2cSda, i});
             if (c1.has)
                 return c1;
-            auto c2 = tryClaim((uint8_t)c.scl, {OwnerKind::I2cScl, i});
+            auto c2 = tryClaim(scl_gpio, {OwnerKind::I2cScl, i});
             if (c2.has)
                 return c2;
         }
@@ -331,36 +362,56 @@ private:
             const auto s = Profile::SPIS[i];
             if (s.sck >= 0)
             {
-                auto c = tryClaim((uint8_t)s.sck, {OwnerKind::SpiSck, i});
-                if (c.has)
-                    return c;
+                uint8_t gpio = 0;
+                if (port_to_gpio_(s.sck, gpio))
+                {
+                    auto c = tryClaim(gpio, {OwnerKind::SpiSck, i});
+                    if (c.has)
+                        return c;
+                }
             }
             if (s.miso >= 0)
             {
-                auto c = tryClaim((uint8_t)s.miso, {OwnerKind::SpiMiso, i});
-                if (c.has)
-                    return c;
+                uint8_t gpio = 0;
+                if (port_to_gpio_(s.miso, gpio))
+                {
+                    auto c = tryClaim(gpio, {OwnerKind::SpiMiso, i});
+                    if (c.has)
+                        return c;
+                }
             }
             if (s.mosi >= 0)
             {
-                auto c = tryClaim((uint8_t)s.mosi, {OwnerKind::SpiMosi, i});
-                if (c.has)
-                    return c;
+                uint8_t gpio = 0;
+                if (port_to_gpio_(s.mosi, gpio))
+                {
+                    auto c = tryClaim(gpio, {OwnerKind::SpiMosi, i});
+                    if (c.has)
+                        return c;
+                }
             }
             if (s.cs >= 0)
             {
-                auto c = tryClaim((uint8_t)s.cs, {OwnerKind::SpiCs, i});
-                if (c.has)
-                    return c;
+                uint8_t gpio = 0;
+                if (port_to_gpio_(s.cs, gpio))
+                {
+                    auto c = tryClaim(gpio, {OwnerKind::SpiCs, i});
+                    if (c.has)
+                        return c;
+                }
             }
         }
 
         for (uint8_t i = 0; i < Profile::ONEWIRE_COUNT; ++i)
         {
             const auto w = Profile::ONEWIRES[i];
-            auto c = tryClaim((uint8_t)w.pin, {OwnerKind::OneWire, i});
-            if (c.has)
-                return c;
+            uint8_t gpio = 0;
+            if (port_to_gpio_(w.pin, gpio))
+            {
+                auto c = tryClaim(gpio, {OwnerKind::OneWire, i});
+                if (c.has)
+                    return c;
+            }
         }
 
         return {false, 255, {}, {}};

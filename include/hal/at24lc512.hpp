@@ -12,9 +12,8 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Wire.h>
 #include <stdint.h>
-
-#include "hal/bus/i2c.hpp"
 
 class At24lc512
 {
@@ -29,14 +28,12 @@ public:
     static constexpr uint8_t kDefaultAddr = 0x50;
     static constexpr uint32_t kSizeBytes = 65536;
 
-    explicit At24lc512(I2CManager &i2c)
-        : _i2c(i2c)
-    {
-    }
+    At24lc512() = default;
+    explicit At24lc512(TwoWire &wire) : _wire(&wire) {}
 
-    bool begin(uint8_t bus_num = 0, uint8_t addr = kDefaultAddr)
+    bool begin(TwoWire &wire, uint8_t addr = kDefaultAddr)
     {
-        _wire = _i2c.wirePtr(bus_num);
+        _wire = &wire;
         _addr = addr;
         _err = _wire ? Error::Ok : Error::NoBus;
         return _wire != nullptr;
@@ -128,7 +125,6 @@ public:
     uint32_t usedBytes() const { return _used_end; }
 
 private:
-    I2CManager &_i2c;
     TwoWire *_wire = nullptr;
     uint8_t _addr = kDefaultAddr;
     Error _err = Error::Ok;

@@ -12,9 +12,8 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Wire.h>
 #include <stdint.h>
-
-#include "hal/bus/i2c.hpp"
 
 class Lm75ad
 {
@@ -28,14 +27,12 @@ public:
 
     static constexpr uint8_t kDefaultAddr = 0x48;
 
-    explicit Lm75ad(I2CManager &i2c)
-        : _i2c(i2c)
-    {
-    }
+    Lm75ad() = default;
+    explicit Lm75ad(TwoWire &wire) : _wire(&wire) {}
 
-    bool begin(uint8_t bus_num = 0, uint8_t addr = kDefaultAddr)
+    bool begin(TwoWire &wire, uint8_t addr = kDefaultAddr)
     {
-        _wire = _i2c.wirePtr(bus_num);
+        _wire = &wire;
         _addr = addr;
         _err = _wire ? Error::Ok : Error::NoBus;
         return _wire != nullptr;
@@ -86,7 +83,6 @@ private:
         return true;
     }
 
-    I2CManager &_i2c;
     TwoWire *_wire = nullptr;
     uint8_t _addr = kDefaultAddr;
     Error _err = Error::Ok;

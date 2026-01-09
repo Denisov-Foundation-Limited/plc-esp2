@@ -12,9 +12,8 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Wire.h>
 #include <stdint.h>
-
-#include "hal/bus/i2c.hpp"
 
 class Ds3231Mz
 {
@@ -37,16 +36,13 @@ public:
         I2c
     };
 
-    explicit Ds3231Mz(I2CManager &i2c) : _i2c(i2c)
-    {
-    }
+    Ds3231Mz() = default;
+    explicit Ds3231Mz(TwoWire &wire) : _wire(&wire) {}
 
-    bool begin(uint8_t bus_num = 0, uint8_t addr = 0x68)
+    bool begin(TwoWire &wire, uint8_t addr = 0x68)
     {
-        _wire = _i2c.wirePtr(bus_num);
+        _wire = &wire;
         _addr = addr;
-        if (!_wire)
-            _err = Error::NoBus;
         _err = _wire ? Error::Ok : Error::NoBus;
         return _wire != nullptr;
     }
@@ -155,5 +151,4 @@ private:
     TwoWire *_wire = nullptr;
     uint8_t _addr = 0x68;
     Error _err = Error::Ok;
-    I2CManager &_i2c;
 };

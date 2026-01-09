@@ -14,13 +14,16 @@
 #include <Wire.h>
 
 #include "boards/board_profile.hpp"
+#include "hal/gpio/portio.hpp"
+
 class I2CManager
 {
 public:
     enum class Error : uint8_t
     {
         Ok = 0,
-        InvalidBus
+        InvalidBus,
+        InvalidPins
     };
 
     bool beginAll()
@@ -37,7 +40,14 @@ public:
             }
 
 #if defined(ESP32)
-            w->begin(c.sda, c.scl, c.freq);
+            uint8_t sda_gpio = 0;
+            uint8_t scl_gpio = 0;
+            if (!i2cPinsFromPorts_(c.sda, c.scl, sda_gpio, scl_gpio))
+            {
+                _err = Error::InvalidPins;
+                return false;
+            }
+            w->begin(sda_gpio, scl_gpio, c.freq);
 #else
             w->begin();
             w->setClock(c.freq);
@@ -63,6 +73,22 @@ public:
 
 private:
     Error _err = Error::Ok;
+
+    static bool i2cPinsFromPorts_(uint8_t sda_port, uint8_t scl_port,
+                                 uint8_t &out_sda_gpio, uint8_t &out_scl_gpio)
+    {
+        if (sda_port >= PortIO::PORT_COUNT || scl_port >= PortIO::PORT_COUNT)
+            return false;
+        const auto &psda = ActiveBoardProfile::PORTS[sda_port];
+        const auto &pscl = ActiveBoardProfile::PORTS[scl_port];
+        if (psda.backend != PortIO::Backend::Esp32 || pscl.backend != PortIO::Backend::Esp32)
+            return false;
+        if (psda.u.esp.gpio == 0xFF || pscl.u.esp.gpio == 0xFF)
+            return false;
+        out_sda_gpio = psda.u.esp.gpio;
+        out_scl_gpio = pscl.u.esp.gpio;
+        return true;
+    }
 
     static TwoWire *wirePtr_(uint8_t bus_num)
     {

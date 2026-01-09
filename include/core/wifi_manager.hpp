@@ -46,7 +46,7 @@ public:
         return true;
     }
 
-    void tick()
+    void task()
     {
         if (_ap)
         {

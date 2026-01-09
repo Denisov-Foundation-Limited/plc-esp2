@@ -20,5 +20,5 @@ void setup()
 
 void loop()
 {
-    app.tick();
+    app.loop();
 }

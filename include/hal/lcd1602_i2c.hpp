@@ -12,21 +12,19 @@
 #pragma once
 
 #include <Arduino.h>
-#include "hal/bus/i2c.hpp"
+#include <Wire.h>
 
 class Lcd1602I2c
 {
 public:
     static constexpr uint8_t kDefaultAddr = 0x3F;
 
-    explicit Lcd1602I2c(I2CManager &i2c)
-        : _i2c(i2c)
-    {
-    }
+    Lcd1602I2c() = default;
+    explicit Lcd1602I2c(TwoWire &wire) : _wire(&wire) {}
 
-    bool begin(uint8_t bus_num = 0, uint8_t addr = kDefaultAddr)
+    bool begin(TwoWire &wire, uint8_t addr = kDefaultAddr)
     {
-        _wire = _i2c.wirePtr(bus_num);
+        _wire = &wire;
         _addr = addr;
         if (!_wire)
             return false;
@@ -181,7 +179,6 @@ private:
         writeI2c_(data);
     }
 
-    I2CManager &_i2c;
     TwoWire *_wire = nullptr;
     uint8_t _addr = kDefaultAddr;
     bool _backlight = true;

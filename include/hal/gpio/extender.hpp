@@ -34,12 +34,10 @@ public:
     };
 
     template <size_t N>
-    explicit Extender(const std::array<DevCfg, N> &devs)
-        : _devs(devs.data()), _dev_count((uint8_t)N)
+    Extender(I2CManager &i2c, const std::array<DevCfg, N> &devs)
+        : _devs(devs.data()), _dev_count((uint8_t)N), _i2c(&i2c)
     {
     }
-
-    void begin(I2CManager &i2c) { _i2c = &i2c; }
 
     bool isConfigured(uint8_t dev) const
     {
