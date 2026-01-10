@@ -13,19 +13,21 @@
 
 #include "core/task_manager.hpp"
 #include "core/wifi_manager.hpp"
+#include "plc/plc_control.hpp"
 
 template <size_t N>
 class TaskBinder
 {
 public:
-    TaskBinder(TaskManager<N> &tm, WifiManager &wifi)
-        : _tm(tm), _wifi(wifi)
+    TaskBinder(TaskManager<N> &tm, WifiManager &wifi, PlcControl &plc)
+        : _tm(tm), _wifi(wifi), _plc(plc)
     {
     }
 
     void bindAll()
     {
         bindWiFiManager();
+        bindPlcControl();
     }
 
     template <typename FtestT>
@@ -50,7 +52,16 @@ private:
         return _tm.template add<&WifiManager::task>(_wifi, opt);
     }
 
+    typename TaskManager<N>::Handle bindPlcControl()
+    {
+        typename TaskManager<N>::Options opt;
+        opt.interval_ms = 1000;
+        opt.priority = TaskManager<N>::Priority::Normal;
+        return _tm.template add<&PlcControl::task>(_plc, opt);
+    }
+
     TaskManager<N> &_tm;
     WifiManager &_wifi;
+    PlcControl &_plc;
     typename TaskManager<N>::Handle _ftest_task{};
 };

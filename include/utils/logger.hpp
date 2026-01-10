@@ -114,10 +114,11 @@ public:
         if (!_out)
             return;
 
-        _out->print(levelChar_(L));
-        _out->print(F(" "));
+        _out->print(F("["));
+        _out->print(levelName_(L));
+        _out->print(F("]["));
         _out->print(tag);
-        _out->print(F(": "));
+        _out->print(F("] "));
         _out->println(msg);
     }
 
@@ -173,7 +174,7 @@ private:
         case Level::Trace:
             return "TRACE";
         default:
-            return "UNK";
+            return "UNKNOWN";
         }
     }
 
@@ -204,13 +205,15 @@ private:
         _out->print(color_<L>());
 #endif
 #if LOGGER_USE_TIMESTAMP
+        _out->print(F("["));
         _out->print((uint32_t)millis());
-        _out->print(F(" "));
+        _out->print(F("]"));
 #endif
-        _out->print(levelChar_(L));
-        _out->print(F(" "));
+        _out->print(F("["));
+        _out->print(levelName_(L));
+        _out->print(F("]["));
         _out->print(tag);
-        _out->print(F(": "));
+        _out->print(F("] "));
         _out->println(msg);
 #if LOGGER_USE_COLOR
         _out->print(F("\x1b[0m"));

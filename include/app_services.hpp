@@ -21,6 +21,7 @@
 #include "core/wifi_manager.hpp"
 #include "core/rtc.hpp"
 #include "core/display.hpp"
+#include "core/cli/cli_console.hpp"
 
 #include "hal/dht22.hpp"
 #include "hal/at24lc512.hpp"
@@ -39,6 +40,7 @@
 #include "hal/bus/uart.hpp"
 #include "hal/hal.hpp"
 #include "ftest.hpp"
+#include "plc/plc_control.hpp"
 
 #include "utils/logger.hpp"
 
@@ -66,10 +68,12 @@ struct AppServices
     PortIO portio;
     Gpio gpio;
     Hal hal;
+    PlcControl plc;
 
     TaskManager<TASK_MGR_TSK_COUNT> tm;
     TaskBinder<TASK_MGR_TSK_COUNT> task_binder;
     Ftest ftest;
+    CliConsole console;
 
     AppServices()
         : logs(uart),
@@ -88,9 +92,11 @@ struct AppServices
           portio(ActiveBoardProfile::PORTS, &ext),
           gpio(portio),
           hal(ow, i2c, spi, uart, gpio),
+          plc(i2c, portio),
           tm(),
-          task_binder(tm, wifi),
-          ftest(logs, portio, tm, task_binder)
+          task_binder(tm, wifi, plc),
+          ftest(logs, portio, ow, ibutton, ds18b20, i2c, tm, task_binder),
+          console(plc, wifi, rtc, ftest)
     {
     }
 
@@ -102,6 +108,8 @@ struct AppServices
             logs.begin(Serial);
             logs.error(F("APP"), F("LOG Auto bind failed, fallback to USB"));
         }
+
+        console.begin(Serial);
 
         logs.info(F("APP"), F("Starting application..."));
         ProfileValidator<ActiveBoardProfile>::printDiagnostics(Serial);
@@ -184,10 +192,28 @@ struct AppServices
         task_binder.bindAll();
 
         if (ok) {
-            logs.info(F("APP"), F("Application init OK"));
-        } else {
-            ftest.start();
-        }      
+            if (!plc.begin())
+            {
+                switch (plc.lastError())
+                {
+                case PlcControl::Error::NoBus:
+                    logs.error(F("APP"), F("PLC I2C bus missing"));
+                    break;
+                case PlcControl::Error::InvalidConfig:
+                    logs.error(F("APP"), F("PLC temp config invalid"));
+                    break;
+                case PlcControl::Error::I2c:
+                    logs.error(F("APP"), F("PLC temp sensor error"));
+                    break;
+                default:
+                    logs.error(F("APP"), F("PLC Init failed"));
+                    break;
+                }
+                ok = false;
+            }
+            if (ok)
+                logs.info(F("APP"), F("Application init OK"));
+        }   
 
         return ok;
     }
@@ -195,6 +221,7 @@ struct AppServices
     void loop()
     {
         gpio.loop();
+        console.loop();
         tm.loop();
     }
 };

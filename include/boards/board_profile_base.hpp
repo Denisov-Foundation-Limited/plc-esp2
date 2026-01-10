@@ -55,6 +55,20 @@ struct LcdCfg
     uint8_t addr;    // LCD I2C address
 };
 
+struct BoardTempCfg
+{
+    uint8_t bus_num;    // I2C bus id
+    uint8_t addr;       // LM75 address
+    float hysteresis_c; // fan off delta
+    float fan_on_c;     // fan on temperature
+};
+
+struct EepromCfg
+{
+    uint8_t bus_num; // I2C bus id
+    uint8_t addr;    // AT24LC512 address
+};
+
 struct SpiCfg
 {
     uint8_t bus_num; // 0->SPI, 1->HSPI, 2->VSPI (ESP32 Arduino policy)

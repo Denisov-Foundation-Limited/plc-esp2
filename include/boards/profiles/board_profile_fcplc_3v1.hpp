@@ -22,18 +22,22 @@ struct BoardProfileFCPLC_3v1 : BoardProfileCommon
 {
     // ---- logging sink ----
     static inline constexpr LogCfg LOG = {
-        LogCfg::Sink::UsbSerial, 0, 115200
+        .sink = LogCfg::Sink::UsbSerial,
+        .uart_index = 0,
+        .usb_baud = 115200
     };
 
     // ---- UART ----
     static inline constexpr uint8_t UART_COUNT = 1;
     static inline constexpr std::array<UartCfg, UART_COUNT> UARTS{{
-        /*  0 */ { 1, 26, 27, 115200 }
+        /*  0 */ { .uart_num = 1, .tx = 26, .rx = 27, .baud = 115200 }
     }};
 
     // ---- RTC ----
-    static inline constexpr RtcCfg RTC = { 0, 0x68 };
-    static inline constexpr LcdCfg LCD = { 0, 0x3F };
+    static inline constexpr RtcCfg RTC = { .bus_num = 0, .addr = 0x68 };
+    static inline constexpr LcdCfg LCD = { .bus_num = 0, .addr = 0x3F };
+    static inline constexpr BoardTempCfg BOARD_TEMP = { .bus_num = 0, .addr = 0x48, .hysteresis_c = 2.0f, .fan_on_c = 45.0f };
+    static inline constexpr EepromCfg EEPROM = { .bus_num = 0, .addr = 0x50 };
 
     // ---- Control pins ----
     static inline constexpr uint8_t BUZZER_PIN = 34;
@@ -49,119 +53,117 @@ struct BoardProfileFCPLC_3v1 : BoardProfileCommon
     // ---- I2C ----
     static inline constexpr uint8_t I2C_COUNT = 2;
     static inline constexpr std::array<I2cCfg, I2C_COUNT> I2CS{{
-        /*  0 */ { 0, 22, 23, 400000 },
-        /*  1 */ { 1, 24, 25, 400000 }
+        /*  0 */ { .bus_num = 0, .sda = 22, .scl = 23, .freq = 400000 },
+        /*  1 */ { .bus_num = 1, .sda = 24, .scl = 25, .freq = 400000 }
     }};
 
     // ---- SPI ----
     static inline constexpr uint8_t SPI_COUNT = 1;
     static inline constexpr std::array<SpiCfg, SPI_COUNT> SPIS{{
-        /*  0 */ { 0, 28, 29, 30, 31, 10000000 }
+        /*  0 */ { .bus_num = 0, .sck = 28, .miso = 29, .mosi = 30, .cs = 31, .freq = 10000000 }
     }};
 
     // ---- OneWire ----
     static inline constexpr uint8_t ONEWIRE_COUNT = 2;
     static inline constexpr std::array<OneWireCfg, ONEWIRE_COUNT> ONEWIRES{{
-        /*  0 */ { OneWireCfg::OwType::iButton, 32, false },
-        /*  1 */ { OneWireCfg::OwType::Temp,    33, false },
+        /*  0 */ { .bus_id = OneWireCfg::OwType::iButton, .pin = 32, .parasite_power = false },
+        /*  1 */ { .bus_id = OneWireCfg::OwType::Temp,    .pin = 33, .parasite_power = false },
     }};
 
     // ---- Extenders ----
-    static inline constexpr uint8_t EXT_DEVS_COUNT = 11;
+    static inline constexpr uint8_t EXT_DEVS_COUNT = 10;
     static inline constexpr std::array<Extender::DevCfg, EXT_DEVS_COUNT> EXT_DEVS{{
         // Onboard extender
-        /*  0 */ { 0, 0x20, Extender::Type::MCP23017 },
+        /*  0 */ { .bus_num = 0, .i2c_addr = 0x20, .type = Extender::Type::MCP23017 },
         // Rear pannel extender
-        /*  1 */ { 0, 0x21, Extender::Type::MCP23017 },
-        // Rear pannel LCD
-        /*  2 */ { 0, 0x22, Extender::Type::PCF8574 },
+        /*  1 */ { .bus_num = 0, .i2c_addr = 0x21, .type = Extender::Type::MCP23017 },
         // Extended Units
-        /*  3 */ { 1, 0x20, Extender::Type::MCP23017 },
-        /*  4 */ { 1, 0x21, Extender::Type::MCP23017 },
-        /*  5 */ { 1, 0x22, Extender::Type::MCP23017 },
-        /*  6 */ { 1, 0x23, Extender::Type::MCP23017 },
-        /*  7 */ { 1, 0x24, Extender::Type::MCP23017 },
-        /*  8 */ { 1, 0x25, Extender::Type::MCP23017 },
-        /*  9 */ { 1, 0x26, Extender::Type::MCP23017 },
-        /* 10 */ { 1, 0x27, Extender::Type::MCP23017 }
+        /*  2 */ { .bus_num = 1, .i2c_addr = 0x20, .type = Extender::Type::MCP23017 },
+        /*  3 */ { .bus_num = 1, .i2c_addr = 0x21, .type = Extender::Type::MCP23017 },
+        /*  4 */ { .bus_num = 1, .i2c_addr = 0x22, .type = Extender::Type::MCP23017 },
+        /*  5 */ { .bus_num = 1, .i2c_addr = 0x23, .type = Extender::Type::MCP23017 },
+        /*  6 */ { .bus_num = 1, .i2c_addr = 0x24, .type = Extender::Type::MCP23017 },
+        /*  7 */ { .bus_num = 1, .i2c_addr = 0x25, .type = Extender::Type::MCP23017 },
+        /*  8 */ { .bus_num = 1, .i2c_addr = 0x26, .type = Extender::Type::MCP23017 },
+        /*  9 */ { .bus_num = 1, .i2c_addr = 0x27, .type = Extender::Type::MCP23017 }
     }};
 
     // ---- Ports ----
     static inline constexpr std::array<PortIO::PortDesc, PortIO::PORT_COUNT> PORTS{{
         // Onboard sensors pins for DHT22 or other sensors [1..6]
-        /*  0 */ { PortIO::Backend::Esp32, ESP_GPIO_IN, PortIO::PortMode::Input, PortIO::PinType::Sensor, false, false, { 0, 0, 0, 0 }, { .esp = { 15, false } } },
-        /*  1 */ { PortIO::Backend::Esp32, ESP_GPIO_IN, PortIO::PortMode::Input, PortIO::PinType::Sensor, false, false, { 0, 0, 0, 0 }, { .esp = { 16, false } } },
-        /*  2 */ { PortIO::Backend::Esp32, ESP_GPIO_IN, PortIO::PortMode::Input, PortIO::PinType::Sensor, false, false, { 0, 0, 0, 0 }, { .esp = { 17, false } } },
-        /*  3 */ { PortIO::Backend::Esp32, ESP_GPIO_IN, PortIO::PortMode::Input, PortIO::PinType::Sensor, false, false, { 0, 0, 0, 0 }, { .esp = { 18, false } } },
-        /*  4 */ { PortIO::Backend::Esp32, ESP_GPIO_IN, PortIO::PortMode::Input, PortIO::PinType::Sensor, false, false, { 0, 0, 0, 0 }, { .esp = {  8, false } } },
-        /*  5 */ { PortIO::Backend::Esp32, ESP_GPIO_IN, PortIO::PortMode::Input, PortIO::PinType::Sensor, false, false, { 0, 0, 0, 0 }, { .esp = {  9, false } } },
+        /*  0 */ { .backend = PortIO::Backend::Esp32, .caps = ESP_GPIO_IN, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::Sensor, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 15, .inverted = false } } },
+        /*  1 */ { .backend = PortIO::Backend::Esp32, .caps = ESP_GPIO_IN, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::Sensor, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 16, .inverted = false } } },
+        /*  2 */ { .backend = PortIO::Backend::Esp32, .caps = ESP_GPIO_IN, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::Sensor, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 17, .inverted = false } } },
+        /*  3 */ { .backend = PortIO::Backend::Esp32, .caps = ESP_GPIO_IN, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::Sensor, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 18, .inverted = false } } },
+        /*  4 */ { .backend = PortIO::Backend::Esp32, .caps = ESP_GPIO_IN, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::Sensor, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 8, .inverted = false } } },
+        /*  5 */ { .backend = PortIO::Backend::Esp32, .caps = ESP_GPIO_IN, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::Sensor, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 9, .inverted = false } } },
 
         // Onboard Relays pins [1:8]
-        /*  6 */ { PortIO::Backend::Extender, MCP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Relay, true, false, { 0, 0, 0, 0 }, { .ext = { 0,  7, false }}},
-        /*  7 */ { PortIO::Backend::Extender, MCP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Relay, true, false, { 0, 0, 0, 0 }, { .ext = { 0,  6, false }}},
-        /*  8 */ { PortIO::Backend::Extender, MCP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Relay, true, false, { 0, 0, 0, 0 }, { .ext = { 0,  5, false }}},
-        /*  9 */ { PortIO::Backend::Extender, MCP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Relay, true, false, { 0, 0, 0, 0 }, { .ext = { 0,  4, false }}},
-        /* 10 */ { PortIO::Backend::Extender, MCP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Relay, true, false, { 0, 0, 0, 0 }, { .ext = { 0,  3, false }}},
-        /* 11 */ { PortIO::Backend::Extender, MCP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Relay, true, false, { 0, 0, 0, 0 }, { .ext = { 0,  2, false }}},
-        /* 12 */ { PortIO::Backend::Extender, MCP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Relay, true, false, { 0, 0, 0, 0 }, { .ext = { 0,  1, false }}},
-        /* 13 */ { PortIO::Backend::Extender, MCP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Relay, true, false, { 0, 0, 0, 0 }, { .ext = { 0, 15, false }}},
+        /*  6 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Relay, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 7, .inverted = false } } },
+        /*  7 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Relay, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 6, .inverted = false } } },
+        /*  8 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Relay, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 5, .inverted = false } } },
+        /*  9 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Relay, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 4, .inverted = false } } },
+        /* 10 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Relay, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 3, .inverted = false } } },
+        /* 11 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Relay, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 2, .inverted = false } } },
+        /* 12 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Relay, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 1, .inverted = false } } },
+        /* 13 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Relay, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 15, .inverted = false } } },
 
         // Onboard Digital Inputs [1..8]
-        /* 14 */ { PortIO::Backend::Extender, MCP_GPIO_PU, PortIO::PortMode::InputPullUp, PortIO::PinType::DInput, true, false, { 0, 0, 0, 0 }, { .ext = { 0,  8, false }}},
-        /* 15 */ { PortIO::Backend::Extender, MCP_GPIO_PU, PortIO::PortMode::InputPullUp, PortIO::PinType::DInput, true, false, { 0, 0, 0, 0 }, { .ext = { 0,  9, false }}},
-        /* 16 */ { PortIO::Backend::Extender, MCP_GPIO_PU, PortIO::PortMode::InputPullUp, PortIO::PinType::DInput, true, false, { 0, 0, 0, 0 }, { .ext = { 0, 10, false }}},
-        /* 17 */ { PortIO::Backend::Extender, MCP_GPIO_PU, PortIO::PortMode::InputPullUp, PortIO::PinType::DInput, true, false, { 0, 0, 0, 0 }, { .ext = { 0, 11, false }}},
-        /* 18 */ { PortIO::Backend::Extender, MCP_GPIO_PU, PortIO::PortMode::InputPullUp, PortIO::PinType::DInput, true, false, { 0, 0, 0, 0 }, { .ext = { 0, 12, false }}},
-        /* 19 */ { PortIO::Backend::Extender, MCP_GPIO_PU, PortIO::PortMode::InputPullUp, PortIO::PinType::DInput, true, false, { 0, 0, 0, 0 }, { .ext = { 0, 13, false }}},
-        /* 20 */ { PortIO::Backend::Extender, MCP_GPIO_PU, PortIO::PortMode::InputPullUp, PortIO::PinType::DInput, true, false, { 0, 0, 0, 0 }, { .ext = { 0, 14, false }}},
-        /* 21 */ { PortIO::Backend::Extender, MCP_GPIO_PU, PortIO::PortMode::InputPullUp, PortIO::PinType::DInput, true, false, { 0, 0, 0, 0 }, { .ext = { 0,  0, false }}},
+        /* 14 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::DInput, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 8, .inverted = false } } },
+        /* 15 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::DInput, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 9, .inverted = false } } },
+        /* 16 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::DInput, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 10, .inverted = false } } },
+        /* 17 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::DInput, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 11, .inverted = false } } },
+        /* 18 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::DInput, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 12, .inverted = false } } },
+        /* 19 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::DInput, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 13, .inverted = false } } },
+        /* 20 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::DInput, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 14, .inverted = false } } },
+        /* 21 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::DInput, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 0, .pin = 0, .inverted = false } } },
 
         // I2C reserved pins (not exposed as ports)
-        /* 22 */ { PortIO::Backend::Esp32, Cap::None, PortIO::PortMode::Input, PortIO::PinType::System, false, false, { 0, 0, 0, 0 }, { .esp = {  2, false } } },
-        /* 23 */ { PortIO::Backend::Esp32, Cap::None, PortIO::PortMode::Input, PortIO::PinType::System, false, false, { 0, 0, 0, 0 }, { .esp = {  1, false } } },
-        /* 24 */ { PortIO::Backend::Esp32, Cap::None, PortIO::PortMode::Input, PortIO::PinType::System, false, false, { 0, 0, 0, 0 }, { .esp = { 47, false } } },
-        /* 25 */ { PortIO::Backend::Esp32, Cap::None, PortIO::PortMode::Input, PortIO::PinType::System, false, false, { 0, 0, 0, 0 }, { .esp = { 48, false } } },
+        /* 22 */ { .backend = PortIO::Backend::Esp32, .caps = Cap::None, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::System, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 2, .inverted = false } } },
+        /* 23 */ { .backend = PortIO::Backend::Esp32, .caps = Cap::None, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::System, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 1, .inverted = false } } },
+        /* 24 */ { .backend = PortIO::Backend::Esp32, .caps = Cap::None, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::System, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 47, .inverted = false } } },
+        /* 25 */ { .backend = PortIO::Backend::Esp32, .caps = Cap::None, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::System, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 48, .inverted = false } } },
 
         // UART reserved pins (not exposed as ports)
-        /* 26 */ { PortIO::Backend::Esp32, Cap::None, PortIO::PortMode::Input, PortIO::PinType::System, false, false, { 0, 0, 0, 0 }, { .esp = {  5, false } } },
-        /* 27 */ { PortIO::Backend::Esp32, Cap::None, PortIO::PortMode::Input, PortIO::PinType::System, false, false, { 0, 0, 0, 0 }, { .esp = {  4, false } } },
+        /* 26 */ { .backend = PortIO::Backend::Esp32, .caps = Cap::None, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::System, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 5, .inverted = false } } },
+        /* 27 */ { .backend = PortIO::Backend::Esp32, .caps = Cap::None, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::System, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 4, .inverted = false } } },
 
         // SPI reserved pins (not exposed as ports)
-        /* 28 */ { PortIO::Backend::Esp32, Cap::None, PortIO::PortMode::Input, PortIO::PinType::System, false, false, { 0, 0, 0, 0 }, { .esp = { 13, false } } },
-        /* 29 */ { PortIO::Backend::Esp32, Cap::None, PortIO::PortMode::Input, PortIO::PinType::System, false, false, { 0, 0, 0, 0 }, { .esp = { 12, false } } },
-        /* 30 */ { PortIO::Backend::Esp32, Cap::None, PortIO::PortMode::Input, PortIO::PinType::System, false, false, { 0, 0, 0, 0 }, { .esp = { 11, false } } },
-        /* 31 */ { PortIO::Backend::Esp32, Cap::None, PortIO::PortMode::Input, PortIO::PinType::System, false, false, { 0, 0, 0, 0 }, { .esp = { 14, false } } },
+        /* 28 */ { .backend = PortIO::Backend::Esp32, .caps = Cap::None, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::System, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 13, .inverted = false } } },
+        /* 29 */ { .backend = PortIO::Backend::Esp32, .caps = Cap::None, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::System, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 12, .inverted = false } } },
+        /* 30 */ { .backend = PortIO::Backend::Esp32, .caps = Cap::None, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::System, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 11, .inverted = false } } },
+        /* 31 */ { .backend = PortIO::Backend::Esp32, .caps = Cap::None, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::System, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 14, .inverted = false } } },
 
         // OneWire reserved pins (not exposed as ports)
-        /* 32 */ { PortIO::Backend::Esp32, Cap::None, PortIO::PortMode::Input, PortIO::PinType::System, false, false, { 0, 0, 0, 0 }, { .esp = {  6, false } } },
-        /* 33 */ { PortIO::Backend::Esp32, Cap::None, PortIO::PortMode::Input, PortIO::PinType::System, false, false, { 0, 0, 0, 0 }, { .esp = {  7, false } } },
+        /* 32 */ { .backend = PortIO::Backend::Esp32, .caps = Cap::None, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::System, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 6, .inverted = false } } },
+        /* 33 */ { .backend = PortIO::Backend::Esp32, .caps = Cap::None, .mode = PortIO::PortMode::Input, .type = PortIO::PinType::System, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 7, .inverted = false } } },
 
         // Buzzer
-        /* 34 */ { PortIO::Backend::Esp32, ESP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Buzzer, false, false, { 0, 0, 0, 0 }, { .esp = { 38, false } } },
-        
+        /* 34 */ { .backend = PortIO::Backend::Esp32, .caps = ESP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Buzzer, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 38, .inverted = false } } },
+
         // Status LED
-        /* 35 */ { PortIO::Backend::Esp32, ESP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Led, false, false, { 0, 0, 0, 0 }, { .esp = { 39, false } } },
-        
+        /* 35 */ { .backend = PortIO::Backend::Esp32, .caps = ESP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Led, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .esp = { .gpio = 39, .inverted = false } } },
+
         // Net LED
-        /* 36 */ { PortIO::Backend::Extender, MCP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Led, false, false, { 0, 0, 0, 0 }, { .ext = { 1, 7, false } } },
-        
+        /* 36 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Led, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 1, .pin = 7, .inverted = false } } },
+
         // Fan
-        /* 37 */ { PortIO::Backend::Extender, MCP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Fan, false, false, { 0, 0, 0, 0 }, { .ext = { 1, 1, false } } },
+        /* 37 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Fan, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 1, .pin = 1, .inverted = false } } },
 
         // Alarm LED
-        /* 38 */ { PortIO::Backend::Extender, MCP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Led, false, false, { 0, 0, 0, 0 }, { .ext = { 1, 5, false } } },
+        /* 38 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Led, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 1, .pin = 5, .inverted = false } } },
 
         // Up Button
-        /* 39 */ { PortIO::Backend::Extender, MCP_GPIO_PU, PortIO::PortMode::InputPullUp, PortIO::PinType::Button, false, false, { 0, 0, 0, 0 }, { .ext = { 1, 4, false } } },
+        /* 39 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::Button, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 1, .pin = 4, .inverted = false } } },
 
         // Ok Button
-        /* 40 */ { PortIO::Backend::Extender, MCP_GPIO_PU, PortIO::PortMode::InputPullUp, PortIO::PinType::Button, false, false, { 0, 0, 0, 0 }, { .ext = { 1, 3, false } } },
+        /* 40 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::Button, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 1, .pin = 3, .inverted = false } } },
 
         // Down Button
-        /* 41 */ { PortIO::Backend::Extender, MCP_GPIO_PU, PortIO::PortMode::InputPullUp, PortIO::PinType::Button, false, false, { 0, 0, 0, 0 }, { .ext = { 1, 2, false } } },
+        /* 41 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::Button, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 1, .pin = 2, .inverted = false } } },
 
         // LCD Backlight
-        /* 42 */ { PortIO::Backend::Extender, MCP_GPIO_OUT, PortIO::PortMode::Output, PortIO::PinType::Led, false, false, { 0, 0, 0, 0 }, { .ext = { 1, 0, false } } },
+        /* 42 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Led, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 1, .pin = 0, .inverted = false } } },
     }};
 
     template <uint8_t P>

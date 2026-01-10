@@ -15,9 +15,10 @@
 
 #include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
-#include "hal/lcd1602_i2c.hpp"
+#include "hal/gpio/portio.hpp"
+#include "hal/lm75ad.hpp"
 
-class Display
+class PlcControl
 {
 public:
     enum class Error : uint8_t
@@ -28,53 +29,63 @@ public:
         I2c
     };
 
-    Display(I2CManager &i2c, Lcd1602I2c &lcd) : _i2c(i2c), _lcd(lcd) {}
+    PlcControl(I2CManager &i2c, PortIO &portio)
+        : _i2c(i2c), _portio(portio)
+    {
+    }
 
     bool begin()
     {
-        const uint8_t bus_num = ActiveBoardProfile::LCD.bus_num;
-        const uint8_t addr = ActiveBoardProfile::LCD.addr;
-        if (!busExists_(bus_num))
+        const auto cfg = ActiveBoardProfile::BOARD_TEMP;
+        if (!busExists_(cfg.bus_num))
         {
             _err = Error::InvalidConfig;
             return false;
         }
 
-        TwoWire *wire = _i2c.wirePtr(bus_num);
+        TwoWire *wire = _i2c.wirePtr(cfg.bus_num);
         if (!wire)
         {
             _err = Error::NoBus;
             return false;
         }
 
-        if (!_lcd.begin(*wire, addr))
+        if (!_lm75.begin(*wire, cfg.addr))
         {
             _err = Error::I2c;
             return false;
         }
 
         _err = Error::Ok;
-
-        clear();
-        showStr(0, F("      FCPLC     "));
-        showStr(1, F("Denisov Fnd Ltd."));
         return true;
     }
 
-    bool showStr(uint8_t str, const String &text) {
-        if (str > 0 || str < 2) {
-            if (text.length() > 16) {
-                return false;
-            }
-            _lcd.setCursor(0, str);
-            _lcd.print(text);
+    void task()
+    {
+        const auto cfg = ActiveBoardProfile::BOARD_TEMP;
+        float temp_c = 0.0f;
+        if (!_lm75.readTempC(temp_c))
+            return;
+        _last_temp_c = temp_c;
+
+        bool want = _fan_on;
+        const float on_c = cfg.fan_on_c;
+        const float off_c = on_c - cfg.hysteresis_c;
+
+        if (!_fan_on && temp_c >= on_c)
+            want = true;
+        else if (_fan_on && temp_c <= off_c)
+            want = false;
+
+        if (want != _fan_on)
+        {
+            _fan_on = want;
+            setFans_(_fan_on);
         }
-        return false;
     }
 
-    void clear() {
-        _lcd.clear();
-    }
+    float boardTemp() const { return _last_temp_c; }
+    bool fanStatus() const { return _fan_on; }
 
     Error lastError() const { return _err; }
 
@@ -89,7 +100,25 @@ private:
         return false;
     }
 
+    void setFans_(bool on)
+    {
+        for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+        {
+            const auto &p = _portio.desc(i);
+            if (p.caps == Cap::None)
+                continue;
+            if (p.type != PortIO::PinType::Fan)
+                continue;
+            if (!has(p.caps, Cap::Output))
+                continue;
+            _portio.write(i, on);
+        }
+    }
+
+    Lm75ad _lm75;
     I2CManager &_i2c;
-    Lcd1602I2c &_lcd;
+    PortIO &_portio;
     Error _err = Error::Ok;
+    bool _fan_on = false;
+    float _last_temp_c = 0.0f;
 };
