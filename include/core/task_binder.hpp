@@ -12,8 +12,8 @@
 #pragma once
 
 #include "core/task_manager.hpp"
-#include "core/wifi_manager.hpp"
-#include "core/telegram.hpp"
+#include "core/network/wifi_manager.hpp"
+#include "core/network/telegram/telegram.hpp"
 #include "plc/plc_control.hpp"
 
 template <size_t N>

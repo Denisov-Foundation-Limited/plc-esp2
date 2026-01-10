@@ -69,6 +69,21 @@ struct EepromCfg
     uint8_t addr;    // AT24LC512 address
 };
 
+struct TelegramNetCfg
+{
+    enum class ClientKind : uint8_t
+    {
+        WifiSecure = 0,
+        TinyGsm
+    };
+
+    ClientKind client = ClientKind::WifiSecure;
+    bool use_proxy = false;
+    const char *proxy_host = "";
+    uint16_t proxy_port = 0;
+    const char *proxy_path = "";
+};
+
 struct SpiCfg
 {
     uint8_t bus_num; // 0->SPI, 1->HSPI, 2->VSPI (ESP32 Arduino policy)

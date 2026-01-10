@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include <vector>
 
-#include "core/telegram.hpp"
+#include "core/network/telegram/telegram.hpp"
 
 template <typename ConsoleT>
 class CLITgbotT

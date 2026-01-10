@@ -12,6 +12,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -20,14 +21,15 @@
 #endif
 
 #include "core/rtc.hpp"
-#include "core/wifi_manager.hpp"
-#include "core/telegram.hpp"
+#include "core/network/wifi_manager.hpp"
+#include "core/network/telegram/telegram.hpp"
 #include "ftest.hpp"
 #include "plc/plc_control.hpp"
 #include "core/cli/cli_config.hpp"
 #include "core/cli/cli_enable.hpp"
 #include "core/cli/modules/cli_tgbot.hpp"
 #include "hal/bus/i2c.hpp"
+#include "utils/configs.hpp"
 
 class CliConsole
 {
@@ -38,13 +40,15 @@ public:
     using CLITgbot = CLITgbotT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
 
-    CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, TelegramClient &tgbot)
+    CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c,
+               TelegramClient &tgbot, Configs &configs)
         : _plc(plc),
           _wifi(wifi),
           _rtc(rtc),
           _ftest(ftest),
           _i2c(i2c),
           _tgbot(tgbot),
+          _configs(configs),
           _wifi_cli(*this),
           _tgbot_cli(*this),
           _enable(*this, _wifi_cli),
@@ -102,9 +106,13 @@ public:
         uint8_t hash[32] = {};
         sha256_(pass.c_str(), hash);
         memcpy(_admin_hash, hash, sizeof(_admin_hash));
+        _admin_password = pass;
         _admin_set = true;
         return true;
     }
+
+    const String &adminPassword() const { return _admin_password; }
+    bool adminPasswordSet() const { return _admin_set; }
 
     void enterUser() { _mode = Mode::Enable; printPrompt_(); }
     void enterEnable() { _mode = Mode::Enable; printPrompt_(); }
@@ -166,10 +174,15 @@ public:
     void cmdShowTelegram_()
     {
         _io->println(F("Telegram:"));
-        const size_t key_w = 9; // insecure
+        const size_t key_w = 10; // proxy_host
         printKeyValue_(F("token"), _tgbot.token(), key_w);
         printKeyValue_(F("chat_id"), String((long long)_tgbot.chatId()), key_w);
         printKeyValue_(F("insecure"), _tgbot.insecure() ? F("true") : F("false"), key_w);
+        printKeyValue_(F("client"), _tgbot.clientKindName(), key_w);
+        printKeyValue_(F("proxy"), _tgbot.useProxy() ? F("true") : F("false"), key_w);
+        printKeyValue_(F("proxy_host"), _tgbot.proxyHost(), key_w);
+        printKeyValue_(F("proxy_port"), String((unsigned)_tgbot.proxyPort()), key_w);
+        printKeyValue_(F("proxy_path"), _tgbot.proxyPath(), key_w);
     }
 
     void cmdShowI2c_()
@@ -199,6 +212,44 @@ public:
         }
     }
 
+    void cmdShowConfig_()
+    {
+        JsonDocument doc;
+        if (!_configs.load(doc))
+        {
+            const char *err = "Unknown error";
+            switch (_configs.lastError())
+            {
+            case Configs::Error::FsMount:
+                err = "FS mount failed";
+                break;
+            case Configs::Error::OpenRead:
+                err = "Open read failed";
+                break;
+            case Configs::Error::OpenWrite:
+                err = "Open write failed";
+                break;
+            case Configs::Error::JsonParse:
+                err = "JSON parse failed";
+                break;
+            case Configs::Error::JsonSerialize:
+                err = "JSON serialize failed";
+                break;
+            default:
+                break;
+            }
+            _io->print(F("Show config failed: "));
+            _io->println(err);
+            return;
+        }
+        _io->println(F("Config file:"));
+        String pretty;
+        if (serializeJsonPretty(doc, pretty) == 0)
+            _io->println(F("{}"));
+        else
+            _io->println(pretty);
+    }
+
     void cmdFtest_()
     {
         _ftest.start();
@@ -222,6 +273,89 @@ public:
 #else
         _io->println(F("Restart not supported"));
 #endif
+    }
+
+    void cmdWriteConfig_()
+    {
+        JsonDocument doc;
+        JsonObject w = doc["wifi"].to<JsonObject>();
+        w["ssid"] = _wifi.ssid();
+        w["password"] = _wifi.password();
+        w["ap"] = _wifi.ap();
+        w["ap_ssid"] = _wifi.apSsid();
+        w["ap_password"] = _wifi.apPassword();
+
+        JsonObject t = doc["telegram"].to<JsonObject>();
+        t["token"] = _tgbot.token();
+        t["chat_id"] = (long long)_tgbot.chatId();
+        t["insecure"] = _tgbot.insecure();
+        t["client"] = _tgbot.clientKindName();
+        t["use_proxy"] = _tgbot.useProxy();
+        t["proxy_host"] = _tgbot.proxyHost();
+        t["proxy_port"] = (unsigned)_tgbot.proxyPort();
+        t["proxy_path"] = _tgbot.proxyPath();
+
+        if (_configs.save(doc))
+        {
+            _io->println(F("OK"));
+            return;
+        }
+
+        const char *err = "Unknown error";
+        switch (_configs.lastError())
+        {
+        case Configs::Error::FsMount:
+            err = "FS mount failed";
+            break;
+        case Configs::Error::OpenRead:
+            err = "Open read failed";
+            break;
+        case Configs::Error::OpenWrite:
+            err = "Open write failed";
+            break;
+        case Configs::Error::JsonParse:
+            err = "JSON parse failed";
+            break;
+        case Configs::Error::JsonSerialize:
+            err = "JSON serialize failed";
+            break;
+        default:
+            break;
+        }
+        _io->print(F("Write failed: "));
+        _io->println(err);
+    }
+
+    void cmdEraseConfig_()
+    {
+        if (_configs.erase())
+        {
+            _io->println(F("OK"));
+            return;
+        }
+        const char *err = "Unknown error";
+        switch (_configs.lastError())
+        {
+        case Configs::Error::FsMount:
+            err = "FS mount failed";
+            break;
+        case Configs::Error::OpenRead:
+            err = "Open read failed";
+            break;
+        case Configs::Error::OpenWrite:
+            err = "Open write failed";
+            break;
+        case Configs::Error::JsonParse:
+            err = "JSON parse failed";
+            break;
+        case Configs::Error::JsonSerialize:
+            err = "JSON serialize failed";
+            break;
+        default:
+            break;
+        }
+        _io->print(F("Erase failed: "));
+        _io->println(err);
     }
 
 private:
@@ -254,6 +388,7 @@ private:
             _io->println(F("  show time       - RTC date/time"));
             _io->println(F("  show i2c        - I2C device list"));
             _io->println(F("  show telegram   - Telegram settings"));
+            _io->println(F("  show config     - configuration file contents"));
             return;
         }
         if (t == "wifi")
@@ -279,6 +414,8 @@ private:
             _io->println(F("  ftest   - start functional test task"));
             _io->println(F("  reload  - restart controller"));
             _io->println(F("  reset   - restart controller"));
+            _io->println(F("  write   - save configuration"));
+            _io->println(F("  erase   - delete configuration"));
             return;
         }
         _io->println(F("Unknown topic"));
@@ -294,10 +431,13 @@ private:
             "show time",
             "show i2c",
             "show telegram",
+            "show config",
             "ftest",
             "wifi restart",
             "reload",
             "reset",
+            "write",
+            "erase",
             "configure terminal",
             "conf t",
             "disable",
@@ -585,6 +725,8 @@ private:
             cmdShowI2c_();
         else if (eq_(what, "telegram"))
             cmdShowTelegram_();
+        else if (eq_(what, "config"))
+            cmdShowConfig_();
         else
             _io->println(F("Unknown show"));
         printPrompt_();
@@ -801,6 +943,7 @@ private:
     Ftest &_ftest;
     I2CManager &_i2c;
     TelegramClient &_tgbot;
+    Configs &_configs;
 
     Stream *_io = nullptr;
     String _line;
@@ -809,6 +952,7 @@ private:
     Mode _mode = Mode::Enable;
     uint8_t _admin_hash[32] = {};
     bool _admin_set = false;
+    String _admin_password;
 
     CLIWifi _wifi_cli;
     CLITgbot _tgbot_cli;

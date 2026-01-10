@@ -70,6 +70,11 @@ public:
         return true;
     }
 
+    void loop()
+    {
+        _gpio.loop();
+    }
+
     Error lastError() const { return _err; }
 
 private:

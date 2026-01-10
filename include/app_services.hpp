@@ -12,17 +12,22 @@
 #pragma once
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <vector>
+#include <WebServer.h>
 
 #include "boards/board_profile.hpp"
 #include "boards/profile_validator.hpp"
 
 #include "core/task_binder.hpp"
 #include "core/task_manager.hpp"
-#include "core/wifi_manager.hpp"
+#include "core/network/wifi_manager.hpp"
 #include "core/rtc.hpp"
 #include "core/display.hpp"
-#include "core/telegram.hpp"
+#include "core/network/telegram/telegram.hpp"
+#include "core/network/telegram/telegram_bot.hpp"
+#include "core/network/telegram/telegram_menu.hpp"
+#include "core/network/network.hpp"
 #include "core/cli/cli_console.hpp"
 
 #include "hal/dht22.hpp"
@@ -45,6 +50,8 @@
 #include "plc/plc_control.hpp"
 
 #include "utils/logger.hpp"
+#include "utils/configs.hpp"
+#include "core/network/web/web_interface.hpp"
 
 struct AppServices
 {
@@ -65,6 +72,7 @@ struct AppServices
     Display display;
     Lm75ad lm75ad;
     Sim800l sim800l;
+    WiFiClientSecure telegram_wifi_client;
     TelegramClient telegram;
 
     Extender ext;
@@ -72,11 +80,17 @@ struct AppServices
     Gpio gpio;
     Hal hal;
     PlcControl plc;
+    TelegramBot telegram_bot;
+    TelegramMenu telegram_menu;
+    Network network;
+    WebServer web;
+    WebInterface fw_upgrade;
 
     TaskManager<TASK_MGR_TSK_COUNT> tm;
     TaskBinder<TASK_MGR_TSK_COUNT> task_binder;
     Ftest ftest;
     CliConsole console;
+    Configs configs;
 
     AppServices()
         : logs(uart),
@@ -91,15 +105,21 @@ struct AppServices
           display(i2c, lcd_hal),
           lm75ad(),
           sim800l(),
+          telegram_wifi_client(),
           ext(i2c, ActiveBoardProfile::EXT_DEVS),
           portio(ActiveBoardProfile::PORTS, &ext),
           gpio(portio),
           hal(ow, i2c, spi, uart, gpio),
           plc(i2c, portio),
+          telegram_bot(telegram),
+          telegram_menu(plc, wifi, rtc, telegram_bot, configs),
+          web(80),
+          fw_upgrade(web, console, wifi, configs),
+          network(logs, wifi, telegram, telegram_bot, telegram_menu, fw_upgrade, web, telegram_wifi_client),
           tm(),
           task_binder(tm, wifi, plc, telegram),
           ftest(logs, portio, ow, ibutton, ds18b20, i2c, tm, task_binder),
-          console(plc, wifi, rtc, ftest, i2c, telegram)
+          console(plc, wifi, rtc, ftest, i2c, telegram, configs)
     {
     }
 
@@ -117,8 +137,39 @@ struct AppServices
         logs.info(F("APP"), F("Starting application..."));
         ProfileValidator<ActiveBoardProfile>::printDiagnostics(Serial);
 
+        if (!configs.begin())
+        {
+            logs.error(F("APP"), F("Configs mount failed"));
+        }
+        else if (!loadConfigs_())
+        {
+            const char *err = "Unknown error";
+            switch (configs.lastError())
+            {
+            case Configs::Error::FsMount:
+                err = "FS mount failed";
+                break;
+            case Configs::Error::OpenRead:
+                err = "Open read failed";
+                break;
+            case Configs::Error::OpenWrite:
+                err = "Open write failed";
+                break;
+            case Configs::Error::JsonParse:
+                err = "JSON parse failed";
+                break;
+            case Configs::Error::JsonSerialize:
+                err = "JSON serialize failed";
+                break;
+            default:
+                break;
+            }
+            logs.error(F("APP"), F("Configs load failed: %s"), err);
+        }
+
         bool ok = true;
 
+        logs.info(F("APP"), F("Initializing HAL")); 
         if (!hal.begin())
         {
             switch (hal.lastError())
@@ -145,7 +196,8 @@ struct AppServices
             ok = false;
         }
 
-        if (ok && !rtc.begin())
+        logs.info(F("APP"), F("Initializing RTC"));
+        if (!rtc.begin())
         {
             switch (rtc.lastError())
             {
@@ -162,10 +214,10 @@ struct AppServices
                 logs.error(F("APP"), F("RTC Init failed"));
                 break;
             }
-            ok = false;
         }
 
-        if (ok && !display.begin())
+        logs.info(F("APP"), F("Initializing Display"));
+        if (!display.begin())
         {
             switch (display.lastError())
             {
@@ -182,49 +234,163 @@ struct AppServices
                 logs.error(F("APP"), F("LCD Init failed"));
                 break;
             }
+        }
+
+        logs.info(F("APP"), F("Initializing PLC Control"));
+        if (!plc.begin())
+        {
+            switch (plc.lastError())
+            {
+            case PlcControl::Error::NoBus:
+                logs.error(F("APP"), F("PLC I2C bus missing"));
+                break;
+            case PlcControl::Error::InvalidConfig:
+                logs.error(F("APP"), F("PLC temp config invalid"));
+                break;
+            case PlcControl::Error::I2c:
+                logs.error(F("APP"), F("PLC temp sensor error"));
+                break;
+            default:
+                logs.error(F("APP"), F("PLC Init failed"));
+                break;
+            }
             ok = false;
         }
 
-        if (ok && !wifi.begin())
+        logs.info(F("APP"), F("Initializing Network"));
+        if (!network.begin())
         {
-            logs.error(F("APP"), F("WIFI Init failed"));
+            switch (network.lastError())
+            {
+            case Network::Error::Wifi:
+                logs.error(F("APP"), F("WIFI Init failed"));
+                break;
+            case Network::Error::TelegramClientMissing:
+                logs.error(F("APP"), F("Telegram client missing"));
+                break;
+            case Network::Error::TelegramProxyInvalid:
+                logs.error(F("APP"), F("Telegram proxy invalid"));
+                break;
+            case Network::Error::WebInterfaceFs:
+                logs.error(F("APP"), F("WebInterface FS mount failed"));
+                break;
+            default:
+                logs.error(F("APP"), F("Network init failed"));
+                break;
+            }
             ok = false;
         }
+
+        if (ok)
+            logs.info(F("APP"), F("Application init [OK]"));
+        else
+            logs.error(F("APP"), F("Application init [FAIL]"));
 
         task_binder.bindFtest(ftest);
         task_binder.bindAll();
-
-        if (ok) {
-            if (!plc.begin())
-            {
-                switch (plc.lastError())
-                {
-                case PlcControl::Error::NoBus:
-                    logs.error(F("APP"), F("PLC I2C bus missing"));
-                    break;
-                case PlcControl::Error::InvalidConfig:
-                    logs.error(F("APP"), F("PLC temp config invalid"));
-                    break;
-                case PlcControl::Error::I2c:
-                    logs.error(F("APP"), F("PLC temp sensor error"));
-                    break;
-                default:
-                    logs.error(F("APP"), F("PLC Init failed"));
-                    break;
-                }
-                ok = false;
-            }
-            if (ok)
-                logs.info(F("APP"), F("Application init OK"));
-        }   
 
         return ok;
     }
 
     void loop()
     {
-        gpio.loop();
+        hal.loop();
         console.loop();
         tm.loop();
+        network.loop();
+    }
+
+private:
+    bool loadConfigs_()
+    {
+        JsonDocument doc;
+        if (!configs.load(doc))
+        {
+            if (configs.lastError() == Configs::Error::OpenRead)
+                return true;
+            return false;
+        }
+        applyConfig_(doc);
+        return true;
+    }
+
+    void applyConfig_(const JsonDocument &doc)
+    {
+        if (doc["wifi"].is<JsonObjectConst>())
+        {
+            JsonObjectConst w = doc["wifi"].as<JsonObjectConst>();
+            if (w["ssid"].is<const char *>())
+                wifi.setSsid(w["ssid"].as<const char *>());
+            if (w["password"].is<const char *>())
+                wifi.setPassword(w["password"].as<const char *>());
+            if (w["ap"].is<bool>())
+                wifi.setAp(w["ap"].as<bool>());
+            if (w["ap_ssid"].is<const char *>())
+                wifi.setApSsid(w["ap_ssid"].as<const char *>());
+            if (w["ap_password"].is<const char *>())
+                wifi.setApPassword(w["ap_password"].as<const char *>());
+        }
+
+        if (doc["telegram"].is<JsonObjectConst>())
+        {
+            JsonObjectConst t = doc["telegram"].as<JsonObjectConst>();
+            if (t["token"].is<const char *>())
+                telegram.setToken(t["token"].as<const char *>());
+            if (t["chat_id"].is<long long>())
+                telegram.setChatId((int64_t)t["chat_id"].as<long long>());
+            if (t["insecure"].is<bool>())
+                telegram.setInsecure(t["insecure"].as<bool>());
+
+            if (t["client"].is<const char *>())
+            {
+                String c = t["client"].as<const char *>();
+                c.toLowerCase();
+                if (c == "tinygsm")
+                    network.setTelegramClientKind(TelegramNetCfg::ClientKind::TinyGsm);
+                else if (c == "wifi" || c == "wifi_secure")
+                    network.setTelegramClientKind(TelegramNetCfg::ClientKind::WifiSecure);
+            }
+
+            bool proxy_override = false;
+            bool use_proxy = false;
+            String host;
+            uint16_t port = 0;
+            String path;
+
+            if (t["use_proxy"].is<bool>())
+            {
+                proxy_override = true;
+                use_proxy = t["use_proxy"].as<bool>();
+            }
+            if (t["proxy_host"].is<const char *>())
+            {
+                proxy_override = true;
+                host = t["proxy_host"].as<const char *>();
+                if (!t["use_proxy"].is<bool>())
+                    use_proxy = true;
+            }
+            if (t["proxy_port"].is<unsigned>())
+            {
+                proxy_override = true;
+                port = (uint16_t)t["proxy_port"].as<unsigned>();
+                if (!t["use_proxy"].is<bool>())
+                    use_proxy = true;
+            }
+            if (t["proxy_path"].is<const char *>())
+            {
+                proxy_override = true;
+                path = t["proxy_path"].as<const char *>();
+                if (!t["use_proxy"].is<bool>())
+                    use_proxy = true;
+            }
+
+            if (proxy_override)
+            {
+                if (use_proxy)
+                    network.setTelegramProxy(host, port, path);
+                else
+                    network.disableTelegramProxy();
+            }
+        }
     }
 };

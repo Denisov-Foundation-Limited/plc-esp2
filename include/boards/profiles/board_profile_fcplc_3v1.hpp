@@ -38,6 +38,13 @@ struct BoardProfileFCPLC_3v1 : BoardProfileCommon
     static inline constexpr LcdCfg LCD = { .bus_num = 0, .addr = 0x3F };
     static inline constexpr BoardTempCfg BOARD_TEMP = { .bus_num = 0, .addr = 0x48, .hysteresis_c = 2.0f, .fan_on_c = 45.0f };
     static inline constexpr EepromCfg EEPROM = { .bus_num = 0, .addr = 0x50 };
+    static inline constexpr TelegramNetCfg TELEGRAM_NET = {
+        .client = TelegramNetCfg::ClientKind::WifiSecure,
+        .use_proxy = false,
+        .proxy_host = "",
+        .proxy_port = 0,
+        .proxy_path = ""
+    };
 
     // ---- Control pins ----
     static inline constexpr uint8_t BUZZER_PIN = 34;
