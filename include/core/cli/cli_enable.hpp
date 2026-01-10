@@ -39,6 +39,8 @@ public:
             _c._io->println(F("    show plc        - fan state and board temperature"));
             _c._io->println(F("    show wifi       - Wi-Fi configuration"));
             _c._io->println(F("    show time       - RTC date/time"));
+            _c._io->println(F("    show i2c        - I2C device list"));
+            _c._io->println(F("    show telegram   - Telegram settings"));
             _c._io->println(F("  Actions:"));
             _c._io->println(F("    ftest           - start functional test task"));
             _wifi.printHelpEnable();

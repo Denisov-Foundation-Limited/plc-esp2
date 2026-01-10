@@ -78,6 +78,7 @@ public:
         Cap caps;
         PortMode mode;
         PinType type;
+        bool allow_control;
         bool initial_level;
 
         bool pwm_enable;

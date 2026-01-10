@@ -21,10 +21,13 @@
 
 #include "core/rtc.hpp"
 #include "core/wifi_manager.hpp"
+#include "core/telegram.hpp"
 #include "ftest.hpp"
 #include "plc/plc_control.hpp"
 #include "core/cli/cli_config.hpp"
 #include "core/cli/cli_enable.hpp"
+#include "core/cli/modules/cli_tgbot.hpp"
+#include "hal/bus/i2c.hpp"
 
 class CliConsole
 {
@@ -32,16 +35,20 @@ public:
     using CLIEnable = CLIEnableT<CliConsole>;
     using CLIConfig = CLIConfigT<CliConsole>;
     using CLIWifi = CLIWifiT<CliConsole>;
+    using CLITgbot = CLITgbotT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
 
-    CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest)
+    CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, TelegramClient &tgbot)
         : _plc(plc),
           _wifi(wifi),
           _rtc(rtc),
           _ftest(ftest),
+          _i2c(i2c),
+          _tgbot(tgbot),
           _wifi_cli(*this),
+          _tgbot_cli(*this),
           _enable(*this, _wifi_cli),
-          _config(*this, _wifi_cli)
+          _config(*this, _wifi_cli, _tgbot_cli)
     {
     }
 
@@ -103,6 +110,7 @@ public:
     void enterEnable() { _mode = Mode::Enable; printPrompt_(); }
     void enterConfig() { _mode = Mode::Config; printPrompt_(); }
     void enterConfigWifi() { _mode = Mode::ConfigWifi; printPrompt_(); }
+    void enterConfigTgbot() { _mode = Mode::ConfigTgbot; printPrompt_(); }
     void logout()
     {
         _state = State::NeedUser;
@@ -143,7 +151,7 @@ public:
             return;
         }
         _io->println(F("RTC time:"));
-        const size_t key_w = 7; // weekday
+        const size_t key_w = 8; // weekday
         char date_buf[16] = {};
         char time_buf[16] = {};
         snprintf(date_buf, sizeof(date_buf), "%04u-%02u-%02u",
@@ -153,6 +161,42 @@ public:
         printKeyValue_(F("date"), date_buf, key_w);
         printKeyValue_(F("time"), time_buf, key_w);
         printKeyValue_(F("weekday"), String((unsigned)dt.day_of_week), key_w);
+    }
+
+    void cmdShowTelegram_()
+    {
+        _io->println(F("Telegram:"));
+        const size_t key_w = 9; // insecure
+        printKeyValue_(F("token"), _tgbot.token(), key_w);
+        printKeyValue_(F("chat_id"), String((long long)_tgbot.chatId()), key_w);
+        printKeyValue_(F("insecure"), _tgbot.insecure() ? F("true") : F("false"), key_w);
+    }
+
+    void cmdShowI2c_()
+    {
+        _io->println(F("I2C devices:"));
+        _io->println(F("    Bus  Addr"));
+        _io->println(F("    --- -----"));
+        bool scanned[3] = {false, false, false};
+        for (uint8_t i = 0; i < ActiveBoardProfile::I2C_COUNT; ++i)
+        {
+            const uint8_t bus = ActiveBoardProfile::I2CS[i].bus_num;
+            if (bus < 3 && scanned[bus])
+                continue;
+            if (bus < 3)
+                scanned[bus] = true;
+            std::vector<uint8_t> addrs;
+            if (!_i2c.scanDevices(bus, addrs))
+                continue;
+            for (size_t a = 0; a < addrs.size(); ++a)
+            {
+                char addr_buf[8] = {};
+                snprintf(addr_buf, sizeof(addr_buf), "0x%02X", addrs[a]);
+                char line[20] = {};
+                snprintf(line, sizeof(line), "    %3u  %s", (unsigned)bus, addr_buf);
+                _io->println(line);
+            }
+        }
     }
 
     void cmdFtest_()
@@ -186,7 +230,8 @@ private:
         User,
         Enable,
         Config,
-        ConfigWifi
+        ConfigWifi,
+        ConfigTgbot
     };
 
     enum class State : uint8_t
@@ -207,6 +252,8 @@ private:
             _io->println(F("  show plc        - fan state and board temperature"));
             _io->println(F("  show wifi       - Wi-Fi configuration"));
             _io->println(F("  show time       - RTC date/time"));
+            _io->println(F("  show i2c        - I2C device list"));
+            _io->println(F("  show telegram   - Telegram settings"));
             return;
         }
         if (t == "wifi")
@@ -219,6 +266,11 @@ private:
             _io->println(F("Admin commands:"));
             _io->println(F("  password <pass>         - set admin password"));
             _io->println(F("  admin password <pass>   - set admin password"));
+            return;
+        }
+        if (t == "tgbot")
+        {
+            _tgbot_cli.printHelpTopic();
             return;
         }
         if (t == "system")
@@ -240,6 +292,8 @@ private:
             "show plc",
             "show wifi",
             "show time",
+            "show i2c",
+            "show telegram",
             "ftest",
             "wifi restart",
             "reload",
@@ -253,13 +307,15 @@ private:
             "help show",
             "help wifi",
             "help user",
-            "help system"};
+            "help system",
+            "help tgbot"};
         static const size_t kEnableCmdsCount = sizeof(kEnableCmds) / sizeof(kEnableCmds[0]);
 
         static const char *const kConfigCmds[] = {
             "password <pass>",
             "admin password <pass>",
             "wifi",
+            "tgbot",
             "wifi ssid <value>",
             "wifi password <value>",
             "wifi ap on",
@@ -273,7 +329,8 @@ private:
             "help show",
             "help wifi",
             "help user",
-            "help system"};
+            "help system",
+            "help tgbot"};
         static const size_t kConfigCmdsCount = sizeof(kConfigCmds) / sizeof(kConfigCmds[0]);
 
         static const char *const kConfigWifiCmds[] = {
@@ -294,6 +351,24 @@ private:
             "help system"};
         static const size_t kConfigWifiCmdsCount = sizeof(kConfigWifiCmds) / sizeof(kConfigWifiCmds[0]);
 
+        static const char *const kConfigTgbotCmds[] = {
+            "token <value>",
+            "chat <id>",
+            "insecure on",
+            "insecure off",
+            "send <text>",
+            "poll",
+            "show",
+            "exit",
+            "end",
+            "help",
+            "help show",
+            "help wifi",
+            "help user",
+            "help system",
+            "help tgbot"};
+        static const size_t kConfigTgbotCmdsCount = sizeof(kConfigTgbotCmds) / sizeof(kConfigTgbotCmds[0]);
+
         const char *const *cmds = nullptr;
         size_t count = 0;
         switch (_mode)
@@ -309,6 +384,10 @@ private:
         case Mode::ConfigWifi:
             cmds = kConfigWifiCmds;
             count = kConfigWifiCmdsCount;
+            break;
+        case Mode::ConfigTgbot:
+            cmds = kConfigTgbotCmds;
+            count = kConfigTgbotCmdsCount;
             break;
         case Mode::User:
             cmds = kEnableCmds;
@@ -502,6 +581,10 @@ private:
             cmdShowWifi_();
         else if (eq_(what, "time"))
             cmdShowTime_();
+        else if (eq_(what, "i2c"))
+            cmdShowI2c_();
+        else if (eq_(what, "telegram"))
+            cmdShowTelegram_();
         else
             _io->println(F("Unknown show"));
         printPrompt_();
@@ -545,6 +628,9 @@ private:
             break;
         case Mode::ConfigWifi:
             _config.handleWifiContext(line);
+            break;
+        case Mode::ConfigTgbot:
+            _config.handleTgbotContext(line);
             break;
         case Mode::User:
             _enable.handle(line);
@@ -631,6 +717,9 @@ private:
         case Mode::ConfigWifi:
             _io->print(F("plc(config-wifi)# "));
             break;
+        case Mode::ConfigTgbot:
+            _io->print(F("plc(config-tgbot)# "));
+            break;
         }
     }
 
@@ -644,7 +733,7 @@ private:
     {
         if (!_io)
             return;
-        _io->print(F("\t"));
+        _io->print(F("    "));
         _io->print(key);
         size_t len = strlen_P(reinterpret_cast<const char *>(key));
         if (len < key_w)
@@ -652,7 +741,7 @@ private:
             for (size_t i = 0; i < (key_w - len); ++i)
                 _io->print(F(" "));
         }
-        _io->print(F(": "));
+        _io->print(F(" : "));
         _io->println(value);
     }
 
@@ -660,7 +749,7 @@ private:
     {
         if (!_io)
             return;
-        _io->print(F("\t"));
+        _io->print(F("    "));
         _io->print(key);
         size_t len = strlen_P(reinterpret_cast<const char *>(key));
         if (len < key_w)
@@ -668,7 +757,7 @@ private:
             for (size_t i = 0; i < (key_w - len); ++i)
                 _io->print(F(" "));
         }
-        _io->print(F(": "));
+        _io->print(F(" : "));
         _io->println(value);
     }
 
@@ -710,6 +799,8 @@ private:
     WifiManager &_wifi;
     RTC &_rtc;
     Ftest &_ftest;
+    I2CManager &_i2c;
+    TelegramClient &_tgbot;
 
     Stream *_io = nullptr;
     String _line;
@@ -720,8 +811,10 @@ private:
     bool _admin_set = false;
 
     CLIWifi _wifi_cli;
+    CLITgbot _tgbot_cli;
     CLIEnable _enable;
     CLIConfig _config;
+    uint32_t _tgbot_last_update_id = 0;
 
     template <typename>
     friend class CLIEnableT;
@@ -729,4 +822,6 @@ private:
     friend class CLIConfigT;
     template <typename>
     friend class CLIWifiT;
+    template <typename>
+    friend class CLITgbotT;
 };

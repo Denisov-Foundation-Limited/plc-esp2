@@ -13,14 +13,15 @@
 
 #include "core/task_manager.hpp"
 #include "core/wifi_manager.hpp"
+#include "core/telegram.hpp"
 #include "plc/plc_control.hpp"
 
 template <size_t N>
 class TaskBinder
 {
 public:
-    TaskBinder(TaskManager<N> &tm, WifiManager &wifi, PlcControl &plc)
-        : _tm(tm), _wifi(wifi), _plc(plc)
+    TaskBinder(TaskManager<N> &tm, WifiManager &wifi, PlcControl &plc, TelegramClient &tgbot)
+        : _tm(tm), _wifi(wifi), _plc(plc), _tgbot(tgbot)
     {
     }
 
@@ -28,6 +29,7 @@ public:
     {
         bindWiFiManager();
         bindPlcControl();
+        bindTgbot();
     }
 
     template <typename FtestT>
@@ -60,8 +62,17 @@ private:
         return _tm.template add<&PlcControl::task>(_plc, opt);
     }
 
+    typename TaskManager<N>::Handle bindTgbot()
+    {
+        typename TaskManager<N>::Options opt;
+        opt.interval_ms = 100;
+        opt.priority = TaskManager<N>::Priority::Low;
+        return _tm.template add<&TelegramClient::task>(_tgbot, opt);
+    }
+
     TaskManager<N> &_tm;
     WifiManager &_wifi;
     PlcControl &_plc;
+    TelegramClient &_tgbot;
     typename TaskManager<N>::Handle _ftest_task{};
 };

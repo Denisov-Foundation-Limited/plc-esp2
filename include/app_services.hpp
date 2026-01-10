@@ -12,6 +12,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <vector>
 
 #include "boards/board_profile.hpp"
 #include "boards/profile_validator.hpp"
@@ -21,6 +22,7 @@
 #include "core/wifi_manager.hpp"
 #include "core/rtc.hpp"
 #include "core/display.hpp"
+#include "core/telegram.hpp"
 #include "core/cli/cli_console.hpp"
 
 #include "hal/dht22.hpp"
@@ -63,6 +65,7 @@ struct AppServices
     Display display;
     Lm75ad lm75ad;
     Sim800l sim800l;
+    TelegramClient telegram;
 
     Extender ext;
     PortIO portio;
@@ -94,9 +97,9 @@ struct AppServices
           hal(ow, i2c, spi, uart, gpio),
           plc(i2c, portio),
           tm(),
-          task_binder(tm, wifi, plc),
+          task_binder(tm, wifi, plc, telegram),
           ftest(logs, portio, ow, ibutton, ds18b20, i2c, tm, task_binder),
-          console(plc, wifi, rtc, ftest)
+          console(plc, wifi, rtc, ftest, i2c, telegram)
     {
     }
 
