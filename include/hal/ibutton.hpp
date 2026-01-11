@@ -12,16 +12,16 @@
 #pragma once
 
 #include <Arduino.h>
-#include <OneWire.h>
+#include "hal/bus/one_wire_bus.hpp"
 #include <stdint.h>
 
 class IButton
 {
 public:
     IButton() = default;
-    explicit IButton(OneWire &bus) : _bus(&bus) {}
+    explicit IButton(OneWireBus &bus) : _bus(&bus) {}
 
-    bool begin(OneWire &bus)
+    bool begin(OneWireBus &bus)
     {
         _bus = &bus;
         _bus->reset_search();
@@ -30,7 +30,7 @@ public:
 
     bool readSerial(uint8_t out[8])
     {
-        OneWire *bus = bus_();
+        OneWireBus *bus = bus_();
         if (!bus)
             return false;
 
@@ -38,7 +38,7 @@ public:
         if (!bus->search(out))
             return false;
 
-        if (OneWire::crc8(out, 7) != out[7])
+        if (OneWireBus::crc8(out, 7) != out[7])
             return false;
 
         return true;
@@ -93,7 +93,7 @@ public:
     }
 
 private:
-    OneWire *bus_() { return _bus; }
+    OneWireBus *bus_() { return _bus; }
 
-    OneWire *_bus = nullptr;
+    OneWireBus *_bus = nullptr;
 };

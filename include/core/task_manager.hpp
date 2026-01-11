@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <type_traits>
+
 constexpr uint8_t TASK_MGR_TSK_COUNT = 24;
 
 template <size_t N>

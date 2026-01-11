@@ -24,6 +24,7 @@
 #include "core/network/wifi_manager.hpp"
 #include "plc/plc_control.hpp"
 #include "utils/configs.hpp"
+#include "utils/configs_manager_iface.hpp"
 
 class TelegramMenu
 {
@@ -45,6 +46,62 @@ public:
 
     void setAdminPassword(const String &password) { _admin_password = password; }
     const String &adminPassword() const { return _admin_password; }
+    void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }
+
+    enum class AllowResult : uint8_t
+    {
+        Ok = 0,
+        Invalid,
+        Exists,
+        Full
+    };
+
+    void setAllowedUsers(const std::vector<String> &users)
+    {
+        _allowed_users.clear();
+        for (size_t i = 0; i < users.size(); ++i)
+        {
+            if (_allowed_users.size() >= kMaxAllowedUsers)
+                break;
+            String u = normalizeUser_(users[i]);
+            if (u.length() == 0 || hasAllowedUser_(u))
+                continue;
+            _allowed_users.push_back(u);
+        }
+    }
+
+    AllowResult addAllowedUser(const String &user)
+    {
+        String u = normalizeUser_(user);
+        if (u.length() == 0)
+            return AllowResult::Invalid;
+        if (hasAllowedUser_(u))
+            return AllowResult::Exists;
+        if (_allowed_users.size() >= kMaxAllowedUsers)
+            return AllowResult::Full;
+        _allowed_users.push_back(u);
+        return AllowResult::Ok;
+    }
+
+    bool removeAllowedUser(const String &user)
+    {
+        String u = normalizeUser_(user);
+        if (u.length() == 0)
+            return false;
+        for (size_t i = 0; i < _allowed_users.size(); ++i)
+        {
+            if (_allowed_users[i] == u)
+            {
+                _allowed_users.erase(_allowed_users.begin() + (int)i);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void clearAllowedUsers() { _allowed_users.clear(); }
+
+    const std::vector<String> &allowedUsers() const { return _allowed_users; }
 
 private:
     static inline TelegramMenu *_self = nullptr;
@@ -54,6 +111,8 @@ private:
     RTC &_rtc;
     String _admin_password;
     Configs &_configs;
+    ConfigsManagerIface *_configs_manager = nullptr;
+    std::vector<String> _allowed_users;
 
     struct ChatAuth
     {
@@ -67,6 +126,21 @@ private:
 
     std::vector<ChatAuth> _auth;
     static constexpr size_t kMaxConfigBytes = 8192;
+    static constexpr size_t kMaxAllowedUsers = 10;
+
+    static bool requireAdmin_(TelegramMenu &self, TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        (void)bot;
+        if (self._admin_password.length() == 0)
+            return true;
+        ChatAuth *st = self.ensureAuth_(u.chat_id);
+        if (!st || !st->authorized)
+        {
+            reply = "Нужна авторизация. Используйте /admin.";
+            return false;
+        }
+        return true;
+    }
 
     static bool cmdAdmin_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
     {
@@ -204,6 +278,81 @@ private:
         return true;
     }
 
+    static bool cmdAllowList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (_self->_allowed_users.empty())
+        {
+            reply = "Список разрешенных username пуст.";
+            return true;
+        }
+        reply = "Разрешенные username:";
+        for (const auto &name : _self->_allowed_users)
+            reply += "\n  " + name;
+        return true;
+    }
+
+    static bool cmdAllowAdd_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        const char *cmd = "/allow_add";
+        String name = u.text.substring(strlen(cmd));
+        name.trim();
+        if (name.length() == 0)
+        {
+            reply = "Использование: /allow_add <username>";
+            return true;
+        }
+        AllowResult res = _self->addAllowedUser(name);
+        if (res == AllowResult::Ok)
+            reply = "OK";
+        else if (res == AllowResult::Exists)
+            reply = "Уже в списке";
+        else if (res == AllowResult::Full)
+            reply = "Лимит 10";
+        else
+            reply = "Неверный username";
+        return true;
+    }
+
+    static bool cmdAllowDel_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        const char *cmd = "/allow_del";
+        String name = u.text.substring(strlen(cmd));
+        name.trim();
+        if (name.length() == 0)
+        {
+            reply = "Использование: /allow_del <username>";
+            return true;
+        }
+        if (_self->removeAllowedUser(name))
+            reply = "OK";
+        else
+            reply = "Не найден";
+        return true;
+    }
+
+    static bool cmdAllowClear_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        _self->clearAllowedUsers();
+        reply = "OK";
+        return true;
+    }
+
     static bool cmdTime_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
     {
         (void)bot;
@@ -280,7 +429,8 @@ private:
                 self._bot->sendText(u.chat_id, F("Ошибка разбора JSON."));
                 return true;
             }
-            if (!self._configs.save(doc))
+            const bool saved = self._configs_manager ? self._configs_manager->save(doc) : self._configs.save(doc);
+            if (!saved)
             {
                 self._bot->sendText(u.chat_id, F("Не удалось сохранить конфиг."));
                 return true;
@@ -301,7 +451,7 @@ private:
         auto writer = [](void *ctx, const uint8_t *data, size_t len) -> bool
         {
             (void)ctx;
-            return Update.write(data, len) == len;
+            return Update.write(const_cast<uint8_t *>(data), len) == len;
         };
         if (!client.downloadFile(file_path, writer, nullptr, bytes))
         {
@@ -327,6 +477,12 @@ private:
         TelegramMenu *self = static_cast<TelegramMenu *>(ctx);
         if (!self)
             return false;
+        if (!self->isAllowedUser_(u))
+        {
+            if (self->_bot)
+                self->_bot->sendText(u.chat_id, F("Доступ запрещен"));
+            return true;
+        }
         if (handleDocument_(*self, u))
             return true;
         if (u.text == "/start")
@@ -358,7 +514,8 @@ private:
                     self->_bot->sendText(u.chat_id, F("Ошибка разбора JSON."));
                 return true;
             }
-            if (!self->_configs.save(doc))
+            const bool saved = self->_configs_manager ? self->_configs_manager->save(doc) : self->_configs.save(doc);
+            if (!saved)
             {
                 if (self->_bot)
                     self->_bot->sendText(u.chat_id, F("Не удалось сохранить конфиг."));
@@ -500,6 +657,10 @@ private:
         { "/wifi_ap_off", &TelegramMenu::cmdWifiApOff_ },
         { "/config_set", &TelegramMenu::cmdConfigSet_ },
         { "/fw_update", &TelegramMenu::cmdFirmware_ },
+        { "/allow_list", &TelegramMenu::cmdAllowList_ },
+        { "/allow_add", &TelegramMenu::cmdAllowAdd_ },
+        { "/allow_del", &TelegramMenu::cmdAllowDel_ },
+        { "/allow_clear", &TelegramMenu::cmdAllowClear_ },
     };
 
     static inline const size_t kCommandCount = sizeof(kCommands) / sizeof(kCommands[0]);
@@ -530,5 +691,33 @@ private:
             if (_bot)
                 _bot->sendText(st.chat_id, F("Слишком много попыток. Блокировка 30 сек"));
         }
+    }
+    static String normalizeUser_(String user)
+    {
+        user.trim();
+        if (user.startsWith("@"))
+            user.remove(0, 1);
+        user.toLowerCase();
+        return user;
+    }
+
+    bool hasAllowedUser_(const String &user) const
+    {
+        for (size_t i = 0; i < _allowed_users.size(); ++i)
+        {
+            if (_allowed_users[i] == user)
+                return true;
+        }
+        return false;
+    }
+
+    bool isAllowedUser_(const TelegramClient::Update &u) const
+    {
+        if (_allowed_users.empty())
+            return true;
+        String user = normalizeUser_(u.from);
+        if (user.length() == 0)
+            return false;
+        return hasAllowedUser_(user);
     }
 };

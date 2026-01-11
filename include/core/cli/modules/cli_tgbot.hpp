@@ -33,6 +33,10 @@ public:
         _c._io->println(F("    token <value>           - set bot token"));
         _c._io->println(F("    chat <id>               - set chat id"));
         _c._io->println(F("    insecure on|off         - TLS check"));
+        _c._io->println(F("    allow list              - show allowed usernames"));
+        _c._io->println(F("    allow add <username>    - add allowed username"));
+        _c._io->println(F("    allow del <username>    - remove allowed username"));
+        _c._io->println(F("    allow clear             - clear allowed list"));
         _c._io->println(F("    send <text>             - send message"));
         _c._io->println(F("    poll                    - poll commands"));
         _c._io->println(F("    show                    - show settings"));
@@ -45,6 +49,10 @@ public:
         _c._io->println(F("  token <value>           - set bot token"));
         _c._io->println(F("  chat <id>               - set chat id"));
         _c._io->println(F("  insecure on|off         - TLS check"));
+        _c._io->println(F("  allow list              - show allowed usernames"));
+        _c._io->println(F("  allow add <username>    - add allowed username"));
+        _c._io->println(F("  allow del <username>    - remove allowed username"));
+        _c._io->println(F("  allow clear             - clear allowed list"));
         _c._io->println(F("  send <text>             - send message"));
         _c._io->println(F("  poll                    - poll commands"));
         _c._io->println(F("  show                    - show settings"));
@@ -60,6 +68,54 @@ public:
         if (lower == "show")
         {
             _c.cmdShowTelegram_();
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower == "allow list")
+        {
+            const auto &users = _c._tgbot_menu.allowedUsers();
+            if (users.empty())
+                _c._io->println(F("Allowed list empty"));
+            else
+            {
+                for (const auto &name : users)
+                    _c._io->println(name);
+            }
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("allow add "))
+        {
+            String v = cmd.substring(10);
+            v.trim();
+            auto res = _c._tgbot_menu.addAllowedUser(v);
+            const uint8_t code = static_cast<uint8_t>(res);
+            if (code == 0)
+                _c._io->println(F("OK"));
+            else if (code == 2)
+                _c._io->println(F("Already exists"));
+            else if (code == 3)
+                _c._io->println(F("List full"));
+            else
+                _c._io->println(F("Invalid username"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("allow del "))
+        {
+            String v = cmd.substring(10);
+            v.trim();
+            if (_c._tgbot_menu.removeAllowedUser(v))
+                _c._io->println(F("OK"));
+            else
+                _c._io->println(F("Not found"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower == "allow clear")
+        {
+            _c._tgbot_menu.clearAllowedUsers();
+            _c._io->println(F("OK"));
             _c.printPrompt_();
             return true;
         }

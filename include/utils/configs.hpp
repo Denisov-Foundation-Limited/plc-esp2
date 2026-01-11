@@ -68,7 +68,7 @@ public:
             _err = Error::OpenWrite;
             return false;
         }
-        if (serializeJson(doc, f) == 0)
+        if (serializeJsonPretty(doc, f) == 0)
         {
             f.close();
             _err = Error::JsonSerialize;

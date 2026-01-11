@@ -11,7 +11,7 @@
 
 #pragma once
 #include <Arduino.h>
-#include <OneWire.h>
+#include "hal/bus/one_wire_bus.hpp"
 #include <stdint.h>
 
 #include "boards/board_profile.hpp"
@@ -60,7 +60,7 @@ public:
                 return false;
             }
             _cfg[i] = c;
-            _bus[i] = OneWire(gpio);
+            _bus[i].begin(gpio);
         }
         _count = ActiveBoardProfile::ONEWIRE_COUNT;
         return true;
@@ -68,7 +68,7 @@ public:
 
     uint8_t count() const { return _count; }
 
-    OneWire *busPtrByIndex(uint8_t idx)
+    OneWireBus *busPtrByIndex(uint8_t idx)
     {
         if (idx >= _count)
         {
@@ -78,7 +78,7 @@ public:
         return &_bus[idx];
     }
 
-    OneWire *busPtrById(OwBusType bus_id)
+    OneWireBus *busPtrById(OwBusType bus_id)
     {
         for (uint8_t i = 0; i < _count; ++i)
         {
@@ -92,7 +92,7 @@ public:
     Error lastError() const { return _err; }
 
 private:
-    OneWire _bus[MAX_BUSES] = {OneWire(0), OneWire(0), OneWire(0), OneWire(0)};
+    OneWireBus _bus[MAX_BUSES] = {};
     OneWireCfg _cfg[MAX_BUSES] = {};
     uint8_t _count = 0;
     Error _err = Error::Ok;

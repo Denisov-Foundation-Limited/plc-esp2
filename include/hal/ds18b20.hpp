@@ -12,7 +12,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include <OneWire.h>
+#include "hal/bus/one_wire_bus.hpp"
 #include <stdint.h>
 #include <vector>
 
@@ -20,9 +20,9 @@ class Ds18b20
 {
 public:
     Ds18b20() = default;
-    explicit Ds18b20(OneWire &bus) : _bus(&bus) {}
+    explicit Ds18b20(OneWireBus &bus) : _bus(&bus) {}
 
-    bool begin(OneWire &bus)
+    bool begin(OneWireBus &bus)
     {
         _bus = &bus;
         _has_addr = false;
@@ -54,15 +54,15 @@ public:
         return readTempC(addr, out_c);
     }
 
-    bool startConversion(bool parasite_power = true)
+    bool startConversion()
     {
-        OneWire *bus = bus_();
+        OneWireBus *bus = bus_();
         if (!bus)
             return false;
         if (!bus->reset())
             return false;
         bus->skip();
-        bus->write(0x44, parasite_power ? 1 : 0);
+        bus->write(0x44);
         _last_conv_ms = millis();
         _has_conv = true;
         return true;
@@ -102,7 +102,7 @@ public:
 
     void listSerials(std::vector<String> &out)
     {
-        OneWire *bus = bus_();
+        OneWireBus *bus = bus_();
         if (!bus)
             return;
 
@@ -112,7 +112,7 @@ public:
         {
             if (addr[0] != kFamily)
                 continue;
-            if (OneWire::crc8(addr, 7) != addr[7])
+            if (OneWireBus::crc8(addr, 7) != addr[7])
                 continue;
             out.push_back(toString_(addr));
         }
@@ -123,11 +123,11 @@ private:
     static constexpr uint8_t kFamily = 0x28;
     static constexpr uint16_t kDefaultConvMs = 750;
 
-    OneWire *bus_() { return _bus; }
+    OneWireBus *bus_() { return _bus; }
 
     bool findFirst_()
     {
-        OneWire *bus = bus_();
+        OneWireBus *bus = bus_();
         if (!bus)
             return false;
 
@@ -136,7 +136,7 @@ private:
         {
             if (_addr[0] != kFamily)
                 continue;
-            if (OneWire::crc8(_addr, 7) != _addr[7])
+            if (OneWireBus::crc8(_addr, 7) != _addr[7])
                 continue;
             _has_addr = true;
             return true;
@@ -147,17 +147,17 @@ private:
 
     bool readTempByAddr_(const uint8_t addr[8], float &out_c)
     {
-        OneWire *bus = bus_();
+        OneWireBus *bus = bus_();
         if (!bus)
             return false;
         if (addr[0] != kFamily)
             return false;
-        if (OneWire::crc8(addr, 7) != addr[7])
+        if (OneWireBus::crc8(addr, 7) != addr[7])
             return false;
 
         bus->reset();
         bus->select(addr);
-        bus->write(0x44, 1);
+        bus->write(0x44);
         delay(750);
         return readScratchpadTemp_(addr, out_c);
     }
@@ -169,12 +169,12 @@ private:
 
     bool readScratchpadTemp_(const uint8_t addr[8], float &out_c)
     {
-        OneWire *bus = bus_();
+        OneWireBus *bus = bus_();
         if (!bus)
             return false;
         if (addr[0] != kFamily)
             return false;
-        if (OneWire::crc8(addr, 7) != addr[7])
+        if (OneWireBus::crc8(addr, 7) != addr[7])
             return false;
 
         uint8_t data[9] = {};
@@ -184,7 +184,7 @@ private:
         for (uint8_t i = 0; i < 9; ++i)
             data[i] = bus->read();
 
-        if (OneWire::crc8(data, 8) != data[8])
+        if (OneWireBus::crc8(data, 8) != data[8])
             return false;
 
         int16_t raw = (int16_t)((data[1] << 8) | data[0]);
@@ -236,7 +236,7 @@ private:
         return -1;
     }
 
-    OneWire *_bus = nullptr;
+    OneWireBus *_bus = nullptr;
     uint8_t _addr[8] = {};
     bool _has_addr = false;
     uint32_t _last_conv_ms = 0;

@@ -51,6 +51,7 @@
 
 #include "utils/logger.hpp"
 #include "utils/configs.hpp"
+#include "utils/configs_manager.hpp"
 #include "core/network/web/web_interface.hpp"
 
 struct AppServices
@@ -91,6 +92,7 @@ struct AppServices
     Ftest ftest;
     CliConsole console;
     Configs configs;
+    ConfigsManager configs_manager;
 
     AppServices()
         : logs(uart),
@@ -119,8 +121,13 @@ struct AppServices
           tm(),
           task_binder(tm, wifi, plc, telegram),
           ftest(logs, portio, ow, ibutton, ds18b20, i2c, tm, task_binder),
-          console(plc, wifi, rtc, ftest, i2c, telegram, configs)
+          console(plc, wifi, rtc, ftest, i2c, telegram, telegram_menu, configs),
+          configs(),
+          configs_manager(configs, wifi, telegram, network, console, telegram_menu)
     {
+        console.setConfigsManager(configs_manager);
+        telegram_menu.setConfigsManager(configs_manager);
+        fw_upgrade.setConfigsManager(configs_manager);
     }
 
     bool begin()
@@ -141,7 +148,7 @@ struct AppServices
         {
             logs.error(F("APP"), F("Configs mount failed"));
         }
-        else if (!loadConfigs_())
+        else if (!configs_manager.loadConfigs())
         {
             const char *err = "Unknown error";
             switch (configs.lastError())
@@ -301,96 +308,4 @@ struct AppServices
     }
 
 private:
-    bool loadConfigs_()
-    {
-        JsonDocument doc;
-        if (!configs.load(doc))
-        {
-            if (configs.lastError() == Configs::Error::OpenRead)
-                return true;
-            return false;
-        }
-        applyConfig_(doc);
-        return true;
-    }
-
-    void applyConfig_(const JsonDocument &doc)
-    {
-        if (doc["wifi"].is<JsonObjectConst>())
-        {
-            JsonObjectConst w = doc["wifi"].as<JsonObjectConst>();
-            if (w["ssid"].is<const char *>())
-                wifi.setSsid(w["ssid"].as<const char *>());
-            if (w["password"].is<const char *>())
-                wifi.setPassword(w["password"].as<const char *>());
-            if (w["ap"].is<bool>())
-                wifi.setAp(w["ap"].as<bool>());
-            if (w["ap_ssid"].is<const char *>())
-                wifi.setApSsid(w["ap_ssid"].as<const char *>());
-            if (w["ap_password"].is<const char *>())
-                wifi.setApPassword(w["ap_password"].as<const char *>());
-        }
-
-        if (doc["telegram"].is<JsonObjectConst>())
-        {
-            JsonObjectConst t = doc["telegram"].as<JsonObjectConst>();
-            if (t["token"].is<const char *>())
-                telegram.setToken(t["token"].as<const char *>());
-            if (t["chat_id"].is<long long>())
-                telegram.setChatId((int64_t)t["chat_id"].as<long long>());
-            if (t["insecure"].is<bool>())
-                telegram.setInsecure(t["insecure"].as<bool>());
-
-            if (t["client"].is<const char *>())
-            {
-                String c = t["client"].as<const char *>();
-                c.toLowerCase();
-                if (c == "tinygsm")
-                    network.setTelegramClientKind(TelegramNetCfg::ClientKind::TinyGsm);
-                else if (c == "wifi" || c == "wifi_secure")
-                    network.setTelegramClientKind(TelegramNetCfg::ClientKind::WifiSecure);
-            }
-
-            bool proxy_override = false;
-            bool use_proxy = false;
-            String host;
-            uint16_t port = 0;
-            String path;
-
-            if (t["use_proxy"].is<bool>())
-            {
-                proxy_override = true;
-                use_proxy = t["use_proxy"].as<bool>();
-            }
-            if (t["proxy_host"].is<const char *>())
-            {
-                proxy_override = true;
-                host = t["proxy_host"].as<const char *>();
-                if (!t["use_proxy"].is<bool>())
-                    use_proxy = true;
-            }
-            if (t["proxy_port"].is<unsigned>())
-            {
-                proxy_override = true;
-                port = (uint16_t)t["proxy_port"].as<unsigned>();
-                if (!t["use_proxy"].is<bool>())
-                    use_proxy = true;
-            }
-            if (t["proxy_path"].is<const char *>())
-            {
-                proxy_override = true;
-                path = t["proxy_path"].as<const char *>();
-                if (!t["use_proxy"].is<bool>())
-                    use_proxy = true;
-            }
-
-            if (proxy_override)
-            {
-                if (use_proxy)
-                    network.setTelegramProxy(host, port, path);
-                else
-                    network.disableTelegramProxy();
-            }
-        }
-    }
 };

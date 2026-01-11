@@ -22,6 +22,7 @@
 #include "core/network/web/web_interface_page.hpp"
 #include "core/network/web/web_interface_status.hpp"
 #include "utils/configs.hpp"
+#include "utils/configs_manager_iface.hpp"
 
 class WebInterface
 {
@@ -51,6 +52,8 @@ public:
         _allowed_exts = exts_csv;
         _allowed_exts.toLowerCase();
     }
+
+    void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }
 
     void registerRoutes()
     {
@@ -350,20 +353,9 @@ private:
 
     bool saveWifiConfig_()
     {
-        JsonDocument doc;
-        if (!_configs.load(doc))
-        {
-            if (_configs.lastError() != Configs::Error::OpenRead)
-                return false;
-            doc.clear();
-        }
-        JsonObject w = doc["wifi"].to<JsonObject>();
-        w["ssid"] = _wifi.ssid();
-        w["password"] = _wifi.password();
-        w["ap"] = _wifi.ap();
-        w["ap_ssid"] = _wifi.apSsid();
-        w["ap_password"] = _wifi.apPassword();
-        return _configs.save(doc);
+        if (_configs_manager)
+            return _configs_manager->save();
+        return false;
     }
 
     bool isAllowedExt_(const String &path) const
@@ -394,6 +386,7 @@ private:
     WebServer &_server;
     WifiManager &_wifi;
     Configs &_configs;
+    ConfigsManagerIface *_configs_manager = nullptr;
     File _upload;
     bool _upload_ok = true;
     size_t _upload_size = 0;

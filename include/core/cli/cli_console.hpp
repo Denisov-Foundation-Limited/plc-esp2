@@ -23,6 +23,7 @@
 #include "core/rtc.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/network/telegram/telegram.hpp"
+#include "core/network/telegram/telegram_menu.hpp"
 #include "ftest.hpp"
 #include "plc/plc_control.hpp"
 #include "core/cli/cli_config.hpp"
@@ -30,6 +31,7 @@
 #include "core/cli/modules/cli_tgbot.hpp"
 #include "hal/bus/i2c.hpp"
 #include "utils/configs.hpp"
+#include "utils/configs_manager_iface.hpp"
 
 class CliConsole
 {
@@ -41,13 +43,14 @@ public:
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c,
-               TelegramClient &tgbot, Configs &configs)
+               TelegramClient &tgbot, TelegramMenu &tgbot_menu, Configs &configs)
         : _plc(plc),
           _wifi(wifi),
           _rtc(rtc),
           _ftest(ftest),
           _i2c(i2c),
           _tgbot(tgbot),
+          _tgbot_menu(tgbot_menu),
           _configs(configs),
           _wifi_cli(*this),
           _tgbot_cli(*this),
@@ -277,31 +280,14 @@ public:
 
     void cmdWriteConfig_()
     {
-        JsonDocument doc;
-        JsonObject w = doc["wifi"].to<JsonObject>();
-        w["ssid"] = _wifi.ssid();
-        w["password"] = _wifi.password();
-        w["ap"] = _wifi.ap();
-        w["ap_ssid"] = _wifi.apSsid();
-        w["ap_password"] = _wifi.apPassword();
-
-        JsonObject t = doc["telegram"].to<JsonObject>();
-        t["token"] = _tgbot.token();
-        t["chat_id"] = (long long)_tgbot.chatId();
-        t["insecure"] = _tgbot.insecure();
-        t["client"] = _tgbot.clientKindName();
-        t["use_proxy"] = _tgbot.useProxy();
-        t["proxy_host"] = _tgbot.proxyHost();
-        t["proxy_port"] = (unsigned)_tgbot.proxyPort();
-        t["proxy_path"] = _tgbot.proxyPath();
-
-        if (_configs.save(doc))
+        const bool saved = _configs_manager && _configs_manager->save();
+        if (saved)
         {
             _io->println(F("OK"));
             return;
         }
 
-        const char *err = "Unknown error";
+        const char *err = _configs_manager ? "Unknown error" : "Config manager missing";
         switch (_configs.lastError())
         {
         case Configs::Error::FsMount:
@@ -496,6 +482,10 @@ private:
             "chat <id>",
             "insecure on",
             "insecure off",
+            "allow list",
+            "allow add <username>",
+            "allow del <username>",
+            "allow clear",
             "send <text>",
             "poll",
             "show",
@@ -943,7 +933,9 @@ private:
     Ftest &_ftest;
     I2CManager &_i2c;
     TelegramClient &_tgbot;
+    TelegramMenu &_tgbot_menu;
     Configs &_configs;
+    ConfigsManagerIface *_configs_manager = nullptr;
 
     Stream *_io = nullptr;
     String _line;
@@ -968,4 +960,7 @@ private:
     friend class CLIWifiT;
     template <typename>
     friend class CLITgbotT;
+
+public:
+    void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }
 };

@@ -236,12 +236,12 @@ private:
 
     void initOneWire_()
     {
-        OneWire *ib_bus = _ow.busPtrById(OneWireManager::OwBusType::iButton);
+        OneWireBus *ib_bus = _ow.busPtrById(OneWireManager::OwBusType::iButton);
         if (!ib_bus || !_ibutton.begin(*ib_bus))
         {
             _logs.error(F("FTEST"), F("OW iButton bus missing"));
         }
-        OneWire *temp_bus = _ow.busPtrById(OneWireManager::OwBusType::Temp);
+        OneWireBus *temp_bus = _ow.busPtrById(OneWireManager::OwBusType::Temp);
         if (!temp_bus || !_ds18b20.begin(*temp_bus))
         {
             _logs.error(F("FTEST"), F("OW DS18B20 bus missing"));
