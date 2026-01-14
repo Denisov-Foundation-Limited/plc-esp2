@@ -109,7 +109,7 @@ struct AppServices
           lm75ad(),
           sim800l(),
           telegram_wifi_client(),
-          ext(i2c, ActiveBoardProfile::EXT_DEVS),
+          ext(i2c, ActiveBoardProfile::EXT_DEVS, &logs),
           portio(ActiveBoardProfile::PORTS, &ext),
           gpio(portio),
           hal(ow, i2c, spi, uart, gpio),

@@ -108,7 +108,7 @@ public:
             _c.printPrompt_();
             return;
         }
-        _c._io->println(F("Unknown command"));
+        _c._io->println(F("\tUnknown command"));
         _c.printPrompt_();
     }
 

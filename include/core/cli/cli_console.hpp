@@ -147,6 +147,7 @@ public:
     void enterConfig() { _mode = Mode::Config; printPrompt_(); }
     void enterConfigWifi() { _mode = Mode::ConfigWifi; printPrompt_(); }
     void enterConfigTgbot() { _mode = Mode::ConfigTgbot; printPrompt_(); }
+    void enterConfigTime() { _mode = Mode::ConfigTime; printPrompt_(); }
     void logout()
     {
         _state = State::NeedUser;
@@ -470,7 +471,8 @@ private:
         Enable,
         Config,
         ConfigWifi,
-        ConfigTgbot
+        ConfigTgbot,
+        ConfigTime
     };
 
     enum class State : uint8_t
@@ -564,13 +566,7 @@ private:
             "admin password <pass>",
             "wifi",
             "tgbot",
-            "wifi ssid <value>",
-            "wifi password <value>",
-            "wifi ap on",
-            "wifi ap off",
-            "wifi ap_ssid <value>",
-            "wifi ap_password <value>",
-            "wifi restart",
+            "time",
             "exit",
             "end",
             "help",
@@ -621,6 +617,16 @@ private:
             "help tgbot"};
         static const size_t kConfigTgbotCmdsCount = sizeof(kConfigTgbotCmds) / sizeof(kConfigTgbotCmds[0]);
 
+        static const char *const kConfigTimeCmds[] = {
+            "date <YYYY-MM-DD>",
+            "time <HH:MM:SS>",
+            "set <YYYY-MM-DD> <HH:MM:SS>",
+            "show",
+            "exit",
+            "end",
+            "help"};
+        static const size_t kConfigTimeCmdsCount = sizeof(kConfigTimeCmds) / sizeof(kConfigTimeCmds[0]);
+
         const char *const *cmds = nullptr;
         size_t count = 0;
         switch (_mode)
@@ -640,6 +646,10 @@ private:
         case Mode::ConfigTgbot:
             cmds = kConfigTgbotCmds;
             count = kConfigTgbotCmdsCount;
+            break;
+        case Mode::ConfigTime:
+            cmds = kConfigTimeCmds;
+            count = kConfigTimeCmdsCount;
             break;
         case Mode::User:
             cmds = kEnableCmds;
@@ -873,6 +883,7 @@ private:
             printPrompt_();
             return;
         }
+        beginCmdOutput_();
         if (_state == State::LoggedIn)
             addHistory_(line);
 
@@ -889,6 +900,9 @@ private:
             break;
         case Mode::ConfigTgbot:
             _config.handleTgbotContext(line);
+            break;
+        case Mode::ConfigTime:
+            _config.handleTimeContext(line);
             break;
         case Mode::User:
             _enable.handle(line);
@@ -950,6 +964,11 @@ private:
     {
         if (!_io)
             return;
+        if (_cmd_blank_after)
+        {
+            _io->println();
+            _cmd_blank_after = false;
+        }
         if (_state == State::NeedUser)
         {
             _io->print(F("login: "));
@@ -977,6 +996,9 @@ private:
             break;
         case Mode::ConfigTgbot:
             _io->print(F("plc(config-tgbot)# "));
+            break;
+        case Mode::ConfigTime:
+            _io->print(F("plc(config-time)# "));
             break;
         }
     }
@@ -1135,6 +1157,14 @@ private:
         _io->println(value);
     }
 
+    void beginCmdOutput_()
+    {
+        if (!_io)
+            return;
+        _io->println();
+        _cmd_blank_after = true;
+    }
+
     static void sha256_(const char *input, uint8_t out[32])
     {
         if (!input)
@@ -1189,6 +1219,7 @@ private:
     String _admin_password;
     bool _saw_cr = false;
     uint8_t _esc_state = 0;
+    bool _cmd_blank_after = false;
 
     static constexpr size_t kHistoryMax = 12;
     String _history[kHistoryMax];
