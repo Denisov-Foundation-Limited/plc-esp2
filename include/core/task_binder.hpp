@@ -65,9 +65,9 @@ private:
     typename TaskManager<N>::Handle bindTgbot()
     {
         typename TaskManager<N>::Options opt;
-        opt.interval_ms = 100;
+        opt.interval_ms = 500;
         opt.priority = TaskManager<N>::Priority::Low;
-        return _tm.template add<&TelegramClient::task>(_tgbot, opt);
+        return _tm.template add<&TaskBinder::tgbotTask_>(*this, opt);
     }
 
     TaskManager<N> &_tm;
@@ -75,4 +75,10 @@ private:
     PlcControl &_plc;
     TelegramClient &_tgbot;
     typename TaskManager<N>::Handle _ftest_task{};
+
+    void tgbotTask_()
+    {
+        if (_wifi.isConnected())
+            _tgbot.task();
+    }
 };

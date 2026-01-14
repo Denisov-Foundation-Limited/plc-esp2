@@ -24,14 +24,20 @@
 #include "core/network/wifi_manager.hpp"
 #include "core/network/telegram/telegram.hpp"
 #include "core/network/telegram/telegram_menu.hpp"
+#include "core/network/tftp_client.hpp"
 #include "ftest.hpp"
 #include "plc/plc_control.hpp"
 #include "core/cli/cli_config.hpp"
 #include "core/cli/cli_enable.hpp"
 #include "core/cli/modules/cli_tgbot.hpp"
+#include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
+
+#if defined(ESP32)
+#include <Update.h>
+#endif
 
 class CliConsole
 {
@@ -77,17 +83,36 @@ public:
         {
             char c = (char)_io->read();
             if (c == '\r')
+            {
+                _io->println();
+                handleLine_(_line);
+                _line = "";
+                _saw_cr = true;
                 continue;
+            }
             if (c == '\n')
             {
+                if (_saw_cr)
+                {
+                    _saw_cr = false;
+                    continue;
+                }
+                _io->println();
                 handleLine_(_line);
                 _line = "";
                 continue;
             }
+            if (handleEscape_(c))
+                continue;
+            _saw_cr = false;
             if (c == 0x7F || c == 0x08)
             {
                 if (_line.length() > 0)
+                {
                     _line.remove(_line.length() - 1);
+                    if (_state != State::NeedPass)
+                        _io->print(F("\b \b"));
+                }
                 continue;
             }
             if (c == '\t')
@@ -142,6 +167,13 @@ public:
         printKeyValue_(F("temp_c"), buf, key_w);
     }
 
+    void cmdShowBoard_()
+    {
+        _io->println(F("Board:"));
+        const size_t key_w = 4; // name
+        printKeyValue_(F("name"), String(ActiveBoardProfile::UI_NAME), key_w);
+    }
+
     void cmdShowWifi_()
     {
         _io->println(F("Wi-Fi configurations:"));
@@ -186,6 +218,93 @@ public:
         printKeyValue_(F("proxy_host"), _tgbot.proxyHost(), key_w);
         printKeyValue_(F("proxy_port"), String((unsigned)_tgbot.proxyPort()), key_w);
         printKeyValue_(F("proxy_path"), _tgbot.proxyPath(), key_w);
+    }
+
+    void cmdCopy_(const String &line)
+    {
+        String args = line;
+        if (args.startsWith("copy"))
+            args = args.substring(4);
+        args.trim();
+        const int space = args.indexOf(' ');
+        if (space < 0)
+        {
+            _io->println(F("Usage: copy tftp://<ip>/firmware.bin firmware"));
+            return;
+        }
+        String url = args.substring(0, space);
+        String dest = args.substring(space + 1);
+        dest.trim();
+        if (dest != "firmware")
+        {
+            _io->println(F("Only firmware destination supported"));
+            return;
+        }
+        if (!url.startsWith("tftp://"))
+        {
+            _io->println(F("Only tftp:// URLs supported"));
+            return;
+        }
+        String target = url.substring(strlen("tftp://"));
+        const int slash = target.indexOf('/');
+        if (slash <= 0)
+        {
+            _io->println(F("Invalid TFTP URL"));
+            return;
+        }
+        String host = target.substring(0, slash);
+        String file = target.substring(slash + 1);
+        if (file != "firmware.bin")
+        {
+            _io->println(F("Only firmware.bin supported"));
+            return;
+        }
+        IPAddress ip;
+        if (!ip.fromString(host))
+        {
+            _io->println(F("Invalid TFTP host"));
+            return;
+        }
+#if !defined(ESP32)
+        _io->println(F("OTA not supported"));
+        return;
+#else
+        _io->println(F("TFTP download started"));
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN))
+        {
+            _io->println(Update.errorString());
+            return;
+        }
+        struct OtaCtx
+        {
+            size_t bytes = 0;
+        } ctx;
+        auto writer = [](void *c, const uint8_t *data, size_t len) -> bool {
+            if (Update.write(const_cast<uint8_t *>(data), len) != len)
+                return false;
+            OtaCtx *st = static_cast<OtaCtx *>(c);
+            st->bytes += len;
+            return true;
+        };
+        TftpClient client;
+        if (!client.download(ip, file, writer, &ctx))
+        {
+            Update.abort();
+            _io->print(F("TFTP failed: "));
+            _io->println(client.lastError());
+            return;
+        }
+        if (!Update.end(true))
+        {
+            _io->print(F("Update failed: "));
+            _io->println(Update.errorString());
+            return;
+        }
+        _io->println(F("Update OK, rebooting"));
+        _io->flush();
+        delay(500);
+        ESP.restart();
+#endif
     }
 
     void cmdShowI2c_()
@@ -261,7 +380,7 @@ public:
 
     void cmdWifiRestart_()
     {
-        if (_wifi.begin())
+        if (_wifi.restart())
             _io->println(F("Wi-Fi restarted"));
         else
             _io->println(F("Wi-Fi restart failed"));
@@ -370,6 +489,7 @@ private:
         {
             _io->println(F("Show commands:"));
             _io->println(F("  show plc        - fan state and board temperature"));
+            _io->println(F("  show board      - board profile name"));
             _io->println(F("  show wifi       - Wi-Fi configuration"));
             _io->println(F("  show time       - RTC date/time"));
             _io->println(F("  show i2c        - I2C device list"));
@@ -413,12 +533,14 @@ private:
             return;
         static const char *const kEnableCmds[] = {
             "show plc",
+            "show board",
             "show wifi",
             "show time",
             "show i2c",
             "show telegram",
             "show config",
             "ftest",
+            "copy tftp://<ip>/firmware.bin firmware",
             "wifi restart",
             "reload",
             "reset",
@@ -707,6 +829,8 @@ private:
         what.trim();
         if (eq_(what, "plc"))
             cmdShowPlc_();
+        else if (eq_(what, "board"))
+            cmdShowBoard_();
         else if (eq_(what, "wifi"))
             cmdShowWifi_();
         else if (eq_(what, "time"))
@@ -749,6 +873,8 @@ private:
             printPrompt_();
             return;
         }
+        if (_state == State::LoggedIn)
+            addHistory_(line);
 
         switch (_mode)
         {
@@ -855,6 +981,122 @@ private:
         }
     }
 
+    bool handleEscape_(char c)
+    {
+        if (_esc_state == 0)
+        {
+            if ((uint8_t)c == 0x1B)
+            {
+                _esc_state = 1;
+                return true;
+            }
+            return false;
+        }
+        if (_esc_state == 1)
+        {
+            if (c == '[')
+            {
+                _esc_state = 2;
+                return true;
+            }
+            _esc_state = 0;
+            return false;
+        }
+        if (_esc_state == 2)
+        {
+            _esc_state = 0;
+            if (_state != State::LoggedIn)
+                return true;
+            if (c == 'A')
+            {
+                historyUp_();
+                return true;
+            }
+            if (c == 'B')
+            {
+                historyDown_();
+                return true;
+            }
+            return true;
+        }
+        _esc_state = 0;
+        return false;
+    }
+
+    void redrawLine_(const String &new_line, size_t old_len)
+    {
+        if (!_io)
+            return;
+        _io->print('\r');
+        printPrompt_();
+        _io->print(new_line);
+        if (old_len > new_line.length())
+        {
+            const size_t extra = old_len - new_line.length();
+            for (size_t i = 0; i < extra; ++i)
+                _io->print(' ');
+            _io->print('\r');
+            printPrompt_();
+            _io->print(new_line);
+        }
+    }
+
+    void addHistory_(const String &line)
+    {
+        if (line.length() == 0)
+            return;
+        if (_history_len > 0 && _history[_history_len - 1] == line)
+            return;
+        if (_history_len < kHistoryMax)
+        {
+            _history[_history_len++] = line;
+        }
+        else
+        {
+            for (size_t i = 1; i < kHistoryMax; ++i)
+                _history[i - 1] = _history[i];
+            _history[kHistoryMax - 1] = line;
+        }
+        _history_pos = -1;
+        _history_saved = "";
+    }
+
+    void historyUp_()
+    {
+        if (_history_len == 0)
+            return;
+        if (_history_pos < 0)
+        {
+            _history_saved = _line;
+            _history_pos = (int)_history_len - 1;
+        }
+        else if (_history_pos > 0)
+        {
+            _history_pos--;
+        }
+        const size_t old_len = _line.length();
+        _line = _history[_history_pos];
+        redrawLine_(_line, old_len);
+    }
+
+    void historyDown_()
+    {
+        if (_history_len == 0 || _history_pos < 0)
+            return;
+        if (_history_pos < (int)_history_len - 1)
+        {
+            _history_pos++;
+            const size_t old_len = _line.length();
+            _line = _history[_history_pos];
+            redrawLine_(_line, old_len);
+            return;
+        }
+        _history_pos = -1;
+        const size_t old_len = _line.length();
+        _line = _history_saved;
+        redrawLine_(_line, old_len);
+    }
+
     void printLine_(const __FlashStringHelper *s)
     {
         if (_io)
@@ -945,6 +1187,14 @@ private:
     uint8_t _admin_hash[32] = {};
     bool _admin_set = false;
     String _admin_password;
+    bool _saw_cr = false;
+    uint8_t _esc_state = 0;
+
+    static constexpr size_t kHistoryMax = 12;
+    String _history[kHistoryMax];
+    size_t _history_len = 0;
+    int _history_pos = -1;
+    String _history_saved;
 
     CLIWifi _wifi_cli;
     CLITgbot _tgbot_cli;

@@ -85,10 +85,11 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       <h1>FCPLC</h1>
-      <p>Настройка контроллера FCPLC</p>
+      <p class="status">Плата: %BOARD_NAME%</p>
+      <p>Веб-интерфейс контроллера FCPLC</p>
       <div class="section">
         <h2>Wi-Fi</h2>
-        <p class="status">Текущее: %WIFI_MODE% | SSID: %WIFI_CUR_SSID% | IP: %WIFI_IP%%WIFI_STA_SEG%</p>
+        <p class="status">Состояние: %WIFI_MODE% | SSID: %WIFI_CUR_SSID% | IP: %WIFI_IP%%WIFI_STA_SEG%</p>
         <form method="POST" action="/wifi">
           <div class="grid">
             <div>
@@ -104,7 +105,7 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
             </div>
             <div>
               <label>Пароль</label>
-              <input type="password" name="password" placeholder="Оставьте пустым, чтобы не менять">
+              <input type="password" name="password" placeholder="Оставьте пустым, если не меняете">
             </div>
             <div>
               <label>AP SSID</label>
@@ -112,32 +113,43 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
             </div>
             <div>
               <label>Пароль AP</label>
-              <input type="password" name="ap_password" placeholder="Оставьте пустым, чтобы не менять">
+              <input type="password" name="ap_password" placeholder="Оставьте пустым, если не меняете">
             </div>
           </div>
           <div class="row" style="margin-top:10px;">
-            <button type="submit">Применить Wi‑Fi</button>
+            <button type="submit">Сохранить Wi-Fi</button>
             <span class="status">%WIFI_STATUS%</span>
           </div>
         </form>
       </div>
       <div class="section">
+        <h2>Прошивка</h2>
+        <p class="status">OTA обновление (.bin)</p>
+        <form method="POST" action="/ota" enctype="multipart/form-data">
+          <div class="row">
+            <input type="file" name="firmware">
+            <button type="submit">Загрузить прошивку</button>
+          </div>
+        </form>
+      </div>
+      <div class="section">
+        <h2>Файлы</h2>
         <form method="POST" action="/upload" enctype="multipart/form-data">
           <div class="row">
             <input type="file" name="file">
-            <button type="submit">Загрузить</button>
+            <button type="submit">Загрузить файл</button>
           </div>
         </form>
         <p><a href="/status">Статус</a></p>
       </div>
       <div class="section">
-        <h2>Файлы</h2>
+        <h2>Список файлов</h2>
         <table>
           <thead>
             <tr>
               <th>Имя</th>
               <th class="right">Размер</th>
-              <th class="right">Действие</th>
+              <th class="right">Действия</th>
             </tr>
           </thead>
           <tbody>

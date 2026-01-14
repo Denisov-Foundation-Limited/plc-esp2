@@ -20,6 +20,8 @@
 
 struct BoardProfileFCPLC_3v1 : BoardProfileCommon
 {
+    static inline constexpr const char *UI_NAME = "FCPLC-3V1";
+
     // ---- logging sink ----
     static inline constexpr LogCfg LOG = {
         .sink = LogCfg::Sink::UsbSerial,

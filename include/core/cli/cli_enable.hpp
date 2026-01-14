@@ -37,6 +37,7 @@ public:
             _c._io->println(F("Commands (enable):"));
             _c._io->println(F("  Show:"));
             _c._io->println(F("    show plc        - fan state and board temperature"));
+            _c._io->println(F("    show board      - board profile name"));
             _c._io->println(F("    show wifi       - Wi-Fi configuration"));
             _c._io->println(F("    show time       - RTC date/time"));
             _c._io->println(F("    show i2c        - I2C device list"));
@@ -44,6 +45,7 @@ public:
             _c._io->println(F("    show config     - configuration file contents"));
             _c._io->println(F("  Actions:"));
             _c._io->println(F("    ftest           - start functional test task"));
+            _c._io->println(F("    copy tftp://<ip>/firmware.bin firmware - update firmware"));
             _wifi.printHelpEnable();
             _c._io->println(F("    reload          - restart controller"));
             _c._io->println(F("    reset           - restart controller"));
@@ -85,6 +87,12 @@ public:
         if (eq_(cmd, "ftest"))
         {
             _c.cmdFtest_();
+            _c.printPrompt_();
+            return;
+        }
+        if (startsWith_(cmd, "copy "))
+        {
+            _c.cmdCopy_(cmd);
             _c.printPrompt_();
             return;
         }

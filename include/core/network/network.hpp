@@ -12,6 +12,9 @@
 #pragma once
 
 #include <Arduino.h>
+#if defined(ESP32)
+#include <ESPAsyncWebServer.h>
+#endif
 
 #include "boards/board_profile_base.hpp"
 #include "utils/logger.hpp"
@@ -34,7 +37,7 @@ public:
     };
 
     Network(Logger &logs, WifiManager &wifi, TelegramClient &tgbot, TelegramBot &bot,
-            TelegramMenu &menu, WebInterface &fw, WebServer &web, WiFiClientSecure &wifi_client)
+            TelegramMenu &menu, WebInterface &fw, AsyncWebServer &web, WiFiClientSecure &wifi_client)
         : _logs(logs), _wifi(wifi), _tgbot(tgbot), _bot(bot), _menu(menu),
           _fw_upgrade(fw), _web(web),
           _wifi_client(wifi_client) {}
@@ -81,15 +84,16 @@ public:
         _menu.begin();
         _fw_upgrade.registerRoutes();
         _web.begin();
-        return configureTelegram_(ActiveBoardProfile::TELEGRAM_NET);
+        if (!configureTelegram_(ActiveBoardProfile::TELEGRAM_NET))
+            return false;
+        _tgbot.setAutoPollIntervalMs(10000);
+        _tgbot.enableAutoPoll(true, 0);
+        return true;
     }
 
     Error lastError() const { return _last_error; }
 
-    void loop()
-    {
-        _web.handleClient();
-    }
+    void loop() {}
 
 private:
     Logger &_logs;
@@ -98,7 +102,7 @@ private:
     TelegramBot &_bot;
     TelegramMenu &_menu;
     WebInterface &_fw_upgrade;
-    WebServer &_web;
+    AsyncWebServer &_web;
     WiFiClientSecure &_wifi_client;
     Client *_tgbot_ext_client = nullptr;
     Error _last_error = Error::None;

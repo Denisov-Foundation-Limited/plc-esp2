@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -14,10 +14,6 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <vector>
-
-#if defined(ESP32)
-#include <Update.h>
-#endif
 
 #include "core/network/telegram/telegram_bot.hpp"
 #include "core/rtc.hpp"
@@ -173,7 +169,7 @@ private:
 
         st->awaiting = true;
         st->authorized = false;
-        bot.sendText(u.chat_id, F("Введите пароль Админки:"));
+        bot.sendText(u.chat_id, F("Введите пароль администратора:"));
         return true;
     }
 
@@ -196,7 +192,7 @@ private:
         (void)bot;
         if (!_self)
             return false;
-        reply = "Wi-Fi:\n  режим : ";
+        reply = "Wi-Fi:\n  режим: ";
         reply += _self->_wifi.ap() ? "AP" : "STA";
         reply += "\n  ssid  : ";
         reply += _self->_wifi.ssid();
@@ -213,7 +209,17 @@ private:
         if (_self->_wifi.begin())
             reply = "Wi-Fi перезапущен";
         else
-            reply = "Перезапуск Wi-Fi не удался";
+            reply = "Не удалось перезапустить Wi-Fi";
+        return true;
+    }
+    static bool cmdPlcRestart_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        (void)reply;
+        if (!_self)
+            return false;
+        bot.sendText(u.chat_id, F("Перезапуск ПЛК"));
+        delay(200);
+        ESP.restart();
         return true;
     }
 
@@ -258,23 +264,7 @@ private:
         }
         st->awaiting_config = true;
         st->awaiting = false;
-        bot.sendText(u.chat_id, F("Отправьте JSON для сохранения startup-config. /back — отмена."));
-        return true;
-    }
-
-    static bool cmdFirmware_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
-    {
-        if (!_self)
-            return false;
-        ChatAuth *st = _self->ensureAuth_(u.chat_id);
-        if (!st)
-            return false;
-        if (_self->_admin_password.length() > 0 && !st->authorized)
-        {
-            reply = "Нужна авторизация. Используйте /admin.";
-            return true;
-        }
-        reply = "Отправьте файл firmware.bin для обновления прошивки.";
+        bot.sendText(u.chat_id, F("Отправьте JSON для сохранения startup-config. /back - отмена."));
         return true;
     }
 
@@ -317,7 +307,7 @@ private:
         else if (res == AllowResult::Full)
             reply = "Лимит 10";
         else
-            reply = "Неверный username";
+            reply = "Некорректный username";
         return true;
     }
 
@@ -361,7 +351,7 @@ private:
         Ds3231Mz::DateTime dt;
         if (!_self->_rtc.Time(dt))
         {
-            reply = "RTC: ошибка чтения";
+            reply = "RTC: нет данных";
             return true;
         }
         char date_buf[16] = {};
@@ -384,8 +374,7 @@ private:
         if (!u.hasDocument())
             return false;
         const bool is_config = (u.document_file_name == "startup-config.json");
-        const bool is_firmware = (u.document_file_name == "firmware.bin");
-        if (!is_config && !is_firmware)
+        if (!is_config)
             return false;
 
         ChatAuth *st = self.ensureAuth_(u.chat_id);
@@ -397,78 +386,78 @@ private:
                 self._bot->sendText(u.chat_id, F("Нужна авторизация. Используйте /admin."));
             return true;
         }
+        st->awaiting_config = false;
+        st->awaiting = false;
         if (is_config && u.document_size > 0 && u.document_size > kMaxConfigBytes)
         {
             if (self._bot)
-                self._bot->sendText(u.chat_id, F("Конфиг слишком большой."));
+                self._bot->sendText(u.chat_id, F("Слишком большой файл."));
             return true;
         }
         if (!self._bot)
             return true;
 
         TelegramClient &client = self._bot->client();
-        String file_path;
-        if (!client.getFilePath(u.document_file_id, file_path))
+        FastBot2Client *fb = client.fastBot();
+        if (!fb)
         {
-            self._bot->sendText(u.chat_id, String("getFile: ") + client.lastError());
+            self._bot->sendText(u.chat_id, F("Telegram client not ready"));
+            return true;
+        }
+        fb::Fetcher fetch = fb->downloadFile(u.document_file_id);
+        if (!fetch)
+        {
+            String err = client.lastError();
+            if (err.length() == 0)
+                err = F("downloadFile failed");
+            self._bot->sendText(u.chat_id, err);
             return true;
         }
 
-        if (is_config)
+        String json;
+        if (u.document_size > 0)
+            json.reserve((size_t)u.document_size + 16);
+        struct StringWriter : public Print
         {
-            String json;
-            if (!client.downloadFile(file_path, json))
+            explicit StringWriter(String &out) : _out(out) {}
+            size_t write(uint8_t b) override
             {
-                self._bot->sendText(u.chat_id, String("Скачивание не удалось: ") + client.lastError());
-                return true;
+                _out += static_cast<char>(b);
+                return 1;
             }
-            JsonDocument doc;
-            DeserializationError err = deserializeJson(doc, json);
-            if (err)
+            size_t write(const uint8_t *data, size_t len) override
             {
-                self._bot->sendText(u.chat_id, F("Ошибка разбора JSON."));
-                return true;
+                if (!data || len == 0)
+                    return 0;
+                if (!_out.concat(reinterpret_cast<const char *>(data), len))
+                    return 0;
+                return len;
             }
-            const bool saved = self._configs_manager ? self._configs_manager->save(doc) : self._configs.save(doc);
-            if (!saved)
-            {
-                self._bot->sendText(u.chat_id, F("Не удалось сохранить конфиг."));
-                return true;
-            }
-            self._bot->sendText(u.chat_id, F("Startup-config сохранен. Перезагрузите контроллер для применения."));
-            return true;
-        }
-
-#if defined(ESP32)
-        self._bot->sendText(u.chat_id, F("Начинаю обновление прошивки..."));
-        size_t bytes = 0;
-        const size_t size = u.document_size > 0 ? (size_t)u.document_size : UPDATE_SIZE_UNKNOWN;
-        if (!Update.begin(size))
-        {
-            self._bot->sendText(u.chat_id, F("Не удалось начать обновление."));
-            return true;
-        }
-        auto writer = [](void *ctx, const uint8_t *data, size_t len) -> bool
-        {
-            (void)ctx;
-            return Update.write(const_cast<uint8_t *>(data), len) == len;
+            String &_out;
         };
-        if (!client.downloadFile(file_path, writer, nullptr, bytes))
+        StringWriter writer(json);
+        if (!fetch.writeTo(writer))
         {
-            Update.abort();
-            self._bot->sendText(u.chat_id, String("Скачивание не удалось: ") + client.lastError());
+            String err = client.lastError();
+            if (err.length() == 0)
+                err = F("download failed");
+            self._bot->sendText(u.chat_id, err);
             return true;
         }
-        if (!Update.end(true))
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, json);
+        if (err)
         {
-            self._bot->sendText(u.chat_id, F("Обновление прошивки не удалось."));
+            self._bot->sendText(u.chat_id, F("Ошибка разбора JSON."));
             return true;
         }
-        self._bot->sendText(u.chat_id, F("Прошивка обновлена. Перезагрузка..."));
-        ESP.restart();
-#else
-        self._bot->sendText(u.chat_id, F("Обновление прошивки не поддерживается."));
-#endif
+        const bool saved = self._configs_manager ? self._configs_manager->save(doc) : self._configs.save(doc);
+        if (!saved)
+        {
+            self._bot->sendText(u.chat_id, F("Не удалось сохранить конфиг."));
+            return true;
+        }
+        self._bot->sendText(u.chat_id, F("Startup-config сохранен. Перезагрузите контроллер для применения."));
         return true;
     }
 
@@ -552,7 +541,7 @@ private:
             st->awaiting = true;
             self->onFail_(*st);
             if (self->_bot && !self->isLocked_(*st))
-                self->_bot->sendText(u.chat_id, F("Неверный пароль\nВведите пароль Админки:"));
+                self->_bot->sendText(u.chat_id, F("Неверный пароль\nВведите пароль администратора:"));
         }
         return true;
     }
@@ -600,11 +589,11 @@ private:
 
     TelegramBot *_bot = nullptr;
 
-    static inline const TelegramBot::MenuItem kRootItems[] = {
+        static inline const TelegramBot::MenuItem kRootItems[] = {
         { "Админка", "Админка", nullptr, nullptr },
     };
 
-    static inline const TelegramBot::MenuItem kAdminItems[] = {
+        static inline const TelegramBot::MenuItem kAdminItems[] = {
         { "ПЛК", nullptr, "plc", nullptr },
         { "Часы", nullptr, "rtc", nullptr },
         { "Wi-Fi", nullptr, "wifi", nullptr },
@@ -612,31 +601,31 @@ private:
         { "Назад", "/back", nullptr, nullptr },
     };
 
-    static inline const TelegramBot::MenuItem kPlcItems[] = {
+        static inline const TelegramBot::MenuItem kPlcItems[] = {
         { "Статус", "/status", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
     };
 
-    static inline const TelegramBot::MenuItem kRtcItems[] = {
+        static inline const TelegramBot::MenuItem kRtcItems[] = {
         { "Время", "/time", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
     };
 
-    static inline const TelegramBot::MenuItem kWifiItems[] = {
-        { "Показать", "/wifi", nullptr, nullptr },
+        static inline const TelegramBot::MenuItem kWifiItems[] = {
+        { "Состояние", "/wifi", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
     };
 
-    static inline const TelegramBot::MenuItem kSettingsItems[] = {
+        static inline const TelegramBot::MenuItem kSettingsItems[] = {
         { "Перезапуск Wi-Fi", "/wifi_restart", nullptr, nullptr },
-        { "Wi-Fi AP вкл", "/wifi_ap_on", nullptr, nullptr },
-        { "Wi-Fi AP выкл", "/wifi_ap_off", nullptr, nullptr },
+        { "Перезапуск ПЛК", "/plc_restart", nullptr, nullptr },
+        { "Wi-Fi AP Вкл", "/wifi_ap_on", nullptr, nullptr },
+        { "Wi-Fi AP Выкл", "/wifi_ap_off", nullptr, nullptr },
         { "Startup-config", "/config_set", nullptr, nullptr },
-        { "Прошивка", "/fw_update", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
     };
 
-    static inline const TelegramBot::Menu kMenus[] = {
+        static inline const TelegramBot::Menu kMenus[] = {
         { "root", "Главное меню", kRootItems, 1, nullptr },
         { "admin", "Админка", kAdminItems, 5, "root" },
         { "plc", "ПЛК", kPlcItems, 2, "admin" },
@@ -653,10 +642,10 @@ private:
         { "/wifi", &TelegramMenu::cmdWifi_ },
         { "/time", &TelegramMenu::cmdTime_ },
         { "/wifi_restart", &TelegramMenu::cmdWifiRestart_ },
+        { "/plc_restart", &TelegramMenu::cmdPlcRestart_ },
         { "/wifi_ap_on", &TelegramMenu::cmdWifiApOn_ },
         { "/wifi_ap_off", &TelegramMenu::cmdWifiApOff_ },
         { "/config_set", &TelegramMenu::cmdConfigSet_ },
-        { "/fw_update", &TelegramMenu::cmdFirmware_ },
         { "/allow_list", &TelegramMenu::cmdAllowList_ },
         { "/allow_add", &TelegramMenu::cmdAllowAdd_ },
         { "/allow_del", &TelegramMenu::cmdAllowDel_ },
@@ -689,7 +678,7 @@ private:
             st.fail_count = 0;
             st.awaiting = false;
             if (_bot)
-                _bot->sendText(st.chat_id, F("Слишком много попыток. Блокировка 30 сек"));
+                _bot->sendText(st.chat_id, F("Слишком много неверных попыток. Блокировка 30 сек"));
         }
     }
     static String normalizeUser_(String user)
@@ -721,3 +710,5 @@ private:
         return hasAllowedUser_(user);
     }
 };
+
+

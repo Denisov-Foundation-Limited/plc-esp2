@@ -20,5 +20,7 @@
 
 struct BoardProfileCommon
 {
+    static inline constexpr const char *UI_NAME = "Unknown";
+    static inline constexpr uint16_t WEB_PORT = 80;
     // Shared defaults could go here
 };

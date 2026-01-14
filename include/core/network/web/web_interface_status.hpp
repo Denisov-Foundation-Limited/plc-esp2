@@ -17,7 +17,7 @@ static const char kWebInterfaceStatusHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Статус загрузки</title>
+  <title>Статус</title>
   <style>
     body { font-family: "Segoe UI", Tahoma, Arial, sans-serif; background:#0b1220; color:#e5e7eb; }
     .wrap { max-width: 560px; margin: 40px auto; padding: 0 16px; }
@@ -29,6 +29,7 @@ static const char kWebInterfaceStatusHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       <h2>Статус</h2>
+      <p>Плата: %BOARD_NAME%</p>
       <pre>%STATUS%</pre>
       <p><a href="/">Назад</a></p>
     </div>

@@ -200,8 +200,15 @@ private:
                 continue;
             if (u.text != it.label)
                 continue;
-            if (it.command && handleCommandText_(u, it.command))
-                return true;
+            if (it.command)
+            {
+                if (strcmp(it.command, "/back") == 0)
+                    return goParent_(u.chat_id);
+                TelegramClient::Update cmd_u = u;
+                cmd_u.text = it.command;
+                if (handleCommandText_(cmd_u, it.command))
+                    return true;
+            }
             if (it.next_menu)
             {
                 const Menu *next = findMenu_(it.next_menu);

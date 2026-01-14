@@ -14,7 +14,8 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <vector>
-#include <WebServer.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
 
 #include "boards/board_profile.hpp"
 #include "boards/profile_validator.hpp"
@@ -84,7 +85,7 @@ struct AppServices
     TelegramBot telegram_bot;
     TelegramMenu telegram_menu;
     Network network;
-    WebServer web;
+    AsyncWebServer web;
     WebInterface fw_upgrade;
 
     TaskManager<TASK_MGR_TSK_COUNT> tm;
@@ -113,10 +114,11 @@ struct AppServices
           gpio(portio),
           hal(ow, i2c, spi, uart, gpio),
           plc(i2c, portio),
+          telegram(logs),
           telegram_bot(telegram),
           telegram_menu(plc, wifi, rtc, telegram_bot, configs),
-          web(80),
-          fw_upgrade(web, console, wifi, configs),
+          web(ActiveBoardProfile::WEB_PORT),
+          fw_upgrade(web, console, wifi, configs, logs),
           network(logs, wifi, telegram, telegram_bot, telegram_menu, fw_upgrade, web, telegram_wifi_client),
           tm(),
           task_binder(tm, wifi, plc, telegram),
@@ -139,6 +141,7 @@ struct AppServices
             logs.error(F("APP"), F("LOG Auto bind failed, fallback to USB"));
         }
 
+        delay(1000);
         console.begin(Serial);
 
         logs.info(F("APP"), F("Starting application..."));

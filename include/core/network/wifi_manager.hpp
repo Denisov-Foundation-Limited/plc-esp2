@@ -41,9 +41,19 @@ public:
             return ok;
         }
 
+        WiFi.persistent(false);
+        WiFi.setAutoReconnect(true);
         WiFi.mode(WIFI_STA);
         WiFi.begin(_ssid.c_str(), _password.c_str());
         return true;
+    }
+
+    bool restart()
+    {
+        WiFi.disconnect(true, true);
+        WiFi.mode(WIFI_OFF);
+        delay(200);
+        return begin();
     }
 
     void task()
@@ -85,6 +95,7 @@ public:
     bool ap() const { return _ap; }
     const String &apSsid() const { return _ap_ssid; }
     const String &apPassword() const { return _ap_password; }
+    bool isConnected() const { return !_ap && WiFi.status() == WL_CONNECTED; }
 
 private:
     static const char *statusToString_(wl_status_t st)
