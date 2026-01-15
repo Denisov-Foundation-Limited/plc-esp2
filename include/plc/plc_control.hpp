@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <Arduino.h>
 #include <stdint.h>
 
 #include "boards/board_profile.hpp"
@@ -62,6 +63,7 @@ public:
 
     void task()
     {
+        _last_cpu_temp_c = readCpuTemp_();
         const auto cfg = ActiveBoardProfile::BOARD_TEMP;
         float temp_c = 0.0f;
         if (!_lm75.readTempC(temp_c))
@@ -85,6 +87,7 @@ public:
     }
 
     float boardTemp() const { return _last_temp_c; }
+    float cpuTemp() const { return _last_cpu_temp_c; }
     bool fanStatus() const { return _fan_on; }
 
     Error lastError() const { return _err; }
@@ -115,10 +118,20 @@ private:
         }
     }
 
+    static float readCpuTemp_()
+    {
+#if defined(ESP32)
+        return temperatureRead();
+#else
+        return 0.0f;
+#endif
+    }
+
     Lm75ad _lm75;
     I2CManager &_i2c;
     PortIO &_portio;
     Error _err = Error::Ok;
     bool _fan_on = false;
     float _last_temp_c = 0.0f;
+    float _last_cpu_temp_c = 0.0f;
 };

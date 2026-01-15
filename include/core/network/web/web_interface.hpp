@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -25,17 +25,30 @@
 #include "boards/board_profile.hpp"
 #include "core/cli/cli_console.hpp"
 #include "core/network/wifi_manager.hpp"
-#include "core/network/web/web_interface_page.hpp"
-#include "core/network/web/web_interface_status.hpp"
+#include "core/network/web/pages/web_interface_page.hpp"
+#include "core/network/web/pages/web_interface_manage.hpp"
+#include "core/network/web/pages/web_interface_ports.hpp"
+#include "core/network/web/pages/web_interface_status.hpp"
+#include "core/rtc.hpp"
+#include "plc/plc_control.hpp"
 #include "utils/logger.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
+#include "hal/gpio/extender.hpp"
 
 class WebInterface
 {
 public:
-    WebInterface(AsyncWebServer &server, const CliConsole &cli, WifiManager &wifi, Configs &configs, Logger &logs)
-        : _server(server), _cli_auth(&cli), _wifi(wifi), _configs(configs), _log(&logs)
+    WebInterface(AsyncWebServer &server, const CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
+                 RTC &rtc, Logger &logs, Extender &ext)
+        : _server(server),
+          _cli_auth(&cli),
+          _wifi(wifi),
+          _configs(configs),
+          _plc(&plc),
+          _rtc(&rtc),
+          _ext(&ext),
+          _log(&logs)
     {
     }
 
@@ -65,6 +78,8 @@ public:
     void registerRoutes()
     {
         _server.on("/", HTTP_GET, [this](AsyncWebServerRequest *request) { handleIndex_(request); });
+        _server.on("/manage", HTTP_GET, [this](AsyncWebServerRequest *request) { handleManage_(request); });
+        _server.on("/ports", HTTP_GET, [this](AsyncWebServerRequest *request) { handlePorts_(request); });
         _server.on(
             "/upload", HTTP_POST,
             [this](AsyncWebServerRequest *request) { handleUploadDone_(request); },
@@ -107,7 +122,35 @@ private:
         page.replace("%WIFI_SSID%", _wifi.ssid());
         page.replace("%WIFI_AP_SSID%", _wifi.apSsid());
         page.replace("%WIFI_STATUS%", _wifi_status);
+        page.replace("%BOARD_TEMP%", formatTemp_(boardTemp_()));
+        page.replace("%CPU_TEMP%", formatTemp_(cpuTemp_()));
+        page.replace("%RTC_TIME%", rtcTimeStr_());
+        page.replace("%RTC_TEMP%", formatTemp_(rtcTemp_()));
+        page.replace("%FAN_STATUS%", fanStatusStr_());
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        request->send(200, "text/html", page);
+    }
+
+    void handleManage_(AsyncWebServerRequest *request)
+    {
+        if (!checkAuth_(request))
+            return;
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("GET /manage (ip=%s)"), requestIp_(request).c_str());
+        String page = FPSTR(kWebInterfaceManageHtml);
         page.replace("%FILES%", listFilesHtml_());
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        request->send(200, "text/html", page);
+    }
+
+    void handlePorts_(AsyncWebServerRequest *request)
+    {
+        if (!checkAuth_(request))
+            return;
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("GET /ports (ip=%s)"), requestIp_(request).c_str());
+        String page = FPSTR(kWebInterfacePortsHtml);
+        page.replace("%PORTS%", listPortsHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         request->send(200, "text/html", page);
     }
@@ -126,18 +169,153 @@ private:
             items += "<tr><td><a href=\"/files";
             items += path;
             items += "\">";
+            items += "<strong>";
             items += name;
+            items += "</strong>";
             items += "</a></td><td class=\"right\">";
+            items += "<strong>";
             items += String((unsigned)file.size());
+            items += "</strong>";
             items += " B</td><td class=\"right\"><a class=\"del\" onclick=\"return confirm('Удалить файл ";
             items += name;
             items += "?')\" href=\"/delete?path=";
             items += path;
-            items += "\">Удалить</a></td></tr>";
+            items += "\"><strong>Удалить</strong></a></td></tr>";
             file = root.openNextFile();
         }
         if (items.length() == 0)
-            items = "<tr><td colspan=\"3\" style=\"color:#94a3b8\">Файлы отсутствуют</td></tr>";
+            items = "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>Нет файлов</strong></td></tr>";
+        return items;
+    }
+
+    static const char *extTypeName_(Extender::Type t)
+    {
+        switch (t)
+        {
+        case Extender::Type::PCF8574:
+            return "PCF8574";
+        case Extender::Type::MCP23017:
+            return "MCP23017";
+        default:
+            return "None";
+        }
+    }
+
+    static const char *extDevTypeName_(uint8_t dev)
+    {
+        if (dev >= ActiveBoardProfile::EXT_DEVS_COUNT)
+            return "None";
+        return extTypeName_(ActiveBoardProfile::EXT_DEVS[dev].type);
+    }
+
+    static const char *portTypeName_(PortIO::PinType t)
+    {
+        switch (t)
+        {
+        case PortIO::PinType::System:
+            return "System";
+        case PortIO::PinType::Relay:
+            return "Relay";
+        case PortIO::PinType::Led:
+            return "Led";
+        case PortIO::PinType::Sensor:
+            return "Sensor";
+        case PortIO::PinType::Button:
+            return "Button";
+        case PortIO::PinType::DInput:
+            return "DInput";
+        case PortIO::PinType::Buzzer:
+            return "Buzzer";
+        case PortIO::PinType::Fan:
+            return "Fan";
+        default:
+            return "Unknown";
+        }
+    }
+
+    static const char *locationName_(PortIO::Location loc)
+    {
+        switch (loc)
+        {
+        case PortIO::Location::Cpu:
+            return "CPU";
+        case PortIO::Location::Unit1:
+            return "UNIT_1";
+        case PortIO::Location::Unit2:
+            return "UNIT_2";
+        case PortIO::Location::Unit3:
+            return "UNIT_3";
+        case PortIO::Location::Unit4:
+            return "UNIT_4";
+        case PortIO::Location::Unit5:
+            return "UNIT_5";
+        case PortIO::Location::Unit6:
+            return "UNIT_6";
+        case PortIO::Location::Unit7:
+            return "UNIT_7";
+        case PortIO::Location::Unit8:
+            return "UNIT_8";
+        case PortIO::Location::Unit9:
+            return "UNIT_9";
+        case PortIO::Location::Unit10:
+            return "UNIT_10";
+        default:
+            return "UNKNOWN";
+        }
+    }
+
+    String listPortsHtml_()
+    {
+        String items;
+        for (uint16_t i = 0; i < PortIO::PORT_COUNT; ++i)
+        {
+            const auto &p = ActiveBoardProfile::PORTS[i];
+            if (p.caps == Cap::None)
+                continue;
+            if (p.backend == PortIO::Backend::Extender)
+            {
+                if (!_ext)
+                    continue;
+                const uint8_t dev = p.u.ext.dev;
+                const auto *devs = _ext->devs();
+                if (!devs || dev >= _ext->devCount())
+                    continue;
+                if (devs[dev].type != Extender::Type::MCP23017)
+                    continue;
+                if (!_ext->isPresent(dev))
+                    continue;
+            }
+
+            items += "<tr><td class=\"right\"><strong>";
+            items += String(i);
+            items += "</strong></td><td><strong>";
+            items += (p.backend == PortIO::Backend::Extender) ? "Extender" : "Esp32";
+            items += "</strong></td><td><strong>";
+            items += locationName_(p.location);
+            items += "</strong></td><td><strong>";
+            items += portTypeName_(p.type);
+            items += "</strong></td><td><strong>";
+            items += p.allow_control ? "yes" : "no";
+            items += "</strong></td><td class=\"right\"><strong>";
+
+            if (p.backend == PortIO::Backend::Extender)
+            {
+                items += String(p.u.ext.dev);
+                items += "</strong></td><td class=\"right\"><strong>";
+                items += String(p.u.ext.pin);
+                items += "</strong></td><td><strong>";
+                items += extDevTypeName_(p.u.ext.dev);
+            }
+            else
+            {
+                items += "--</strong></td><td class=\"right\"><strong>";
+                items += String(p.u.esp.gpio);
+                items += "</strong></td><td><strong>CPU";
+            }
+            items += "</strong></td></tr>";
+        }
+        if (items.length() == 0)
+            items = "<tr><td colspan=\"8\" style=\"color:#94a3b8\"><strong>Нет портов</strong></td></tr>";
         return items;
     }
 
@@ -158,7 +336,7 @@ private:
             if (!isAllowedExt_(path))
             {
                 _upload_ok = false;
-                _upload_error = "Недопустимое расширение файла";
+                _upload_error = "РќРµРґРѕРїСѓСЃС‚РёРјРѕРµ СЂР°СЃС€РёСЂРµРЅРёРµ С„Р°Р№Р»Р°";
                 return;
             }
             _upload_size = 0;
@@ -170,7 +348,7 @@ private:
         if (_max_upload > 0 && _upload_size > _max_upload)
         {
             _upload_ok = false;
-            _upload_error = "Файл слишком большой";
+            _upload_error = "Р¤Р°Р№Р» СЃР»РёС€РєРѕРј Р±РѕР»СЊС€РѕР№";
             if (_upload)
                 _upload.close();
             return;
@@ -190,7 +368,7 @@ private:
                 return;
 #if !defined(ESP32)
             _ota_ok = false;
-            _ota_error = "OTA не поддерживается";
+            _ota_error = "OTA РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ";
             return;
 #else
             _ota_ok = true;
@@ -213,7 +391,7 @@ private:
         if (_max_upload > 0 && _ota_size > _max_upload)
         {
             _ota_ok = false;
-            _ota_error = "Слишком большой файл прошивки";
+            _ota_error = "РЎР»РёС€РєРѕРј Р±РѕР»СЊС€РѕР№ С„Р°Р№Р» РїСЂРѕС€РёРІРєРё";
             Update.abort();
             return;
         }
@@ -238,9 +416,9 @@ private:
     void handleUploadDone_(AsyncWebServerRequest *request)
     {
         if (!_upload_ok)
-            _last_status = _upload_error.length() ? _upload_error : "Загрузка не удалась";
+            _last_status = _upload_error.length() ? _upload_error : "Р—Р°РіСЂСѓР·РєР° РЅРµ СѓРґР°Р»Р°СЃСЊ";
         else
-            _last_status = "Загрузка завершена";
+            _last_status = "Р—Р°РіСЂСѓР·РєР° Р·Р°РІРµСЂС€РµРЅР°";
         if (_log && _log->ready())
         {
             const String name = _upload_name.length() ? _upload_name : String("-");
@@ -257,9 +435,9 @@ private:
     void handleOtaDone_(AsyncWebServerRequest *request)
     {
         if (!_ota_ok)
-            _last_status = _ota_error.length() ? _ota_error : "Обновление прошивки не удалось";
+            _last_status = _ota_error.length() ? _ota_error : "РћР±РЅРѕРІР»РµРЅРёРµ РїСЂРѕС€РёРІРєРё РЅРµ СѓРґР°Р»РѕСЃСЊ";
         else
-            _last_status = "Прошивка обновлена. Перезагрузка...";
+            _last_status = "РџСЂРѕС€РёРІРєР° РѕР±РЅРѕРІР»РµРЅР°. РџРµСЂРµР·Р°РіСЂСѓР·РєР°...";
         if (_log && _log->ready())
         {
             const String name = _ota_name.length() ? _ota_name : String("-");
@@ -345,15 +523,15 @@ private:
         }
 
         if (!changed)
-            _wifi_status = "Нет изменений";
+            _wifi_status = "РќРµС‚ РёР·РјРµРЅРµРЅРёР№";
         else if (!wifi_ok && !save_ok)
-            _wifi_status = "Не удалось применить Wi-Fi и сохранить конфигурацию";
+            _wifi_status = "РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРјРµРЅРёС‚СЊ Wi-Fi Рё СЃРѕС…СЂР°РЅРёС‚СЊ РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ";
         else if (!wifi_ok)
-            _wifi_status = "Не удалось применить Wi-Fi";
+            _wifi_status = "РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРјРµРЅРёС‚СЊ Wi-Fi";
         else if (!save_ok)
-            _wifi_status = "Wi-Fi применен, но сохранить конфигурацию не удалось";
+            _wifi_status = "Wi-Fi РїСЂРёРјРµРЅРµРЅ, РЅРѕ СЃРѕС…СЂР°РЅРёС‚СЊ РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ РЅРµ СѓРґР°Р»РѕСЃСЊ";
         else
-            _wifi_status = "Wi-Fi обновлен";
+            _wifi_status = "Wi-Fi РѕР±РЅРѕРІР»РµРЅ";
 
         if (_log && _log->ready())
         {
@@ -385,7 +563,7 @@ private:
         {
             if (_log && _log->ready())
                 _log->warn(F("WEB"), F("Download missing %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
-            request->send(404, "text/plain", "Файл не найден");
+            request->send(404, "text/plain", "Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ");
             return;
         }
         if (_log && _log->ready())
@@ -399,7 +577,7 @@ private:
             return;
         if (!request->hasParam("path"))
         {
-            request->send(400, "text/plain", "Не указан путь");
+            request->send(400, "text/plain", "РќРµ СѓРєР°Р·Р°РЅ РїСѓС‚СЊ");
             return;
         }
         String path = request->getParam("path")->value();
@@ -411,17 +589,17 @@ private:
         {
             if (_log && _log->ready())
                 _log->warn(F("WEB"), F("Delete missing %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
-            request->send(404, "text/plain", "Файл не найден");
+            request->send(404, "text/plain", "Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ");
             return;
         }
         if (!LittleFS.remove(path))
         {
             if (_log && _log->ready())
                 _log->warn(F("WEB"), F("Delete failed %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
-            request->send(500, "text/plain", "Не удалось удалить файл");
+            request->send(500, "text/plain", "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ С„Р°Р№Р»");
             return;
         }
-        request->redirect("/");
+        request->redirect("/manage");
     }
 
     void handleStatus_(AsyncWebServerRequest *request)
@@ -432,7 +610,7 @@ private:
             _log->info(F("WEB"), F("GET /status (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceStatusHtml);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        page.replace("%STATUS%", _last_status.length() ? _last_status : "Нет данных");
+        page.replace("%STATUS%", _last_status.length() ? _last_status : "РќРµС‚ РґР°РЅРЅС‹С…");
         request->send(200, "text/html", page);
     }
 
@@ -484,7 +662,7 @@ private:
     {
         if (_wifi.ap())
             return "";
-        return String(" | STA: ") + wifiStaStatus_();
+        return String(" | STA: <strong>") + wifiStaStatus_() + "</strong>";
     }
 
     String wifiStaStatus_() const
@@ -492,21 +670,21 @@ private:
         switch (WiFi.status())
         {
         case WL_IDLE_STATUS:
-            return "ожидание";
+            return "Ожидание";
         case WL_NO_SSID_AVAIL:
             return "SSID не найден";
         case WL_SCAN_COMPLETED:
-            return "сканирование завершено";
+            return "Сканирование завершено";
         case WL_CONNECTED:
-            return "подключено";
+            return "Подключено";
         case WL_CONNECT_FAILED:
-            return "не удалось подключиться";
+            return "Ошибка подключения";
         case WL_CONNECTION_LOST:
-            return "соединение потеряно";
+            return "Связь потеряна";
         case WL_DISCONNECTED:
-            return "отключено";
+            return "Отключено";
         default:
-            return "неизвестно";
+            return "Неизвестно";
         }
     }
 
@@ -542,10 +720,60 @@ private:
         return false;
     }
 
+    float boardTemp_() const
+    {
+        return _plc ? _plc->boardTemp() : 0.0f;
+    }
+
+    float cpuTemp_() const
+    {
+        return _plc ? _plc->cpuTemp() : 0.0f;
+    }
+
+    String formatTemp_(float temp_c) const
+    {
+        char buf[16] = {};
+        dtostrf(temp_c, 0, 2, buf);
+        return String(buf) + " C";
+    }
+
+    String rtcTimeStr_() const
+    {
+        if (!_rtc)
+            return String("n/a");
+        Ds3231Mz::DateTime dt{};
+        if (!_rtc->Time(dt))
+            return String("n/a");
+        char buf[24] = {};
+        snprintf(buf, sizeof(buf), "%04u-%02u-%02u %02u:%02u:%02u",
+                 (unsigned)dt.year, (unsigned)dt.month, (unsigned)dt.day,
+                 (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
+        return String(buf);
+    }
+
+    float rtcTemp_() const
+    {
+        if (!_rtc)
+            return 0.0f;
+        float temp_c = 0.0f;
+        if (!_rtc->readTemp(temp_c))
+            return 0.0f;
+        return temp_c;
+    }
+
+    const char *fanStatusStr_() const
+    {
+        if (!_plc)
+            return "n/a";
+        return _plc->fanStatus() ? "Вкл" : "Выкл";
+    }
+
     AsyncWebServer &_server;
     WifiManager &_wifi;
     Configs &_configs;
     ConfigsManagerIface *_configs_manager = nullptr;
+    PlcControl *_plc = nullptr;
+    RTC *_rtc = nullptr;
     File _upload;
     bool _upload_ok = true;
     size_t _upload_size = 0;
@@ -563,5 +791,11 @@ private:
     String _auth_user;
     String _auth_pass;
     const CliConsole *_cli_auth = nullptr;
+    Extender *_ext = nullptr;
     Logger *_log = nullptr;
 };
+
+
+
+
+

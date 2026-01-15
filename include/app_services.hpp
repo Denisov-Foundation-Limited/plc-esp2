@@ -118,12 +118,12 @@ struct AppServices
           telegram_bot(telegram),
           telegram_menu(plc, wifi, rtc, telegram_bot, configs),
           web(ActiveBoardProfile::WEB_PORT),
-          fw_upgrade(web, console, wifi, configs, logs),
+          fw_upgrade(web, console, wifi, configs, plc, rtc, logs, ext),
           network(logs, wifi, telegram, telegram_bot, telegram_menu, fw_upgrade, web, telegram_wifi_client),
           tm(),
-          task_binder(tm, wifi, plc, telegram),
+          task_binder(tm, wifi, plc, telegram, ext),
           ftest(logs, portio, ow, ibutton, ds18b20, i2c, tm, task_binder),
-          console(plc, wifi, rtc, ftest, i2c, telegram, telegram_menu, configs),
+          console(plc, wifi, rtc, ftest, i2c, telegram, telegram_menu, configs, ext),
           configs(),
           configs_manager(configs, wifi, telegram, network, console, telegram_menu)
     {

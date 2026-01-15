@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -29,9 +29,9 @@ static const char kWebInterfaceStatusHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       <h2>Статус</h2>
-      <p>Плата: %BOARD_NAME%</p>
-      <pre>%STATUS%</pre>
-      <p><a href="/">Назад</a></p>
+      <p>Плата: <strong>%BOARD_NAME%</strong></p>
+      <pre><strong>%STATUS%</strong></pre>
+      <p><a href="/manage">Назад</a> | <a href="/ports">Порты</a></p>
     </div>
   </div>
 </body>

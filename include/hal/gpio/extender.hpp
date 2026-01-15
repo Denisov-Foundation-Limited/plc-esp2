@@ -45,6 +45,12 @@ public:
         initState_();
     }
 
+    bool begin();
+    void task();
+    void rescan();
+    bool isPresent(uint8_t dev) const;
+    uint32_t rescanIntervalMs() const { return _rescan_interval_ms; }
+
     bool isConfigured(uint8_t dev) const
     {
         if (dev >= _dev_count)
@@ -70,10 +76,15 @@ private:
     mutable Pcf8574 *_pcf = nullptr;
     mutable bool *_pcf_inited = nullptr;
     mutable bool *_dev_failed = nullptr;
+    mutable bool *_present = nullptr;
+    mutable bool *_warned_missing = nullptr;
+    uint32_t _rescan_interval_ms = 5000;
 
     void initState_();
     bool ensureDev_(uint8_t dev) const;
     Mcp23017 *mcp_(uint8_t dev) const;
     Pcf8574 *pcf_(uint8_t dev) const;
     void logInitFailOnce_(uint8_t dev, const __FlashStringHelper *msg) const;
+    void logPresentChange_(uint8_t dev, bool present) const;
+    void setPresent_(uint8_t dev, bool present) const;
 };

@@ -18,6 +18,7 @@
 
 #if defined(ESP32)
 #include "mbedtls/sha256.h"
+#include <HTTPClient.h>
 #endif
 
 #include "core/rtc.hpp"
@@ -32,6 +33,8 @@
 #include "core/cli/modules/cli_tgbot.hpp"
 #include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
+#include "hal/gpio/extender.hpp"
+#include "hal/gpio/portio.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
 
@@ -49,7 +52,7 @@ public:
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c,
-               TelegramClient &tgbot, TelegramMenu &tgbot_menu, Configs &configs)
+               TelegramClient &tgbot, TelegramMenu &tgbot_menu, Configs &configs, Extender &ext)
         : _plc(plc),
           _wifi(wifi),
           _rtc(rtc),
@@ -58,6 +61,7 @@ public:
           _tgbot(tgbot),
           _tgbot_menu(tgbot_menu),
           _configs(configs),
+          _ext(ext),
           _wifi_cli(*this),
           _tgbot_cli(*this),
           _enable(*this, _wifi_cli),
@@ -175,6 +179,47 @@ public:
         printKeyValue_(F("name"), String(ActiveBoardProfile::UI_NAME), key_w);
     }
 
+    void cmdShowPort_(uint8_t id)
+    {
+        if (id >= PortIO::PORT_COUNT)
+        {
+            _io->println(F("Invalid port id"));
+            return;
+        }
+        const auto &p = ActiveBoardProfile::PORTS[id];
+        if (p.caps == Cap::None)
+        {
+            _io->println(F("Port not used"));
+            return;
+        }
+        printPortsHeader_();
+        printPortRow_(id, p);
+    }
+
+    void cmdShowPorts_()
+    {
+        _io->println(F("Ports:"));
+        printPortsHeader_();
+        const auto *devs = _ext.devs();
+        for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+        {
+            const auto &p = ActiveBoardProfile::PORTS[i];
+            if (p.caps == Cap::None)
+                continue;
+            if (p.backend == PortIO::Backend::Extender)
+            {
+                const uint8_t dev = p.u.ext.dev;
+                if (!devs || dev >= _ext.devCount())
+                    continue;
+                if (devs[dev].type != Extender::Type::MCP23017)
+                    continue;
+                if (!_ext.isPresent(dev))
+                    continue;
+            }
+            printPortRow_(i, p);
+        }
+    }
+
     void cmdShowWifi_()
     {
         _io->println(F("Wi-Fi configurations:"));
@@ -231,6 +276,7 @@ public:
         if (space < 0)
         {
             _io->println(F("Usage: copy tftp://<ip>/firmware.bin firmware"));
+            _io->println(F("       copy http://<ip>/firmware.bin firmware"));
             return;
         }
         String url = args.substring(0, space);
@@ -241,9 +287,66 @@ public:
             _io->println(F("Only firmware destination supported"));
             return;
         }
+        if (url.startsWith("http://"))
+        {
+            const int slash = url.lastIndexOf('/');
+            if (slash < 0 || url.substring(slash + 1) != "firmware.bin")
+            {
+                _io->println(F("Only firmware.bin supported"));
+                return;
+            }
+#if !defined(ESP32)
+            _io->println(F("OTA not supported"));
+            return;
+#else
+            _io->println(F("HTTP download started"));
+            HTTPClient http;
+            if (!http.begin(url))
+            {
+                _io->println(F("HTTP begin failed"));
+                return;
+            }
+            const int code = http.GET();
+            if (code != HTTP_CODE_OK)
+            {
+                _io->print(F("HTTP failed: "));
+                _io->println(code);
+                http.end();
+                return;
+            }
+            const int len = http.getSize();
+            if (!Update.begin(len > 0 ? (size_t)len : UPDATE_SIZE_UNKNOWN))
+            {
+                _io->println(Update.errorString());
+                http.end();
+                return;
+            }
+            WiFiClient *stream = http.getStreamPtr();
+            const size_t written = Update.writeStream(*stream);
+            if (len > 0 && written != (size_t)len)
+            {
+                Update.abort();
+                http.end();
+                _io->println(F("HTTP read incomplete"));
+                return;
+            }
+            http.end();
+            if (!Update.end(true))
+            {
+                _io->print(F("Update failed: "));
+                _io->println(Update.errorString());
+                return;
+            }
+            _io->println(F("Update OK, rebooting"));
+            _io->flush();
+            delay(500);
+            ESP.restart();
+#endif
+            return;
+        }
         if (!url.startsWith("tftp://"))
         {
-            _io->println(F("Only tftp:// URLs supported"));
+            _io->println(F("Only tftp:// or http:// URLs supported"));
             return;
         }
         String target = url.substring(strlen("tftp://"));
@@ -379,6 +482,17 @@ public:
         _io->println(F("ftest started"));
     }
 
+    void cmdExtScan_()
+    {
+        _ext.rescan();
+        printExtList_();
+    }
+
+    void cmdExtList_()
+    {
+        printExtList_();
+    }
+
     void cmdWifiRestart_()
     {
         if (_wifi.restart())
@@ -497,6 +611,8 @@ private:
             _io->println(F("  show i2c        - I2C device list"));
             _io->println(F("  show telegram   - Telegram settings"));
             _io->println(F("  show config     - configuration file contents"));
+            _io->println(F("  show port <id>  - port details"));
+            _io->println(F("  show ports      - list ports"));
             return;
         }
         if (t == "wifi")
@@ -541,13 +657,18 @@ private:
             "show i2c",
             "show telegram",
             "show config",
+            "show ext",
+            "show port <id>",
+            "show ports",
             "ftest",
             "copy tftp://<ip>/firmware.bin firmware",
+            "copy http://<ip>/firmware.bin firmware",
             "wifi restart",
             "reload",
             "reset",
             "write",
             "erase",
+            "ext scan",
             "configure terminal",
             "conf t",
             "disable",
@@ -837,7 +958,28 @@ private:
     void handleShow_(String what)
     {
         what.trim();
-        if (eq_(what, "plc"))
+        if (startsWith_(what, "port "))
+        {
+            String tail = what.substring(5);
+            tail.trim();
+            if (tail.length() == 0)
+            {
+                _io->println(F("Usage: show port <id>"));
+            }
+            else
+            {
+                const int id = tail.toInt();
+                if (id < 0 || id >= PortIO::PORT_COUNT)
+                    _io->println(F("Invalid port id"));
+                else
+                    cmdShowPort_((uint8_t)id);
+            }
+        }
+        else if (eq_(what, "ports"))
+            cmdShowPorts_();
+        else if (eq_(what, "ext"))
+            cmdExtList_();
+        else if (eq_(what, "plc"))
             cmdShowPlc_();
         else if (eq_(what, "board"))
             cmdShowBoard_();
@@ -1207,6 +1349,7 @@ private:
     TelegramClient &_tgbot;
     TelegramMenu &_tgbot_menu;
     Configs &_configs;
+    Extender &_ext;
     ConfigsManagerIface *_configs_manager = nullptr;
 
     Stream *_io = nullptr;
@@ -1232,6 +1375,184 @@ private:
     CLIEnable _enable;
     CLIConfig _config;
     uint32_t _tgbot_last_update_id = 0;
+
+    void printExtList_()
+    {
+        const auto *devs = _ext.devs();
+        if (!devs)
+        {
+            _io->println(F("Extenders: none"));
+            return;
+        }
+        _io->println(F("Extenders:"));
+        _io->println(F("  ID  Bus  Addr  Type      Present"));
+        _io->println(F("  --  ---  ----  --------  -------"));
+        for (uint8_t i = 0; i < _ext.devCount(); ++i)
+        {
+            const auto &d = devs[i];
+            if (d.i2c_addr == 0 || d.type == Extender::Type::None)
+                continue;
+            _io->print(F("  "));
+            printPad_(i, 2);
+            _io->print(F("  "));
+            printPad_(d.bus_num, 3);
+            _io->print(F("  "));
+            char addr_buf[8] = {};
+            snprintf(addr_buf, sizeof(addr_buf), "0x%02X", d.i2c_addr);
+            printPadStr_(addr_buf, 4);
+            _io->print(F("  "));
+            printPadStr_(extTypeName_(d.type), 8);
+            _io->print(F("  "));
+            _io->println(_ext.isPresent(i) ? F("yes") : F("no"));
+        }
+    }
+
+    static const __FlashStringHelper *extTypeName_(Extender::Type t)
+    {
+        switch (t)
+        {
+        case Extender::Type::PCF8574:
+            return F("PCF8574");
+        case Extender::Type::MCP23017:
+            return F("MCP23017");
+        default:
+            return F("None");
+        }
+    }
+
+    const __FlashStringHelper *extDevTypeName_(uint8_t dev) const
+    {
+        const auto *devs = _ext.devs();
+        if (!devs || dev >= _ext.devCount())
+            return F("None");
+        return extTypeName_(devs[dev].type);
+    }
+
+    static const __FlashStringHelper *portTypeName_(PortIO::PinType t)
+    {
+        switch (t)
+        {
+        case PortIO::PinType::System:
+            return F("System");
+        case PortIO::PinType::Relay:
+            return F("Relay");
+        case PortIO::PinType::Led:
+            return F("Led");
+        case PortIO::PinType::Sensor:
+            return F("Sensor");
+        case PortIO::PinType::Button:
+            return F("Button");
+        case PortIO::PinType::DInput:
+            return F("DInput");
+        case PortIO::PinType::Buzzer:
+            return F("Buzzer");
+        case PortIO::PinType::Fan:
+            return F("Fan");
+        default:
+            return F("Unknown");
+        }
+    }
+
+    static const __FlashStringHelper *locationName_(PortIO::Location loc)
+    {
+        switch (loc)
+        {
+        case PortIO::Location::Cpu:
+            return F("CPU");
+        case PortIO::Location::Unit1:
+            return F("UNIT_1");
+        case PortIO::Location::Unit2:
+            return F("UNIT_2");
+        case PortIO::Location::Unit3:
+            return F("UNIT_3");
+        case PortIO::Location::Unit4:
+            return F("UNIT_4");
+        case PortIO::Location::Unit5:
+            return F("UNIT_5");
+        case PortIO::Location::Unit6:
+            return F("UNIT_6");
+        case PortIO::Location::Unit7:
+            return F("UNIT_7");
+        case PortIO::Location::Unit8:
+            return F("UNIT_8");
+        case PortIO::Location::Unit9:
+            return F("UNIT_9");
+        case PortIO::Location::Unit10:
+            return F("UNIT_10");
+        default:
+            return F("UNKNOWN");
+        }
+    }
+
+    void printPortsHeader_()
+    {
+        _io->println(F("  ID  Backend   Loc      Type     Ctrl Dev Pin  HW"));
+        _io->println(F("  --  --------  -------  -------  ---- --- ---  --------"));
+    }
+
+    void printPortRow_(uint8_t id, const PortIO::PortDesc &p)
+    {
+        _io->print(F("  "));
+        printPad_(id, 2);
+        _io->print(F("  "));
+        printPadStr_(p.backend == PortIO::Backend::Extender ? F("Extender") : F("Esp32"), 8);
+        _io->print(F("  "));
+        printPadStr_(locationName_(p.location), 7);
+        _io->print(F("  "));
+        printPadStr_(portTypeName_(p.type), 7);
+        _io->print(F("  "));
+        printPadStr_(p.allow_control ? F("yes") : F("no"), 4);
+        _io->print(F(" "));
+        if (p.backend == PortIO::Backend::Extender)
+        {
+            printPad_(p.u.ext.dev, 3);
+            _io->print(F(" "));
+            printPad_(p.u.ext.pin, 3);
+            _io->print(F("  "));
+            printPadStr_(extDevTypeName_(p.u.ext.dev), 8);
+            _io->println();
+        }
+        else
+        {
+            printPadStr_(F("--"), 3);
+            _io->print(F(" "));
+            printPad_(p.u.esp.gpio, 3);
+            _io->print(F("  "));
+            printPadStr_(F("CPU"), 8);
+            _io->println();
+        }
+    }
+
+    void printPad_(uint8_t value, uint8_t width)
+    {
+        char buf[6] = {};
+        snprintf(buf, sizeof(buf), "%u", (unsigned)value);
+        printPadStr_(buf, width);
+    }
+
+    void printPadStr_(const __FlashStringHelper *s, uint8_t width)
+    {
+        if (!_io)
+            return;
+        char buf[16] = {};
+        strncpy_P(buf, reinterpret_cast<const char *>(s), sizeof(buf) - 1);
+        printPadStr_(buf, width);
+    }
+
+    void printPadStr_(const char *s, uint8_t width)
+    {
+        if (!_io)
+            return;
+        size_t len = strlen(s);
+        if (len >= width)
+        {
+            _io->print(s);
+            return;
+        }
+        for (size_t i = 0; i < width - len; ++i)
+            _io->print(' ');
+        _io->print(s);
+    }
 
     template <typename>
     friend class CLIEnableT;

@@ -23,7 +23,7 @@
 class PortIO
 {
 public:
-    static constexpr uint8_t PORT_COUNT = 43;
+    static constexpr uint8_t PORT_COUNT = 171;
     using PortId = uint8_t;
 
     enum class PinType : uint8_t
@@ -52,6 +52,21 @@ public:
         Esp32,
         Extender
     };
+    enum class Location : uint8_t
+    {
+        Cpu = 0,
+        Unit1,
+        Unit2,
+        Unit3,
+        Unit4,
+        Unit5,
+        Unit6,
+        Unit7,
+        Unit8,
+        Unit9,
+        Unit10,
+        Unknown
+    };
 
     struct PwmCfg
     {
@@ -78,6 +93,7 @@ public:
         Cap caps;
         PortMode mode;
         PinType type;
+        Location location = Location::Cpu;
         bool allow_control;
         bool initial_level;
 
@@ -119,6 +135,9 @@ public:
             _err = Error::ExtenderMissing;
             return false;
         }
+
+        if (_ext)
+            _ext->begin();
 
         for (uint8_t i = 0; i < PORT_COUNT; ++i)
         {

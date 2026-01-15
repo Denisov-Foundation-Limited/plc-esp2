@@ -11,6 +11,8 @@
 
 #include "hal/gpio/extender.hpp"
 
+#include <vector>
+
 #include "hal/bus/i2c.hpp"
 #include "utils/logger.hpp"
 
@@ -23,11 +25,15 @@ void Extender::initState_()
     _pcf = new Pcf8574[_dev_count];
     _pcf_inited = new bool[_dev_count];
     _dev_failed = new bool[_dev_count];
+    _present = new bool[_dev_count];
+    _warned_missing = new bool[_dev_count];
     for (uint8_t i = 0; i < _dev_count; ++i)
     {
         _mcp_inited[i] = false;
         _pcf_inited[i] = false;
         _dev_failed[i] = false;
+        _present[i] = false;
+        _warned_missing[i] = false;
     }
 }
 
@@ -55,11 +61,120 @@ void Extender::logInitFailOnce_(uint8_t dev, const __FlashStringHelper *msg) con
     _log->warn(F("EXT"), msg, dev);
 }
 
+void Extender::logPresentChange_(uint8_t dev, bool present) const
+{
+    if (!_log)
+        return;
+    if (present)
+        _log->info(F("EXT"), F("Extender %u detected"), dev);
+    else
+        _log->warn(F("EXT"), F("Extender %u missing"), dev);
+}
+
+void Extender::setPresent_(uint8_t dev, bool present) const
+{
+    if (!_present)
+        return;
+    const bool prev = _present[dev];
+    _present[dev] = present;
+    if (prev == present)
+        return;
+    logPresentChange_(dev, present);
+    if (!present)
+    {
+        if (_mcp_inited)
+            _mcp_inited[dev] = false;
+        if (_pcf_inited)
+            _pcf_inited[dev] = false;
+        if (_dev_failed)
+            _dev_failed[dev] = false;
+        if (_warned_missing)
+            _warned_missing[dev] = false;
+    }
+    else
+    {
+        if (_dev_failed)
+            _dev_failed[dev] = false;
+    }
+}
+
+bool Extender::begin()
+{
+    rescan();
+    return true;
+}
+
+void Extender::task()
+{
+    rescan();
+}
+
+void Extender::rescan()
+{
+    if (!_i2c || !_present)
+        return;
+
+    bool bus_used[3] = {false, false, false};
+    for (uint8_t i = 0; i < _dev_count; ++i)
+    {
+        if (!isConfigured(i))
+            continue;
+        const uint8_t bus = _devs[i].bus_num;
+        if (bus < 3)
+            bus_used[bus] = true;
+    }
+
+    std::vector<uint8_t> addrs[3];
+    bool bus_ok[3] = {true, true, true};
+    for (uint8_t b = 0; b < 3; ++b)
+    {
+        if (!bus_used[b])
+            continue;
+        if (!_i2c->scanDevices(b, addrs[b]))
+            bus_ok[b] = false;
+    }
+
+    for (uint8_t i = 0; i < _dev_count; ++i)
+    {
+        if (!isConfigured(i))
+        {
+            setPresent_(i, false);
+            continue;
+        }
+        const uint8_t bus = _devs[i].bus_num;
+        const uint8_t addr = _devs[i].i2c_addr;
+        if (bus >= 3 || !bus_ok[bus])
+        {
+            setPresent_(i, false);
+            continue;
+        }
+        bool found = false;
+        for (size_t a = 0; a < addrs[bus].size(); ++a)
+        {
+            if (addrs[bus][a] == addr)
+            {
+                found = true;
+                break;
+            }
+        }
+        setPresent_(i, found);
+    }
+}
+
+bool Extender::isPresent(uint8_t dev) const
+{
+    if (!_present || dev >= _dev_count)
+        return false;
+    return _present[dev];
+}
+
 bool Extender::ensureDev_(uint8_t dev) const
 {
     if (!isConfigured(dev))
         return false;
     if (_dev_failed && _dev_failed[dev])
+        return false;
+    if (_present && !_present[dev])
         return false;
     if (_mcp_inited && _mcp_inited[dev])
         return true;
@@ -82,6 +197,8 @@ bool Extender::ensureDev_(uint8_t dev) const
     if (wire->endTransmission() != 0)
     {
         logInitFailOnce_(dev, F("I2C device not responding for extender %u"));
+        if (_present)
+            setPresent_(dev, false);
         return false;
     }
     if (cfg.type == Type::MCP23017)

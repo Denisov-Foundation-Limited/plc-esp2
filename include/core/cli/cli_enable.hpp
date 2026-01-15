@@ -43,14 +43,19 @@ public:
             _c._io->println(F("    show i2c        - I2C device list"));
             _c._io->println(F("    show telegram   - Telegram settings"));
             _c._io->println(F("    show config     - configuration file contents"));
+            _c._io->println(F("    show port <id>  - port details"));
+            _c._io->println(F("    show ports      - list ports"));
             _c._io->println(F("  Actions:"));
             _c._io->println(F("    ftest           - start functional test task"));
             _c._io->println(F("    copy tftp://<ip>/firmware.bin firmware - update firmware"));
+            _c._io->println(F("    copy http://<ip>/firmware.bin firmware - update firmware"));
             _wifi.printHelpEnable();
             _c._io->println(F("    reload          - restart controller"));
             _c._io->println(F("    reset           - restart controller"));
             _c._io->println(F("    write           - save configuration"));
             _c._io->println(F("    erase           - delete configuration"));
+            _c._io->println(F("    ext scan        - rescan extenders"));
+            _c._io->println(F("    show ext        - list extenders"));
             _c._io->println(F("  Config:"));
             _c._io->println(F("    configure terminal | conf t - enter config mode"));
             _c._io->println(F("  Session:"));
@@ -99,6 +104,18 @@ public:
         if (eq_(cmd, "write"))
         {
             _c.cmdWriteConfig_();
+            _c.printPrompt_();
+            return;
+        }
+        if (eq_(cmd, "ext scan"))
+        {
+            _c.cmdExtScan_();
+            _c.printPrompt_();
+            return;
+        }
+        if (eq_(cmd, "show ext"))
+        {
+            _c.cmdExtList_();
             _c.printPrompt_();
             return;
         }

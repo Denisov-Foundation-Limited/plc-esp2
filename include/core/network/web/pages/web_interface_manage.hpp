@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -11,13 +11,13 @@
 
 #pragma once
 
-static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
+static const char kWebInterfaceManageHtml[] PROGMEM = R"HTML(
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FCPLC</title>
+  <title>Прошивка и файлы</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -79,52 +79,20 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
     a { color: #7dd3fc; text-decoration: none; }
     .del { color: #fca5a5; }
     .right { text-align: right; }
+    .nav { margin-bottom: 12px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>FCPLC</h1>
-      <p class="status">Плата: %BOARD_NAME%</p>
-      <p>Веб-интерфейс контроллера FCPLC</p>
-      <div class="section">
-        <h2>Wi-Fi</h2>
-        <p class="status">Состояние: %WIFI_MODE% | SSID: %WIFI_CUR_SSID% | IP: %WIFI_IP%%WIFI_STA_SEG%</p>
-        <form method="POST" action="/wifi">
-          <div class="grid">
-            <div>
-              <label>Режим</label>
-              <select name="mode">
-                <option value="sta" %WIFI_STA_SEL%>STA</option>
-                <option value="ap" %WIFI_AP_SEL%>AP</option>
-              </select>
-            </div>
-            <div>
-              <label>SSID</label>
-              <input type="text" name="ssid" value="%WIFI_SSID%" placeholder="SSID STA">
-            </div>
-            <div>
-              <label>Пароль</label>
-              <input type="password" name="password" placeholder="Оставьте пустым, если не меняете">
-            </div>
-            <div>
-              <label>AP SSID</label>
-              <input type="text" name="ap_ssid" value="%WIFI_AP_SSID%" placeholder="SSID AP">
-            </div>
-            <div>
-              <label>Пароль AP</label>
-              <input type="password" name="ap_password" placeholder="Оставьте пустым, если не меняете">
-            </div>
-          </div>
-          <div class="row" style="margin-top:10px;">
-            <button type="submit">Сохранить Wi-Fi</button>
-            <span class="status">%WIFI_STATUS%</span>
-          </div>
-        </form>
+      <div class="nav">
+        <a href="/">FCPLC и Wi-Fi</a> | <a href="/ports">Порты</a>
       </div>
+      <h1>Прошивка и файлы</h1>
+      <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
       <div class="section">
         <h2>Прошивка</h2>
-        <p class="status">OTA обновление (.bin)</p>
+        <p class="status">OTA загрузка (.bin)</p>
         <form method="POST" action="/ota" enctype="multipart/form-data">
           <div class="row">
             <input type="file" name="firmware">
@@ -149,7 +117,7 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
             <tr>
               <th>Имя</th>
               <th class="right">Размер</th>
-              <th class="right">Действия</th>
+              <th class="right">Удалить</th>
             </tr>
           </thead>
           <tbody>
