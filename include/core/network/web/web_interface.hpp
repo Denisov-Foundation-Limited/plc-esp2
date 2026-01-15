@@ -13,6 +13,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <vector>
 #include <LittleFS.h>
 #include <WiFi.h>
 
@@ -28,26 +29,37 @@
 #include "core/network/web/pages/web_interface_page.hpp"
 #include "core/network/web/pages/web_interface_manage.hpp"
 #include "core/network/web/pages/web_interface_ports.hpp"
+#include "core/network/web/pages/web_interface_buses.hpp"
+#include "core/network/web/pages/web_interface_telegram.hpp"
 #include "core/network/web/pages/web_interface_status.hpp"
 #include "core/rtc.hpp"
 #include "plc/plc_control.hpp"
+#include "core/network/telegram/telegram.hpp"
+#include "core/network/telegram/telegram_menu.hpp"
 #include "utils/logger.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "hal/gpio/extender.hpp"
+#include "hal/bus/i2c.hpp"
+#include "hal/bus/onewire.hpp"
 
 class WebInterface
 {
 public:
     WebInterface(AsyncWebServer &server, const CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
-                 RTC &rtc, Logger &logs, Extender &ext)
+                 RTC &rtc, TelegramClient &tgbot, TelegramMenu &tgbot_menu, Logger &logs, Extender &ext,
+                 I2CManager &i2c, OneWireManager &ow)
         : _server(server),
           _cli_auth(&cli),
           _wifi(wifi),
           _configs(configs),
           _plc(&plc),
           _rtc(&rtc),
+          _tgbot(&tgbot),
+          _tgbot_menu(&tgbot_menu),
           _ext(&ext),
+          _i2c(&i2c),
+          _ow(&ow),
           _log(&logs)
     {
     }
@@ -80,6 +92,9 @@ public:
         _server.on("/", HTTP_GET, [this](AsyncWebServerRequest *request) { handleIndex_(request); });
         _server.on("/manage", HTTP_GET, [this](AsyncWebServerRequest *request) { handleManage_(request); });
         _server.on("/ports", HTTP_GET, [this](AsyncWebServerRequest *request) { handlePorts_(request); });
+        _server.on("/buses", HTTP_GET, [this](AsyncWebServerRequest *request) { handleBuses_(request); });
+        _server.on("/telegram", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTelegram_(request); });
+        _server.on("/telegram", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTelegramSave_(request); });
         _server.on(
             "/upload", HTTP_POST,
             [this](AsyncWebServerRequest *request) { handleUploadDone_(request); },
@@ -153,6 +168,127 @@ private:
         page.replace("%PORTS%", listPortsHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         request->send(200, "text/html", page);
+    }
+
+    void handleBuses_(AsyncWebServerRequest *request)
+    {
+        if (!checkAuth_(request))
+            return;
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("GET /buses (ip=%s)"), requestIp_(request).c_str());
+        String page = FPSTR(kWebInterfaceBusesHtml);
+        page.replace("%I2C%", listI2cHtml_());
+        page.replace("%OW%", listOwHtml_());
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        request->send(200, "text/html", page);
+    }
+
+    void handleTelegram_(AsyncWebServerRequest *request)
+    {
+        if (!checkAuth_(request))
+            return;
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("GET /telegram (ip=%s)"), requestIp_(request).c_str());
+        String page = FPSTR(kWebInterfaceTelegramHtml);
+        page.replace("%TGBOT_TOKEN%", _tgbot ? _tgbot->token() : String(""));
+        page.replace("%TGBOT_CHAT_ID%", _tgbot ? String((long long)_tgbot->chatId()) : String("0"));
+        page.replace("%TGBOT_INSECURE_CHECKED%", _tgbot && _tgbot->insecure() ? "checked" : "");
+        page.replace("%TGBOT_CLIENT%", _tgbot ? _tgbot->clientKindName() : "none");
+        page.replace("%TGBOT_USE_PROXY_CHECKED%", _tgbot && _tgbot->useProxy() ? "checked" : "");
+        page.replace("%TGBOT_PROXY_HOST%", _tgbot ? _tgbot->proxyHost() : String(""));
+        page.replace("%TGBOT_PROXY_PORT%", _tgbot ? String((unsigned)_tgbot->proxyPort()) : String("0"));
+        page.replace("%TGBOT_PROXY_PATH%", _tgbot ? _tgbot->proxyPath() : String(""));
+        page.replace("%TGBOT_ALLOWED_USERS%", allowedUsersCsv_());
+        page.replace("%TGBOT_STATUS%", _tgbot_status);
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        request->send(200, "text/html", page);
+    }
+
+    void handleTelegramSave_(AsyncWebServerRequest *request)
+    {
+        if (!checkAuth_(request))
+            return;
+        bool changed = false;
+
+        if (_tgbot && request->hasParam("token", true))
+        {
+            String token = request->getParam("token", true)->value();
+            token.trim();
+            if (token != _tgbot->token())
+            {
+                _tgbot->setToken(token);
+                changed = true;
+            }
+        }
+        if (_tgbot && request->hasParam("chat_id", true))
+        {
+            String chat = request->getParam("chat_id", true)->value();
+            chat.trim();
+            if (chat.length() > 0)
+            {
+                int64_t chat_id = (int64_t)strtoll(chat.c_str(), nullptr, 10);
+                if (chat_id != _tgbot->chatId())
+                {
+                    _tgbot->setChatId(chat_id);
+                    changed = true;
+                }
+            }
+        }
+        if (_tgbot)
+        {
+            const bool insecure = request->hasParam("insecure", true);
+            if (insecure != _tgbot->insecure())
+            {
+                _tgbot->setInsecure(insecure);
+                changed = true;
+            }
+        }
+
+        if (_tgbot)
+        {
+            const bool use_proxy = request->hasParam("use_proxy", true);
+            String host = request->hasParam("proxy_host", true) ? request->getParam("proxy_host", true)->value() : "";
+            String port_str = request->hasParam("proxy_port", true) ? request->getParam("proxy_port", true)->value() : "0";
+            String path = request->hasParam("proxy_path", true) ? request->getParam("proxy_path", true)->value() : "";
+            host.trim();
+            path.trim();
+            const uint16_t port = (uint16_t)strtoul(port_str.c_str(), nullptr, 10);
+
+            if (use_proxy)
+            {
+                if (host != _tgbot->proxyHost() || port != _tgbot->proxyPort() || path != _tgbot->proxyPath() || !_tgbot->useProxy())
+                {
+                    _tgbot->setProxy(host, port, path);
+                    changed = true;
+                }
+            }
+            else if (_tgbot->useProxy())
+            {
+                _tgbot->clearProxy();
+                changed = true;
+            }
+        }
+
+        if (_tgbot_menu && request->hasParam("allowed_users", true))
+        {
+            String raw = request->getParam("allowed_users", true)->value();
+            std::vector<String> users = splitCsv_(raw);
+            _tgbot_menu->setAllowedUsers(users);
+            changed = true;
+        }
+
+        bool save_ok = true;
+        if (changed)
+            save_ok = saveWifiConfig_();
+
+        if (!changed)
+            _tgbot_status = "Нет изменений";
+        else if (!save_ok)
+            _tgbot_status = "Ошибка сохранения";
+        else
+            _tgbot_status = "Сохранено";
+
+        request->redirect("/telegram");
     }
 
     String listFilesHtml_()
@@ -264,6 +400,30 @@ private:
         }
     }
 
+    static const char *owBusName_(OneWireCfg::OwType t)
+    {
+        switch (t)
+        {
+        case OneWireCfg::OwType::iButton:
+            return "iButton";
+        case OneWireCfg::OwType::Temp:
+            return "Temp";
+        default:
+            return "Unknown";
+        }
+    }
+
+    static void owAddrToHex_(const uint8_t in[8], char out[17])
+    {
+        static const char kHex[] = "0123456789ABCDEF";
+        for (uint8_t i = 0; i < 8; ++i)
+        {
+            out[i * 2] = kHex[(in[i] >> 4) & 0x0F];
+            out[i * 2 + 1] = kHex[in[i] & 0x0F];
+        }
+        out[16] = '\0';
+    }
+
     String listPortsHtml_()
     {
         String items;
@@ -316,6 +476,71 @@ private:
         }
         if (items.length() == 0)
             items = "<tr><td colspan=\"8\" style=\"color:#94a3b8\"><strong>Нет портов</strong></td></tr>";
+        return items;
+    }
+
+    String listI2cHtml_()
+    {
+        if (!_i2c)
+            return "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>none</strong></td></tr>";
+        String items;
+        bool scanned[3] = {false, false, false};
+        for (uint8_t i = 0; i < ActiveBoardProfile::I2C_COUNT; ++i)
+        {
+            const uint8_t bus = ActiveBoardProfile::I2CS[i].bus_num;
+            if (bus < 3 && scanned[bus])
+                continue;
+            if (bus < 3)
+                scanned[bus] = true;
+            std::vector<uint8_t> addrs;
+            if (!_i2c->scanDevices(bus, addrs))
+                continue;
+            for (size_t a = 0; a < addrs.size(); ++a)
+            {
+                char addr_buf[8] = {};
+                snprintf(addr_buf, sizeof(addr_buf), "0x%02X", addrs[a]);
+                items += "<tr><td class=\"right\"><strong>";
+                items += String((unsigned)bus);
+                items += "</strong></td><td><strong>";
+                items += addr_buf;
+                items += "</strong></td></tr>";
+            }
+        }
+        if (items.length() == 0)
+            items = "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>none</strong></td></tr>";
+        return items;
+    }
+
+    String listOwHtml_()
+    {
+        if (!_ow)
+            return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>none</strong></td></tr>";
+        String items;
+        for (uint8_t i = 0; i < ActiveBoardProfile::ONEWIRE_COUNT; ++i)
+        {
+            OneWireBus *bus = _ow->busPtrByIndex(i);
+            if (!bus)
+                continue;
+            const auto &cfg = ActiveBoardProfile::ONEWIRES[i];
+            uint8_t addr[8] = {};
+            bus->reset_search();
+            while (bus->search(addr))
+            {
+                if (OneWireBus::crc8(addr, 7) != addr[7])
+                    continue;
+                char hex[17] = {};
+                owAddrToHex_(addr, hex);
+                items += "<tr><td class=\"right\"><strong>";
+                items += String((unsigned)i);
+                items += "</strong></td><td><strong>";
+                items += owBusName_(cfg.bus_id);
+                items += "</strong></td><td><strong>";
+                items += hex;
+                items += "</strong></td></tr>";
+            }
+        }
+        if (items.length() == 0)
+            items = "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>none</strong></td></tr>";
         return items;
     }
 
@@ -751,6 +976,40 @@ private:
         return String(buf);
     }
 
+    String allowedUsersCsv_() const
+    {
+        if (!_tgbot_menu)
+            return "";
+        const auto &users = _tgbot_menu->allowedUsers();
+        String out;
+        for (size_t i = 0; i < users.size(); ++i)
+        {
+            if (i > 0)
+                out += ", ";
+            out += users[i];
+        }
+        return out;
+    }
+
+    static std::vector<String> splitCsv_(const String &input)
+    {
+        std::vector<String> out;
+        String s = input;
+        size_t start = 0;
+        while (start < s.length())
+        {
+            int comma = s.indexOf(',', (int)start);
+            if (comma < 0)
+                comma = s.length();
+            String token = s.substring(start, (size_t)comma);
+            token.trim();
+            if (token.length())
+                out.push_back(token);
+            start = (size_t)comma + 1;
+        }
+        return out;
+    }
+
     float rtcTemp_() const
     {
         if (!_rtc)
@@ -774,6 +1033,10 @@ private:
     ConfigsManagerIface *_configs_manager = nullptr;
     PlcControl *_plc = nullptr;
     RTC *_rtc = nullptr;
+    TelegramClient *_tgbot = nullptr;
+    TelegramMenu *_tgbot_menu = nullptr;
+    I2CManager *_i2c = nullptr;
+    OneWireManager *_ow = nullptr;
     File _upload;
     bool _upload_ok = true;
     size_t _upload_size = 0;
@@ -787,6 +1050,7 @@ private:
     String _upload_error;
     String _upload_name;
     String _ota_name;
+    String _tgbot_status;
     bool _auth_enabled = false;
     String _auth_user;
     String _auth_pass;

@@ -31,7 +31,7 @@ static const char kWebInterfaceStatusHtml[] PROGMEM = R"HTML(
       <h2>Статус</h2>
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <pre><strong>%STATUS%</strong></pre>
-      <p><a href="/manage">Назад</a> | <a href="/ports">Порты</a></p>
+      <p><a href="/manage">Назад</a> | <a href="/ports">Порты</a> | <a href="/buses">Шины</a> | <a href="/telegram">Telegram</a></p>
     </div>
   </div>
 </body>

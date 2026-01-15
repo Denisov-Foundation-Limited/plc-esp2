@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -14,6 +14,12 @@
 #include <Arduino.h>
 #include <stdint.h>
 
+#if defined(ARDUINO_ARCH_ESP32)
+#include <driver/rtc_io.h>
+#include <soc/gpio_struct.h>
+#include <esp_idf_version.h>
+#endif
+
 class OneWireBus
 {
 public:
@@ -23,6 +29,9 @@ public:
     {
         _pin = pin;
         _inited = true;
+#if defined(ARDUINO_ARCH_ESP32)
+        pinMode(_pin, INPUT);
+#endif
         release_();
         reset_search();
     }
@@ -33,14 +42,23 @@ public:
             return 0;
 
         uint8_t presence = 0;
-        noInterrupts();
-        driveLow_();
-        delayMicroseconds(480);
         release_();
-        delayMicroseconds(70);
-        presence = (digitalRead(_pin) == LOW) ? 1 : 0;
-        interrupts();
-        delayMicroseconds(410);
+        for (uint8_t retries = 125; retries > 0; --retries)
+        {
+            if (readPin_() == HIGH)
+                break;
+            delayMicroseconds(2);
+            if (retries == 1)
+                return 0;
+        }
+        critEnter_();
+        driveLow_();
+        delayMicroseconds(kResetLowUs);
+        release_();
+        delayMicroseconds(kResetReleaseUs);
+        presence = (readPin_() == LOW) ? 1 : 0;
+        critExit_();
+        delayMicroseconds(kResetRecoverUs);
         return presence;
     }
 
@@ -187,48 +205,206 @@ public:
     }
 
 private:
+    static constexpr uint16_t kResetLowUs = 480;
+    static constexpr uint16_t kResetReleaseUs = 70;
+    static constexpr uint16_t kResetRecoverUs = 410;
+    static constexpr uint8_t kWrite1LowUs = 10;
+    static constexpr uint8_t kWrite1SlotUs = 55;
+    static constexpr uint8_t kWrite0LowUs = 65;
+    static constexpr uint8_t kWrite0SlotUs = 5;
+    static constexpr uint8_t kReadLowUs = 3;
+    static constexpr uint8_t kReadSampleUs = 10;
+    static constexpr uint8_t kReadSlotUs = 53;
+
     void driveLow_()
     {
+#if defined(ARDUINO_ARCH_ESP32)
+        directWriteLow_(_pin);
+        directModeOutput_(_pin);
+#else
         pinMode(_pin, OUTPUT);
         digitalWrite(_pin, LOW);
+#endif
     }
 
     void release_()
     {
+#if defined(ARDUINO_ARCH_ESP32)
+        directModeInput_(_pin);
+#else
         pinMode(_pin, INPUT);
+#endif
+    }
+
+    void driveHigh_()
+    {
+#if defined(ARDUINO_ARCH_ESP32)
+        directWriteHigh_(_pin);
+        directModeOutput_(_pin);
+#else
+        pinMode(_pin, OUTPUT);
+        digitalWrite(_pin, HIGH);
+#endif
+    }
+
+    uint8_t readPin_() const
+    {
+#if defined(ARDUINO_ARCH_ESP32)
+        return directRead_(_pin);
+#else
+        return digitalRead(_pin);
+#endif
+    }
+
+#if defined(ARDUINO_ARCH_ESP32)
+    static inline uint8_t directRead_(uint8_t pin)
+    {
+#if CONFIG_IDF_TARGET_ESP32C3
+        return (GPIO.in.val >> pin) & 0x1;
+#elif CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3
+        if (pin < 32)
+            return (GPIO.in >> pin) & 0x1;
+        if (pin < 54)
+            return (GPIO.in1.val >> (pin - 32)) & 0x1;
+#else
+        if (pin < 32)
+            return (GPIO.in >> pin) & 0x1;
+        if (pin < 46)
+            return (GPIO.in1.val >> (pin - 32)) & 0x1;
+#endif
+        return 0;
+    }
+
+    static inline void directWriteLow_(uint8_t pin)
+    {
+#if CONFIG_IDF_TARGET_ESP32C3
+        GPIO.out_w1tc.val = (1U << pin);
+#elif CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3
+        if (pin < 32)
+            GPIO.out_w1tc = (1U << pin);
+        else if (pin < 54)
+            GPIO.out1_w1tc.val = (1U << (pin - 32));
+#else
+        if (pin < 32)
+            GPIO.out_w1tc = (1U << pin);
+        else if (pin < 46)
+            GPIO.out1_w1tc.val = (1U << (pin - 32));
+#endif
+    }
+
+    static inline void directWriteHigh_(uint8_t pin)
+    {
+#if CONFIG_IDF_TARGET_ESP32C3
+        GPIO.out_w1ts.val = (1U << pin);
+#elif CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3
+        if (pin < 32)
+            GPIO.out_w1ts = (1U << pin);
+        else if (pin < 54)
+            GPIO.out1_w1ts.val = (1U << (pin - 32));
+#else
+        if (pin < 32)
+            GPIO.out_w1ts = (1U << pin);
+        else if (pin < 46)
+            GPIO.out1_w1ts.val = (1U << (pin - 32));
+#endif
+    }
+
+    static inline void directModeInput_(uint8_t pin)
+    {
+#if CONFIG_IDF_TARGET_ESP32C3
+        GPIO.enable_w1tc.val = (1U << pin);
+#else
+        if (digitalPinIsValid(pin))
+        {
+#if ESP_IDF_VERSION_MAJOR < 4
+            uint32_t rtc_reg(rtc_gpio_desc[pin].reg);
+            if (rtc_reg)
+            {
+                ESP_REG(rtc_reg) = ESP_REG(rtc_reg) & ~(rtc_gpio_desc[pin].mux);
+                ESP_REG(rtc_reg) = ESP_REG(rtc_reg) & ~(rtc_gpio_desc[pin].pullup | rtc_gpio_desc[pin].pulldown);
+            }
+#endif
+            if (pin < 32)
+                GPIO.enable_w1tc = (1U << pin);
+            else
+                GPIO.enable1_w1tc.val = (1U << (pin - 32));
+        }
+#endif
+    }
+
+    static inline void directModeOutput_(uint8_t pin)
+    {
+#if CONFIG_IDF_TARGET_ESP32C3
+        GPIO.enable_w1ts.val = (1U << pin);
+#else
+        if (digitalPinIsValid(pin))
+        {
+#if ESP_IDF_VERSION_MAJOR < 4
+            uint32_t rtc_reg(rtc_gpio_desc[pin].reg);
+            if (rtc_reg)
+            {
+                ESP_REG(rtc_reg) = ESP_REG(rtc_reg) & ~(rtc_gpio_desc[pin].mux);
+                ESP_REG(rtc_reg) = ESP_REG(rtc_reg) & ~(rtc_gpio_desc[pin].pullup | rtc_gpio_desc[pin].pulldown);
+            }
+#endif
+            if (pin < 32)
+                GPIO.enable_w1ts = (1U << pin);
+            else
+                GPIO.enable1_w1ts.val = (1U << (pin - 32));
+        }
+#endif
+    }
+#endif
+
+    static inline void critEnter_()
+    {
+#if defined(ARDUINO_ARCH_ESP32)
+        portENTER_CRITICAL(&mux_);
+#else
+        noInterrupts();
+#endif
+    }
+
+    static inline void critExit_()
+    {
+#if defined(ARDUINO_ARCH_ESP32)
+        portEXIT_CRITICAL(&mux_);
+#else
+        interrupts();
+#endif
     }
 
     void writeBit_(uint8_t v)
     {
-        noInterrupts();
+        critEnter_();
         if (v)
         {
             driveLow_();
-            delayMicroseconds(6);
-            release_();
-            delayMicroseconds(64);
+            delayMicroseconds(kWrite1LowUs);
+            driveHigh_();
+            delayMicroseconds(kWrite1SlotUs);
         }
         else
         {
             driveLow_();
-            delayMicroseconds(60);
-            release_();
-            delayMicroseconds(10);
+            delayMicroseconds(kWrite0LowUs);
+            driveHigh_();
+            delayMicroseconds(kWrite0SlotUs);
         }
-        interrupts();
+        critExit_();
     }
 
     uint8_t readBit_()
     {
         uint8_t r = 0;
-        noInterrupts();
+        critEnter_();
         driveLow_();
-        delayMicroseconds(6);
+        delayMicroseconds(kReadLowUs);
         release_();
-        delayMicroseconds(9);
-        r = (digitalRead(_pin) == HIGH) ? 1 : 0;
-        interrupts();
-        delayMicroseconds(55);
+        delayMicroseconds(kReadSampleUs);
+        r = (readPin_() == HIGH) ? 1 : 0;
+        critExit_();
+        delayMicroseconds(kReadSlotUs);
         return r;
     }
 
@@ -238,4 +414,8 @@ private:
     uint8_t _last_discrepancy = 0;
     uint8_t _last_family_discrepancy = 0;
     bool _last_device_flag = false;
+
+#if defined(ARDUINO_ARCH_ESP32)
+    static inline portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;
+#endif
 };

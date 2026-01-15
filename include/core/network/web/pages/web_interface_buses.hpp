@@ -11,13 +11,13 @@
 
 #pragma once
 
-static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
+static const char kWebInterfaceBusesHtml[] PROGMEM = R"HTML(
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Порты</title>
+  <title>Шины</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -42,6 +42,7 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
       box-shadow: 0 10px 30px rgba(0,0,0,0.35);
     }
     h1 { margin: 0 0 6px; font-size: 22px; }
+    h2 { margin: 16px 0 8px; font-size: 18px; }
     p { margin: 0 0 18px; color: var(--muted); }
     a { color: #7dd3fc; text-decoration: none; }
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
@@ -55,25 +56,33 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       <div class="nav">
-        <a href="/">FCPLC и Wi-Fi</a> | <a href="/manage">Прошивка и файлы</a> | <a href="/buses">Шины</a> | <a href="/telegram">Telegram</a>
+        <a href="/">FCPLC и Wi-Fi</a> | <a href="/manage">Прошивка и файлы</a> | <a href="/ports">Порты</a> | <a href="/telegram">Telegram</a>
       </div>
-      <h1>Порты</h1>
+      <h1>Шины</h1>
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
+      <h2>I2C</h2>
       <table>
         <thead>
           <tr>
-            <th class="right">ID</th>
-            <th>Backend</th>
-            <th>Loc</th>
-            <th>Type</th>
-            <th>Ctrl</th>
-            <th class="right">Dev</th>
-            <th class="right">Pin</th>
-            <th>HW</th>
+            <th class="right">Bus</th>
+            <th>Addr</th>
           </tr>
         </thead>
         <tbody>
-          %PORTS%
+          %I2C%
+        </tbody>
+      </table>
+      <h2>OneWire</h2>
+      <table>
+        <thead>
+          <tr>
+            <th class="right">Bus</th>
+            <th>Type</th>
+            <th>Addr</th>
+          </tr>
+        </thead>
+        <tbody>
+          %OW%
         </tbody>
       </table>
     </div>

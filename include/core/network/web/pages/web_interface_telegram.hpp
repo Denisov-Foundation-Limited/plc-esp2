@@ -1,4 +1,4 @@
-﻿/**********************************************************************/
+/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -11,13 +11,13 @@
 
 #pragma once
 
-static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
+static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FCPLC</title>
+  <title>Telegram</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -47,7 +47,7 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
     .row { display: flex; gap: 10px; align-items: center; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--muted); }
-    input[type=text], input[type=password], select {
+    input[type=text], input[type=password], input[type=number], select {
       width: 100%;
       background: #0b1220;
       border: 1px solid #334155;
@@ -67,60 +67,67 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
     .status { color: var(--muted); font-size: 12px; }
     a { color: #7dd3fc; text-decoration: none; }
     .nav { margin-bottom: 12px; }
+    .checkbox { display: flex; gap: 8px; align-items: center; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <div class="nav">
-        <a href="/manage">Прошивка и файлы</a> | <a href="/ports">Порты</a> | <a href="/buses">Шины</a> | <a href="/telegram">Telegram</a>
+        <a href="/">FCPLC и Wi-Fi</a> | <a href="/manage">Прошивка и файлы</a> | <a href="/ports">Порты</a> | <a href="/buses">Шины</a>
       </div>
-      <h1>FCPLC</h1>
+      <h1>Telegram</h1>
       <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
-      <p>Управление контроллером FCPLC</p>
-      <div class="section">
-        <h2>Статус</h2>
-        <p class="status">RTC: <strong>%RTC_TIME%</strong></p>
-        <p class="status">RTC температура: <strong>%RTC_TEMP%</strong></p>
-        <p class="status">Температура платы: <strong>%BOARD_TEMP%</strong></p>
-        <p class="status">CPU: <strong>%CPU_TEMP%</strong></p>
-        <p class="status">Вентилятор: <strong>%FAN_STATUS%</strong></p>
-      </div>
-      <div class="section">
-        <h2>Wi-Fi</h2>
-        <p class="status">Режим: <strong>%WIFI_MODE%</strong> | SSID: <strong>%WIFI_CUR_SSID%</strong> | IP: <strong>%WIFI_IP%</strong>%WIFI_STA_SEG%</p>
-        <form method="POST" action="/wifi">
+      <p class="status">Клиент: <strong>%TGBOT_CLIENT%</strong></p>
+      <form method="POST" action="/telegram">
+        <div class="section">
+          <h2>Доступ</h2>
           <div class="grid">
             <div>
-              <label>Режим</label>
-              <select name="mode">
-                <option value="sta" %WIFI_STA_SEL%>STA</option>
-                <option value="ap" %WIFI_AP_SEL%>AP</option>
-              </select>
+              <label>Token</label>
+              <input type="text" name="token" value="%TGBOT_TOKEN%" placeholder="Bot token">
             </div>
             <div>
-              <label>SSID</label>
-              <input type="text" name="ssid" value="%WIFI_SSID%" placeholder="SSID STA">
+              <label>Chat ID</label>
+              <input type="text" name="chat_id" value="%TGBOT_CHAT_ID%" placeholder="123456789">
             </div>
-            <div>
-              <label>Пароль</label>
-              <input type="password" name="password" placeholder="Введите пароль для STA">
-            </div>
-            <div>
-              <label>AP SSID</label>
-              <input type="text" name="ap_ssid" value="%WIFI_AP_SSID%" placeholder="SSID AP">
-            </div>
-            <div>
-              <label>Пароль AP</label>
-              <input type="password" name="ap_password" placeholder="Введите пароль для AP">
+            <div class="checkbox" style="margin-top:22px;">
+              <input type="checkbox" id="insecure" name="insecure" %TGBOT_INSECURE_CHECKED%>
+              <label for="insecure">Insecure TLS</label>
             </div>
           </div>
-          <div class="row" style="margin-top:10px;">
-            <button type="submit">Сохранить Wi-Fi</button>
-            <span class="status">%WIFI_STATUS%</span>
+        </div>
+        <div class="section">
+          <h2>Proxy</h2>
+          <div class="grid">
+            <div class="checkbox" style="margin-top:22px;">
+              <input type="checkbox" id="use_proxy" name="use_proxy" %TGBOT_USE_PROXY_CHECKED%>
+              <label for="use_proxy">Использовать proxy</label>
+            </div>
+            <div>
+              <label>Proxy host</label>
+              <input type="text" name="proxy_host" value="%TGBOT_PROXY_HOST%">
+            </div>
+            <div>
+              <label>Proxy port</label>
+              <input type="number" name="proxy_port" value="%TGBOT_PROXY_PORT%">
+            </div>
+            <div>
+              <label>Proxy path</label>
+              <input type="text" name="proxy_path" value="%TGBOT_PROXY_PATH%">
+            </div>
           </div>
-        </form>
-      </div>
+        </div>
+        <div class="section">
+          <h2>Allowed users</h2>
+          <label>Список (через запятую)</label>
+          <input type="text" name="allowed_users" value="%TGBOT_ALLOWED_USERS%" placeholder="user1, user2">
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button type="submit">Сохранить</button>
+          <span class="status"><strong>%TGBOT_STATUS%</strong></span>
+        </div>
+      </form>
     </div>
   </div>
 </body>

@@ -33,6 +33,7 @@
 #include "core/cli/modules/cli_tgbot.hpp"
 #include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
+#include "hal/bus/onewire.hpp"
 #include "hal/gpio/extender.hpp"
 #include "hal/gpio/portio.hpp"
 #include "utils/configs.hpp"
@@ -51,13 +52,14 @@ public:
     using CLITgbot = CLITgbotT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
 
-    CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c,
+    CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
                TelegramClient &tgbot, TelegramMenu &tgbot_menu, Configs &configs, Extender &ext)
         : _plc(plc),
           _wifi(wifi),
           _rtc(rtc),
           _ftest(ftest),
           _i2c(i2c),
+          _ow(ow),
           _tgbot(tgbot),
           _tgbot_menu(tgbot_menu),
           _configs(configs),
@@ -438,6 +440,39 @@ public:
         }
     }
 
+    void cmdShowOw_()
+    {
+        _io->println(F("OneWire devices:"));
+        _io->println(F("    Bus  Type     Addr"));
+        _io->println(F("    ---  -------  ----------------"));
+        bool any = false;
+        for (uint8_t i = 0; i < ActiveBoardProfile::ONEWIRE_COUNT; ++i)
+        {
+            OneWireBus *bus = _ow.busPtrByIndex(i);
+            if (!bus)
+                continue;
+            const auto &cfg = ActiveBoardProfile::ONEWIRES[i];
+            uint8_t addr[8] = {};
+            bus->reset_search();
+            while (bus->search(addr))
+            {
+                if (OneWireBus::crc8(addr, 7) != addr[7])
+                    continue;
+                char hex[17] = {};
+                owAddrToHex_(addr, hex);
+                _io->print(F("    "));
+                printPad_(i, 3);
+                _io->print(F("  "));
+                printPadStr_(owBusName_(cfg.bus_id), 7);
+                _io->print(F("  "));
+                _io->println(hex);
+                any = true;
+            }
+        }
+        if (!any)
+            _io->println(F("    none"));
+    }
+
     void cmdShowConfig_()
     {
         JsonDocument doc;
@@ -609,6 +644,7 @@ private:
             _io->println(F("  show wifi       - Wi-Fi configuration"));
             _io->println(F("  show time       - RTC date/time"));
             _io->println(F("  show i2c        - I2C device list"));
+            _io->println(F("  show ow         - OneWire device list"));
             _io->println(F("  show telegram   - Telegram settings"));
             _io->println(F("  show config     - configuration file contents"));
             _io->println(F("  show port <id>  - port details"));
@@ -655,6 +691,7 @@ private:
             "show wifi",
             "show time",
             "show i2c",
+            "show ow",
             "show telegram",
             "show config",
             "show ext",
@@ -989,6 +1026,8 @@ private:
             cmdShowTime_();
         else if (eq_(what, "i2c"))
             cmdShowI2c_();
+        else if (eq_(what, "ow"))
+            cmdShowOw_();
         else if (eq_(what, "telegram"))
             cmdShowTelegram_();
         else if (eq_(what, "config"))
@@ -1346,6 +1385,7 @@ private:
     RTC &_rtc;
     Ftest &_ftest;
     I2CManager &_i2c;
+    OneWireManager &_ow;
     TelegramClient &_tgbot;
     TelegramMenu &_tgbot_menu;
     Configs &_configs;
@@ -1482,6 +1522,30 @@ private:
         default:
             return F("UNKNOWN");
         }
+    }
+
+    static const __FlashStringHelper *owBusName_(OneWireCfg::OwType t)
+    {
+        switch (t)
+        {
+        case OneWireCfg::OwType::iButton:
+            return F("iButton");
+        case OneWireCfg::OwType::Temp:
+            return F("Temp");
+        default:
+            return F("Unknown");
+        }
+    }
+
+    static void owAddrToHex_(const uint8_t in[8], char out[17])
+    {
+        static const char kHex[] = "0123456789ABCDEF";
+        for (uint8_t i = 0; i < 8; ++i)
+        {
+            out[i * 2] = kHex[(in[i] >> 4) & 0x0F];
+            out[i * 2 + 1] = kHex[in[i] & 0x0F];
+        }
+        out[16] = '\0';
     }
 
     void printPortsHeader_()

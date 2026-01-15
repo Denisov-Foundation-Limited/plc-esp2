@@ -86,7 +86,7 @@ static const char kWebInterfaceManageHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       <div class="nav">
-        <a href="/">FCPLC и Wi-Fi</a> | <a href="/ports">Порты</a>
+        <a href="/">FCPLC и Wi-Fi</a> | <a href="/ports">Порты</a> | <a href="/buses">Шины</a> | <a href="/telegram">Telegram</a>
       </div>
       <h1>Прошивка и файлы</h1>
       <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>

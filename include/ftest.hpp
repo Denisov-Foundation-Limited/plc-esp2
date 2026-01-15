@@ -215,8 +215,24 @@ private:
 
     void logDs18b20_()
     {
+        if (!_ds18b20_ok)
+        {
+            OneWireBus *temp_bus = _ow.busPtrById(OneWireManager::OwBusType::Temp);
+            if (!temp_bus)
+            {
+                _logs.info(F("FTEST"), F("DS18B20: bus missing"));
+                return;
+            }
+            _ds18b20.begin(*temp_bus);
+            _ds18b20_ok = true;
+        }
         std::vector<String> serials;
         _ds18b20.listSerials(serials);
+        if (serials.empty())
+        {
+            _logs.info(F("FTEST"), F("DS18B20: none"));
+            return;
+        }
         for (size_t i = 0; i < serials.size(); ++i)
         {
             _logs.info(F("FTEST"), F("DS18B20[%u]: %s"), (unsigned)i, serials[i].c_str());
@@ -242,10 +258,14 @@ private:
             _logs.error(F("FTEST"), F("OW iButton bus missing"));
         }
         OneWireBus *temp_bus = _ow.busPtrById(OneWireManager::OwBusType::Temp);
-        if (!temp_bus || !_ds18b20.begin(*temp_bus))
+        if (!temp_bus)
         {
+            _ds18b20_ok = false;
             _logs.error(F("FTEST"), F("OW DS18B20 bus missing"));
+            return;
         }
+        _ds18b20.begin(*temp_bus);
+        _ds18b20_ok = true;
     }
 
     static const char *pinTypeName_(PortIO::PinType t)
@@ -293,6 +313,7 @@ private:
     bool _lm75_ok = false;
     At24lc512 _eeprom;
     bool _eeprom_ok = false;
+    bool _ds18b20_ok = false;
     TaskManager<TASK_MGR_TSK_COUNT> &_tm;
     TaskBinder<TASK_MGR_TSK_COUNT> &_tb;
     bool _state = false;
