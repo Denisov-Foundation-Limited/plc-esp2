@@ -1,4 +1,4 @@
-﻿/**********************************************************************/
+/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -30,6 +30,8 @@
 #include "core/network/web/pages/web_interface_manage.hpp"
 #include "core/network/web/pages/web_interface_ports.hpp"
 #include "core/network/web/pages/web_interface_buses.hpp"
+#include "core/network/web/pages/web_interface_stack.hpp"
+#include "core/network/web/pages/web_interface_wifi.hpp"
 #include "core/network/web/pages/web_interface_telegram.hpp"
 #include "core/network/web/pages/web_interface_status.hpp"
 #include "core/rtc.hpp"
@@ -90,9 +92,11 @@ public:
     void registerRoutes()
     {
         _server.on("/", HTTP_GET, [this](AsyncWebServerRequest *request) { handleIndex_(request); });
+        _server.on("/wifi", HTTP_GET, [this](AsyncWebServerRequest *request) { handleWifi_(request); });
         _server.on("/manage", HTTP_GET, [this](AsyncWebServerRequest *request) { handleManage_(request); });
         _server.on("/ports", HTTP_GET, [this](AsyncWebServerRequest *request) { handlePorts_(request); });
         _server.on("/buses", HTTP_GET, [this](AsyncWebServerRequest *request) { handleBuses_(request); });
+        _server.on("/stack", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStack_(request); });
         _server.on("/telegram", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTelegram_(request); });
         _server.on("/telegram", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTelegramSave_(request); });
         _server.on(
@@ -106,6 +110,9 @@ public:
             [this](AsyncWebServerRequest *request, const String &filename, size_t index, uint8_t *data, size_t len,
                    bool final) { handleOta_(request, filename, index, data, len, final); });
         _server.on("/wifi", HTTP_POST, [this](AsyncWebServerRequest *request) { handleWifiSave_(request); });
+        _server.on("/stack", HTTP_POST, [this](AsyncWebServerRequest *request) { handleStackSave_(request); });
+        _server.on("/device", HTTP_POST, [this](AsyncWebServerRequest *request) { handleDeviceSave_(request); });
+        _server.on("/reboot", HTTP_POST, [this](AsyncWebServerRequest *request) { handleReboot_(request); });
         _server.on("/files", HTTP_GET, [this](AsyncWebServerRequest *request) { handleFileDownload_(request); });
         _server.on("/delete", HTTP_GET, [this](AsyncWebServerRequest *request) { handleDelete_(request); });
         _server.on("/status", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStatus_(request); });
@@ -128,6 +135,30 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET / (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceIndexHtml);
+        page.replace("%DEVICE_NAME%", deviceName_());
+        page.replace("%DEVICE_STATUS%", _device_status);
+        const auto role = stackRole_();
+        page.replace("%STACK_ROLE%", stackRoleName_(role));
+        page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
+        page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
+        page.replace("%STACK_MASTER_HOST%", stackMasterHost_());
+        page.replace("%STACK_STATUS%", _stack_status);
+        page.replace("%BOARD_TEMP%", formatTemp_(boardTemp_()));
+        page.replace("%CPU_TEMP%", formatTemp_(cpuTemp_()));
+        page.replace("%RTC_TIME%", rtcTimeStr_());
+        page.replace("%RTC_TEMP%", formatTemp_(rtcTemp_()));
+        page.replace("%FAN_STATUS%", fanStatusStr_());
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        request->send(200, "text/html", page);
+    }
+
+    void handleWifi_(AsyncWebServerRequest *request)
+    {
+        if (!checkAuth_(request))
+            return;
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("GET /wifi (ip=%s)"), requestIp_(request).c_str());
+        String page = FPSTR(kWebInterfaceWifiHtml);
         page.replace("%WIFI_MODE%", _wifi.ap() ? "AP" : "STA");
         page.replace("%WIFI_CUR_SSID%", _wifi.ap() ? _wifi.apSsid() : _wifi.ssid());
         page.replace("%WIFI_IP%", wifiIp_());
@@ -137,12 +168,6 @@ private:
         page.replace("%WIFI_SSID%", _wifi.ssid());
         page.replace("%WIFI_AP_SSID%", _wifi.apSsid());
         page.replace("%WIFI_STATUS%", _wifi_status);
-        page.replace("%BOARD_TEMP%", formatTemp_(boardTemp_()));
-        page.replace("%CPU_TEMP%", formatTemp_(cpuTemp_()));
-        page.replace("%RTC_TIME%", rtcTimeStr_());
-        page.replace("%RTC_TEMP%", formatTemp_(rtcTemp_()));
-        page.replace("%FAN_STATUS%", fanStatusStr_());
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         request->send(200, "text/html", page);
     }
 
@@ -179,6 +204,23 @@ private:
         String page = FPSTR(kWebInterfaceBusesHtml);
         page.replace("%I2C%", listI2cHtml_());
         page.replace("%OW%", listOwHtml_());
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        request->send(200, "text/html", page);
+    }
+
+    void handleStack_(AsyncWebServerRequest *request)
+    {
+        if (!checkAuth_(request))
+            return;
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("GET /stack (ip=%s)"), requestIp_(request).c_str());
+        String page = FPSTR(kWebInterfaceStackHtml);
+        const auto role = stackRole_();
+        page.replace("%STACK_ROLE%", stackRoleName_(role));
+        page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
+        page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
+        page.replace("%STACK_MASTER_HOST%", stackMasterHost_());
+        page.replace("%STACK_STATUS%", _stack_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         request->send(200, "text/html", page);
     }
@@ -773,6 +815,107 @@ private:
         request->redirect("/");
     }
 
+    void handleStackSave_(AsyncWebServerRequest *request)
+    {
+        if (!checkAuth_(request))
+            return;
+        if (!_configs_manager)
+        {
+            _stack_status = "Config manager missing";
+            request->redirect("/");
+            return;
+        }
+
+        bool changed = false;
+        if (request->hasParam("role", true))
+        {
+            String role = request->getParam("role", true)->value();
+            role.trim();
+            role.toLowerCase();
+            const auto new_role = (role == "slave") ? ConfigsManagerIface::StackRole::Slave
+                                                    : ConfigsManagerIface::StackRole::Master;
+            if (new_role != _configs_manager->stackRole())
+            {
+                _configs_manager->setStackRole(new_role);
+                changed = true;
+            }
+        }
+
+        String host = request->hasParam("master_host", true)
+                          ? request->getParam("master_host", true)->value()
+                          : String("");
+        host.trim();
+        if (host != _configs_manager->stackMasterHost())
+        {
+            _configs_manager->setStackMasterHost(host);
+            changed = true;
+        }
+
+        bool save_ok = true;
+        if (changed)
+            save_ok = saveWifiConfig_();
+
+        if (!changed)
+            _stack_status = "No changes";
+        else if (!save_ok)
+            _stack_status = "Save failed";
+        else
+            _stack_status = "Saved";
+
+        request->redirect("/stack");
+    }
+
+    void handleDeviceSave_(AsyncWebServerRequest *request)
+    {
+        if (!checkAuth_(request))
+            return;
+        if (!_plc)
+        {
+            _device_status = "PLC missing";
+            request->redirect("/");
+            return;
+        }
+        if (!request->hasParam("device_name", true))
+        {
+            _device_status = "Missing name";
+            request->redirect("/");
+            return;
+        }
+        String name = request->getParam("device_name", true)->value();
+        name.trim();
+        bool changed = (name != _plc->deviceName());
+        if (changed)
+            _plc->setDeviceName(name);
+
+        bool save_ok = true;
+        if (changed)
+            save_ok = saveWifiConfig_();
+
+        if (!changed)
+            _device_status = "No changes";
+        else if (!save_ok)
+            _device_status = "Save failed";
+        else
+            _device_status = "Saved";
+
+        request->redirect("/");
+    }
+
+    void handleReboot_(AsyncWebServerRequest *request)
+    {
+        if (!checkAuth_(request))
+            return;
+#if defined(ESP32)
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("Reboot request (ip=%s)"), requestIp_(request).c_str());
+        request->send(200, "text/plain", "Rebooting");
+        delay(100);
+        ESP.restart();
+#else
+        request->send(200, "text/plain", "Not supported");
+#endif
+    }
+
     void handleFileDownload_(AsyncWebServerRequest *request)
     {
         if (!checkAuth_(request))
@@ -913,6 +1056,32 @@ private:
         }
     }
 
+    String deviceName_() const
+    {
+        if (_plc)
+            return _plc->deviceName();
+        return "";
+    }
+
+    ConfigsManagerIface::StackRole stackRole_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->stackRole();
+        return ConfigsManagerIface::StackRole::Master;
+    }
+
+    String stackMasterHost_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->stackMasterHost();
+        return "";
+    }
+
+    static const char *stackRoleName_(ConfigsManagerIface::StackRole role)
+    {
+        return (role == ConfigsManagerIface::StackRole::Master) ? "master" : "slave";
+    }
+
     bool saveWifiConfig_()
     {
         if (_configs_manager)
@@ -1051,6 +1220,8 @@ private:
     String _upload_name;
     String _ota_name;
     String _tgbot_status;
+    String _stack_status;
+    String _device_status;
     bool _auth_enabled = false;
     String _auth_user;
     String _auth_pass;

@@ -36,6 +36,8 @@
 #include "hal/bus/onewire.hpp"
 #include "hal/gpio/extender.hpp"
 #include "hal/gpio/portio.hpp"
+#include "core/network/stack/stack_master.hpp"
+#include "core/network/stack/stack_protocol.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
 
@@ -53,7 +55,8 @@ public:
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
-               TelegramClient &tgbot, TelegramMenu &tgbot_menu, Configs &configs, Extender &ext)
+               TelegramClient &tgbot, TelegramMenu &tgbot_menu, Configs &configs, Extender &ext,
+               StackMaster *stack_master)
         : _plc(plc),
           _wifi(wifi),
           _rtc(rtc),
@@ -64,11 +67,14 @@ public:
           _tgbot_menu(tgbot_menu),
           _configs(configs),
           _ext(ext),
+          _stack_master(stack_master),
           _wifi_cli(*this),
           _tgbot_cli(*this),
           _enable(*this, _wifi_cli),
           _config(*this, _wifi_cli, _tgbot_cli)
     {
+        if (_stack_master)
+            _stack_master->setFrameHandler(&CliConsole::onStackFrame_, this);
     }
 
     void begin(Stream &io)
@@ -440,6 +446,20 @@ public:
         }
     }
 
+    void cmdShowStack_()
+    {
+        if (!_configs_manager)
+        {
+            _io->println(F("Config manager missing"));
+            return;
+        }
+        _io->println(F("Stack:"));
+        const size_t key_w = 11; // master_host
+        const auto role = _configs_manager->stackRole();
+        printKeyValue_(F("role"), stackRoleName_(role), key_w);
+        printKeyValue_(F("master_host"), _configs_manager->stackMasterHost(), key_w);
+    }
+
     void cmdShowOw_()
     {
         _io->println(F("OneWire devices:"));
@@ -536,6 +556,74 @@ public:
             _io->println(F("Wi-Fi restart failed"));
     }
 
+    void cmdStack_(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        if (cmd == "stack nodes")
+        {
+            listStackNodes_();
+            return;
+        }
+        if (!cmd.startsWith("stack send "))
+        {
+            _io->println(F("Usage: stack nodes"));
+            _io->println(F("       stack send <id> <get|set> <json>"));
+            return;
+        }
+        if (!_stack_master)
+        {
+            _io->println(F("Stack master unavailable"));
+            return;
+        }
+        if (_configs_manager &&
+            _configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
+        {
+            _io->println(F("Stack role is slave"));
+            return;
+        }
+        String rest = cmd.substring(strlen("stack send "));
+        rest.trim();
+        const int sp1 = rest.indexOf(' ');
+        if (sp1 <= 0)
+        {
+            _io->println(F("Invalid node id"));
+            return;
+        }
+        String id_str = rest.substring(0, sp1);
+        rest = rest.substring(sp1 + 1);
+        rest.trim();
+        const int sp2 = rest.indexOf(' ');
+        if (sp2 <= 0)
+        {
+            _io->println(F("Missing get/set"));
+            return;
+        }
+        String kind = rest.substring(0, sp2);
+        kind.toLowerCase();
+        String json = rest.substring(sp2 + 1);
+        json.trim();
+        if (json.length() == 0)
+        {
+            _io->println(F("Missing JSON payload"));
+            return;
+        }
+        uint32_t node_id = (uint32_t)strtoul(id_str.c_str(), nullptr, 0);
+        uint8_t type = 0;
+        if (kind == "get")
+            type = (uint8_t)StackMsgType::CmdGet;
+        else if (kind == "set")
+            type = (uint8_t)StackMsgType::CmdSet;
+        else
+        {
+            _io->println(F("Invalid command type"));
+            return;
+        }
+        const bool ok = _stack_master->sendTo(node_id, type,
+                                              (const uint8_t *)json.c_str(), json.length());
+        _io->println(ok ? F("OK") : F("Send failed"));
+    }
+
     void cmdRestart_()
     {
 #if defined(ESP32)
@@ -579,6 +667,22 @@ public:
         }
         _io->print(F("Write failed: "));
         _io->println(err);
+    }
+
+    bool setStackRole_(ConfigsManagerIface::StackRole role)
+    {
+        if (!_configs_manager)
+            return false;
+        _configs_manager->setStackRole(role);
+        return true;
+    }
+
+    bool setStackMasterHost_(const String &host)
+    {
+        if (!_configs_manager)
+            return false;
+        _configs_manager->setStackMasterHost(host);
+        return true;
     }
 
     void cmdEraseConfig_()
@@ -645,6 +749,7 @@ private:
             _io->println(F("  show time       - RTC date/time"));
             _io->println(F("  show i2c        - I2C device list"));
             _io->println(F("  show ow         - OneWire device list"));
+            _io->println(F("  show stack      - stack role settings"));
             _io->println(F("  show telegram   - Telegram settings"));
             _io->println(F("  show config     - configuration file contents"));
             _io->println(F("  show port <id>  - port details"));
@@ -692,6 +797,7 @@ private:
             "show time",
             "show i2c",
             "show ow",
+            "show stack",
             "show telegram",
             "show config",
             "show ext",
@@ -700,6 +806,8 @@ private:
             "ftest",
             "copy tftp://<ip>/firmware.bin firmware",
             "copy http://<ip>/firmware.bin firmware",
+            "stack nodes",
+            "stack send <id> <get|set> <json>",
             "wifi restart",
             "reload",
             "reset",
@@ -722,6 +830,8 @@ private:
         static const char *const kConfigCmds[] = {
             "password <pass>",
             "admin password <pass>",
+            "stack role <master|slave>",
+            "stack master <host>",
             "wifi",
             "tgbot",
             "time",
@@ -1028,6 +1138,8 @@ private:
             cmdShowI2c_();
         else if (eq_(what, "ow"))
             cmdShowOw_();
+        else if (eq_(what, "stack"))
+            cmdShowStack_();
         else if (eq_(what, "telegram"))
             cmdShowTelegram_();
         else if (eq_(what, "config"))
@@ -1390,6 +1502,7 @@ private:
     TelegramMenu &_tgbot_menu;
     Configs &_configs;
     Extender &_ext;
+    StackMaster *_stack_master = nullptr;
     ConfigsManagerIface *_configs_manager = nullptr;
 
     Stream *_io = nullptr;
@@ -1447,6 +1560,99 @@ private:
         }
     }
 
+    void listStackNodes_()
+    {
+        if (!_stack_master)
+        {
+            _io->println(F("Stack master unavailable"));
+            return;
+        }
+        if (_configs_manager &&
+            _configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
+        {
+            _io->println(F("Stack role is slave"));
+            return;
+        }
+        const size_t count = _stack_master->nodeCount();
+        if (count == 0)
+        {
+            _io->println(F("Stack nodes: none"));
+            return;
+        }
+        _io->println(F("Stack nodes:"));
+        _io->println(F("  ID       Name"));
+        _io->println(F("  -------- ----------------"));
+        for (size_t i = 0; i < count; ++i)
+        {
+            uint32_t id = _stack_master->nodeIdAt(i);
+            String name = _stack_master->nodeNameAt(i);
+            char buf[12] = {};
+            snprintf(buf, sizeof(buf), "%lu", (unsigned long)id);
+            _io->print(F("  "));
+            _io->print(buf);
+            _io->print(F("  "));
+            _io->println(name.length() ? name : String("-"));
+        }
+    }
+
+    static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame)
+    {
+        if (!ctx)
+            return;
+        static_cast<CliConsole *>(ctx)->handleStackFrame_(node_id, frame);
+    }
+
+    void handleStackFrame_(uint32_t node_id, const StackFrame &frame)
+    {
+        if (!_io)
+            return;
+        String payload = payloadToString_(frame.payload);
+        _io->println();
+        _io->print(F("[STACK] node="));
+        _io->print(node_id);
+        _io->print(F(" type="));
+        _io->print(stackMsgName_(frame.type));
+        _io->print(F(" payload="));
+        _io->println(payload.length() ? payload : String(F("<empty>")));
+        _cmd_blank_after = true;
+        printPrompt_();
+        _io->print(_line);
+    }
+
+    static String payloadToString_(const std::vector<uint8_t> &data)
+    {
+        String out;
+        if (data.empty())
+            return out;
+        out.reserve(data.size() + 1);
+        for (uint8_t b : data)
+            out += (char)b;
+        return out;
+    }
+
+    static const __FlashStringHelper *stackMsgName_(uint8_t type)
+    {
+        switch (type)
+        {
+        case (uint8_t)StackMsgType::Hello:
+            return F("hello");
+        case (uint8_t)StackMsgType::Features:
+            return F("features");
+        case (uint8_t)StackMsgType::Status:
+            return F("status");
+        case (uint8_t)StackMsgType::CmdSet:
+            return F("cmd_set");
+        case (uint8_t)StackMsgType::CmdGet:
+            return F("cmd_get");
+        case (uint8_t)StackMsgType::Ack:
+            return F("ack");
+        case (uint8_t)StackMsgType::Err:
+            return F("err");
+        default:
+            return F("unknown");
+        }
+    }
+
     static const __FlashStringHelper *extTypeName_(Extender::Type t)
     {
         switch (t)
@@ -1466,6 +1672,11 @@ private:
         if (!devs || dev >= _ext.devCount())
             return F("None");
         return extTypeName_(devs[dev].type);
+    }
+
+    static const __FlashStringHelper *stackRoleName_(ConfigsManagerIface::StackRole role)
+    {
+        return (role == ConfigsManagerIface::StackRole::Master) ? F("master") : F("slave");
     }
 
     static const __FlashStringHelper *portTypeName_(PortIO::PinType t)

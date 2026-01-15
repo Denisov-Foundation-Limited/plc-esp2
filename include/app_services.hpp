@@ -29,6 +29,7 @@
 #include "core/network/telegram/telegram_bot.hpp"
 #include "core/network/telegram/telegram_menu.hpp"
 #include "core/network/network.hpp"
+#include "core/network/stack/stack_slave_handler.hpp"
 #include "core/cli/cli_console.hpp"
 
 #include "hal/dht22.hpp"
@@ -85,6 +86,7 @@ struct AppServices
     TelegramBot telegram_bot;
     TelegramMenu telegram_menu;
     Network network;
+    StackSlaveHandler stack_slave;
     AsyncWebServer web;
     WebInterface fw_upgrade;
 
@@ -120,16 +122,22 @@ struct AppServices
           web(ActiveBoardProfile::WEB_PORT),
           fw_upgrade(web, console, wifi, configs, plc, rtc, telegram, telegram_menu, logs, ext, i2c, ow),
           network(logs, wifi, telegram, telegram_bot, telegram_menu, fw_upgrade, web, telegram_wifi_client),
+          stack_slave(portio, ds18b20, ow, i2c, plc, rtc, telegram, logs),
           tm(),
           task_binder(tm, wifi, plc, telegram, ext),
           ftest(logs, portio, ow, ibutton, ds18b20, i2c, tm, task_binder),
-          console(plc, wifi, rtc, ftest, i2c, ow, telegram, telegram_menu, configs, ext),
+          console(plc, wifi, rtc, ftest, i2c, ow, telegram, telegram_menu, configs, ext, network.stackMaster()),
           configs(),
-          configs_manager(configs, wifi, telegram, network, console, telegram_menu)
+          configs_manager(configs, wifi, telegram, network, console, telegram_menu, plc)
     {
         console.setConfigsManager(configs_manager);
         telegram_menu.setConfigsManager(configs_manager);
         fw_upgrade.setConfigsManager(configs_manager);
+        network.setStackConfig(configs_manager);
+#if defined(ESP32)
+        if (auto *node = network.stackNode())
+            stack_slave.attach(*node);
+#endif
     }
 
     bool begin()
@@ -176,6 +184,7 @@ struct AppServices
             }
             logs.error(F("APP"), F("Configs load failed: %s"), err);
         }
+        network.setStackDeviceName(plc.deviceName());
 
         bool ok = true;
 

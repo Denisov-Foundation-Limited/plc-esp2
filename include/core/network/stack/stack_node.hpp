@@ -1,0 +1,207 @@
+/**********************************************************************/
+/*                                                                    */
+/* Programmable Logic Controller for ESP microcontrollers             */
+/*                                                                    */
+/* Copyright (C) 2026 Denisov Foundation Limited                      */
+/* License: GPLv3                                                     */
+/* Written by Sergey Denisov aka LittleBuster                         */
+/* Email: DenisovFoundationLtd@gmail.com                              */
+/*                                                                    */
+/**********************************************************************/
+
+#pragma once
+
+#include <Arduino.h>
+#include <stdint.h>
+#include <vector>
+
+#include <AsyncTCP.h>
+
+#include "core/network/stack/stack_protocol.hpp"
+#include "core/network/stack/stack_types.hpp"
+
+class StackNode
+{
+public:
+    using FrameHandler = void (*)(void *ctx, const StackFrame &frame);
+    using StatusProvider = bool (*)(void *ctx, std::vector<uint8_t> &out);
+
+    StackNode() = default;
+
+    void setFrameHandler(FrameHandler cb, void *ctx)
+    {
+        _frame_cb = cb;
+        _frame_ctx = ctx;
+    }
+
+    void setNodeId(uint32_t id) { _node_id = id; }
+    void setDeviceName(const String &name) { _device_name = name; }
+    void setServer(const String &host, uint16_t port)
+    {
+        _host = host;
+        _port = port;
+    }
+
+    void setReconnectMs(uint32_t ms) { _reconnect_ms = ms; }
+    void setHelloIntervalMs(uint32_t ms) { _hello_interval_ms = ms; }
+    void setStatusIntervalMs(uint32_t ms) { _status_interval_ms = ms; }
+
+    void setStatusProvider(StatusProvider cb, void *ctx)
+    {
+        _status_cb = cb;
+        _status_ctx = ctx;
+    }
+
+    void begin()
+    {
+        if (_host.length() == 0 || _port == 0)
+            return;
+        setupClient_();
+        connect_();
+    }
+
+    void loop()
+    {
+        if (_client.connected())
+        {
+            const uint32_t now = millis();
+            if ((now - _last_hello_ms) >= _hello_interval_ms)
+            {
+                sendHello();
+                _last_hello_ms = now;
+            }
+            if ((now - _last_status_ms) >= _status_interval_ms)
+            {
+                sendStatus_();
+                _last_status_ms = now;
+            }
+            return;
+        }
+        const uint32_t now = millis();
+        if ((now - _last_connect_ms) >= _reconnect_ms)
+            connect_();
+    }
+
+    bool send(uint8_t type, const uint8_t *payload, size_t len)
+    {
+        if (!_client.connected())
+            return false;
+        std::vector<uint8_t> buf;
+        StackCodec::encode(type, payload, len, buf);
+        if (buf.empty())
+            return false;
+        _client.write((const char *)buf.data(), buf.size());
+        return true;
+    }
+
+    bool sendHello(uint16_t fw_ver = 0, uint32_t caps = 0)
+    {
+        StackHello hello{};
+        hello.node_id = _node_id;
+        hello.proto_ver = StackCodec::kVersion;
+        hello.fw_ver = fw_ver;
+        hello.caps = caps;
+        hello.name = _device_name;
+        std::vector<uint8_t> payload;
+        StackHello::encode(hello, payload);
+        return send((uint8_t)StackMsgType::Hello, payload.data(), payload.size());
+    }
+
+private:
+    String _host;
+    uint16_t _port = 0;
+    uint32_t _node_id = 0;
+    String _device_name;
+    uint32_t _reconnect_ms = 3000;
+    uint32_t _last_connect_ms = 0;
+    uint32_t _hello_interval_ms = 15000;
+    uint32_t _status_interval_ms = 5000;
+    uint32_t _last_hello_ms = 0;
+    uint32_t _last_status_ms = 0;
+    FrameHandler _frame_cb = nullptr;
+    void *_frame_ctx = nullptr;
+    StatusProvider _status_cb = nullptr;
+    void *_status_ctx = nullptr;
+    StackCodec _codec;
+
+    AsyncClient _client;
+
+    void setupClient_()
+    {
+        _client.onData(
+            [](void *arg, AsyncClient *, void *data, size_t len) {
+                StackNode *self = static_cast<StackNode *>(arg);
+                self->onData_((const uint8_t *)data, len);
+            },
+            this);
+        _client.onConnect(
+            [](void *arg, AsyncClient *) {
+                StackNode *self = static_cast<StackNode *>(arg);
+                self->onConnect_();
+            },
+            this);
+        _client.onDisconnect(
+            [](void *arg, AsyncClient *) {
+                StackNode *self = static_cast<StackNode *>(arg);
+                self->onDisconnect_();
+            },
+            this);
+        _client.onError(
+            [](void *arg, AsyncClient *, int8_t) {
+                StackNode *self = static_cast<StackNode *>(arg);
+                self->onDisconnect_();
+            },
+            this);
+    }
+
+    void connect_()
+    {
+        _last_connect_ms = millis();
+        _client.connect(_host.c_str(), _port);
+    }
+
+    void onConnect_()
+    {
+        sendHello();
+        const uint32_t now = millis();
+        _last_hello_ms = now;
+        _last_status_ms = now;
+        sendStatus_();
+    }
+
+    void onDisconnect_() {}
+
+    void onData_(const uint8_t *data, size_t len)
+    {
+        _codec.feed(
+            data, len,
+            [](void *ctx, const StackFrame &frame) {
+                StackNode *self = static_cast<StackNode *>(ctx);
+                self->handleFrame_(frame);
+            },
+            this);
+    }
+
+    void handleFrame_(const StackFrame &frame)
+    {
+        if (_frame_cb)
+            _frame_cb(_frame_ctx, frame);
+    }
+
+    void sendStatus_()
+    {
+        std::vector<uint8_t> payload;
+        if (_status_cb)
+        {
+            if (!_status_cb(_status_ctx, payload))
+                return;
+        }
+        else
+        {
+            StackStatus st{};
+            st.uptime_ms = millis();
+            StackStatus::encode(st, payload);
+        }
+        send((uint8_t)StackMsgType::Status, payload.data(), payload.size());
+    }
+};

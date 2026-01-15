@@ -42,6 +42,7 @@ public:
             _c._io->println(F("    show time       - RTC date/time"));
             _c._io->println(F("    show i2c        - I2C device list"));
             _c._io->println(F("    show ow         - OneWire device list"));
+            _c._io->println(F("    show stack      - stack role settings"));
             _c._io->println(F("    show telegram   - Telegram settings"));
             _c._io->println(F("    show config     - configuration file contents"));
             _c._io->println(F("    show port <id>  - port details"));
@@ -50,6 +51,8 @@ public:
             _c._io->println(F("    ftest           - start functional test task"));
             _c._io->println(F("    copy tftp://<ip>/firmware.bin firmware - update firmware"));
             _c._io->println(F("    copy http://<ip>/firmware.bin firmware - update firmware"));
+            _c._io->println(F("    stack nodes     - list stack nodes"));
+            _c._io->println(F("    stack send <id> <get|set> <json> - send stack command"));
             _wifi.printHelpEnable();
             _c._io->println(F("    reload          - restart controller"));
             _c._io->println(F("    reset           - restart controller"));
@@ -79,6 +82,12 @@ public:
         if (startsWith_(cmd, "show "))
         {
             _c.handleShow_(cmd.substring(5));
+            return;
+        }
+        if (startsWith_(cmd, "stack "))
+        {
+            _c.cmdStack_(cmd);
+            _c.printPrompt_();
             return;
         }
         if (_wifi.handleEnable(cmd))

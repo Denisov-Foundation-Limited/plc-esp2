@@ -22,20 +22,27 @@
 #include "core/network/wifi_manager.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
+#include "plc/plc_control.hpp"
 
 class ConfigsManager : public ConfigsManagerIface
 {
 public:
     ConfigsManager(Configs &configs, WifiManager &wifi, TelegramClient &telegram,
-                   Network &network, CliConsole &console, TelegramMenu &telegram_menu)
+                   Network &network, CliConsole &console, TelegramMenu &telegram_menu, PlcControl &plc)
         : _configs(configs),
           _wifi(wifi),
           _telegram(telegram),
           _network(network),
           _console(console),
-          _telegram_menu(telegram_menu)
+          _telegram_menu(telegram_menu),
+          _plc(plc)
     {
     }
+
+    StackRole stackRole() const override { return _stack_role; }
+    String stackMasterHost() const override { return _stack_master_host; }
+    void setStackRole(StackRole role) override { _stack_role = role; }
+    void setStackMasterHost(const String &host) override { _stack_master_host = host; }
 
     bool loadConfigs()
     {
@@ -78,6 +85,13 @@ public:
             JsonObject a = doc["admin"].to<JsonObject>();
             a["password"] = _console.adminPassword();
         }
+
+        JsonObject plc = doc["plc"].to<JsonObject>();
+        plc["device_name"] = _plc.deviceName();
+
+        JsonObject s = doc["stack"].to<JsonObject>();
+        s["role"] = (_stack_role == StackRole::Master) ? "master" : "slave";
+        s["master_host"] = _stack_master_host;
 
         return _configs.save(doc);
     }
@@ -185,6 +199,26 @@ private:
             if (a["password"].is<const char *>())
                 _console.setAdminPassword_(a["password"].as<const char *>());
         }
+
+        if (doc["plc"].is<JsonObjectConst>())
+        {
+            JsonObjectConst p = doc["plc"].as<JsonObjectConst>();
+            if (p["device_name"].is<const char *>())
+                _plc.setDeviceName(p["device_name"].as<const char *>());
+        }
+
+        if (doc["stack"].is<JsonObjectConst>())
+        {
+            JsonObjectConst s = doc["stack"].as<JsonObjectConst>();
+            if (s["role"].is<const char *>())
+            {
+                String role = s["role"].as<const char *>();
+                role.toLowerCase();
+                _stack_role = (role == "slave") ? StackRole::Slave : StackRole::Master;
+            }
+            if (s["master_host"].is<const char *>())
+                _stack_master_host = s["master_host"].as<const char *>();
+        }
     }
 
     Configs &_configs;
@@ -193,4 +227,7 @@ private:
     Network &_network;
     CliConsole &_console;
     TelegramMenu &_telegram_menu;
+    PlcControl &_plc;
+    StackRole _stack_role = StackRole::Master;
+    String _stack_master_host;
 };

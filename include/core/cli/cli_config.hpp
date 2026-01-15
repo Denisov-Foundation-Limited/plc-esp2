@@ -15,6 +15,7 @@
 
 #include "core/cli/modules/cli_wifi.hpp"
 #include "core/cli/modules/cli_tgbot.hpp"
+#include "utils/configs_manager_iface.hpp"
 
 template <typename ConsoleT>
 class CLIConfigT
@@ -44,6 +45,9 @@ public:
             _c._io->println(F("  Admin:"));
             _c._io->println(F("    password <pass>         - set admin password"));
             _c._io->println(F("    admin password <pass>   - set admin password"));
+            _c._io->println(F("  Stack:"));
+            _c._io->println(F("    stack role <master|slave> - set device role"));
+            _c._io->println(F("    stack master <host>       - set master host/IP"));
             _c._io->println(F("  Wi-Fi:"));
             _c._io->println(F("    wifi                     - enter Wi-Fi context"));
             _c._io->println(F("  Time:"));
@@ -74,6 +78,11 @@ public:
         if (lower == "time")
         {
             _c.enterConfigTime();
+            return;
+        }
+        if (lower.startsWith("stack "))
+        {
+            handleStack_(cmd, lower);
             return;
         }
         if (handleAdminPassword_(cmd, lower))
@@ -356,6 +365,44 @@ private:
             return true;
         }
         return false;
+    }
+
+    void handleStack_(const String &cmd, const String &lower)
+    {
+        if (lower.startsWith("stack role "))
+        {
+            String role = cmd.substring(11);
+            role.trim();
+            role.toLowerCase();
+            ConfigsManagerIface::StackRole r = ConfigsManagerIface::StackRole::Master;
+            if (role == "slave")
+                r = ConfigsManagerIface::StackRole::Slave;
+            else if (role != "master")
+            {
+                _c._io->println(F("Invalid role"));
+                _c.printPrompt_();
+                return;
+            }
+            if (!_c.setStackRole_(r))
+                _c._io->println(F("Config manager missing"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower.startsWith("stack master "))
+        {
+            String host = cmd.substring(13);
+            host.trim();
+            if (!_c.setStackMasterHost_(host))
+                _c._io->println(F("Config manager missing"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
     }
 
     static bool parseUint_(const String &s, uint16_t &out)

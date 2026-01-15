@@ -1,4 +1,4 @@
-﻿/**********************************************************************/
+/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -27,10 +27,15 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
       --muted: #94a3b8;
     }
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
+      min-height: 100vh;
       font-family: "Segoe UI", Tahoma, Arial, sans-serif;
       background: radial-gradient(1200px 600px at 10% -10%, #1f2937 0%, #0b1220 60%, #080d17 100%);
+      background-repeat: no-repeat;
+      background-size: cover;
+      background-attachment: fixed;
       color: var(--text);
     }
     .wrap { max-width: 720px; margin: 40px auto; padding: 0 16px; }
@@ -73,13 +78,14 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       <div class="nav">
-        <a href="/manage">Прошивка и файлы</a> | <a href="/ports">Порты</a> | <a href="/buses">Шины</a> | <a href="/telegram">Telegram</a>
+        <a href="/wifi">Wi-Fi</a> | <a href="/manage">Прошивка и файлы</a> | <a href="/ports">Порты</a> | <a href="/buses">Шины</a> | <a href="/stack">Стек</a> | <a href="/telegram">Telegram</a>
       </div>
       <h1>FCPLC</h1>
       <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
       <p>Управление контроллером FCPLC</p>
       <div class="section">
         <h2>Статус</h2>
+        <p class="status">Имя устройства: <strong>%DEVICE_NAME%</strong></p>
         <p class="status">RTC: <strong>%RTC_TIME%</strong></p>
         <p class="status">RTC температура: <strong>%RTC_TEMP%</strong></p>
         <p class="status">Температура платы: <strong>%BOARD_TEMP%</strong></p>
@@ -87,37 +93,20 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
         <p class="status">Вентилятор: <strong>%FAN_STATUS%</strong></p>
       </div>
       <div class="section">
-        <h2>Wi-Fi</h2>
-        <p class="status">Режим: <strong>%WIFI_MODE%</strong> | SSID: <strong>%WIFI_CUR_SSID%</strong> | IP: <strong>%WIFI_IP%</strong>%WIFI_STA_SEG%</p>
-        <form method="POST" action="/wifi">
-          <div class="grid">
-            <div>
-              <label>Режим</label>
-              <select name="mode">
-                <option value="sta" %WIFI_STA_SEL%>STA</option>
-                <option value="ap" %WIFI_AP_SEL%>AP</option>
-              </select>
-            </div>
-            <div>
-              <label>SSID</label>
-              <input type="text" name="ssid" value="%WIFI_SSID%" placeholder="SSID STA">
-            </div>
-            <div>
-              <label>Пароль</label>
-              <input type="password" name="password" placeholder="Введите пароль для STA">
-            </div>
-            <div>
-              <label>AP SSID</label>
-              <input type="text" name="ap_ssid" value="%WIFI_AP_SSID%" placeholder="SSID AP">
-            </div>
-            <div>
-              <label>Пароль AP</label>
-              <input type="password" name="ap_password" placeholder="Введите пароль для AP">
-            </div>
+        <h2>Имя устройства</h2>
+        <form method="POST" action="/device">
+          <div class="row">
+            <input type="text" name="device_name" value="%DEVICE_NAME%" placeholder="FCPLC">
+            <button type="submit">Сохранить</button>
           </div>
-          <div class="row" style="margin-top:10px;">
-            <button type="submit">Сохранить Wi-Fi</button>
-            <span class="status">%WIFI_STATUS%</span>
+          <div class="status">%DEVICE_STATUS%</div>
+        </form>
+      </div>
+      <div class="section">
+        <h2>Система</h2>
+        <form method="POST" action="/reboot">
+          <div class="row">
+            <button type="submit">Перезагрузить</button>
           </div>
         </form>
       </div>

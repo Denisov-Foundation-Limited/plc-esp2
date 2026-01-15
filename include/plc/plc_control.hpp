@@ -31,7 +31,7 @@ public:
     };
 
     PlcControl(I2CManager &i2c, PortIO &portio)
-        : _i2c(i2c), _portio(portio)
+        : _i2c(i2c), _portio(portio), _device_name(ActiveBoardProfile::UI_NAME)
     {
     }
 
@@ -57,6 +57,8 @@ public:
             return false;
         }
 
+        _fan_on_c = cfg.fan_on_c;
+        _fan_hyst_c = cfg.hysteresis_c;
         _err = Error::Ok;
         return true;
     }
@@ -70,9 +72,14 @@ public:
             return;
         _last_temp_c = temp_c;
 
+        if (_fan_manual)
+        {
+            setFans_(_fan_on);
+            return;
+        }
         bool want = _fan_on;
-        const float on_c = cfg.fan_on_c;
-        const float off_c = on_c - cfg.hysteresis_c;
+        const float on_c = _fan_on_c;
+        const float off_c = on_c - _fan_hyst_c;
 
         if (!_fan_on && temp_c >= on_c)
             want = true;
@@ -89,6 +96,26 @@ public:
     float boardTemp() const { return _last_temp_c; }
     float cpuTemp() const { return _last_cpu_temp_c; }
     bool fanStatus() const { return _fan_on; }
+    const String &deviceName() const { return _device_name; }
+    void setDeviceName(const String &name) { _device_name = name; }
+    bool fanManualMode() const { return _fan_manual; }
+    float fanOnC() const { return _fan_on_c; }
+    float fanHysteresisC() const { return _fan_hyst_c; }
+
+    void setFanAuto() { _fan_manual = false; }
+
+    void setFanManual(bool on)
+    {
+        _fan_manual = true;
+        _fan_on = on;
+        setFans_(_fan_on);
+    }
+
+    void setFanThresholds(float on_c, float hyst_c)
+    {
+        _fan_on_c = on_c;
+        _fan_hyst_c = hyst_c;
+    }
 
     Error lastError() const { return _err; }
 
@@ -132,6 +159,10 @@ private:
     PortIO &_portio;
     Error _err = Error::Ok;
     bool _fan_on = false;
+    bool _fan_manual = false;
+    float _fan_on_c = 0.0f;
+    float _fan_hyst_c = 0.0f;
     float _last_temp_c = 0.0f;
     float _last_cpu_temp_c = 0.0f;
+    String _device_name;
 };

@@ -27,10 +27,15 @@ static const char kWebInterfaceBusesHtml[] PROGMEM = R"HTML(
       --muted: #94a3b8;
     }
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
+      min-height: 100vh;
       font-family: "Segoe UI", Tahoma, Arial, sans-serif;
       background: radial-gradient(1200px 600px at 10% -10%, #1f2937 0%, #0b1220 60%, #080d17 100%);
+      background-repeat: no-repeat;
+      background-size: cover;
+      background-attachment: fixed;
       color: var(--text);
     }
     .wrap { max-width: 900px; margin: 40px auto; padding: 0 16px; }
@@ -56,7 +61,7 @@ static const char kWebInterfaceBusesHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       <div class="nav">
-        <a href="/">FCPLC и Wi-Fi</a> | <a href="/manage">Прошивка и файлы</a> | <a href="/ports">Порты</a> | <a href="/telegram">Telegram</a>
+        <a href="/">FCPLC</a> | <a href="/wifi">Wi-Fi</a> | <a href="/manage">Прошивка и файлы</a> | <a href="/ports">Порты</a> | <a href="/stack">Стек</a> | <a href="/telegram">Telegram</a>
       </div>
       <h1>Шины</h1>
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
