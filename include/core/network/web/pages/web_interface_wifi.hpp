@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -77,9 +77,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="nav">
-        <a href="/">FCPLC</a> | <a href="/manage">Прошивка и файлы</a> | <a href="/ports">Порты</a> | <a href="/buses">Шины</a> | <a href="/stack">Стек</a> | <a href="/telegram">Telegram</a>
-      </div>
+      %NAV%
       <h1>Wi-Fi</h1>
       <p class="status">Режим: <strong>%WIFI_MODE%</strong> | SSID: <strong>%WIFI_CUR_SSID%</strong> | IP: <strong>%WIFI_IP%</strong>%WIFI_STA_SEG%</p>
       <form method="POST" action="/wifi">

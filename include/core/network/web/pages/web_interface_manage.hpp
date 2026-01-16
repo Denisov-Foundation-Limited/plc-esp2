@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -90,9 +90,7 @@ static const char kWebInterfaceManageHtml[] PROGMEM = R"HTML(
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="nav">
-        <a href="/">FCPLC</a> | <a href="/wifi">Wi-Fi</a> | <a href="/ports">Порты</a> | <a href="/buses">Шины</a> | <a href="/stack">Стек</a> | <a href="/telegram">Telegram</a>
-      </div>
+      %NAV%
       <h1>Прошивка и файлы</h1>
       <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
       <div class="section">

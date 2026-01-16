@@ -11,13 +11,13 @@
 
 #pragma once
 
-static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
+static const char kWebInterfaceLogsHtml[] PROGMEM = R"HTML(
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Стек</title>
+  <title>Logs</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -38,7 +38,7 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
       background-attachment: fixed;
       color: var(--text);
     }
-    .wrap { max-width: 720px; margin: 40px auto; padding: 0 16px; }
+    .wrap { max-width: 820px; margin: 40px auto; padding: 0 16px; }
     .card {
       background: linear-gradient(180deg, #0f172a 0%, #0b1220 100%);
       border: 1px solid #1f2937;
@@ -46,30 +46,19 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
       padding: 22px;
       box-shadow: 0 10px 30px rgba(0,0,0,0.35);
     }
-    h1 { margin: 0 0 6px; font-size: 22px; }
-    p { margin: 0 0 18px; color: var(--muted); }
-    .section { margin-top: 18px; }
-    .row { display: flex; gap: 10px; align-items: center; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--muted); }
-    input[type=text], select {
-      width: 100%;
+    h1 { margin: 0 0 12px; font-size: 22px; }
+    pre {
+      margin: 0;
       background: #0b1220;
       border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 12px;
       color: var(--text);
-      padding: 10px;
-      border-radius: 8px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      line-height: 1.4;
     }
-    button {
-      background: var(--accent);
-      color: #00111a;
-      border: none;
-      padding: 10px 16px;
-      border-radius: 8px;
-      font-weight: 700;
-      cursor: pointer;
-    }
-    .status { color: var(--muted); font-size: 12px; }
     a { color: #7dd3fc; text-decoration: none; }
     .nav { margin-bottom: 12px; }
   </style>
@@ -78,30 +67,8 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Стек</h1>
-      <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
-      <div class="section">
-        <p class="status">Роль: <strong>%STACK_ROLE%</strong></p>
-        <form method="POST" action="/stack">
-          <div class="grid">
-            <div>
-              <label>Роль</label>
-              <select name="role">
-                <option value="master" %STACK_ROLE_MASTER_SEL%>master</option>
-                <option value="slave" %STACK_ROLE_SLAVE_SEL%>slave</option>
-              </select>
-            </div>
-            <div>
-              <label>Master host/IP</label>
-              <input type="text" name="master_host" value="%STACK_MASTER_HOST%" placeholder="192.168.1.10">
-            </div>
-          </div>
-          <div class="row" style="margin-top:10px;">
-            <button type="submit">Сохранить</button>
-            <span class="status">%STACK_STATUS%</span>
-          </div>
-        </form>
-      </div>
+      <h1>Logs</h1>
+      <pre>%LOG_LINES%</pre>
     </div>
   </div>
 </body>

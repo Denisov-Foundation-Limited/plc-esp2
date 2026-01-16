@@ -13,8 +13,6 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-#include "boards/board_profile.hpp"
-
 #include "hal/gpio/extender.hpp"
 #include "hal/gpio/gpio_caps.hpp"
 #include "hal/gpio/portio.hpp"

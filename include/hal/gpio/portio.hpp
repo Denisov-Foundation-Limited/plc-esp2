@@ -55,16 +55,16 @@ public:
     enum class Location : uint8_t
     {
         Cpu = 0,
-        Unit1,
-        Unit2,
-        Unit3,
-        Unit4,
-        Unit5,
-        Unit6,
-        Unit7,
-        Unit8,
-        Unit9,
-        Unit10,
+        Ext1,
+        Ext2,
+        Ext3,
+        Ext4,
+        Ext5,
+        Ext6,
+        Ext7,
+        Ext8,
+        Ext9,
+        Ext10,
         Unknown
     };
 

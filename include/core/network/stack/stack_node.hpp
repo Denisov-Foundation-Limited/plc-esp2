@@ -13,8 +13,6 @@
 
 #include <Arduino.h>
 #include <stdint.h>
-#include <vector>
-
 #include <AsyncTCP.h>
 
 #include "core/network/stack/stack_protocol.hpp"
@@ -24,7 +22,7 @@ class StackNode
 {
 public:
     using FrameHandler = void (*)(void *ctx, const StackFrame &frame);
-    using StatusProvider = bool (*)(void *ctx, std::vector<uint8_t> &out);
+    using StatusProvider = size_t (*)(void *ctx, uint8_t *out, size_t cap);
 
     StackNode() = default;
 
@@ -86,11 +84,11 @@ public:
     {
         if (!_client.connected())
             return false;
-        std::vector<uint8_t> buf;
-        StackCodec::encode(type, payload, len, buf);
-        if (buf.empty())
+        uint8_t buf[StackCodec::kMaxFrame] = {};
+        const size_t frame_len = StackCodec::encode(type, payload, len, buf, sizeof(buf));
+        if (frame_len == 0)
             return false;
-        _client.write((const char *)buf.data(), buf.size());
+        _client.write((const char *)buf, frame_len);
         return true;
     }
 
@@ -102,9 +100,11 @@ public:
         hello.fw_ver = fw_ver;
         hello.caps = caps;
         hello.name = _device_name;
-        std::vector<uint8_t> payload;
-        StackHello::encode(hello, payload);
-        return send((uint8_t)StackMsgType::Hello, payload.data(), payload.size());
+        uint8_t payload[StackCodec::kMaxPayload] = {};
+        const size_t payload_len = StackHello::encode(hello, payload, sizeof(payload));
+        if (payload_len == 0)
+            return false;
+        return send((uint8_t)StackMsgType::Hello, payload, payload_len);
     }
 
 private:
@@ -190,18 +190,17 @@ private:
 
     void sendStatus_()
     {
-        std::vector<uint8_t> payload;
+        uint8_t payload[StackCodec::kMaxPayload] = {};
+        size_t payload_len = 0;
         if (_status_cb)
-        {
-            if (!_status_cb(_status_ctx, payload))
-                return;
-        }
+            payload_len = _status_cb(_status_ctx, payload, sizeof(payload));
         else
         {
             StackStatus st{};
             st.uptime_ms = millis();
-            StackStatus::encode(st, payload);
+            payload_len = StackStatus::encode(st, payload, sizeof(payload));
         }
-        send((uint8_t)StackMsgType::Status, payload.data(), payload.size());
+        if (payload_len > 0)
+            send((uint8_t)StackMsgType::Status, payload, payload_len);
     }
 };

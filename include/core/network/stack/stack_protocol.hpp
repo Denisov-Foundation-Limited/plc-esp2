@@ -12,8 +12,9 @@
 #pragma once
 
 #include <Arduino.h>
+#include <string.h>
 #include <stdint.h>
-#include <vector>
+#include <array>
 
 enum class StackMsgType : uint8_t
 {
@@ -37,7 +38,8 @@ struct StackHeader
 struct StackFrame
 {
     uint8_t type = 0;
-    std::vector<uint8_t> payload;
+    const uint8_t *payload = nullptr;
+    size_t payload_len = 0;
 };
 
 class StackCodec
@@ -48,78 +50,115 @@ public:
     static constexpr size_t kHeaderSize = 5;
     static constexpr size_t kCrcSize = 2;
     static constexpr size_t kMaxPayload = 1024;
+    static constexpr size_t kMaxFrame = kHeaderSize + kMaxPayload + kCrcSize;
 
     using FrameHandler = void (*)(void *ctx, const StackFrame &frame);
 
-    void clear() { _buf.clear(); }
+    void clear()
+    {
+        _head = 0;
+        _len = 0;
+    }
 
     void feed(const uint8_t *data, size_t len, FrameHandler cb, void *ctx)
     {
         if (!data || len == 0)
             return;
-        _buf.insert(_buf.end(), data, data + len);
+        if (len > kMaxFrame)
+        {
+            clear();
+            return;
+        }
+        if ((_len + len) > kMaxFrame)
+            clear();
+        for (size_t i = 0; i < len; ++i)
+            push_(data[i]);
 
         while (true)
         {
             sync_();
-            if (_buf.size() < kHeaderSize + kCrcSize)
+            if (_len < kHeaderSize + kCrcSize)
                 return;
-            const uint16_t payload_len = readU16_(&_buf[3]);
+            const uint16_t payload_len = readU16_(3);
             if (payload_len > kMaxPayload)
             {
-                _buf.erase(_buf.begin());
+                pop_(1);
                 continue;
             }
             const size_t total = kHeaderSize + payload_len + kCrcSize;
-            if (_buf.size() < total)
+            if (_len < total)
                 return;
-            const uint16_t crc_rx = readU16_(&_buf[kHeaderSize + payload_len]);
-            const uint16_t crc_calc = crc16_(_buf.data(), kHeaderSize + payload_len);
+            const uint16_t crc_rx = readU16_(kHeaderSize + payload_len);
+            const uint16_t crc_calc = crc16_(0, kHeaderSize + payload_len);
             if (crc_rx != crc_calc)
             {
-                _buf.erase(_buf.begin());
+                pop_(1);
                 continue;
             }
             StackFrame frame;
-            frame.type = _buf[2];
-            frame.payload.assign(_buf.begin() + (int)kHeaderSize, _buf.begin() + (int)(kHeaderSize + payload_len));
+            frame.type = at_(2);
+            copyOut_(kHeaderSize, payload_len);
+            frame.payload = _payload.data();
+            frame.payload_len = payload_len;
             if (cb)
                 cb(ctx, frame);
-            _buf.erase(_buf.begin(), _buf.begin() + (int)total);
+            pop_(total);
         }
     }
 
-    static void encode(uint8_t type, const uint8_t *payload, size_t len, std::vector<uint8_t> &out)
+    static size_t encode(uint8_t type, const uint8_t *payload, size_t len, uint8_t *out, size_t out_cap)
     {
         if (len > kMaxPayload)
-            return;
-        out.clear();
-        out.reserve(kHeaderSize + len + kCrcSize);
-        out.push_back(kMagic);
-        out.push_back(kVersion);
-        out.push_back(type);
-        writeU16_(out, (uint16_t)len);
+            return 0;
+        const size_t total = kHeaderSize + len + kCrcSize;
+        if (!out || out_cap < total)
+            return 0;
+        out[0] = kMagic;
+        out[1] = kVersion;
+        out[2] = type;
+        writeU16_(out, 3, (uint16_t)len);
         if (payload && len > 0)
-            out.insert(out.end(), payload, payload + len);
-        const uint16_t crc = crc16_(out.data(), kHeaderSize + len);
-        writeU16_(out, crc);
+            memcpy(out + kHeaderSize, payload, len);
+        const uint16_t crc = crc16Raw_(out, kHeaderSize + len);
+        writeU16_(out, kHeaderSize + len, crc);
+        return total;
     }
 
 private:
-    std::vector<uint8_t> _buf;
+    std::array<uint8_t, kMaxPayload> _payload = {};
+    std::array<uint8_t, kMaxFrame> _buf = {};
+    size_t _head = 0;
+    size_t _len = 0;
 
     void sync_()
     {
-        while (!_buf.empty() && _buf[0] != kMagic)
-            _buf.erase(_buf.begin());
-        if (_buf.size() >= kHeaderSize)
+        while (_len > 0 && at_(0) != kMagic)
+            pop_(1);
+        if (_len >= kHeaderSize)
         {
-            if (_buf[0] != kMagic || _buf[1] != kVersion)
-                _buf.erase(_buf.begin());
+            if (at_(0) != kMagic || at_(1) != kVersion)
+                pop_(1);
         }
     }
 
-    static uint16_t crc16_(const uint8_t *data, size_t len)
+    uint16_t crc16_(size_t offset, size_t len) const
+    {
+        uint16_t crc = 0xFFFF;
+        for (size_t i = 0; i < len; ++i)
+        {
+            crc ^= at_(offset + i);
+            for (uint8_t b = 0; b < 8; ++b)
+            {
+                if (crc & 1)
+                    crc = (crc >> 1) ^ 0xA001;
+                else
+                    crc >>= 1;
+            }
+        }
+        return crc;
+    }
+
+    static uint16_t crc16Raw_(const uint8_t *data, size_t len)
     {
         uint16_t crc = 0xFFFF;
         for (size_t i = 0; i < len; ++i)
@@ -136,14 +175,47 @@ private:
         return crc;
     }
 
-    static uint16_t readU16_(const uint8_t *p)
+    uint16_t readU16_(size_t offset) const
     {
-        return (uint16_t)p[0] | (uint16_t)p[1] << 8;
+        return (uint16_t)at_(offset) | (uint16_t)at_(offset + 1) << 8;
     }
 
-    static void writeU16_(std::vector<uint8_t> &out, uint16_t v)
+    static void writeU16_(uint8_t *out, size_t offset, uint16_t v)
     {
-        out.push_back((uint8_t)(v & 0xFF));
-        out.push_back((uint8_t)((v >> 8) & 0xFF));
+        out[offset] = (uint8_t)(v & 0xFF);
+        out[offset + 1] = (uint8_t)((v >> 8) & 0xFF);
+    }
+
+    uint8_t at_(size_t offset) const
+    {
+        return _buf[(size_t)((_head + offset) % _buf.size())];
+    }
+
+    void push_(uint8_t v)
+    {
+        const size_t pos = (_head + _len) % _buf.size();
+        _buf[pos] = v;
+        ++_len;
+    }
+
+    void pop_(size_t n)
+    {
+        if (n >= _len)
+        {
+            clear();
+            return;
+        }
+        _head = (_head + n) % _buf.size();
+        _len -= n;
+    }
+
+    void copyOut_(size_t offset, size_t len)
+    {
+        if (len == 0)
+            return;
+        if (len > _payload.size())
+            len = _payload.size();
+        for (size_t i = 0; i < len; ++i)
+            _payload[i] = at_(offset + i);
     }
 };

@@ -11,13 +11,13 @@
 
 #pragma once
 
-static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
+static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FCPLC</title>
+  <title>Admin Password</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -38,7 +38,7 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
       background-attachment: fixed;
       color: var(--text);
     }
-    .wrap { max-width: 720px; margin: 40px auto; padding: 0 16px; }
+    .wrap { max-width: 620px; margin: 40px auto; padding: 0 16px; }
     .card {
       background: linear-gradient(180deg, #0f172a 0%, #0b1220 100%);
       border: 1px solid #1f2937;
@@ -48,11 +48,8 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
     }
     h1 { margin: 0 0 6px; font-size: 22px; }
     p { margin: 0 0 18px; color: var(--muted); }
-    .section { margin-top: 18px; }
-    .row { display: flex; gap: 10px; align-items: center; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--muted); }
-    input[type=text], input[type=password], select {
+    label { display: block; margin-bottom: 6px; font-size: 12px; color: var(--muted); }
+    input[type=password] {
       width: 100%;
       background: #0b1220;
       border: 1px solid #334155;
@@ -61,6 +58,7 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
       border-radius: 8px;
     }
     button {
+      margin-top: 12px;
       background: var(--accent);
       color: #00111a;
       border: none;
@@ -70,16 +68,6 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
       cursor: pointer;
     }
     .status { color: var(--muted); font-size: 12px; }
-    .notice {
-      margin: 6px 0 14px;
-      padding: 8px 10px;
-      border-radius: 8px;
-      background: #0b1220;
-      border: 1px solid #334155;
-      color: var(--text);
-      font-size: 12px;
-    }
-    .notice:empty { display: none; }
     a { color: #7dd3fc; text-decoration: none; }
     .nav { margin-bottom: 12px; }
   </style>
@@ -88,37 +76,13 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>FCPLC</h1>
-      <div class="notice">%LOGOUT_MSG%</div>
-      <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
-      <p>Управление контроллером FCPLC</p>
-      <div class="section">
-        <h2>Статус</h2>
-        <p class="status">Имя устройства: <strong>%DEVICE_NAME%</strong></p>
-        <p class="status">RTC: <strong>%RTC_TIME%</strong></p>
-        <p class="status">RTC температура: <strong>%RTC_TEMP%</strong></p>
-        <p class="status">Температура платы: <strong>%BOARD_TEMP%</strong></p>
-        <p class="status">CPU: <strong>%CPU_TEMP%</strong></p>
-        <p class="status">Вентилятор: <strong>%FAN_STATUS%</strong></p>
-      </div>
-      <div class="section">
-        <h2>Имя устройства</h2>
-        <form method="POST" action="/device">
-          <div class="row">
-            <input type="text" name="device_name" value="%DEVICE_NAME%" placeholder="FCPLC">
-            <button type="submit">Сохранить</button>
-          </div>
-          <div class="status">%DEVICE_STATUS%</div>
-        </form>
-      </div>
-      <div class="section">
-        <h2>Система</h2>
-        <form method="POST" action="/reboot">
-          <div class="row">
-            <button type="submit">Перезагрузить</button>
-          </div>
-        </form>
-      </div>
+      <h1>Admin Password</h1>
+      <p class="status">Status: <strong>%ADMIN_STATUS%</strong></p>
+      <form method="POST" action="/admin">
+        <label for="password">New password</label>
+        <input id="password" type="password" name="password" placeholder="Enter new password">
+        <button type="submit">Save</button>
+      </form>
     </div>
   </div>
 </body>

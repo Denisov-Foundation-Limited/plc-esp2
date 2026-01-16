@@ -13,9 +13,11 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <stdarg.h>
+#include <string.h>
 
 #include "boards/board_profile.hpp"
 #include "boards/board_profile_base.hpp"
+#include "core/rtc.hpp"
 
 #include "hal/bus/uart.hpp"
 
@@ -58,6 +60,20 @@ public:
 
     void begin(Stream &out) { _out = &out; }
     bool ready() const { return _out != nullptr; }
+    void setRtc(RTC &rtc) { _rtc = &rtc; }
+    size_t recentCount() const { return _recent_count; }
+    bool getRecentLine(size_t idx, char *out, size_t cap) const
+    {
+        if (!out || cap == 0)
+            return false;
+        if (idx >= _recent_count)
+            return false;
+        const size_t start = (_recent_count < kRecentMax) ? 0 : _recent_head;
+        const size_t pos = (start + idx) % kRecentMax;
+        strncpy(out, _recent[pos], cap - 1);
+        out[cap - 1] = '\0';
+        return true;
+    }
 
     bool beginAuto()
     {
@@ -136,6 +152,11 @@ public:
 private:
     Stream *_out = nullptr;
     UartManager &uart_;
+    RTC *_rtc = nullptr;
+    static constexpr size_t kRecentMax = 30;
+    char _recent[kRecentMax][LOGGER_BUFFER_SIZE] = {};
+    uint8_t _recent_head = 0;
+    uint8_t _recent_count = 0;
 
     template <Level L>
     static constexpr bool enabled() { return (uint8_t)L <= LOGGER_LEVEL; }
@@ -205,9 +226,36 @@ private:
         _out->print(color_<L>());
 #endif
 #if LOGGER_USE_TIMESTAMP
-        _out->print(F("["));
-        _out->print((uint32_t)millis());
-        _out->print(F("]"));
+        if (_rtc)
+        {
+            Ds3231Mz::DateTime dt{};
+            if (_rtc->Time(dt))
+            {
+                char date_buf[16] = {};
+                char time_buf[16] = {};
+                snprintf(date_buf, sizeof(date_buf), "%04u-%02u-%02u",
+                         (unsigned)dt.year, (unsigned)dt.month, (unsigned)dt.day);
+                snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
+                         (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
+                _out->print(F("["));
+                _out->print(date_buf);
+                _out->print(F("]["));
+                _out->print(time_buf);
+                _out->print(F("]"));
+            }
+            else
+            {
+                _out->print(F("["));
+                _out->print((uint32_t)millis());
+                _out->print(F("]"));
+            }
+        }
+        else
+        {
+            _out->print(F("["));
+            _out->print((uint32_t)millis());
+            _out->print(F("]"));
+        }
 #endif
         _out->print(F("["));
         _out->print(levelName_(L));
@@ -218,6 +266,10 @@ private:
 #if LOGGER_USE_COLOR
         _out->print(F("\x1b[0m"));
 #endif
+
+        char line[LOGGER_BUFFER_SIZE] = {};
+        buildTextLine_(line, sizeof(line), tag, levelName_(L), msg);
+        storeLine_(line);
     }
 
     template <Level L>
@@ -225,7 +277,29 @@ private:
     {
         JsonDocument doc;
 #if LOGGER_USE_TIMESTAMP
-        doc["ts"] = (uint32_t)millis();
+        if (_rtc)
+        {
+            Ds3231Mz::DateTime dt{};
+            if (_rtc->Time(dt))
+            {
+                char date_buf[16] = {};
+                char time_buf[16] = {};
+                snprintf(date_buf, sizeof(date_buf), "%04u-%02u-%02u",
+                         (unsigned)dt.year, (unsigned)dt.month, (unsigned)dt.day);
+                snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
+                         (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
+                doc["date"] = date_buf;
+                doc["time"] = time_buf;
+            }
+            else
+            {
+                doc["ts"] = (uint32_t)millis();
+            }
+        }
+        else
+        {
+            doc["ts"] = (uint32_t)millis();
+        }
 #endif
         doc["lvl"] = levelName_(L);
         doc["tag"] = tag;
@@ -233,5 +307,67 @@ private:
 
         serializeJson(doc, *_out);
         _out->println();
+
+        char line[LOGGER_BUFFER_SIZE] = {};
+        if (serializeJson(doc, line, sizeof(line)) == 0)
+            strncpy(line, "{}", sizeof(line) - 1);
+        storeLine_(line);
+    }
+
+    void storeLine_(const char *line)
+    {
+        if (!line)
+            return;
+        strncpy(_recent[_recent_head], line, LOGGER_BUFFER_SIZE - 1);
+        _recent[_recent_head][LOGGER_BUFFER_SIZE - 1] = '\0';
+        _recent_head = (uint8_t)((_recent_head + 1) % kRecentMax);
+        if (_recent_count < kRecentMax)
+            ++_recent_count;
+    }
+
+    void buildTextLine_(char *out, size_t cap, const __FlashStringHelper *tag,
+                        const char *level, const char *msg)
+    {
+        if (!out || cap == 0)
+            return;
+        char tag_buf[32] = {};
+        if (tag)
+            strncpy_P(tag_buf, reinterpret_cast<const char *>(tag), sizeof(tag_buf) - 1);
+        char ts_buf[40] = {};
+        if (!formatTimestamp_(ts_buf, sizeof(ts_buf)))
+        {
+            snprintf(out, cap, "[%s][%s] %s", level ? level : "?", tag_buf, msg ? msg : "");
+            return;
+        }
+        snprintf(out, cap, "%s[%s][%s] %s", ts_buf, level ? level : "?", tag_buf, msg ? msg : "");
+    }
+
+    bool formatTimestamp_(char *out, size_t cap)
+    {
+#if LOGGER_USE_TIMESTAMP
+        if (!out || cap == 0)
+            return false;
+        if (_rtc)
+        {
+            Ds3231Mz::DateTime dt{};
+            if (_rtc->Time(dt))
+            {
+                char date_buf[16] = {};
+                char time_buf[16] = {};
+                snprintf(date_buf, sizeof(date_buf), "%04u-%02u-%02u",
+                         (unsigned)dt.year, (unsigned)dt.month, (unsigned)dt.day);
+                snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
+                         (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
+                snprintf(out, cap, "[%s][%s]", date_buf, time_buf);
+                return true;
+            }
+        }
+        snprintf(out, cap, "[%lu]", (unsigned long)millis());
+        return true;
+#else
+        (void)out;
+        (void)cap;
+        return false;
+#endif
     }
 };

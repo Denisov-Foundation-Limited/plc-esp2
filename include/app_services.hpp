@@ -16,6 +16,7 @@
 #include <vector>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <LittleFS.h>
 
 #include "boards/board_profile.hpp"
 #include "boards/profile_validator.hpp"
@@ -42,6 +43,7 @@
 #include "hal/gpio/extender.hpp"
 #include "hal/gpio/gpio.hpp"
 #include "hal/gpio/portio.hpp"
+#include "hal/io_stack.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/ibutton.hpp"
 #include "hal/bus/onewire.hpp"
@@ -55,6 +57,8 @@
 #include "utils/configs.hpp"
 #include "utils/configs_manager.hpp"
 #include "core/network/web/web_interface.hpp"
+#include "core/plc_scan.hpp"
+#include "hal/gpio/extender_impl.hpp"
 
 struct AppServices
 {
@@ -80,6 +84,7 @@ struct AppServices
 
     Extender ext;
     PortIO portio;
+    IoStack io;
     Gpio gpio;
     Hal hal;
     PlcControl plc;
@@ -96,6 +101,7 @@ struct AppServices
     CliConsole console;
     Configs configs;
     ConfigsManager configs_manager;
+    PlcScanLoop plc_scan;
 
     AppServices()
         : logs(uart),
@@ -113,25 +119,29 @@ struct AppServices
           telegram_wifi_client(),
           ext(i2c, ActiveBoardProfile::EXT_DEVS, &logs),
           portio(ActiveBoardProfile::PORTS, &ext),
-          gpio(portio),
+          io(portio),
+          gpio(io),
           hal(ow, i2c, spi, uart, gpio),
-          plc(i2c, portio),
+          plc(i2c, io),
           telegram(logs),
           telegram_bot(telegram),
-          telegram_menu(plc, wifi, rtc, telegram_bot, configs),
+          telegram_menu(plc, wifi, rtc, telegram_bot, configs, logs),
           web(ActiveBoardProfile::WEB_PORT),
           fw_upgrade(web, console, wifi, configs, plc, rtc, telegram, telegram_menu, logs, ext, i2c, ow),
           network(logs, wifi, telegram, telegram_bot, telegram_menu, fw_upgrade, web, telegram_wifi_client),
-          stack_slave(portio, ds18b20, ow, i2c, plc, rtc, telegram, logs),
+          stack_slave(io, ds18b20, ow, i2c, plc, rtc, telegram, logs, ext),
           tm(),
-          task_binder(tm, wifi, plc, telegram, ext),
-          ftest(logs, portio, ow, ibutton, ds18b20, i2c, tm, task_binder),
+          task_binder(tm, wifi, telegram, ext),
+          ftest(logs, io, ow, ibutton, ds18b20, i2c, rtc, ext, tm, task_binder),
           console(plc, wifi, rtc, ftest, i2c, ow, telegram, telegram_menu, configs, ext, network.stackMaster()),
           configs(),
-          configs_manager(configs, wifi, telegram, network, console, telegram_menu, plc)
+          configs_manager(configs, wifi, telegram, network, console, telegram_menu, plc),
+          plc_scan(io, plc)
     {
+        logs.setRtc(rtc);
         console.setConfigsManager(configs_manager);
         telegram_menu.setConfigsManager(configs_manager);
+        telegram_menu.setStackMaster(*network.stackMaster());
         fw_upgrade.setConfigsManager(configs_manager);
         network.setStackConfig(configs_manager);
 #if defined(ESP32)
@@ -159,32 +169,78 @@ struct AppServices
         {
             logs.error(F("APP"), F("Configs mount failed"));
         }
-        else if (!configs_manager.loadConfigs())
+        else
         {
-            const char *err = "Unknown error";
-            switch (configs.lastError())
+            const bool loaded = configs_manager.loadConfigs();
+            const Configs::Error cfg_err = configs.lastError();
+            uint32_t cfg_size = 0;
+            if (LittleFS.exists(Configs::kPath))
             {
-            case Configs::Error::FsMount:
-                err = "FS mount failed";
-                break;
-            case Configs::Error::OpenRead:
-                err = "Open read failed";
-                break;
-            case Configs::Error::OpenWrite:
-                err = "Open write failed";
-                break;
-            case Configs::Error::JsonParse:
-                err = "JSON parse failed";
-                break;
-            case Configs::Error::JsonSerialize:
-                err = "JSON serialize failed";
-                break;
-            default:
-                break;
+                File f = LittleFS.open(Configs::kPath, "r");
+                if (f)
+                {
+                    cfg_size = (uint32_t)f.size();
+                    f.close();
+                }
             }
-            logs.error(F("APP"), F("Configs load failed: %s"), err);
+
+            if (loaded && cfg_err == Configs::Error::Ok)
+            {
+                logs.info(F("APP"), F("Configs loaded: %s (%u bytes)"), Configs::kPath, (unsigned)cfg_size);
+            }
+            else
+            {
+                const char *err = "Unknown error";
+                switch (cfg_err)
+                {
+                case Configs::Error::OpenRead:
+                    err = "Open read failed";
+                    break;
+                case Configs::Error::OpenWrite:
+                    err = "Open write failed";
+                    break;
+                case Configs::Error::JsonParse:
+                    err = "JSON parse failed";
+                    break;
+                case Configs::Error::JsonSerialize:
+                    err = "JSON serialize failed";
+                    break;
+                default:
+                    break;
+                }
+
+                if (cfg_err == Configs::Error::OpenRead)
+                {
+                    logs.warn(F("APP"), F("Configs missing: %s (saving defaults)"), Configs::kPath);
+                    if (!configs_manager.save())
+                    {
+                        const char *save_err = "Unknown error";
+                        switch (configs.lastError())
+                        {
+                        case Configs::Error::OpenWrite:
+                            save_err = "Open write failed";
+                            break;
+                        case Configs::Error::JsonSerialize:
+                            save_err = "JSON serialize failed";
+                            break;
+                        default:
+                            break;
+                        }
+                        logs.error(F("APP"), F("Configs save failed: %s"), save_err);
+                    }
+                }
+                else
+                {
+                    logs.error(F("APP"), F("Configs load failed: %s (%s, %u bytes)"),
+                               err, Configs::kPath, (unsigned)cfg_size);
+                }
+            }
         }
         network.setStackDeviceName(plc.deviceName());
+        if (wifi.ap())
+            logs.info(F("WIFI"), F("Mode: AP (SSID=%s)"), wifi.apSsid().c_str());
+        else
+            logs.info(F("WIFI"), F("Mode: STA (SSID=%s)"), wifi.ssid().c_str());
 
         bool ok = true;
 
@@ -221,16 +277,16 @@ struct AppServices
             switch (rtc.lastError())
             {
             case RTC::Error::NoBus:
-                logs.error(F("APP"), F("RTC I2C bus missing"));
+                logs.warn(F("APP"), F("RTC I2C bus missing"));
                 break;
             case RTC::Error::InvalidConfig:
-                logs.error(F("APP"), F("RTC config invalid"));
+                logs.warn(F("APP"), F("RTC config invalid"));
                 break;
             case RTC::Error::I2c:
-                logs.error(F("APP"), F("RTC I2C error"));
+                logs.warn(F("APP"), F("RTC I2C error"));
                 break;
             default:
-                logs.error(F("APP"), F("RTC Init failed"));
+                logs.warn(F("APP"), F("RTC Init failed"));
                 break;
             }
         }
@@ -241,16 +297,16 @@ struct AppServices
             switch (display.lastError())
             {
             case Display::Error::NoBus:
-                logs.error(F("APP"), F("LCD I2C bus missing"));
+                logs.warn(F("APP"), F("LCD I2C bus missing"));
                 break;
             case Display::Error::InvalidConfig:
-                logs.error(F("APP"), F("LCD config invalid"));
+                logs.warn(F("APP"), F("LCD config invalid"));
                 break;
             case Display::Error::I2c:
-                logs.error(F("APP"), F("LCD I2C error"));
+                logs.warn(F("APP"), F("LCD I2C error"));
                 break;
             default:
-                logs.error(F("APP"), F("LCD Init failed"));
+                logs.warn(F("APP"), F("LCD Init failed"));
                 break;
             }
         }
@@ -307,16 +363,19 @@ struct AppServices
 
         task_binder.bindFtest(ftest);
         task_binder.bindAll();
+        plc_scan.begin();
 
         return ok;
     }
 
     void loop()
     {
-        hal.loop();
+        plc_scan.tick();
         console.loop();
-        tm.loop();
-        network.loop();
+        const uint32_t budget_us = plc_scan.timeToNextUs();
+        tm.loop(budget_us);
+        if (budget_us > 200)
+            network.loop();
     }
 
 private:

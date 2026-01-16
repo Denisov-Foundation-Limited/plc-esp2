@@ -83,7 +83,7 @@ public:
         if (_console.adminPasswordSet())
         {
             JsonObject a = doc["admin"].to<JsonObject>();
-            a["password"] = _console.adminPassword();
+            a["password_hash"] = _console.adminPasswordHashHex();
         }
 
         JsonObject plc = doc["plc"].to<JsonObject>();
@@ -174,7 +174,7 @@ private:
 
             if (proxy_override)
             {
-                if (use_proxy)
+                if (use_proxy && host.length() > 0)
                     _network.setTelegramProxy(host, port, path);
                 else
                     _network.disableTelegramProxy();
@@ -196,8 +196,14 @@ private:
         if (doc["admin"].is<JsonObjectConst>())
         {
             JsonObjectConst a = doc["admin"].as<JsonObjectConst>();
-            if (a["password"].is<const char *>())
+            if (a["password_hash"].is<const char *>())
+            {
+                _console.setAdminPasswordHashHex_(a["password_hash"].as<const char *>());
+            }
+            else if (a["password"].is<const char *>())
+            {
                 _console.setAdminPassword_(a["password"].as<const char *>());
+            }
         }
 
         if (doc["plc"].is<JsonObjectConst>())

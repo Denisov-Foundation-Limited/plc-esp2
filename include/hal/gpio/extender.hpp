@@ -24,6 +24,8 @@ class Logger;
 class Extender
 {
 public:
+    static constexpr uint8_t MAX_DEVS = 16;
+
     enum class Type : uint8_t
     {
         None = 0,
@@ -42,6 +44,7 @@ public:
     Extender(I2CManager &i2c, const std::array<DevCfg, N> &devs, Logger *log = nullptr)
         : _devs(devs.data()), _dev_count((uint8_t)N), _i2c(&i2c), _log(log)
     {
+        static_assert(N <= MAX_DEVS, "Extender supports up to 16 devices");
         initState_();
     }
 
@@ -71,13 +74,13 @@ private:
     uint8_t _dev_count = 0;
     I2CManager *_i2c = nullptr;
     Logger *_log = nullptr;
-    mutable Mcp23017 *_mcp = nullptr;
-    mutable bool *_mcp_inited = nullptr;
-    mutable Pcf8574 *_pcf = nullptr;
-    mutable bool *_pcf_inited = nullptr;
-    mutable bool *_dev_failed = nullptr;
-    mutable bool *_present = nullptr;
-    mutable bool *_warned_missing = nullptr;
+    mutable Mcp23017 _mcp[MAX_DEVS] = {};
+    mutable bool _mcp_inited[MAX_DEVS] = {};
+    mutable Pcf8574 _pcf[MAX_DEVS] = {};
+    mutable bool _pcf_inited[MAX_DEVS] = {};
+    mutable bool _dev_failed[MAX_DEVS] = {};
+    mutable bool _present[MAX_DEVS] = {};
+    mutable bool _warned_missing[MAX_DEVS] = {};
     uint32_t _rescan_interval_ms = 5000;
 
     void initState_();

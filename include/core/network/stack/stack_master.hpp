@@ -13,7 +13,7 @@
 
 #include <Arduino.h>
 #include <stdint.h>
-#include <vector>
+#include <array>
 
 #include <AsyncTCP.h>
 
@@ -23,6 +23,7 @@
 class StackMaster
 {
 public:
+    static constexpr size_t MAX_SESSIONS = 8;
     using FrameHandler = void (*)(void *ctx, uint32_t node_id, const StackFrame &frame);
     using EventHandler = void (*)(void *ctx, uint32_t node_id, bool online);
 
@@ -53,8 +54,8 @@ public:
     size_t nodeCount() const
     {
         size_t count = 0;
-        for (const Session *s : _sessions)
-            if (s && s->has_id && s->client)
+        for (const auto &s : _sessions)
+            if (s.used && s.data.has_id && s.data.client)
                 ++count;
         return count;
     }
@@ -62,12 +63,12 @@ public:
     uint32_t nodeIdAt(size_t idx) const
     {
         size_t pos = 0;
-        for (const Session *s : _sessions)
+        for (const auto &s : _sessions)
         {
-            if (!s || !s->has_id || !s->client)
+            if (!s.used || !s.data.has_id || !s.data.client)
                 continue;
             if (pos == idx)
-                return s->node_id;
+                return s.data.node_id;
             ++pos;
         }
         return 0;
@@ -76,12 +77,26 @@ public:
     String nodeNameAt(size_t idx) const
     {
         size_t pos = 0;
-        for (const Session *s : _sessions)
+        for (const auto &s : _sessions)
         {
-            if (!s || !s->has_id || !s->client)
+            if (!s.used || !s.data.has_id || !s.data.client)
                 continue;
             if (pos == idx)
-                return s->name;
+                return s.data.name;
+            ++pos;
+        }
+        return "";
+    }
+
+    String nodeIpAt(size_t idx) const
+    {
+        size_t pos = 0;
+        for (const auto &s : _sessions)
+        {
+            if (!s.used || !s.data.has_id || !s.data.client)
+                continue;
+            if (pos == idx)
+                return s.data.ip;
             ++pos;
         }
         return "";
@@ -92,24 +107,23 @@ public:
         Session *s = findByNode_(node_id);
         if (!s || !s->client || !s->client->connected())
             return false;
-        std::vector<uint8_t> buf;
-        StackCodec::encode(type, payload, len, buf);
-        if (buf.empty())
+        uint8_t buf[StackCodec::kMaxFrame] = {};
+        const size_t frame_len = StackCodec::encode(type, payload, len, buf, sizeof(buf));
+        if (frame_len == 0)
             return false;
-        s->client->write((const char *)buf.data(), buf.size());
+        s->client->write((const char *)buf, frame_len);
         return true;
     }
 
     void broadcast(uint8_t type, const uint8_t *payload, size_t len)
     {
-        for (Session *s : _sessions)
-            if (s && s->client && s->client->connected())
-            {
-                std::vector<uint8_t> buf;
-                StackCodec::encode(type, payload, len, buf);
-                if (!buf.empty())
-                    s->client->write((const char *)buf.data(), buf.size());
-            }
+        uint8_t buf[StackCodec::kMaxFrame] = {};
+        const size_t frame_len = StackCodec::encode(type, payload, len, buf, sizeof(buf));
+        if (frame_len == 0)
+            return;
+        for (auto &s : _sessions)
+            if (s.used && s.data.client && s.data.client->connected())
+                s.data.client->write((const char *)buf, frame_len);
     }
 
 private:
@@ -120,11 +134,17 @@ private:
         uint32_t node_id = 0;
         bool has_id = false;
         String name;
+        String ip;
         uint32_t last_seen_ms = 0;
     };
 
     AsyncServer *_server = nullptr;
-    std::vector<Session *> _sessions;
+    struct Slot
+    {
+        bool used = false;
+        Session data;
+    };
+    std::array<Slot, MAX_SESSIONS> _sessions = {};
     FrameHandler _frame_cb = nullptr;
     void *_frame_ctx = nullptr;
     EventHandler _event_cb = nullptr;
@@ -133,10 +153,16 @@ private:
     void onClient_(void *ctx, AsyncClient *client)
     {
         (void)ctx;
-        Session *s = new Session();
+        Session *s = allocSession_();
+        if (!s)
+        {
+            client->close(true);
+            return;
+        }
         s->client = client;
         s->last_seen_ms = millis();
-        _sessions.push_back(s);
+        if (client)
+            s->ip = client->remoteIP().toString();
 
         client->onData(
             [](void *arg, AsyncClient *c, void *data, size_t len) {
@@ -176,33 +202,27 @@ private:
 
     void onDisconnect_(AsyncClient *client)
     {
-        for (size_t i = 0; i < _sessions.size(); ++i)
-        {
-            Session *s = _sessions[i];
-            if (s && s->client == client)
-            {
-                if (s->has_id)
-                    notifyEvent_(s->node_id, false);
-                delete s;
-                _sessions.erase(_sessions.begin() + (int)i);
-                return;
-            }
-        }
+        Session *s = findByClient_(client);
+        if (!s)
+            return;
+        if (s->has_id)
+            notifyEvent_(s->node_id, false);
+        freeSession_(s);
     }
 
     Session *findByClient_(AsyncClient *client)
     {
-        for (Session *s : _sessions)
-            if (s && s->client == client)
-                return s;
+        for (auto &slot : _sessions)
+            if (slot.used && slot.data.client == client)
+                return &slot.data;
         return nullptr;
     }
 
     Session *findByNode_(uint32_t node_id)
     {
-        for (Session *s : _sessions)
-            if (s && s->has_id && s->node_id == node_id)
-                return s;
+        for (auto &slot : _sessions)
+            if (slot.used && slot.data.has_id && slot.data.node_id == node_id)
+                return &slot.data;
         return nullptr;
     }
 
@@ -217,20 +237,18 @@ private:
         if (frame.type == (uint8_t)StackMsgType::Hello)
         {
             StackHello hello{};
-            if (StackHello::decode(frame.payload.data(), frame.payload.size(), hello))
+            if (StackHello::decode(frame.payload, frame.payload_len, hello))
             {
                 Session *s = findByNode_(hello.node_id);
                 if (!s)
                 {
                     // try to bind to first unbound session
-                    for (Session *cand : _sessions)
-                    {
-                        if (cand && !cand->has_id)
+                    for (auto &slot : _sessions)
+                        if (slot.used && !slot.data.has_id)
                         {
-                            s = cand;
+                            s = &slot.data;
                             break;
                         }
-                    }
                 }
                 if (s)
                 {
@@ -250,7 +268,7 @@ private:
         if (frame.type != (uint8_t)StackMsgType::Hello)
             return session && session->has_id ? session->node_id : 0;
         StackHello hello{};
-        if (!StackHello::decode(frame.payload.data(), frame.payload.size(), hello))
+        if (!StackHello::decode(frame.payload, frame.payload_len, hello))
             return 0;
         return hello.node_id;
     }
@@ -259,5 +277,30 @@ private:
     {
         if (_event_cb)
             _event_cb(_event_ctx, node_id, online);
+    }
+
+    Session *allocSession_()
+    {
+        for (auto &slot : _sessions)
+            if (!slot.used)
+            {
+                slot.used = true;
+                slot.data = Session{};
+                return &slot.data;
+            }
+        return nullptr;
+    }
+
+    void freeSession_(Session *s)
+    {
+        if (!s)
+            return;
+        for (auto &slot : _sessions)
+            if (&slot.data == s)
+            {
+                slot.used = false;
+                slot.data = Session{};
+                return;
+            }
     }
 };

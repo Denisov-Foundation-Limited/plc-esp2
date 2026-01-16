@@ -30,6 +30,7 @@
 #include "plc/plc_control.hpp"
 #include "core/cli/cli_config.hpp"
 #include "core/cli/cli_enable.hpp"
+#include "core/cli/modules/cli_stack.hpp"
 #include "core/cli/modules/cli_tgbot.hpp"
 #include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
@@ -52,11 +53,12 @@ public:
     using CLIConfig = CLIConfigT<CliConsole>;
     using CLIWifi = CLIWifiT<CliConsole>;
     using CLITgbot = CLITgbotT<CliConsole>;
+    using CLIStack = CLIStackT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
                TelegramClient &tgbot, TelegramMenu &tgbot_menu, Configs &configs, Extender &ext,
-               StackMaster *stack_master)
+              StackMaster *stack_master)
         : _plc(plc),
           _wifi(wifi),
           _rtc(rtc),
@@ -67,14 +69,13 @@ public:
           _tgbot_menu(tgbot_menu),
           _configs(configs),
           _ext(ext),
-          _stack_master(stack_master),
           _wifi_cli(*this),
           _tgbot_cli(*this),
+          _stack_cli(*this),
           _enable(*this, _wifi_cli),
           _config(*this, _wifi_cli, _tgbot_cli)
     {
-        if (_stack_master)
-            _stack_master->setFrameHandler(&CliConsole::onStackFrame_, this);
+        _stack_cli.bind(stack_master);
     }
 
     void begin(Stream &io)
@@ -146,12 +147,34 @@ public:
         uint8_t hash[32] = {};
         sha256_(pass.c_str(), hash);
         memcpy(_admin_hash, hash, sizeof(_admin_hash));
-        _admin_password = pass;
         _admin_set = true;
         return true;
     }
 
-    const String &adminPassword() const { return _admin_password; }
+    bool setAdminPasswordHashHex_(const String &hex)
+    {
+        uint8_t hash[32] = {};
+        if (!hexToBytes_(hex, hash))
+            return false;
+        memcpy(_admin_hash, hash, sizeof(_admin_hash));
+        _admin_set = true;
+        return true;
+    }
+
+    String adminPasswordHashHex() const
+    {
+        if (!_admin_set)
+            return String();
+        char out[65] = {};
+        bytesToHex_(_admin_hash, out);
+        return String(out);
+    }
+
+    bool checkAdminPassword(const String &pass) const
+    {
+        return checkAdmin_(pass.c_str());
+    }
+
     bool adminPasswordSet() const { return _admin_set; }
 
     void enterUser() { _mode = Mode::Enable; printPrompt_(); }
@@ -170,14 +193,17 @@ public:
 
     void cmdShowPlc_()
     {
-        const float t = _plc.boardTemp();
+        printPlcHeader_();
+        const float board_t = _plc.boardTemp();
+        const float cpu_t = _plc.cpuTemp();
         const bool fan = _plc.fanStatus();
-        _io->println(F("PLC status:"));
-        const size_t key_w = 6; // temp_c
-        printKeyValue_(F("fan"), fan ? F("on") : F("off"), key_w);
-        char buf[16] = {};
-        dtostrf(t, 0, 2, buf);
-        printKeyValue_(F("temp_c"), buf, key_w);
+        const float on_c = _plc.fanOnC();
+        const float hyst_c = _plc.fanHysteresisC();
+        float rtc_t = 0.0f;
+        const bool rtc_ok = _rtc.readTemp(rtc_t);
+        printPlcRow_("CPU", String(ActiveBoardProfile::UI_NAME), fan, board_t, cpu_t,
+                     on_c, hyst_c, rtc_ok ? &rtc_t : nullptr);
+        _stack_cli.requestStackPlc_();
     }
 
     void cmdShowBoard_()
@@ -201,7 +227,7 @@ public:
             return;
         }
         printPortsHeader_();
-        printPortRow_(id, p);
+        printPortRow_("CPU", id, p);
     }
 
     void cmdShowPorts_()
@@ -224,8 +250,9 @@ public:
                 if (!_ext.isPresent(dev))
                     continue;
             }
-            printPortRow_(i, p);
+            printPortRow_("CPU", i, p);
         }
+        _stack_cli.requestStackPorts_();
     }
 
     void cmdShowWifi_()
@@ -247,17 +274,16 @@ public:
             _io->println(F("RTC error"));
             return;
         }
-        _io->println(F("RTC time:"));
-        const size_t key_w = 8; // weekday
+        printRtcHeader_();
         char date_buf[16] = {};
         char time_buf[16] = {};
         snprintf(date_buf, sizeof(date_buf), "%04u-%02u-%02u",
                  (unsigned)dt.year, (unsigned)dt.month, (unsigned)dt.day);
         snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
                  (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
-        printKeyValue_(F("date"), date_buf, key_w);
-        printKeyValue_(F("time"), time_buf, key_w);
-        printKeyValue_(F("weekday"), String((unsigned)dt.day_of_week), key_w);
+        printRtcRow_("CPU", date_buf, time_buf, (unsigned)dt.day_of_week);
+
+        _stack_cli.requestStackRtc_();
     }
 
     void cmdShowTelegram_()
@@ -421,9 +447,7 @@ public:
 
     void cmdShowI2c_()
     {
-        _io->println(F("I2C devices:"));
-        _io->println(F("    Bus  Addr"));
-        _io->println(F("    --- -----"));
+        printI2cHeader_();
         bool scanned[3] = {false, false, false};
         for (uint8_t i = 0; i < ActiveBoardProfile::I2C_COUNT; ++i)
         {
@@ -432,40 +456,28 @@ public:
                 continue;
             if (bus < 3)
                 scanned[bus] = true;
-            std::vector<uint8_t> addrs;
-            if (!_i2c.scanDevices(bus, addrs))
+            bool present[127] = {};
+            if (!_i2c.scanDevices(bus, present))
                 continue;
-            for (size_t a = 0; a < addrs.size(); ++a)
-            {
-                char addr_buf[8] = {};
-                snprintf(addr_buf, sizeof(addr_buf), "0x%02X", addrs[a]);
-                char line[20] = {};
-                snprintf(line, sizeof(line), "    %3u  %s", (unsigned)bus, addr_buf);
-                _io->println(line);
-            }
+            for (uint8_t addr = 1; addr < 127; ++addr)
+                if (present[addr])
+                {
+                    char addr_buf[8] = {};
+                    snprintf(addr_buf, sizeof(addr_buf), "0x%02X", addr);
+                    printI2cRow_("CPU", bus, addr_buf);
+                }
         }
+        _stack_cli.requestStackI2cScan_();
     }
 
     void cmdShowStack_()
     {
-        if (!_configs_manager)
-        {
-            _io->println(F("Config manager missing"));
-            return;
-        }
-        _io->println(F("Stack:"));
-        const size_t key_w = 11; // master_host
-        const auto role = _configs_manager->stackRole();
-        printKeyValue_(F("role"), stackRoleName_(role), key_w);
-        printKeyValue_(F("master_host"), _configs_manager->stackMasterHost(), key_w);
+        _stack_cli.cmdShowStack_();
     }
 
     void cmdShowOw_()
     {
-        _io->println(F("OneWire devices:"));
-        _io->println(F("    Bus  Type     Addr"));
-        _io->println(F("    ---  -------  ----------------"));
-        bool any = false;
+        printOwHeader_();
         for (uint8_t i = 0; i < ActiveBoardProfile::ONEWIRE_COUNT; ++i)
         {
             OneWireBus *bus = _ow.busPtrByIndex(i);
@@ -480,17 +492,10 @@ public:
                     continue;
                 char hex[17] = {};
                 owAddrToHex_(addr, hex);
-                _io->print(F("    "));
-                printPad_(i, 3);
-                _io->print(F("  "));
-                printPadStr_(owBusName_(cfg.bus_id), 7);
-                _io->print(F("  "));
-                _io->println(hex);
-                any = true;
+                printOwRow_("CPU", i, owBusName_(cfg.bus_id), hex);
             }
         }
-        if (!any)
-            _io->println(F("    none"));
+        _stack_cli.requestStackOwScan_();
     }
 
     void cmdShowConfig_()
@@ -558,70 +563,7 @@ public:
 
     void cmdStack_(const String &line)
     {
-        String cmd = line;
-        cmd.trim();
-        if (cmd == "stack nodes")
-        {
-            listStackNodes_();
-            return;
-        }
-        if (!cmd.startsWith("stack send "))
-        {
-            _io->println(F("Usage: stack nodes"));
-            _io->println(F("       stack send <id> <get|set> <json>"));
-            return;
-        }
-        if (!_stack_master)
-        {
-            _io->println(F("Stack master unavailable"));
-            return;
-        }
-        if (_configs_manager &&
-            _configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
-        {
-            _io->println(F("Stack role is slave"));
-            return;
-        }
-        String rest = cmd.substring(strlen("stack send "));
-        rest.trim();
-        const int sp1 = rest.indexOf(' ');
-        if (sp1 <= 0)
-        {
-            _io->println(F("Invalid node id"));
-            return;
-        }
-        String id_str = rest.substring(0, sp1);
-        rest = rest.substring(sp1 + 1);
-        rest.trim();
-        const int sp2 = rest.indexOf(' ');
-        if (sp2 <= 0)
-        {
-            _io->println(F("Missing get/set"));
-            return;
-        }
-        String kind = rest.substring(0, sp2);
-        kind.toLowerCase();
-        String json = rest.substring(sp2 + 1);
-        json.trim();
-        if (json.length() == 0)
-        {
-            _io->println(F("Missing JSON payload"));
-            return;
-        }
-        uint32_t node_id = (uint32_t)strtoul(id_str.c_str(), nullptr, 0);
-        uint8_t type = 0;
-        if (kind == "get")
-            type = (uint8_t)StackMsgType::CmdGet;
-        else if (kind == "set")
-            type = (uint8_t)StackMsgType::CmdSet;
-        else
-        {
-            _io->println(F("Invalid command type"));
-            return;
-        }
-        const bool ok = _stack_master->sendTo(node_id, type,
-                                              (const uint8_t *)json.c_str(), json.length());
-        _io->println(ok ? F("OK") : F("Send failed"));
+        _stack_cli.cmdStack_(line);
     }
 
     void cmdRestart_()
@@ -1450,6 +1392,38 @@ private:
         _io->println(value);
     }
 
+    void printKeyValueTab_(const __FlashStringHelper *key, const __FlashStringHelper *value, size_t key_w)
+    {
+        if (!_io)
+            return;
+        _io->print(F("\t"));
+        _io->print(key);
+        size_t len = strlen_P(reinterpret_cast<const char *>(key));
+        if (len < key_w)
+        {
+            for (size_t i = 0; i < (key_w - len); ++i)
+                _io->print(F(" "));
+        }
+        _io->print(F(" : "));
+        _io->println(value);
+    }
+
+    void printKeyValueTab_(const __FlashStringHelper *key, const String &value, size_t key_w)
+    {
+        if (!_io)
+            return;
+        _io->print(F("\t"));
+        _io->print(key);
+        size_t len = strlen_P(reinterpret_cast<const char *>(key));
+        if (len < key_w)
+        {
+            for (size_t i = 0; i < (key_w - len); ++i)
+                _io->print(F(" "));
+        }
+        _io->print(F(" : "));
+        _io->println(value);
+    }
+
     void beginCmdOutput_()
     {
         if (!_io)
@@ -1492,6 +1466,43 @@ private:
         return memcmp(_admin_hash, hash, sizeof(hash)) == 0;
     }
 
+    static int hexNibble_(char c)
+    {
+        if (c >= '0' && c <= '9')
+            return c - '0';
+        if (c >= 'a' && c <= 'f')
+            return 10 + (c - 'a');
+        if (c >= 'A' && c <= 'F')
+            return 10 + (c - 'A');
+        return -1;
+    }
+
+    static bool hexToBytes_(const String &hex, uint8_t out[32])
+    {
+        if (hex.length() != 64)
+            return false;
+        for (uint8_t i = 0; i < 32; ++i)
+        {
+            const int hi = hexNibble_(hex.charAt(i * 2));
+            const int lo = hexNibble_(hex.charAt(i * 2 + 1));
+            if (hi < 0 || lo < 0)
+                return false;
+            out[i] = (uint8_t)((hi << 4) | lo);
+        }
+        return true;
+    }
+
+    static void bytesToHex_(const uint8_t in[32], char out[65])
+    {
+        static const char kHex[] = "0123456789abcdef";
+        for (uint8_t i = 0; i < 32; ++i)
+        {
+            out[i * 2] = kHex[(in[i] >> 4) & 0x0F];
+            out[i * 2 + 1] = kHex[in[i] & 0x0F];
+        }
+        out[64] = '\0';
+    }
+
     PlcControl &_plc;
     WifiManager &_wifi;
     RTC &_rtc;
@@ -1502,7 +1513,6 @@ private:
     TelegramMenu &_tgbot_menu;
     Configs &_configs;
     Extender &_ext;
-    StackMaster *_stack_master = nullptr;
     ConfigsManagerIface *_configs_manager = nullptr;
 
     Stream *_io = nullptr;
@@ -1512,7 +1522,6 @@ private:
     Mode _mode = Mode::Enable;
     uint8_t _admin_hash[32] = {};
     bool _admin_set = false;
-    String _admin_password;
     bool _saw_cr = false;
     uint8_t _esc_state = 0;
     bool _cmd_blank_after = false;
@@ -1525,6 +1534,7 @@ private:
 
     CLIWifi _wifi_cli;
     CLITgbot _tgbot_cli;
+    CLIStack _stack_cli;
     CLIEnable _enable;
     CLIConfig _config;
     uint32_t _tgbot_last_update_id = 0;
@@ -1532,125 +1542,197 @@ private:
     void printExtList_()
     {
         const auto *devs = _ext.devs();
-        if (!devs)
+        const bool has_stack = _stack_cli.canRequestStackExt_();
+        bool any = false;
+        if (devs)
+        {
+            for (uint8_t i = 0; i < _ext.devCount(); ++i)
+            {
+                const auto &d = devs[i];
+                if (d.i2c_addr == 0 || d.type == Extender::Type::None)
+                    continue;
+                if (!_ext.isPresent(i))
+                    continue;
+                if (!any)
+                    printExtHeader_();
+                any = true;
+                char addr_buf[8] = {};
+                snprintf(addr_buf, sizeof(addr_buf), "0x%02X", d.i2c_addr);
+                printExtRow_("CPU", i, d.bus_num, addr_buf, extTypeName_(d.type), nullptr);
+            }
+        }
+        if (has_stack && !any)
+            printExtHeader_();
+        if (!any && !has_stack)
         {
             _io->println(F("Extenders: none"));
             return;
         }
-        _io->println(F("Extenders:"));
-        _io->println(F("  ID  Bus  Addr  Type      Present"));
-        _io->println(F("  --  ---  ----  --------  -------"));
-        for (uint8_t i = 0; i < _ext.devCount(); ++i)
-        {
-            const auto &d = devs[i];
-            if (d.i2c_addr == 0 || d.type == Extender::Type::None)
-                continue;
-            _io->print(F("  "));
-            printPad_(i, 2);
-            _io->print(F("  "));
-            printPad_(d.bus_num, 3);
-            _io->print(F("  "));
-            char addr_buf[8] = {};
-            snprintf(addr_buf, sizeof(addr_buf), "0x%02X", d.i2c_addr);
-            printPadStr_(addr_buf, 4);
-            _io->print(F("  "));
-            printPadStr_(extTypeName_(d.type), 8);
-            _io->print(F("  "));
-            _io->println(_ext.isPresent(i) ? F("yes") : F("no"));
-        }
-    }
-
-    void listStackNodes_()
-    {
-        if (!_stack_master)
-        {
-            _io->println(F("Stack master unavailable"));
-            return;
-        }
-        if (_configs_manager &&
-            _configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
-        {
-            _io->println(F("Stack role is slave"));
-            return;
-        }
-        const size_t count = _stack_master->nodeCount();
-        if (count == 0)
-        {
-            _io->println(F("Stack nodes: none"));
-            return;
-        }
-        _io->println(F("Stack nodes:"));
-        _io->println(F("  ID       Name"));
-        _io->println(F("  -------- ----------------"));
-        for (size_t i = 0; i < count; ++i)
-        {
-            uint32_t id = _stack_master->nodeIdAt(i);
-            String name = _stack_master->nodeNameAt(i);
-            char buf[12] = {};
-            snprintf(buf, sizeof(buf), "%lu", (unsigned long)id);
-            _io->print(F("  "));
-            _io->print(buf);
-            _io->print(F("  "));
-            _io->println(name.length() ? name : String("-"));
-        }
+        if (has_stack)
+            _stack_cli.requestStackExtList_();
     }
 
     static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame)
     {
         if (!ctx)
             return;
-        static_cast<CliConsole *>(ctx)->handleStackFrame_(node_id, frame);
+        static_cast<CliConsole *>(ctx)->_stack_cli.handleStackFrame_(node_id, frame);
     }
 
-    void handleStackFrame_(uint32_t node_id, const StackFrame &frame)
-    {
-        if (!_io)
-            return;
-        String payload = payloadToString_(frame.payload);
-        _io->println();
-        _io->print(F("[STACK] node="));
-        _io->print(node_id);
-        _io->print(F(" type="));
-        _io->print(stackMsgName_(frame.type));
-        _io->print(F(" payload="));
-        _io->println(payload.length() ? payload : String(F("<empty>")));
-        _cmd_blank_after = true;
-        printPrompt_();
-        _io->print(_line);
-    }
-
-    static String payloadToString_(const std::vector<uint8_t> &data)
+    static String payloadToString_(const uint8_t *data, size_t len)
     {
         String out;
-        if (data.empty())
+        if (!data || len == 0)
             return out;
-        out.reserve(data.size() + 1);
-        for (uint8_t b : data)
-            out += (char)b;
+        out.reserve(len + 1);
+        for (size_t i = 0; i < len; ++i)
+            out += (char)data[i];
         return out;
     }
 
-    static const __FlashStringHelper *stackMsgName_(uint8_t type)
+    void printExtHeader_()
     {
-        switch (type)
+        _io->println(F("Extenders:"));
+        _io->println(F("  Unit        ID  Bus  Addr  Type"));
+        _io->println(F("  ----------  --  ---  ----  --------"));
+    }
+
+    void printExtRow_(const String &unit, uint8_t id, uint8_t bus, const char *addr,
+                      const __FlashStringHelper *type, const char *type_str)
+    {
+        _io->print(F("  "));
+        printPadStr_(unit.c_str(), 10);
+        _io->print(F("  "));
+        printPad_(id, 2);
+        _io->print(F("  "));
+        printPad_(bus, 3);
+        _io->print(F("  "));
+        printPadStr_(addr ? addr : "--", 4);
+        _io->print(F("  "));
+        if (type)
+            printPadStr_(type, 8);
+        else if (type_str)
+            printPadStr_(type_str, 8);
+        else
+            printPadStr_(F("--"), 8);
+        _io->println();
+    }
+
+    void printI2cHeader_()
+    {
+        _io->println(F("I2C devices:"));
+        _io->println(F("    Unit        Bus  Addr"));
+        _io->println(F("    ----------  ---  -----"));
+    }
+
+    void printI2cRow_(const String &unit, uint8_t bus, const char *addr)
+    {
+        if (!addr)
+            addr = "-";
+        char line[48] = {};
+        snprintf(line, sizeof(line), "    %-10.10s  %3u  %s", unit.c_str(), (unsigned)bus, addr);
+        _io->println(line);
+    }
+
+    void printOwHeader_()
+    {
+        _io->println(F("OneWire devices:"));
+        _io->println(F("    Unit        Bus  Type     Addr"));
+        _io->println(F("    ----------  ---  -------  ----------------"));
+    }
+
+    void printOwRow_(const String &unit, uint8_t bus,
+                     const __FlashStringHelper *type, const char *addr,
+                     const char *type_str = nullptr)
+    {
+        if (!addr)
+            addr = "-";
+        _io->print(F("    "));
+        printPadStr_(unit.c_str(), 10);
+        _io->print(F("  "));
+        printPad_(bus, 3);
+        _io->print(F("  "));
+        if (type)
+            printPadStr_(type, 7);
+        else if (type_str)
+            printPadStr_(type_str, 7);
+        else
+            printPadStr_("-", 7);
+        _io->print(F("  "));
+        _io->println(addr);
+    }
+
+    void printPlcHeader_()
+    {
+        _io->println(F("PLC status:"));
+        _io->println(F("  Unit        DeviceName        Fan  BoardC  CpuC    RtcC    Thresh  Hyst"));
+        _io->println(F("  ----------  ----------------  ---  ------  ------  ------  ------  ------"));
+    }
+
+    void printPlcRow_(const String &unit, const String &name, bool fan,
+                      float board_c, float cpu_c, float on_c, float hyst_c,
+                      const float *rtc_c)
+    {
+        _io->print(F("  "));
+        printPadStr_(unit.c_str(), 10);
+        _io->print(F("  "));
+        printPadStr_(name.length() ? name.c_str() : "-", 16);
+        _io->print(F("  "));
+        printPadStr_(fan ? F("on") : F("off"), 3);
+        _io->print(F("  "));
+        char buf[16] = {};
+        dtostrf(board_c, 0, 2, buf);
+        printPadStr_(buf, 6);
+        _io->print(F("  "));
+        dtostrf(cpu_c, 0, 2, buf);
+        printPadStr_(buf, 6);
+        _io->print(F("  "));
+        if (rtc_c)
         {
-        case (uint8_t)StackMsgType::Hello:
-            return F("hello");
-        case (uint8_t)StackMsgType::Features:
-            return F("features");
-        case (uint8_t)StackMsgType::Status:
-            return F("status");
-        case (uint8_t)StackMsgType::CmdSet:
-            return F("cmd_set");
-        case (uint8_t)StackMsgType::CmdGet:
-            return F("cmd_get");
-        case (uint8_t)StackMsgType::Ack:
-            return F("ack");
-        case (uint8_t)StackMsgType::Err:
-            return F("err");
-        default:
-            return F("unknown");
+            dtostrf(*rtc_c, 0, 2, buf);
+            printPadStr_(buf, 6);
         }
+        else
+        {
+            printPadStr_(F("--"), 6);
+        }
+        _io->print(F("  "));
+        dtostrf(on_c, 0, 2, buf);
+        printPadStr_(buf, 6);
+        _io->print(F("  "));
+        dtostrf(hyst_c, 0, 2, buf);
+        printPadStr_(buf, 6);
+        _io->println();
+    }
+
+    void printRtcHeader_()
+    {
+        _io->println(F("RTC time:"));
+        _io->println(F("  Unit        Date        Time      Weekday"));
+        _io->println(F("  ----------  ----------  --------  -------"));
+    }
+
+    void printRtcRow_(const String &unit, const char *date, const char *time,
+                      unsigned weekday)
+    {
+        _io->print(F("  "));
+        printPadStr_(unit.c_str(), 10);
+        _io->print(F("  "));
+        printPadStr_(date ? date : "--", 10);
+        _io->print(F("  "));
+        printPadStr_(time ? time : "--", 8);
+        _io->print(F("  "));
+        char wd[6] = {};
+        snprintf(wd, sizeof(wd), "%u", weekday);
+        printPadStr_(weekday > 0 ? wd : "--", 7);
+        _io->println();
+    }
+
+    void refreshPrompt_()
+    {
+        _cmd_blank_after = true;
+        printPrompt_();
+        _io->print(_line);
     }
 
     static const __FlashStringHelper *extTypeName_(Extender::Type t)
@@ -1672,11 +1754,6 @@ private:
         if (!devs || dev >= _ext.devCount())
             return F("None");
         return extTypeName_(devs[dev].type);
-    }
-
-    static const __FlashStringHelper *stackRoleName_(ConfigsManagerIface::StackRole role)
-    {
-        return (role == ConfigsManagerIface::StackRole::Master) ? F("master") : F("slave");
     }
 
     static const __FlashStringHelper *portTypeName_(PortIO::PinType t)
@@ -1710,26 +1787,26 @@ private:
         {
         case PortIO::Location::Cpu:
             return F("CPU");
-        case PortIO::Location::Unit1:
-            return F("UNIT_1");
-        case PortIO::Location::Unit2:
-            return F("UNIT_2");
-        case PortIO::Location::Unit3:
-            return F("UNIT_3");
-        case PortIO::Location::Unit4:
-            return F("UNIT_4");
-        case PortIO::Location::Unit5:
-            return F("UNIT_5");
-        case PortIO::Location::Unit6:
-            return F("UNIT_6");
-        case PortIO::Location::Unit7:
-            return F("UNIT_7");
-        case PortIO::Location::Unit8:
-            return F("UNIT_8");
-        case PortIO::Location::Unit9:
-            return F("UNIT_9");
-        case PortIO::Location::Unit10:
-            return F("UNIT_10");
+        case PortIO::Location::Ext1:
+            return F("EXT_1");
+        case PortIO::Location::Ext2:
+            return F("EXT_2");
+        case PortIO::Location::Ext3:
+            return F("EXT_3");
+        case PortIO::Location::Ext4:
+            return F("EXT_4");
+        case PortIO::Location::Ext5:
+            return F("EXT_5");
+        case PortIO::Location::Ext6:
+            return F("EXT_6");
+        case PortIO::Location::Ext7:
+            return F("EXT_7");
+        case PortIO::Location::Ext8:
+            return F("EXT_8");
+        case PortIO::Location::Ext9:
+            return F("EXT_9");
+        case PortIO::Location::Ext10:
+            return F("EXT_10");
         default:
             return F("UNKNOWN");
         }
@@ -1761,12 +1838,14 @@ private:
 
     void printPortsHeader_()
     {
-        _io->println(F("  ID  Backend   Loc      Type     Ctrl Dev Pin  HW"));
-        _io->println(F("  --  --------  -------  -------  ---- --- ---  --------"));
+        _io->println(F("  Unit        ID  Backend   Loc      Type     Ctrl Dev Pin  HW"));
+        _io->println(F("  ----------  --  --------  -------  -------  ---- --- ---  --------"));
     }
 
-    void printPortRow_(uint8_t id, const PortIO::PortDesc &p)
+    void printPortRow_(const String &unit, uint8_t id, const PortIO::PortDesc &p)
     {
+        _io->print(F("  "));
+        printPadStr_(unit.c_str(), 10);
         _io->print(F("  "));
         printPad_(id, 2);
         _io->print(F("  "));
@@ -1796,6 +1875,43 @@ private:
             printPadStr_(F("CPU"), 8);
             _io->println();
         }
+    }
+
+    void printPortStateRow_(const String &unit, uint8_t id,
+                            const char *backend, const char *loc, const char *type, bool ctrl,
+                            int dev, int pin, const char *hw)
+    {
+        _io->print(F("  "));
+        printPadStr_(unit.c_str(), 10);
+        _io->print(F("  "));
+        printPad_(id, 2);
+        _io->print(F("  "));
+        printPadStr_(backend ? backend : "--", 8);
+        _io->print(F("  "));
+        printPadStr_(loc ? loc : "--", 7);
+        _io->print(F("  "));
+        printPadStr_(type ? type : "--", 7);
+        _io->print(F("  "));
+        printPadStr_(ctrl ? F("yes") : F("no"), 4);
+        _io->print(F(" "));
+        printPadIntOrDash_(dev, 3);
+        _io->print(F(" "));
+        printPadIntOrDash_(pin, 3);
+        _io->print(F("  "));
+        printPadStr_(hw ? hw : "--", 8);
+        _io->println();
+    }
+
+    void printPadIntOrDash_(int v, uint8_t width)
+    {
+        if (v < 0)
+        {
+            printPadStr_(F("--"), width);
+            return;
+        }
+        char buf[12] = {};
+        snprintf(buf, sizeof(buf), "%d", v);
+        printPadStr_(buf, width);
     }
 
     void printPad_(uint8_t value, uint8_t width)
@@ -1837,7 +1953,11 @@ private:
     friend class CLIWifiT;
     template <typename>
     friend class CLITgbotT;
+    template <typename>
+    friend class CLIStackT;
 
 public:
     void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }
 };
+
+

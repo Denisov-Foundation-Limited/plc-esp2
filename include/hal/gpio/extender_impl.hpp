@@ -9,24 +9,16 @@
 /*                                                                    */
 /**********************************************************************/
 
+#pragma once
 #include "hal/gpio/extender.hpp"
-
-#include <vector>
 
 #include "hal/bus/i2c.hpp"
 #include "utils/logger.hpp"
 
-void Extender::initState_()
+inline void Extender::initState_()
 {
     if (_dev_count == 0)
         return;
-    _mcp = new Mcp23017[_dev_count];
-    _mcp_inited = new bool[_dev_count];
-    _pcf = new Pcf8574[_dev_count];
-    _pcf_inited = new bool[_dev_count];
-    _dev_failed = new bool[_dev_count];
-    _present = new bool[_dev_count];
-    _warned_missing = new bool[_dev_count];
     for (uint8_t i = 0; i < _dev_count; ++i)
     {
         _mcp_inited[i] = false;
@@ -37,23 +29,23 @@ void Extender::initState_()
     }
 }
 
-Mcp23017 *Extender::mcp_(uint8_t dev) const
+inline Mcp23017 *Extender::mcp_(uint8_t dev) const
 {
-    if (!_mcp || dev >= _dev_count)
+    if (dev >= _dev_count)
         return nullptr;
     return &_mcp[dev];
 }
 
-Pcf8574 *Extender::pcf_(uint8_t dev) const
+inline Pcf8574 *Extender::pcf_(uint8_t dev) const
 {
-    if (!_pcf || dev >= _dev_count)
+    if (dev >= _dev_count)
         return nullptr;
     return &_pcf[dev];
 }
 
-void Extender::logInitFailOnce_(uint8_t dev, const __FlashStringHelper *msg) const
+inline void Extender::logInitFailOnce_(uint8_t dev, const __FlashStringHelper *msg) const
 {
-    if (!_log || !_dev_failed)
+    if (!_log)
         return;
     if (_dev_failed[dev])
         return;
@@ -61,7 +53,7 @@ void Extender::logInitFailOnce_(uint8_t dev, const __FlashStringHelper *msg) con
     _log->warn(F("EXT"), msg, dev);
 }
 
-void Extender::logPresentChange_(uint8_t dev, bool present) const
+inline void Extender::logPresentChange_(uint8_t dev, bool present) const
 {
     if (!_log)
         return;
@@ -71,10 +63,8 @@ void Extender::logPresentChange_(uint8_t dev, bool present) const
         _log->warn(F("EXT"), F("Extender %u missing"), dev);
 }
 
-void Extender::setPresent_(uint8_t dev, bool present) const
+inline void Extender::setPresent_(uint8_t dev, bool present) const
 {
-    if (!_present)
-        return;
     const bool prev = _present[dev];
     _present[dev] = present;
     if (prev == present)
@@ -82,36 +72,31 @@ void Extender::setPresent_(uint8_t dev, bool present) const
     logPresentChange_(dev, present);
     if (!present)
     {
-        if (_mcp_inited)
-            _mcp_inited[dev] = false;
-        if (_pcf_inited)
-            _pcf_inited[dev] = false;
-        if (_dev_failed)
-            _dev_failed[dev] = false;
-        if (_warned_missing)
-            _warned_missing[dev] = false;
+        _mcp_inited[dev] = false;
+        _pcf_inited[dev] = false;
+        _dev_failed[dev] = false;
+        _warned_missing[dev] = false;
     }
     else
     {
-        if (_dev_failed)
-            _dev_failed[dev] = false;
+        _dev_failed[dev] = false;
     }
 }
 
-bool Extender::begin()
+inline bool Extender::begin()
 {
     rescan();
     return true;
 }
 
-void Extender::task()
+inline void Extender::task()
 {
     rescan();
 }
 
-void Extender::rescan()
+inline void Extender::rescan()
 {
-    if (!_i2c || !_present)
+    if (!_i2c)
         return;
 
     bool bus_used[3] = {false, false, false};
@@ -124,13 +109,13 @@ void Extender::rescan()
             bus_used[bus] = true;
     }
 
-    std::vector<uint8_t> addrs[3];
+    bool present[3][127] = {};
     bool bus_ok[3] = {true, true, true};
     for (uint8_t b = 0; b < 3; ++b)
     {
         if (!bus_used[b])
             continue;
-        if (!_i2c->scanDevices(b, addrs[b]))
+        if (!_i2c->scanDevices(b, present[b]))
             bus_ok[b] = false;
     }
 
@@ -148,37 +133,31 @@ void Extender::rescan()
             setPresent_(i, false);
             continue;
         }
-        bool found = false;
-        for (size_t a = 0; a < addrs[bus].size(); ++a)
-        {
-            if (addrs[bus][a] == addr)
-            {
-                found = true;
-                break;
-            }
-        }
-        setPresent_(i, found);
+        if (addr < 127)
+            setPresent_(i, present[bus][addr]);
+        else
+            setPresent_(i, false);
     }
 }
 
-bool Extender::isPresent(uint8_t dev) const
+inline bool Extender::isPresent(uint8_t dev) const
 {
-    if (!_present || dev >= _dev_count)
+    if (dev >= _dev_count)
         return false;
     return _present[dev];
 }
 
-bool Extender::ensureDev_(uint8_t dev) const
+inline bool Extender::ensureDev_(uint8_t dev) const
 {
     if (!isConfigured(dev))
         return false;
-    if (_dev_failed && _dev_failed[dev])
+    if (_dev_failed[dev])
         return false;
-    if (_present && !_present[dev])
+    if (!_present[dev])
         return false;
-    if (_mcp_inited && _mcp_inited[dev])
+    if (_mcp_inited[dev])
         return true;
-    if (_pcf_inited && _pcf_inited[dev])
+    if (_pcf_inited[dev])
         return true;
     if (!_i2c)
     {
@@ -197,8 +176,7 @@ bool Extender::ensureDev_(uint8_t dev) const
     if (wire->endTransmission() != 0)
     {
         logInitFailOnce_(dev, F("I2C device not responding for extender %u"));
-        if (_present)
-            setPresent_(dev, false);
+        setPresent_(dev, false);
         return false;
     }
     if (cfg.type == Type::MCP23017)
@@ -211,8 +189,7 @@ bool Extender::ensureDev_(uint8_t dev) const
             logInitFailOnce_(dev, F("MCP23017 init failed for extender %u"));
             return false;
         }
-        if (_mcp_inited)
-            _mcp_inited[dev] = true;
+        _mcp_inited[dev] = true;
         return true;
     }
     if (cfg.type == Type::PCF8574)
@@ -225,15 +202,14 @@ bool Extender::ensureDev_(uint8_t dev) const
             logInitFailOnce_(dev, F("PCF8574 init failed for extender %u"));
             return false;
         }
-        if (_pcf_inited)
-            _pcf_inited[dev] = true;
+        _pcf_inited[dev] = true;
         return true;
     }
     logInitFailOnce_(dev, F("Unsupported extender type for dev %u"));
     return false;
 }
 
-void Extender::pinMode(uint8_t dev, uint8_t pin, uint8_t mode)
+inline void Extender::pinMode(uint8_t dev, uint8_t pin, uint8_t mode)
 {
     if (!ensureDev_(dev))
         return;
@@ -256,7 +232,7 @@ void Extender::pinMode(uint8_t dev, uint8_t pin, uint8_t mode)
     }
 }
 
-void Extender::write(uint8_t dev, uint8_t pin, bool level)
+inline void Extender::write(uint8_t dev, uint8_t pin, bool level)
 {
     if (!ensureDev_(dev))
         return;
@@ -279,7 +255,7 @@ void Extender::write(uint8_t dev, uint8_t pin, bool level)
     }
 }
 
-bool Extender::read(uint8_t dev, uint8_t pin) const
+inline bool Extender::read(uint8_t dev, uint8_t pin) const
 {
     if (!ensureDev_(dev))
         return false;
@@ -307,15 +283,13 @@ bool Extender::read(uint8_t dev, uint8_t pin) const
     return false;
 }
 
-void Extender::flushAll()
+inline void Extender::flushAll()
 {
-    if ((!_mcp || !_mcp_inited) && (!_pcf || !_pcf_inited))
-        return;
     for (uint8_t i = 0; i < _dev_count; ++i)
     {
-        if (_mcp_inited && _mcp_inited[i])
+        if (_mcp_inited[i])
             (void)_mcp[i].flush();
-        if (_pcf_inited && _pcf_inited[i])
+        if (_pcf_inited[i])
             (void)_pcf[i].flush();
     }
 }

@@ -25,7 +25,8 @@
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
 #include "hal/ds18b20.hpp"
-#include "hal/gpio/portio.hpp"
+#include "hal/io_stack.hpp"
+#include "hal/gpio/extender.hpp"
 #include "core/rtc.hpp"
 #include "plc/plc_control.hpp"
 #include "core/network/telegram/telegram.hpp"
@@ -34,16 +35,17 @@
 class StackSlaveHandler
 {
 public:
-    StackSlaveHandler(PortIO &portio, Ds18b20 &ds18b20, OneWireManager &ow, I2CManager &i2c,
-                      PlcControl &plc, RTC &rtc, TelegramClient &telegram, Logger &logs)
-        : _portio(portio),
+    StackSlaveHandler(IoStack &io, Ds18b20 &ds18b20, OneWireManager &ow, I2CManager &i2c,
+                      PlcControl &plc, RTC &rtc, TelegramClient &telegram, Logger &logs, Extender &ext)
+        : _io(io),
           _ds18b20(ds18b20),
           _ow(ow),
           _i2c(i2c),
           _plc(plc),
           _rtc(rtc),
           _telegram(telegram),
-          _logs(logs)
+          _logs(logs),
+          _ext(ext)
     {
     }
 
@@ -66,7 +68,7 @@ private:
         char addr[17] = {};
     };
 
-    PortIO &_portio;
+    IoStack &_io;
     Ds18b20 &_ds18b20;
     OneWireManager &_ow;
     I2CManager &_i2c;
@@ -74,9 +76,14 @@ private:
     RTC &_rtc;
     TelegramClient &_telegram;
     Logger &_logs;
+    Extender &_ext;
     StackNode *_node = nullptr;
-    std::vector<I2cEntry> _last_i2c;
-    std::vector<OwEntry> _last_ow;
+    static constexpr uint8_t MAX_I2C_ADDRS = 127;
+    static constexpr uint8_t MAX_OW_ADDRS = 64;
+    I2cEntry _last_i2c[MAX_I2C_ADDRS] = {};
+    uint8_t _last_i2c_count = 0;
+    OwEntry _last_ow[MAX_OW_ADDRS] = {};
+    uint8_t _last_ow_count = 0;
 
     static void onFrame_(void *ctx, const StackFrame &frame)
     {
@@ -85,11 +92,11 @@ private:
         static_cast<StackSlaveHandler *>(ctx)->handleFrame_(frame);
     }
 
-    static bool onStatus_(void *ctx, std::vector<uint8_t> &out)
+    static size_t onStatus_(void *ctx, uint8_t *out, size_t cap)
     {
         if (!ctx)
-            return false;
-        return static_cast<StackSlaveHandler *>(ctx)->buildStatus_(out);
+            return 0;
+        return static_cast<StackSlaveHandler *>(ctx)->buildStatus_(out, cap);
     }
 
     void handleFrame_(const StackFrame &frame)
@@ -100,7 +107,7 @@ private:
             return;
 
         JsonDocument doc;
-        DeserializationError err = deserializeJson(doc, frame.payload.data(), frame.payload.size());
+        DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
         if (err)
         {
             sendErr_(0, "json parse");
@@ -151,6 +158,9 @@ private:
         case StackFeature::Storage:
             handleStorage_(cmd_id, action);
             break;
+        case StackFeature::Extenders:
+            handleExtenders_(cmd_id, action);
+            break;
         default:
             sendErr_(cmd_id, "unknown feature");
             break;
@@ -192,22 +202,20 @@ private:
                     if (!v.is<unsigned>())
                         continue;
                     const uint8_t id = (uint8_t)v.as<unsigned>();
-                    const bool state = _portio.read(id);
+                    const bool state = _io.read(id);
                     JsonObject o = arr.add<JsonObject>();
-                    o["id"] = id;
-                    o["state"] = state;
+                    fillPortItem_(o, id, state);
                 }
             }
             else
             {
-                for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+                for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
                 {
                     const auto &p = ActiveBoardProfile::PORTS[i];
                     if (p.caps == Cap::None)
                         continue;
                     JsonObject o = arr.add<JsonObject>();
-                    o["id"] = i;
-                    o["state"] = _portio.read(i);
+                    fillPortItem_(o, i, _io.read(i));
                 }
             }
             sendAck_(cmd_id, doc);
@@ -231,7 +239,7 @@ private:
                 const auto &p = ActiveBoardProfile::PORTS[id];
                 if (!p.allow_control)
                     continue;
-                _portio.write(id, state);
+                _io.write(id, state);
             }
             sendAck_(cmd_id);
             return;
@@ -281,8 +289,9 @@ private:
         {
             JsonDocument doc;
             JsonArray arr = doc["items"].to<JsonArray>();
-            for (const auto &e : _last_i2c)
+            for (uint8_t i = 0; i < _last_i2c_count; ++i)
             {
+                const auto &e = _last_i2c[i];
                 JsonObject o = arr.add<JsonObject>();
                 o["bus"] = e.bus;
                 char addr_buf[8] = {};
@@ -303,16 +312,49 @@ private:
         {
             JsonDocument doc;
             JsonArray arr = doc["items"].to<JsonArray>();
-            for (const auto &e : _last_ow)
+            for (uint8_t i = 0; i < _last_ow_count; ++i)
             {
+                const auto &e = _last_ow[i];
                 JsonObject o = arr.add<JsonObject>();
                 o["bus"] = e.bus;
                 o["addr"] = e.addr;
+                if (e.bus < ActiveBoardProfile::ONEWIRE_COUNT)
+                    o["type"] = owBusName_(ActiveBoardProfile::ONEWIRES[e.bus].bus_id);
             }
             sendAck_(cmd_id, doc);
             return;
         }
         sendErr_(cmd_id, "unsupported");
+    }
+
+    void handleExtenders_(uint16_t cmd_id, const String &action)
+    {
+        if (action != "get_list")
+        {
+            sendErr_(cmd_id, "unsupported");
+            return;
+        }
+        JsonDocument doc;
+        JsonArray arr = doc["items"].to<JsonArray>();
+        const auto *devs = _ext.devs();
+        if (devs)
+        {
+            for (uint8_t i = 0; i < _ext.devCount(); ++i)
+            {
+                const auto &d = devs[i];
+                if (d.i2c_addr == 0 || d.type == Extender::Type::None)
+                    continue;
+                JsonObject o = arr.add<JsonObject>();
+                o["id"] = i;
+                o["bus"] = d.bus_num;
+                char addr_buf[8] = {};
+                snprintf(addr_buf, sizeof(addr_buf), "0x%02X", d.i2c_addr);
+                o["addr"] = addr_buf;
+                o["type"] = extTypeName_(d.type);
+                o["present"] = _ext.isPresent(i);
+            }
+        }
+        sendAck_(cmd_id, doc);
     }
 
     void handleFan_(uint16_t cmd_id, const String &action, JsonVariantConst params)
@@ -426,6 +468,8 @@ private:
         doc["board_temp"] = _plc.boardTemp();
         doc["cpu_temp"] = _plc.cpuTemp();
         doc["fan_on"] = _plc.fanStatus();
+        doc["on_c"] = _plc.fanOnC();
+        doc["hyst_c"] = _plc.fanHysteresisC();
         sendAck_(cmd_id, doc);
     }
 
@@ -435,14 +479,14 @@ private:
         {
             JsonDocument doc;
             JsonArray arr = doc["items"].to<JsonArray>();
-            for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+            for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
             {
                 const auto &p = ActiveBoardProfile::PORTS[i];
                 if (p.caps == Cap::None || p.type != PortIO::PinType::Relay)
                     continue;
                 JsonObject o = arr.add<JsonObject>();
                 o["id"] = i;
-                o["state"] = _portio.read(i);
+                o["state"] = _io.read(i);
             }
             sendAck_(cmd_id, doc);
             return;
@@ -465,7 +509,7 @@ private:
                 const auto &p = ActiveBoardProfile::PORTS[id];
                 if (p.type != PortIO::PinType::Relay || !p.allow_control)
                     continue;
-                _portio.write(id, state);
+                _io.write(id, state);
             }
             sendAck_(cmd_id);
             return;
@@ -482,7 +526,7 @@ private:
         }
         JsonDocument doc;
         JsonArray arr = doc["items"].to<JsonArray>();
-        for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+        for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
         {
             const auto &p = ActiveBoardProfile::PORTS[i];
             if (p.caps == Cap::None)
@@ -491,7 +535,7 @@ private:
                 continue;
             JsonObject o = arr.add<JsonObject>();
             o["id"] = i;
-            o["state"] = _portio.read(i);
+            o["state"] = _io.read(i);
         }
         sendAck_(cmd_id, doc);
     }
@@ -536,20 +580,21 @@ private:
         sendAck_(cmd_id, doc);
     }
 
-    bool buildStatus_(std::vector<uint8_t> &out)
+    size_t buildStatus_(uint8_t *out, size_t cap)
     {
-        JsonDocument doc;
+        StaticJsonDocument<256> doc;
         doc["uptime_ms"] = (uint32_t)millis();
         doc["board_temp"] = _plc.boardTemp();
         doc["cpu_temp"] = _plc.cpuTemp();
         doc["fan_on"] = _plc.fanStatus();
-        return serializeJsonToVec_(doc, out);
+        return serializeJson(doc, reinterpret_cast<char *>(out), cap);
     }
 
     void scanI2c_()
     {
-        _last_i2c.clear();
+        _last_i2c_count = 0;
         bool scanned[3] = {false, false, false};
+        bool present[127] = {};
         for (uint8_t i = 0; i < ActiveBoardProfile::I2C_COUNT; ++i)
         {
             const uint8_t bus = ActiveBoardProfile::I2CS[i].bus_num;
@@ -557,17 +602,22 @@ private:
                 continue;
             if (bus < 3)
                 scanned[bus] = true;
-            std::vector<uint8_t> addrs;
-            if (!_i2c.scanDevices(bus, addrs))
+            if (!_i2c.scanDevices(bus, present))
                 continue;
-            for (const auto &addr : addrs)
-                _last_i2c.push_back({bus, addr});
+            for (uint8_t addr = 1; addr < 127; ++addr)
+            {
+                if (!present[addr])
+                    continue;
+                if (_last_i2c_count >= MAX_I2C_ADDRS)
+                    return;
+                _last_i2c[_last_i2c_count++] = {bus, addr};
+            }
         }
     }
 
     void scanOw_()
     {
-        _last_ow.clear();
+        _last_ow_count = 0;
         for (uint8_t i = 0; i < ActiveBoardProfile::ONEWIRE_COUNT; ++i)
         {
             OneWireBus *bus = _ow.busPtrByIndex(i);
@@ -579,10 +629,12 @@ private:
             {
                 if (OneWireBus::crc8(addr, 7) != addr[7])
                     continue;
+                if (_last_ow_count >= MAX_OW_ADDRS)
+                    return;
                 OwEntry e{};
                 e.bus = i;
                 addrToHex_(addr, e.addr);
-                _last_ow.push_back(e);
+                _last_ow[_last_ow_count++] = e;
             }
         }
     }
@@ -636,6 +688,162 @@ private:
         return (uint8_t)(dow + 1);
     }
 
+    void fillPortItem_(JsonObject o, uint8_t id, bool state) const
+    {
+        o["id"] = id;
+        o["state"] = state;
+        if (id >= IoStack::PORT_COUNT)
+            return;
+        const auto &p = ActiveBoardProfile::PORTS[id];
+        if (p.caps == Cap::None)
+            return;
+
+        o["backend"] = (p.backend == PortIO::Backend::Extender) ? "Extender" : "Esp32";
+        o["loc"] = stackUnitName_(toStackUnit_(p.location));
+        o["type"] = portTypeName_(p.type);
+        o["ctrl"] = p.allow_control;
+        if (p.backend == PortIO::Backend::Extender)
+        {
+            o["dev"] = p.u.ext.dev;
+            o["pin"] = p.u.ext.pin;
+            o["hw"] = extDevTypeName_(p.u.ext.dev);
+        }
+        else
+        {
+            o["dev"] = -1;
+            o["pin"] = p.u.esp.gpio;
+            o["hw"] = "CPU";
+        }
+    }
+
+    static const char *portTypeName_(PortIO::PinType t)
+    {
+        switch (t)
+        {
+        case PortIO::PinType::System:
+            return "System";
+        case PortIO::PinType::Relay:
+            return "Relay";
+        case PortIO::PinType::Led:
+            return "Led";
+        case PortIO::PinType::Sensor:
+            return "Sensor";
+        case PortIO::PinType::Button:
+            return "Button";
+        case PortIO::PinType::DInput:
+            return "DInput";
+        case PortIO::PinType::Buzzer:
+            return "Buzzer";
+        case PortIO::PinType::Fan:
+            return "Fan";
+        default:
+            return "Unknown";
+        }
+    }
+
+    static StackUnit toStackUnit_(PortIO::Location loc)
+    {
+        switch (loc)
+        {
+        case PortIO::Location::Cpu:
+            return StackUnit::Cpu;
+        case PortIO::Location::Ext1:
+            return StackUnit::Unit1;
+        case PortIO::Location::Ext2:
+            return StackUnit::Unit2;
+        case PortIO::Location::Ext3:
+            return StackUnit::Unit3;
+        case PortIO::Location::Ext4:
+            return StackUnit::Unit4;
+        case PortIO::Location::Ext5:
+            return StackUnit::Unit5;
+        case PortIO::Location::Ext6:
+            return StackUnit::Unit6;
+        case PortIO::Location::Ext7:
+            return StackUnit::Unit7;
+        case PortIO::Location::Ext8:
+            return StackUnit::Unit8;
+        case PortIO::Location::Ext9:
+            return StackUnit::Unit9;
+        case PortIO::Location::Ext10:
+            return StackUnit::Unit10;
+        default:
+            return StackUnit::Unknown;
+        }
+    }
+
+    static const char *stackUnitName_(StackUnit unit)
+    {
+        switch (unit)
+        {
+        case StackUnit::Cpu:
+            return "CPU";
+        case StackUnit::Unit1:
+            return "UNIT_1";
+        case StackUnit::Unit2:
+            return "UNIT_2";
+        case StackUnit::Unit3:
+            return "UNIT_3";
+        case StackUnit::Unit4:
+            return "UNIT_4";
+        case StackUnit::Unit5:
+            return "UNIT_5";
+        case StackUnit::Unit6:
+            return "UNIT_6";
+        case StackUnit::Unit7:
+            return "UNIT_7";
+        case StackUnit::Unit8:
+            return "UNIT_8";
+        case StackUnit::Unit9:
+            return "UNIT_9";
+        case StackUnit::Unit10:
+            return "UNIT_10";
+        default:
+            return "UNKNOWN";
+        }
+    }
+
+    static const char *extDevTypeName_(uint8_t dev)
+    {
+        if (dev >= ActiveBoardProfile::EXT_DEVS_COUNT)
+            return "Unknown";
+        switch (ActiveBoardProfile::EXT_DEVS[dev].type)
+        {
+        case Extender::Type::MCP23017:
+            return "MCP23017";
+        case Extender::Type::PCF8574:
+            return "PCF8574";
+        default:
+            return "None";
+        }
+    }
+
+    static const char *extTypeName_(Extender::Type t)
+    {
+        switch (t)
+        {
+        case Extender::Type::MCP23017:
+            return "MCP23017";
+        case Extender::Type::PCF8574:
+            return "PCF8574";
+        default:
+            return "None";
+        }
+    }
+
+    static const char *owBusName_(OneWireCfg::OwType t)
+    {
+        switch (t)
+        {
+        case OneWireCfg::OwType::iButton:
+            return "iButton";
+        case OneWireCfg::OwType::Temp:
+            return "Temp";
+        default:
+            return "Unknown";
+        }
+    }
+
     void sendAck_(uint16_t cmd_id)
     {
         JsonDocument empty;
@@ -663,18 +871,12 @@ private:
 
     void sendJson_(uint8_t type, JsonDocument &doc)
     {
-        std::vector<uint8_t> payload;
-        if (!serializeJsonToVec_(doc, payload))
+        uint8_t payload[StackCodec::kMaxPayload] = {};
+        const size_t len = serializeJson(doc, reinterpret_cast<char *>(payload), sizeof(payload));
+        if (len == 0 || len > sizeof(payload))
             return;
-        _node->send(type, payload.data(), payload.size());
-    }
-
-    static bool serializeJsonToVec_(JsonDocument &doc, std::vector<uint8_t> &out)
-    {
-        String s;
-        if (serializeJson(doc, s) == 0)
-            return false;
-        out.assign(s.begin(), s.end());
-        return true;
+        _node->send(type, payload, len);
     }
 };
+
+

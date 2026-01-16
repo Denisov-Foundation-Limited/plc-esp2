@@ -22,20 +22,23 @@
 #include "hal/ds18b20.hpp"
 #include "hal/ibutton.hpp"
 #include "hal/gpio/gpio_caps.hpp"
-#include "hal/gpio/portio.hpp"
+#include "hal/io_stack.hpp"
+#include "hal/gpio/extender.hpp"
 #include "hal/at24lc512.hpp"
 #include "hal/lm75ad.hpp"
 #include "boards/board_profile.hpp"
+#include "core/rtc.hpp"
 #include "utils/logger.hpp"
 
 class Ftest
 {
 public:
-    explicit Ftest(Logger &logs, PortIO &portio, OneWireManager &ow, IButton &ibutton,
-                   Ds18b20 &ds18b20, I2CManager &i2c, TaskManager<TASK_MGR_TSK_COUNT> &tm,
+    explicit Ftest(Logger &logs, IoStack &io, OneWireManager &ow, IButton &ibutton,
+                   Ds18b20 &ds18b20, I2CManager &i2c, RTC &rtc, Extender &ext,
+                   TaskManager<TASK_MGR_TSK_COUNT> &tm,
                    TaskBinder<TASK_MGR_TSK_COUNT> &tb)
-        : _logs(logs), _portio(portio), _ow(ow), _ibutton(ibutton),
-          _ds18b20(ds18b20), _i2c(i2c), _tm(tm), _tb(tb)
+        : _logs(logs), _io(io), _ow(ow), _ibutton(ibutton),
+          _ds18b20(ds18b20), _i2c(i2c), _rtc(rtc), _ext(ext), _tm(tm), _tb(tb)
     {
     }
 
@@ -82,6 +85,10 @@ public:
         _logs.info(F("FTEST"), F(""));
         _logs.info(F("FTEST"), F("[CPU_TEMP]"));
         logCPUTemp_();
+
+        _logs.info(F("FTEST"), F(""));
+        _logs.info(F("FTEST"), F("[RTC]"));
+        logRtc_();
 
         _logs.info(F("FTEST"), F(""));
         _logs.info(F("FTEST"), F("[EEPROM]"));
@@ -154,12 +161,36 @@ private:
 #endif
     }
 
+    void logRtc_()
+    {
+        Ds3231Mz::DateTime dt{};
+        if (!_rtc.Time(dt))
+        {
+            _logs.info(F("FTEST"), F("RTC: err"));
+            return;
+        }
+        float rtc_t = 0.0f;
+        const bool rtc_ok = _rtc.readTemp(rtc_t);
+        char date_buf[16] = {};
+        char time_buf[16] = {};
+        snprintf(date_buf, sizeof(date_buf), "%04u-%02u-%02u",
+                 (unsigned)dt.year, (unsigned)dt.month, (unsigned)dt.day);
+        snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
+                 (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
+        if (rtc_ok)
+            _logs.info(F("FTEST"), F("RTC: %s %s %.2fC"), date_buf, time_buf, rtc_t);
+        else
+            _logs.info(F("FTEST"), F("RTC: %s %s temp: err"), date_buf, time_buf);
+    }
+
     void logGpioOuts_()
     {
-        for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+        for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
         {
-            const auto &p = _portio.desc(i);
+            const auto &p = _io.desc(i);
             if (p.caps == Cap::None)
+                continue;
+            if (!isPortActive_(p))
                 continue;
 
             if (p.type == PortIO::PinType::Led ||
@@ -169,7 +200,7 @@ private:
             {
                 if (has(p.caps, Cap::Output))
                 {
-                    _portio.write(i, _state);
+                    _io.write(i, _state);
                     _logs.info(F("FTEST"), F("GPIO[%u]: State: %s type: %s"), i, _state ? "High" : "Low", pinTypeName_(p.type));
                 }
                 continue;
@@ -179,18 +210,20 @@ private:
 
     void logGpioIns_()
     {
-        for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+        for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
         {
-            const auto &p = _portio.desc(i);
+            const auto &p = _io.desc(i);
             if (p.caps == Cap::None)
+                continue;
+            if (!isPortActive_(p))
                 continue;
 
             if (p.type == PortIO::PinType::DInput)
             {
-                if (has(p.caps, Cap::Output))
+                if (has(p.caps, Cap::Input))
                 {
-                    _portio.write(i, _state);
-                    _logs.info(F("FTEST"), F("GPIO[%u]: State: %s type: %s"), i, _state ? "High" : "Low", pinTypeName_(p.type));
+                    const bool v = _io.read(i);
+                    _logs.info(F("FTEST"), F("GPIO[%u]: State: %s type: %s"), i, v ? "High" : "Low", pinTypeName_(p.type));
                 }
                 continue;
             }
@@ -199,15 +232,17 @@ private:
 
     void logButtons_()
     {
-        for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+        for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
         {
-            const auto &p = _portio.desc(i);
+            const auto &p = _io.desc(i);
             if (p.caps == Cap::None)
+                continue;
+            if (!isPortActive_(p))
                 continue;
 
             if (p.type == PortIO::PinType::Button)
             {
-                bool v = _portio.read(i);
+                bool v = _io.read(i);
                 _logs.info(F("FTEST"), F("BUTTON[%u]: State: %s"), i, v ? "High" : "Low");
             }
         }
@@ -303,12 +338,21 @@ private:
     static constexpr char kTypeFan[] PROGMEM = "Fan";
     static constexpr char kTypeUnknown[] PROGMEM = "Unknown";
 
+    bool isPortActive_(const PortIO::PortDesc &p) const
+    {
+        if (p.backend != PortIO::Backend::Extender)
+            return true;
+        return _ext.isPresent(p.u.ext.dev);
+    }
+
     Logger &_logs;
-    PortIO &_portio;
+    IoStack &_io;
     OneWireManager &_ow;
     IButton &_ibutton;
     Ds18b20 &_ds18b20;
     I2CManager &_i2c;
+    RTC &_rtc;
+    Extender &_ext;
     Lm75ad _lm75;
     bool _lm75_ok = false;
     At24lc512 _eeprom;

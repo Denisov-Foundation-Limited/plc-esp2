@@ -21,6 +21,7 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <Update.h>
+#include <esp_system.h>
 #endif
 
 #include "boards/board_profile.hpp"
@@ -32,6 +33,8 @@
 #include "core/network/web/pages/web_interface_buses.hpp"
 #include "core/network/web/pages/web_interface_stack.hpp"
 #include "core/network/web/pages/web_interface_wifi.hpp"
+#include "core/network/web/pages/web_interface_admin.hpp"
+#include "core/network/web/pages/web_interface_logs.hpp"
 #include "core/network/web/pages/web_interface_telegram.hpp"
 #include "core/network/web/pages/web_interface_status.hpp"
 #include "core/rtc.hpp"
@@ -40,6 +43,7 @@
 #include "core/network/telegram/telegram_menu.hpp"
 #include "utils/logger.hpp"
 #include "utils/configs.hpp"
+#include "utils/fs_config.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "hal/gpio/extender.hpp"
 #include "hal/bus/i2c.hpp"
@@ -48,7 +52,7 @@
 class WebInterface
 {
 public:
-    WebInterface(AsyncWebServer &server, const CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
+    WebInterface(AsyncWebServer &server, CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
                  RTC &rtc, TelegramClient &tgbot, TelegramMenu &tgbot_menu, Logger &logs, Extender &ext,
                  I2CManager &i2c, OneWireManager &ow)
         : _server(server),
@@ -68,7 +72,8 @@ public:
 
     bool begin(bool format_on_fail = false)
     {
-        return LittleFS.begin(format_on_fail);
+        return LittleFS.begin(format_on_fail, FsConfig::kBasePath, FsConfig::kMaxOpenFiles,
+                              FsConfig::kPartitionLabel);
     }
 
     void setAuth(const String &user, const String &pass)
@@ -99,6 +104,7 @@ public:
         _server.on("/stack", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStack_(request); });
         _server.on("/telegram", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTelegram_(request); });
         _server.on("/telegram", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTelegramSave_(request); });
+        _server.on("/logout", HTTP_GET, [this](AsyncWebServerRequest *request) { handleLogout_(request); });
         _server.on(
             "/upload", HTTP_POST,
             [this](AsyncWebServerRequest *request) { handleUploadDone_(request); },
@@ -112,6 +118,9 @@ public:
         _server.on("/wifi", HTTP_POST, [this](AsyncWebServerRequest *request) { handleWifiSave_(request); });
         _server.on("/stack", HTTP_POST, [this](AsyncWebServerRequest *request) { handleStackSave_(request); });
         _server.on("/device", HTTP_POST, [this](AsyncWebServerRequest *request) { handleDeviceSave_(request); });
+        _server.on("/admin", HTTP_GET, [this](AsyncWebServerRequest *request) { handleAdmin_(request); });
+        _server.on("/admin", HTTP_POST, [this](AsyncWebServerRequest *request) { handleAdminSave_(request); });
+        _server.on("/logs", HTTP_GET, [this](AsyncWebServerRequest *request) { handleLogs_(request); });
         _server.on("/reboot", HTTP_POST, [this](AsyncWebServerRequest *request) { handleReboot_(request); });
         _server.on("/files", HTTP_GET, [this](AsyncWebServerRequest *request) { handleFileDownload_(request); });
         _server.on("/delete", HTTP_GET, [this](AsyncWebServerRequest *request) { handleDelete_(request); });
@@ -130,11 +139,15 @@ public:
 private:
     void handleIndex_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET / (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceIndexHtml);
+        page.replace("%NAV%", navHtml_());
+        const bool logged_out = request->hasParam("logout");
+        page.replace("%LOGOUT_MSG%", logged_out ? "Logged out" : "");
         page.replace("%DEVICE_NAME%", deviceName_());
         page.replace("%DEVICE_STATUS%", _device_status);
         const auto role = stackRole_();
@@ -149,16 +162,18 @@ private:
         page.replace("%RTC_TEMP%", formatTemp_(rtcTemp_()));
         page.replace("%FAN_STATUS%", fanStatusStr_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        request->send(200, "text/html", page);
+        sendHtml_(request, page, set_cookie);
     }
 
     void handleWifi_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /wifi (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceWifiHtml);
+        page.replace("%NAV%", navHtml_());
         page.replace("%WIFI_MODE%", _wifi.ap() ? "AP" : "STA");
         page.replace("%WIFI_CUR_SSID%", _wifi.ap() ? _wifi.apSsid() : _wifi.ssid());
         page.replace("%WIFI_IP%", wifiIp_());
@@ -168,53 +183,147 @@ private:
         page.replace("%WIFI_SSID%", _wifi.ssid());
         page.replace("%WIFI_AP_SSID%", _wifi.apSsid());
         page.replace("%WIFI_STATUS%", _wifi_status);
-        request->send(200, "text/html", page);
+        sendHtml_(request, page, set_cookie);
     }
 
     void handleManage_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /manage (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceManageHtml);
+        page.replace("%NAV%", navHtml_());
         page.replace("%FILES%", listFilesHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        request->send(200, "text/html", page);
+        sendHtml_(request, page, set_cookie);
+    }
+
+    void handleLogs_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("GET /logs (ip=%s)"), requestIp_(request).c_str());
+        String page = FPSTR(kWebInterfaceLogsHtml);
+        page.replace("%NAV%", navHtml_());
+        String lines;
+        if (_log)
+        {
+            const size_t count = _log->recentCount();
+            if (count == 0)
+            {
+                lines = "No logs";
+            }
+            else
+            {
+                char buf[LOGGER_BUFFER_SIZE] = {};
+                for (size_t i = 0; i < count; ++i)
+                {
+                    if (_log->getRecentLine(i, buf, sizeof(buf)))
+                    {
+                        appendHtmlEscaped_(lines, buf);
+                        lines += "\n";
+                    }
+                }
+            }
+        }
+        else
+        {
+            lines = "Logger unavailable";
+        }
+        page.replace("%LOG_LINES%", lines);
+        sendHtml_(request, page, set_cookie);
+    }
+
+    void handleAdmin_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (_cli_auth && _cli_auth->adminPasswordSet())
+        {
+            if (!checkAuth_(request, &set_cookie))
+                return;
+        }
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("GET /admin (ip=%s)"), requestIp_(request).c_str());
+        String page = FPSTR(kWebInterfaceAdminHtml);
+        page.replace("%NAV%", navHtml_());
+        page.replace("%ADMIN_STATUS%", (_cli_auth && _cli_auth->adminPasswordSet()) ? "set" : "not set");
+        sendHtml_(request, page, set_cookie);
+    }
+
+    void handleAdminSave_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (_cli_auth && _cli_auth->adminPasswordSet())
+        {
+            if (!checkAuth_(request, &set_cookie))
+                return;
+        }
+        if (!_cli_auth)
+        {
+            sendText_(request, 500, "text/plain", "CLI auth unavailable", set_cookie);
+            return;
+        }
+        if (!request->hasParam("password", true))
+        {
+            sendText_(request, 400, "text/plain", "Missing password", set_cookie);
+            return;
+        }
+        String pass = request->getParam("password", true)->value();
+        pass.trim();
+        if (!_cli_auth->setAdminPassword_(pass))
+        {
+            sendText_(request, 400, "text/plain", "Invalid password", set_cookie);
+            return;
+        }
+        if (_configs_manager)
+            _configs_manager->save();
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("Admin password updated (ip=%s)"), requestIp_(request).c_str());
+        sendRedirect_(request, "/", set_cookie);
     }
 
     void handlePorts_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /ports (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfacePortsHtml);
+        page.replace("%NAV%", navHtml_());
         page.replace("%PORTS%", listPortsHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        request->send(200, "text/html", page);
+        sendHtml_(request, page, set_cookie);
     }
 
     void handleBuses_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /buses (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceBusesHtml);
+        page.replace("%NAV%", navHtml_());
         page.replace("%I2C%", listI2cHtml_());
         page.replace("%OW%", listOwHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        request->send(200, "text/html", page);
+        sendHtml_(request, page, set_cookie);
     }
 
     void handleStack_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /stack (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceStackHtml);
+        page.replace("%NAV%", navHtml_());
         const auto role = stackRole_();
         page.replace("%STACK_ROLE%", stackRoleName_(role));
         page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
@@ -222,16 +331,18 @@ private:
         page.replace("%STACK_MASTER_HOST%", stackMasterHost_());
         page.replace("%STACK_STATUS%", _stack_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        request->send(200, "text/html", page);
+        sendHtml_(request, page, set_cookie);
     }
 
     void handleTelegram_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /telegram (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceTelegramHtml);
+        page.replace("%NAV%", navHtml_());
         page.replace("%TGBOT_TOKEN%", _tgbot ? _tgbot->token() : String(""));
         page.replace("%TGBOT_CHAT_ID%", _tgbot ? String((long long)_tgbot->chatId()) : String("0"));
         page.replace("%TGBOT_INSECURE_CHECKED%", _tgbot && _tgbot->insecure() ? "checked" : "");
@@ -243,12 +354,13 @@ private:
         page.replace("%TGBOT_ALLOWED_USERS%", allowedUsersCsv_());
         page.replace("%TGBOT_STATUS%", _tgbot_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        request->send(200, "text/html", page);
+        sendHtml_(request, page, set_cookie);
     }
 
     void handleTelegramSave_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         bool changed = false;
 
@@ -324,13 +436,22 @@ private:
             save_ok = saveWifiConfig_();
 
         if (!changed)
-            _tgbot_status = "Нет изменений";
+            _tgbot_status = "No changes";
         else if (!save_ok)
-            _tgbot_status = "Ошибка сохранения";
+            _tgbot_status = "Save failed";
         else
-            _tgbot_status = "Сохранено";
+            _tgbot_status = "Saved";
 
-        request->redirect("/telegram");
+        sendRedirect_(request, "/telegram", set_cookie);
+    }
+
+    void handleLogout_(AsyncWebServerRequest *request)
+    {
+        clearSession_();
+        auto *response = request->beginResponse(302);
+        response->addHeader("Location", "/?logout=1");
+        response->addHeader("Set-Cookie", clearSessionCookie_());
+        request->send(response);
     }
 
     String listFilesHtml_()
@@ -354,15 +475,15 @@ private:
             items += "<strong>";
             items += String((unsigned)file.size());
             items += "</strong>";
-            items += " B</td><td class=\"right\"><a class=\"del\" onclick=\"return confirm('Удалить файл ";
+            items += " B</td><td class=\"right\"><a class=\"del\" onclick=\"return confirm('Delete file ";
             items += name;
             items += "?')\" href=\"/delete?path=";
             items += path;
-            items += "\"><strong>Удалить</strong></a></td></tr>";
+            items += "\"><strong>Delete</strong></a></td></tr>";
             file = root.openNextFile();
         }
         if (items.length() == 0)
-            items = "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>Нет файлов</strong></td></tr>";
+            items = "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>No files</strong></td></tr>";
         return items;
     }
 
@@ -417,26 +538,26 @@ private:
         {
         case PortIO::Location::Cpu:
             return "CPU";
-        case PortIO::Location::Unit1:
-            return "UNIT_1";
-        case PortIO::Location::Unit2:
-            return "UNIT_2";
-        case PortIO::Location::Unit3:
-            return "UNIT_3";
-        case PortIO::Location::Unit4:
-            return "UNIT_4";
-        case PortIO::Location::Unit5:
-            return "UNIT_5";
-        case PortIO::Location::Unit6:
-            return "UNIT_6";
-        case PortIO::Location::Unit7:
-            return "UNIT_7";
-        case PortIO::Location::Unit8:
-            return "UNIT_8";
-        case PortIO::Location::Unit9:
-            return "UNIT_9";
-        case PortIO::Location::Unit10:
-            return "UNIT_10";
+        case PortIO::Location::Ext1:
+            return "EXT_1";
+        case PortIO::Location::Ext2:
+            return "EXT_2";
+        case PortIO::Location::Ext3:
+            return "EXT_3";
+        case PortIO::Location::Ext4:
+            return "EXT_4";
+        case PortIO::Location::Ext5:
+            return "EXT_5";
+        case PortIO::Location::Ext6:
+            return "EXT_6";
+        case PortIO::Location::Ext7:
+            return "EXT_7";
+        case PortIO::Location::Ext8:
+            return "EXT_8";
+        case PortIO::Location::Ext9:
+            return "EXT_9";
+        case PortIO::Location::Ext10:
+            return "EXT_10";
         default:
             return "UNKNOWN";
         }
@@ -517,7 +638,7 @@ private:
             items += "</strong></td></tr>";
         }
         if (items.length() == 0)
-            items = "<tr><td colspan=\"8\" style=\"color:#94a3b8\"><strong>Нет портов</strong></td></tr>";
+            items = "<tr><td colspan=\"8\" style=\"color:#94a3b8\"><strong>No ports</strong></td></tr>";
         return items;
     }
 
@@ -534,19 +655,20 @@ private:
                 continue;
             if (bus < 3)
                 scanned[bus] = true;
-            std::vector<uint8_t> addrs;
-            if (!_i2c->scanDevices(bus, addrs))
+            bool present[127] = {};
+            if (!_i2c->scanDevices(bus, present))
                 continue;
-            for (size_t a = 0; a < addrs.size(); ++a)
-            {
-                char addr_buf[8] = {};
-                snprintf(addr_buf, sizeof(addr_buf), "0x%02X", addrs[a]);
-                items += "<tr><td class=\"right\"><strong>";
-                items += String((unsigned)bus);
-                items += "</strong></td><td><strong>";
-                items += addr_buf;
-                items += "</strong></td></tr>";
-            }
+            for (uint8_t addr = 1; addr < 127; ++addr)
+                if (present[addr])
+                {
+                    char addr_buf[8] = {};
+                    snprintf(addr_buf, sizeof(addr_buf), "0x%02X", addr);
+                    items += "<tr><td class=\"right\"><strong>";
+                    items += String((unsigned)bus);
+                    items += "</strong></td><td><strong>";
+                    items += addr_buf;
+                    items += "</strong></td></tr>";
+                }
         }
         if (items.length() == 0)
             items = "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>none</strong></td></tr>";
@@ -591,23 +713,36 @@ private:
     {
         if (index == 0)
         {
-            if (!checkAuth_(request))
+            bool set_cookie = false;
+            if (!checkAuth_(request, &set_cookie, true))
                 return;
+            _upload_set_cookie = set_cookie;
             _upload_ok = true;
             _upload_error = "";
             _upload_name = filename;
-            String path = "/";
-            path += filename;
+            String path = sanitizeUploadName_(filename);
+            if (!path.length())
+            {
+                _upload_ok = false;
+                _upload_error = "Invalid file name";
+                return;
+            }
             if (_log && _log->ready())
                 _log->info(F("WEB"), F("Upload start %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
             if (!isAllowedExt_(path))
             {
                 _upload_ok = false;
-                _upload_error = "РќРµРґРѕРїСѓСЃС‚РёРјРѕРµ СЂР°СЃС€РёСЂРµРЅРёРµ С„Р°Р№Р»Р°";
+                _upload_error = "File extension not allowed";
                 return;
             }
             _upload_size = 0;
             _upload = LittleFS.open(path, "w");
+            if (!_upload)
+            {
+                _upload_ok = false;
+                _upload_error = "Open failed";
+                return;
+            }
         }
         if (!_upload_ok)
             return;
@@ -615,7 +750,7 @@ private:
         if (_max_upload > 0 && _upload_size > _max_upload)
         {
             _upload_ok = false;
-            _upload_error = "Р¤Р°Р№Р» СЃР»РёС€РєРѕРј Р±РѕР»СЊС€РѕР№";
+            _upload_error = "File too large";
             if (_upload)
                 _upload.close();
             return;
@@ -631,11 +766,13 @@ private:
     {
         if (index == 0)
         {
-            if (!checkAuth_(request))
+            bool set_cookie = false;
+            if (!checkAuth_(request, &set_cookie, true))
                 return;
+            _ota_set_cookie = set_cookie;
 #if !defined(ESP32)
             _ota_ok = false;
-            _ota_error = "OTA РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ";
+            _ota_error = "OTA not supported";
             return;
 #else
             _ota_ok = true;
@@ -658,7 +795,7 @@ private:
         if (_max_upload > 0 && _ota_size > _max_upload)
         {
             _ota_ok = false;
-            _ota_error = "РЎР»РёС€РєРѕРј Р±РѕР»СЊС€РѕР№ С„Р°Р№Р» РїСЂРѕС€РёРІРєРё";
+            _ota_error = "Firmware image too large";
             Update.abort();
             return;
         }
@@ -683,9 +820,9 @@ private:
     void handleUploadDone_(AsyncWebServerRequest *request)
     {
         if (!_upload_ok)
-            _last_status = _upload_error.length() ? _upload_error : "Р—Р°РіСЂСѓР·РєР° РЅРµ СѓРґР°Р»Р°СЃСЊ";
+            _last_status = _upload_error.length() ? _upload_error : "Upload failed";
         else
-            _last_status = "Р—Р°РіСЂСѓР·РєР° Р·Р°РІРµСЂС€РµРЅР°";
+            _last_status = "Upload complete";
         if (_log && _log->ready())
         {
             const String name = _upload_name.length() ? _upload_name : String("-");
@@ -696,15 +833,16 @@ private:
                 _log->warn(F("WEB"), F("Upload fail %s size=%lu err=%s (ip=%s)"), name.c_str(),
                            (unsigned long)_upload_size, _upload_error.c_str(), requestIp_(request).c_str());
         }
-        request->redirect("/status");
+        sendRedirect_(request, "/status", _upload_set_cookie);
+        _upload_set_cookie = false;
     }
 
     void handleOtaDone_(AsyncWebServerRequest *request)
     {
         if (!_ota_ok)
-            _last_status = _ota_error.length() ? _ota_error : "РћР±РЅРѕРІР»РµРЅРёРµ РїСЂРѕС€РёРІРєРё РЅРµ СѓРґР°Р»РѕСЃСЊ";
+            _last_status = _ota_error.length() ? _ota_error : "Firmware update failed";
         else
-            _last_status = "РџСЂРѕС€РёРІРєР° РѕР±РЅРѕРІР»РµРЅР°. РџРµСЂРµР·Р°РіСЂСѓР·РєР°...";
+            _last_status = "Firmware updated. Rebooting...";
         if (_log && _log->ready())
         {
             const String name = _ota_name.length() ? _ota_name : String("-");
@@ -715,7 +853,8 @@ private:
                 _log->warn(F("WEB"), F("OTA fail %s size=%lu err=%s (ip=%s)"), name.c_str(), (unsigned long)_ota_size,
                            _ota_error.c_str(), requestIp_(request).c_str());
         }
-        request->redirect("/status");
+        sendRedirect_(request, "/status", _ota_set_cookie);
+        _ota_set_cookie = false;
 #if defined(ESP32)
         if (_ota_ok)
         {
@@ -727,7 +866,8 @@ private:
 
     void handleWifiSave_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         bool changed = false;
 
@@ -790,15 +930,15 @@ private:
         }
 
         if (!changed)
-            _wifi_status = "РќРµС‚ РёР·РјРµРЅРµРЅРёР№";
+            _wifi_status = "No changes";
         else if (!wifi_ok && !save_ok)
-            _wifi_status = "РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРјРµРЅРёС‚СЊ Wi-Fi Рё СЃРѕС…СЂР°РЅРёС‚СЊ РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ";
+            _wifi_status = "Wi-Fi apply and save failed";
         else if (!wifi_ok)
-            _wifi_status = "РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРјРµРЅРёС‚СЊ Wi-Fi";
+            _wifi_status = "Wi-Fi apply failed";
         else if (!save_ok)
-            _wifi_status = "Wi-Fi РїСЂРёРјРµРЅРµРЅ, РЅРѕ СЃРѕС…СЂР°РЅРёС‚СЊ РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ РЅРµ СѓРґР°Р»РѕСЃСЊ";
+            _wifi_status = "Wi-Fi applied, but save failed";
         else
-            _wifi_status = "Wi-Fi РѕР±РЅРѕРІР»РµРЅ";
+            _wifi_status = "Wi-Fi updated";
 
         if (_log && _log->ready())
         {
@@ -812,17 +952,18 @@ private:
                 _log->warn(F("WEB"), F("WiFi save fail wifi=%s save=%s (ip=%s)"), wifi_ok ? "ok" : "err",
                            save_ok ? "ok" : "err", requestIp_(request).c_str());
         }
-        request->redirect("/");
+        sendRedirect_(request, "/", set_cookie);
     }
 
     void handleStackSave_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         if (!_configs_manager)
         {
             _stack_status = "Config manager missing";
-            request->redirect("/");
+            sendRedirect_(request, "/", set_cookie);
             return;
         }
 
@@ -862,23 +1003,24 @@ private:
         else
             _stack_status = "Saved";
 
-        request->redirect("/stack");
+        sendRedirect_(request, "/stack", set_cookie);
     }
 
     void handleDeviceSave_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         if (!_plc)
         {
             _device_status = "PLC missing";
-            request->redirect("/");
+            sendRedirect_(request, "/", set_cookie);
             return;
         }
         if (!request->hasParam("device_name", true))
         {
             _device_status = "Missing name";
-            request->redirect("/");
+            sendRedirect_(request, "/", set_cookie);
             return;
         }
         String name = request->getParam("device_name", true)->value();
@@ -898,112 +1040,182 @@ private:
         else
             _device_status = "Saved";
 
-        request->redirect("/");
+        sendRedirect_(request, "/", set_cookie);
     }
 
     void handleReboot_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
 #if defined(ESP32)
         if (_log && _log->ready())
             _log->info(F("WEB"), F("Reboot request (ip=%s)"), requestIp_(request).c_str());
-        request->send(200, "text/plain", "Rebooting");
+        sendText_(request, 200, "text/plain", "Rebooting", set_cookie);
         delay(100);
         ESP.restart();
 #else
-        request->send(200, "text/plain", "Not supported");
+        sendText_(request, 200, "text/plain", "Not supported", set_cookie);
 #endif
     }
 
     void handleFileDownload_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         String path;
         if (request->hasParam("path"))
             path = request->getParam("path")->value();
         else
             path = request->url().substring(String("/files").length());
-        if (!path.startsWith("/"))
-            path = "/" + path;
+        path = sanitizePath_(path);
+        if (!path.length())
+        {
+            sendText_(request, 400, "text/plain", "Invalid path", set_cookie);
+            return;
+        }
         if (!LittleFS.exists(path))
         {
             if (_log && _log->ready())
                 _log->warn(F("WEB"), F("Download missing %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
-            request->send(404, "text/plain", "Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ");
+            sendText_(request, 404, "text/plain", "File not found", set_cookie);
             return;
         }
         if (_log && _log->ready())
             _log->info(F("WEB"), F("Download %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
-        request->send(LittleFS, path, "application/octet-stream");
+        auto *response = request->beginResponse(LittleFS, path, "application/octet-stream");
+        if (set_cookie)
+            response->addHeader("Set-Cookie", sessionCookie_());
+        request->send(response);
     }
 
     void handleDelete_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie, true))
             return;
         if (!request->hasParam("path"))
         {
-            request->send(400, "text/plain", "РќРµ СѓРєР°Р·Р°РЅ РїСѓС‚СЊ");
+            sendText_(request, 400, "text/plain", "Missing path", set_cookie);
             return;
         }
-        String path = request->getParam("path")->value();
-        if (!path.startsWith("/"))
-            path = "/" + path;
+        String path = sanitizePath_(request->getParam("path")->value());
+        if (!path.length())
+        {
+            sendText_(request, 400, "text/plain", "Invalid path", set_cookie);
+            return;
+        }
         if (_log && _log->ready())
             _log->info(F("WEB"), F("Delete request %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
         if (!LittleFS.exists(path))
         {
             if (_log && _log->ready())
                 _log->warn(F("WEB"), F("Delete missing %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
-            request->send(404, "text/plain", "Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ");
+            sendText_(request, 404, "text/plain", "File not found", set_cookie);
             return;
         }
         if (!LittleFS.remove(path))
         {
             if (_log && _log->ready())
                 _log->warn(F("WEB"), F("Delete failed %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
-            request->send(500, "text/plain", "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ С„Р°Р№Р»");
+            sendText_(request, 500, "text/plain", "Delete failed", set_cookie);
             return;
         }
-        request->redirect("/manage");
+        sendRedirect_(request, "/manage", set_cookie);
     }
 
     void handleStatus_(AsyncWebServerRequest *request)
     {
-        if (!checkAuth_(request))
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
             return;
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /status (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceStatusHtml);
+        page.replace("%NAV%", navHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        page.replace("%STATUS%", _last_status.length() ? _last_status : "РќРµС‚ РґР°РЅРЅС‹С…");
-        request->send(200, "text/html", page);
+        page.replace("%STATUS%", _last_status.length() ? _last_status : "No data");
+        sendHtml_(request, page, set_cookie);
     }
 
-    bool checkAuth_(AsyncWebServerRequest *request)
+    bool checkAuth_(AsyncWebServerRequest *request, bool *set_cookie, bool require_session = false)
     {
+        if (set_cookie)
+            *set_cookie = false;
+
+        String token;
+        if (extractSessionToken_(request, token) && sessionValid_(token))
+        {
+            refreshSession_();
+            return true;
+        }
+        if (require_session)
+        {
+            sendText_(request, 403, "text/plain", "Session required", false);
+            return false;
+        }
+
         if (_cli_auth)
         {
             if (!_cli_auth->adminPasswordSet())
-                return true;
-            if (request->authenticate(CliConsole::kAdminUser, _cli_auth->adminPassword().c_str()))
-                return true;
+            {
+                if (_log && _log->ready())
+                    _log->warn(F("WEB"), F("Auth rejected (admin password not set, ip=%s, url=%s)"),
+                               requestIp_(request).c_str(), request->url().c_str());
+                sendRedirect_(request, "/admin", false);
+                return false;
+            }
+            const bool auth_present = request->hasHeader("Authorization");
+            size_t auth_len = 0;
+            String auth_scheme;
+            if (auth_present)
+            {
+                const AsyncWebHeader *h = request->getHeader("Authorization");
+                if (h)
+                {
+                    String v = h->value();
+                    auth_len = v.length();
+                    const int sp = v.indexOf(' ');
+                    auth_scheme = (sp > 0) ? v.substring(0, sp) : v;
+                }
+            }
+
+            String user;
+            String pass;
+            if (parseBasicAuth_(request, user, pass))
+            {
+                String ulow = user;
+                ulow.toLowerCase();
+                if (ulow == CliConsole::kAdminUser &&
+                _cli_auth->checkAdminPassword(pass))
+                {
+                    issueSession_();
+                    if (set_cookie)
+                        *set_cookie = true;
+                    return true;
+                }
+            }
             if (_log && _log->ready())
-                _log->warn(F("WEB"), F("Auth failed (ip=%s, url=%s)"), requestIp_(request).c_str(),
+                _log->warn(F("WEB"), F("Auth failed (ip=%s, url=%s)"),
+                           requestIp_(request).c_str(),
                            request->url().c_str());
-            request->requestAuthentication();
+            requestBasicAuth_(request);
             return false;
         }
         if (!_auth_enabled)
             return true;
         if (request->authenticate(_auth_user.c_str(), _auth_pass.c_str()))
+        {
+            issueSession_();
+            if (set_cookie)
+                *set_cookie = true;
             return true;
+        }
         if (_log && _log->ready())
             _log->warn(F("WEB"), F("Auth failed (ip=%s, url=%s)"), requestIp_(request).c_str(),
                        request->url().c_str());
-        request->requestAuthentication();
+        requestBasicAuth_(request);
         return false;
     }
 
@@ -1038,22 +1250,30 @@ private:
         switch (WiFi.status())
         {
         case WL_IDLE_STATUS:
-            return "Ожидание";
+            return "Idle";
         case WL_NO_SSID_AVAIL:
-            return "SSID не найден";
+            return "SSID not found";
         case WL_SCAN_COMPLETED:
-            return "Сканирование завершено";
+            return "Scan complete";
         case WL_CONNECTED:
-            return "Подключено";
+            return "Connected";
         case WL_CONNECT_FAILED:
-            return "Ошибка подключения";
+            return "Connect failed";
         case WL_CONNECTION_LOST:
-            return "Связь потеряна";
+            return "Connection lost";
         case WL_DISCONNECTED:
-            return "Отключено";
+            return "Disconnected";
         default:
-            return "Неизвестно";
+            return "Unknown";
         }
+    }
+
+    String navHtml_() const
+    {
+        String nav = F("<div class=\"nav\">");
+        nav += F("<a href=\"/\">FCPLC</a> | <a href=\"/wifi\">Wi-Fi</a> | <a href=\"/manage\">Прошивка и файлы</a> | <a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a> | <a href=\"/stack\">Стек</a> | <a href=\"/telegram\">Telegram</a> | <a href=\"/admin\">Admin</a> | <a href=\"/logs\">Logs</a> | <a href=\"/logout\">Logout</a>");
+        nav += F("</div>");
+        return nav;
     }
 
     String deviceName_() const
@@ -1112,6 +1332,148 @@ private:
             start = (size_t)comma + 1;
         }
         return false;
+    }
+
+    static void appendHtmlEscaped_(String &out, const char *in)
+    {
+        if (!in)
+            return;
+        while (*in)
+        {
+            switch (*in)
+            {
+            case '&':
+                out += "&amp;";
+                break;
+            case '<':
+                out += "&lt;";
+                break;
+            case '>':
+                out += "&gt;";
+                break;
+            case '"':
+                out += "&quot;";
+                break;
+            case '\'':
+                out += "&#39;";
+                break;
+            default:
+                out += *in;
+                break;
+            }
+            ++in;
+        }
+    }
+
+    static bool parseBasicAuth_(AsyncWebServerRequest *request, String &user, String &pass)
+    {
+        if (!request || !request->hasHeader("Authorization"))
+            return false;
+        const AsyncWebHeader *h = request->getHeader("Authorization");
+        if (!h)
+            return false;
+        String value = h->value();
+        String vlow = value;
+        vlow.toLowerCase();
+        if (!vlow.startsWith("basic"))
+            return false;
+        int sp = -1;
+        for (size_t i = 5; i < value.length(); ++i)
+        {
+            const char c = value.charAt(i);
+            if (c == ' ' || c == '\t')
+            {
+                sp = (int)i;
+                break;
+            }
+        }
+        if (sp < 0)
+            return false;
+        String b64 = value.substring(sp + 1);
+        b64.trim();
+        String decoded;
+        if (!decodeBase64_(b64, decoded))
+            return false;
+        const int colon = decoded.indexOf(':');
+        if (colon < 0)
+            return false;
+        user = decoded.substring(0, colon);
+        pass = decoded.substring(colon + 1);
+        return true;
+    }
+
+    static int8_t b64Index_(char c)
+    {
+        if (c >= 'A' && c <= 'Z')
+            return (int8_t)(c - 'A');
+        if (c >= 'a' && c <= 'z')
+            return (int8_t)(26 + (c - 'a'));
+        if (c >= '0' && c <= '9')
+            return (int8_t)(52 + (c - '0'));
+        if (c == '+' || c == '-')
+            return 62;
+        if (c == '/' || c == '_')
+            return 63;
+        return -1;
+    }
+
+    static bool decodeBase64_(const String &in, String &out)
+    {
+        out = "";
+        out.reserve((in.length() * 3) / 4 + 1);
+        uint32_t acc = 0;
+        int bits = 0;
+        for (size_t i = 0; i < in.length(); ++i)
+        {
+            const char c = in.charAt(i);
+            if (c == ' ' || c == '\r' || c == '\n' || c == '\t')
+                continue;
+            if (c == '=')
+                break;
+            const int8_t v = b64Index_(c);
+            if (v < 0)
+                return false;
+            acc = (acc << 6) | (uint32_t)v;
+            bits += 6;
+            if (bits >= 8)
+            {
+                bits -= 8;
+                const uint8_t b = (uint8_t)((acc >> bits) & 0xFFu);
+                out += (char)b;
+            }
+        }
+        return true;
+    }
+
+    static void requestBasicAuth_(AsyncWebServerRequest *request)
+    {
+        if (!request)
+            return;
+        auto *response = request->beginResponse(401);
+        response->addHeader("WWW-Authenticate", "Basic realm=\"FCPLC\"");
+        request->send(response);
+    }
+
+    String sanitizeUploadName_(const String &filename) const
+    {
+        String name = filename;
+        name.trim();
+        if (!name.length() || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.indexOf("..") >= 0)
+            return "";
+        return String("/") + name;
+    }
+
+    String sanitizePath_(const String &path) const
+    {
+        String out = path;
+        out.trim();
+        if (!out.length())
+            return "";
+        if (!out.startsWith("/"))
+            out = "/" + out;
+        if (out.indexOf("..") >= 0 || out.indexOf('\\') >= 0)
+            return "";
+        return out;
     }
 
     float boardTemp_() const
@@ -1193,7 +1555,124 @@ private:
     {
         if (!_plc)
             return "n/a";
-        return _plc->fanStatus() ? "Вкл" : "Выкл";
+        return _plc->fanStatus() ? "On" : "Off";
+    }
+
+    void sendHtml_(AsyncWebServerRequest *request, const String &page, bool set_cookie)
+    {
+        auto *response = request->beginResponse(200, "text/html", page);
+        if (set_cookie)
+            response->addHeader("Set-Cookie", sessionCookie_());
+        request->send(response);
+    }
+
+    void sendText_(AsyncWebServerRequest *request, int code, const char *type, const String &text, bool set_cookie)
+    {
+        auto *response = request->beginResponse(code, type, text);
+        if (set_cookie)
+            response->addHeader("Set-Cookie", sessionCookie_());
+        request->send(response);
+    }
+
+    void sendRedirect_(AsyncWebServerRequest *request, const char *path, bool set_cookie)
+    {
+        auto *response = request->beginResponse(302);
+        response->addHeader("Location", path);
+        if (set_cookie)
+            response->addHeader("Set-Cookie", sessionCookie_());
+        request->send(response);
+    }
+
+    String sessionCookie_() const
+    {
+        String cookie = String("plc_session=") + _session_token +
+                        "; Max-Age=" + String(_session_ttl_ms / 1000) +
+                        "; Path=/; HttpOnly; SameSite=Strict";
+        return cookie;
+    }
+
+    static String clearSessionCookie_()
+    {
+        return "plc_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict";
+    }
+
+    static void appendHex_(String &out, uint32_t value)
+    {
+        char buf[9] = {};
+        snprintf(buf, sizeof(buf), "%08lX", (unsigned long)value);
+        out += buf;
+    }
+
+    static uint32_t rand32_()
+    {
+#if defined(ESP32)
+        return esp_random();
+#else
+        uint32_t r = (uint32_t)random(0x7FFFFFFF);
+        r = (r << 1) ^ (uint32_t)micros();
+        return r;
+#endif
+    }
+
+    String makeSessionToken_() const
+    {
+        String out;
+        out.reserve(32);
+        for (uint8_t i = 0; i < 4; ++i)
+            appendHex_(out, rand32_());
+        return out;
+    }
+
+    void issueSession_()
+    {
+        _session_token = makeSessionToken_();
+        const uint32_t now = millis();
+        _session_expire_ms = now + _session_ttl_ms;
+    }
+
+    void clearSession_()
+    {
+        _session_token = "";
+        _session_expire_ms = 0;
+    }
+
+    void refreshSession_()
+    {
+        const uint32_t now = millis();
+        _session_expire_ms = now + _session_ttl_ms;
+    }
+
+    bool sessionValid_(const String &token) const
+    {
+        if (_session_token.length() == 0)
+            return false;
+        const uint32_t now = millis();
+        if ((int32_t)(now - _session_expire_ms) >= 0)
+            return false;
+        return token == _session_token;
+    }
+
+    bool extractSessionToken_(AsyncWebServerRequest *request, String &out) const
+    {
+        if (!request)
+            return false;
+        if (!request->hasHeader("Cookie"))
+            return false;
+        const AsyncWebHeader *hdr = request->getHeader("Cookie");
+        if (!hdr)
+            return false;
+        String cookies = hdr->value();
+        const String key = "plc_session=";
+        int pos = cookies.indexOf(key);
+        if (pos < 0)
+            return false;
+        int start = pos + key.length();
+        int end = cookies.indexOf(';', start);
+        if (end < 0)
+            end = cookies.length();
+        out = cookies.substring(start, end);
+        out.trim();
+        return out.length() > 0;
     }
 
     AsyncWebServer &_server;
@@ -1225,10 +1704,17 @@ private:
     bool _auth_enabled = false;
     String _auth_user;
     String _auth_pass;
-    const CliConsole *_cli_auth = nullptr;
+    CliConsole *_cli_auth = nullptr;
     Extender *_ext = nullptr;
     Logger *_log = nullptr;
+    String _session_token;
+    uint32_t _session_expire_ms = 0;
+    uint32_t _session_ttl_ms = 10u * 60u * 1000u;
+    bool _upload_set_cookie = false;
+    bool _ota_set_cookie = false;
 };
+
+
 
 
 

@@ -13,7 +13,22 @@
 
 #include <Arduino.h>
 #include <stdint.h>
-#include <vector>
+
+enum class StackUnit : uint8_t
+{
+    Cpu = 0,
+    Unit1,
+    Unit2,
+    Unit3,
+    Unit4,
+    Unit5,
+    Unit6,
+    Unit7,
+    Unit8,
+    Unit9,
+    Unit10,
+    Unknown
+};
 
 struct StackHello
 {
@@ -23,18 +38,21 @@ struct StackHello
     uint32_t caps = 0;
     String name;
 
-    static void encode(const StackHello &v, std::vector<uint8_t> &out)
+    static size_t encode(const StackHello &v, uint8_t *out, size_t cap)
     {
-        out.clear();
-        out.reserve(13 + v.name.length());
-        writeU32_(out, v.node_id);
-        writeU16_(out, v.proto_ver);
-        writeU16_(out, v.fw_ver);
-        writeU32_(out, v.caps);
+        if (!out || cap < 13)
+            return 0;
+        writeU32_(out, 0, v.node_id);
+        writeU16_(out, 4, v.proto_ver);
+        writeU16_(out, 6, v.fw_ver);
+        writeU32_(out, 8, v.caps);
         const uint8_t name_len = (uint8_t)min<size_t>(v.name.length(), 32);
-        out.push_back(name_len);
+        if ((size_t)(13 + name_len) > cap)
+            return 0;
+        out[12] = name_len;
         for (uint8_t i = 0; i < name_len; ++i)
-            out.push_back((uint8_t)v.name[i]);
+            out[13 + i] = (uint8_t)v.name[i];
+        return (size_t)(13 + name_len);
     }
 
     static bool decode(const uint8_t *data, size_t len, StackHello &out)
@@ -66,18 +84,18 @@ private:
         return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
     }
 
-    static void writeU16_(std::vector<uint8_t> &out, uint16_t v)
+    static void writeU16_(uint8_t *out, size_t offset, uint16_t v)
     {
-        out.push_back((uint8_t)(v & 0xFF));
-        out.push_back((uint8_t)((v >> 8) & 0xFF));
+        out[offset] = (uint8_t)(v & 0xFF);
+        out[offset + 1] = (uint8_t)((v >> 8) & 0xFF);
     }
 
-    static void writeU32_(std::vector<uint8_t> &out, uint32_t v)
+    static void writeU32_(uint8_t *out, size_t offset, uint32_t v)
     {
-        out.push_back((uint8_t)(v & 0xFF));
-        out.push_back((uint8_t)((v >> 8) & 0xFF));
-        out.push_back((uint8_t)((v >> 16) & 0xFF));
-        out.push_back((uint8_t)((v >> 24) & 0xFF));
+        out[offset] = (uint8_t)(v & 0xFF);
+        out[offset + 1] = (uint8_t)((v >> 8) & 0xFF);
+        out[offset + 2] = (uint8_t)((v >> 16) & 0xFF);
+        out[offset + 3] = (uint8_t)((v >> 24) & 0xFF);
     }
 };
 
@@ -97,11 +115,12 @@ struct StackStatus
 {
     uint32_t uptime_ms = 0;
 
-    static void encode(const StackStatus &v, std::vector<uint8_t> &out)
+    static size_t encode(const StackStatus &v, uint8_t *out, size_t cap)
     {
-        out.clear();
-        out.reserve(4);
-        writeU32_(out, v.uptime_ms);
+        if (!out || cap < 4)
+            return 0;
+        writeU32_(out, 0, v.uptime_ms);
+        return 4;
     }
 
     static bool decode(const uint8_t *data, size_t len, StackStatus &out)
@@ -118,11 +137,11 @@ private:
         return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
     }
 
-    static void writeU32_(std::vector<uint8_t> &out, uint32_t v)
+    static void writeU32_(uint8_t *out, size_t offset, uint32_t v)
     {
-        out.push_back((uint8_t)(v & 0xFF));
-        out.push_back((uint8_t)((v >> 8) & 0xFF));
-        out.push_back((uint8_t)((v >> 16) & 0xFF));
-        out.push_back((uint8_t)((v >> 24) & 0xFF));
+        out[offset] = (uint8_t)(v & 0xFF);
+        out[offset + 1] = (uint8_t)((v >> 8) & 0xFF);
+        out[offset + 2] = (uint8_t)((v >> 16) & 0xFF);
+        out[offset + 3] = (uint8_t)((v >> 24) & 0xFF);
     }
 };

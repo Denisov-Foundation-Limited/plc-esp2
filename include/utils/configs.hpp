@@ -15,6 +15,8 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 
+#include "utils/fs_config.hpp"
+
 class Configs
 {
 public:
@@ -32,7 +34,8 @@ public:
 
     bool begin(bool format_on_fail = false)
     {
-        if (LittleFS.begin(format_on_fail))
+        if (LittleFS.begin(format_on_fail, FsConfig::kBasePath, FsConfig::kMaxOpenFiles,
+                           FsConfig::kPartitionLabel))
         {
             _err = Error::Ok;
             return true;

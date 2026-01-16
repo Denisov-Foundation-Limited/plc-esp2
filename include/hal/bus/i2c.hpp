@@ -12,7 +12,6 @@
 #pragma once
 #include <Arduino.h>
 #include <Wire.h>
-#include <vector>
 
 #include "boards/board_profile.hpp"
 #include "hal/gpio/portio.hpp"
@@ -72,7 +71,7 @@ public:
 
     Error lastError() const { return _err; }
 
-    bool scanDevices(uint8_t bus_num, std::vector<uint8_t> &addrs)
+    bool scanDevices(uint8_t bus_num, bool present[127])
     {
         TwoWire *w = wirePtr_(bus_num);
         if (!w)
@@ -80,13 +79,14 @@ public:
             _err = Error::InvalidBus;
             return false;
         }
-        addrs.clear();
+        for (uint8_t addr = 1; addr < 127; ++addr)
+            present[addr] = false;
         for (uint8_t addr = 1; addr < 127; ++addr)
         {
             w->beginTransmission(addr);
             uint8_t res = w->endTransmission();
             if (res == 0)
-                addrs.push_back(addr);
+                present[addr] = true;
         }
         return true;
     }

@@ -16,7 +16,7 @@
 
 #include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
-#include "hal/gpio/portio.hpp"
+#include "hal/io_stack.hpp"
 #include "hal/lm75ad.hpp"
 
 class PlcControl
@@ -30,8 +30,8 @@ public:
         I2c
     };
 
-    PlcControl(I2CManager &i2c, PortIO &portio)
-        : _i2c(i2c), _portio(portio), _device_name(ActiveBoardProfile::UI_NAME)
+    PlcControl(I2CManager &i2c, IoStack &io)
+        : _i2c(i2c), _io(io), _device_name(ActiveBoardProfile::UI_NAME)
     {
     }
 
@@ -65,18 +65,29 @@ public:
 
     void task()
     {
-        _last_cpu_temp_c = readCpuTemp_();
-        const auto cfg = ActiveBoardProfile::BOARD_TEMP;
-        float temp_c = 0.0f;
-        if (!_lm75.readTempC(temp_c))
-            return;
-        _last_temp_c = temp_c;
+        const uint32_t now = millis();
+        float temp_c = _last_temp_c;
+        if (timeDue_(now, _next_sample_ms))
+        {
+            _next_sample_ms = now + _sample_interval_ms;
+            _last_cpu_temp_c = readCpuTemp_();
+            const auto cfg = ActiveBoardProfile::BOARD_TEMP;
+            float sample = 0.0f;
+            if (_lm75.readTempC(sample))
+            {
+                _last_temp_c = sample;
+                temp_c = sample;
+                _temp_valid = true;
+            }
+        }
 
         if (_fan_manual)
         {
             setFans_(_fan_on);
             return;
         }
+        if (!_temp_valid)
+            return;
         bool want = _fan_on;
         const float on_c = _fan_on_c;
         const float off_c = on_c - _fan_hyst_c;
@@ -132,16 +143,16 @@ private:
 
     void setFans_(bool on)
     {
-        for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+        for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
         {
-            const auto &p = _portio.desc(i);
+            const auto &p = _io.desc(i);
             if (p.caps == Cap::None)
                 continue;
             if (p.type != PortIO::PinType::Fan)
                 continue;
             if (!has(p.caps, Cap::Output))
                 continue;
-            _portio.write(i, on);
+            _io.write(i, on);
         }
     }
 
@@ -156,7 +167,7 @@ private:
 
     Lm75ad _lm75;
     I2CManager &_i2c;
-    PortIO &_portio;
+    IoStack &_io;
     Error _err = Error::Ok;
     bool _fan_on = false;
     bool _fan_manual = false;
@@ -164,5 +175,13 @@ private:
     float _fan_hyst_c = 0.0f;
     float _last_temp_c = 0.0f;
     float _last_cpu_temp_c = 0.0f;
+    bool _temp_valid = false;
     String _device_name;
+    uint32_t _sample_interval_ms = 1000;
+    uint32_t _next_sample_ms = 0;
+
+    static bool timeDue_(uint32_t now, uint32_t at)
+    {
+        return (int32_t)(now - at) >= 0;
+    }
 };

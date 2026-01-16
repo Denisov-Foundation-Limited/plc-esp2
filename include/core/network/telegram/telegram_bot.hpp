@@ -36,6 +36,8 @@ public:
         const char *parent_id;
     };
 
+    using MenuPrefixProvider = String (*)(void *ctx, int64_t chat_id, const Menu &menu);
+    using MenuMarkupProvider = String (*)(void *ctx, int64_t chat_id, const Menu &menu);
     using CommandHandler = bool (*)(TelegramBot &bot, const TelegramClient::Update &upd, String &reply);
     using TextHandler = bool (*)(void *ctx, const TelegramClient::Update &upd);
 
@@ -72,6 +74,18 @@ public:
         _text_ctx = ctx;
     }
 
+    void setMenuPrefixProvider(MenuPrefixProvider handler, void *ctx)
+    {
+        _menu_prefix_handler = handler;
+        _menu_prefix_ctx = ctx;
+    }
+
+    void setMenuMarkupProvider(MenuMarkupProvider handler, void *ctx)
+    {
+        _menu_markup_handler = handler;
+        _menu_markup_ctx = ctx;
+    }
+
     void setMaxChats(size_t max_chats) { _max_chats = max_chats; }
 
     bool processUpdates(const std::vector<TelegramClient::Update> &updates)
@@ -103,9 +117,19 @@ public:
         if (!menu)
             return false;
         String text = menu->title ? String(menu->title) : String("Menu");
+        if (_menu_prefix_handler)
+        {
+            const String menu_prefix = _menu_prefix_handler(_menu_prefix_ctx, chat_id, *menu);
+            if (menu_prefix.length())
+                text = menu_prefix + "\n" + text;
+        }
         if (prefix.length())
             text = prefix + "\n" + text;
-        String markup = buildMenuMarkup_(*menu);
+        String markup;
+        if (_menu_markup_handler)
+            markup = _menu_markup_handler(_menu_markup_ctx, chat_id, *menu);
+        if (markup.length() == 0)
+            markup = buildMenuMarkup_(*menu);
         return sendText(chat_id, text, markup);
     }
 
@@ -127,6 +151,14 @@ public:
         return showMenu(chat_id, menu, prefix);
     }
 
+    const char *currentMenuId(int64_t chat_id) const
+    {
+        const ChatState *st = findChat_(chat_id);
+        if (!st || !st->menu_id)
+            return _root_menu_id;
+        return st->menu_id;
+    }
+
 private:
     struct ChatState
     {
@@ -143,6 +175,10 @@ private:
     size_t _cmd_count = 0;
     TextHandler _text_handler = nullptr;
     void *_text_ctx = nullptr;
+    MenuPrefixProvider _menu_prefix_handler = nullptr;
+    void *_menu_prefix_ctx = nullptr;
+    MenuMarkupProvider _menu_markup_handler = nullptr;
+    void *_menu_markup_ctx = nullptr;
 
     size_t _max_chats = 8;
     std::vector<ChatState> _chat_states;

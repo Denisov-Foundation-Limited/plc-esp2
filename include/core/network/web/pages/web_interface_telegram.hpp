@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -78,9 +78,7 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="nav">
-        <a href="/">FCPLC</a> | <a href="/wifi">Wi-Fi</a> | <a href="/manage">Прошивка и файлы</a> | <a href="/ports">Порты</a> | <a href="/buses">Шины</a> | <a href="/stack">Стек</a>
-      </div>
+      %NAV%
       <h1>Telegram</h1>
       <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
       <p class="status">Клиент: <strong>%TGBOT_CLIENT%</strong></p>

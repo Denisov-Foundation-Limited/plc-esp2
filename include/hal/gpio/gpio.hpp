@@ -16,13 +16,13 @@
 #include "boards/board_profile.hpp"
 
 #include "hal/gpio/gpio_caps.hpp"
-#include "hal/gpio/portio.hpp"
+#include "hal/io_stack.hpp"
 
 class Gpio {
 public:
   enum Port : uint8_t { LED = 0, BTN = 1, POT = 2, RELAY = 3 };
 
-  explicit Gpio(PortIO& io) : _io(io) {}
+  explicit Gpio(IoStack& io) : _io(io) {}
 
   bool begin() { return _io.begin(); }
   void loop() { _io.loop(); }
@@ -125,5 +125,5 @@ public:
   }
 
 private:
-  PortIO& _io;
+  IoStack& _io;
 };
