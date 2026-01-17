@@ -47,12 +47,18 @@ public:
             _c._io->println(F("    show config     - configuration file contents"));
             _c._io->println(F("    show port <id>  - port details"));
             _c._io->println(F("    show ports      - list ports"));
+            _c._io->println(F("    show sockets    - list sockets"));
+            _c._io->println(F("    show socket <id> - socket details"));
+            _c._io->println(F("    socket toggle <id> - toggle socket relay"));
+            _c._io->println(F("    socket on <id>     - relay ON"));
+            _c._io->println(F("    socket off <id>    - relay OFF"));
             _c._io->println(F("  Actions:"));
             _c._io->println(F("    ftest           - start functional test task"));
             _c._io->println(F("    copy tftp://<ip>/firmware.bin firmware - update firmware"));
             _c._io->println(F("    copy http://<ip>/firmware.bin firmware - update firmware"));
             _c._io->println(F("    stack nodes     - list stack nodes"));
             _c._io->println(F("    stack send <id> <get|set> <json> - send stack command"));
+            _c._io->println(F("    stack socket <unit> <on|off|toggle> <id> - control socket"));
             _wifi.printHelpEnable();
             _c._io->println(F("    reload          - restart controller"));
             _c._io->println(F("    reset           - restart controller"));
@@ -82,6 +88,43 @@ public:
         if (startsWith_(cmd, "show "))
         {
             _c.handleShow_(cmd.substring(5));
+            return;
+        }
+        if (startsWith_(cmd, "socket toggle "))
+        {
+            String tail = cmd.substring(14);
+            tail.trim();
+            uint16_t id = 0;
+            if (!_c.parseUint_(tail, id))
+            {
+                _c._io->println(F("Usage: socket toggle <id>"));
+                _c.printPrompt_();
+                return;
+            }
+            if (!_c._controllers.sockets().toggleRelayById((uint8_t)id))
+                _c._io->println(F("Failed"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (startsWith_(cmd, "socket on ") || startsWith_(cmd, "socket off "))
+        {
+            const bool on = startsWith_(cmd, "socket on ");
+            String tail = cmd.substring(on ? 10 : 11);
+            tail.trim();
+            uint16_t id = 0;
+            if (!_c.parseUint_(tail, id))
+            {
+                _c._io->println(F("Usage: socket on|off <id>"));
+                _c.printPrompt_();
+                return;
+            }
+            if (!_c._controllers.sockets().setRelayById((uint8_t)id, on))
+                _c._io->println(F("Failed"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
             return;
         }
         if (startsWith_(cmd, "stack "))

@@ -29,6 +29,7 @@
 #include "core/network/telegram/telegram.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
 #include "core/network/telegram/telegram_menu.hpp"
+#include "core/eeprom_storage.hpp"
 #include "core/network/network.hpp"
 #include "core/network/stack/stack_slave_handler.hpp"
 #include "core/cli/cli_console.hpp"
@@ -52,6 +53,7 @@
 #include "hal/hal.hpp"
 #include "ftest.hpp"
 #include "plc/plc_control.hpp"
+#include "controllers/controllers.hpp"
 
 #include "utils/logger.hpp"
 #include "utils/configs.hpp"
@@ -75,6 +77,7 @@ struct AppServices
     Ds3231Mz ds3231;
     RTC rtc;
     At24lc512 eeprom;
+    EepromStorage eeprom_storage;
     Lcd1602I2c lcd_hal;
     Display display;
     Lm75ad lm75ad;
@@ -86,6 +89,7 @@ struct AppServices
     PortIO portio;
     IoStack io;
     Gpio gpio;
+    Controllers controllers;
     Hal hal;
     PlcControl plc;
     TelegramBot telegram_bot;
@@ -112,6 +116,7 @@ struct AppServices
           ds3231(),
           rtc(i2c, ds3231),
           eeprom(),
+          eeprom_storage(eeprom),
           lcd_hal(),
           display(i2c, lcd_hal),
           lm75ad(),
@@ -121,27 +126,29 @@ struct AppServices
           portio(ActiveBoardProfile::PORTS, &ext),
           io(portio),
           gpio(io),
-          hal(ow, i2c, spi, uart, gpio),
+          controllers(gpio, eeprom_storage, logs),
+          hal(ow, i2c, spi, uart, gpio, logs),
           plc(i2c, io),
           telegram(logs),
           telegram_bot(telegram),
           telegram_menu(plc, wifi, rtc, telegram_bot, configs, logs),
           web(ActiveBoardProfile::WEB_PORT),
-          fw_upgrade(web, console, wifi, configs, plc, rtc, telegram, telegram_menu, logs, ext, i2c, ow),
+          fw_upgrade(web, console, wifi, configs, plc, rtc, telegram, telegram_menu, logs, ext, i2c, ow, controllers),
           network(logs, wifi, telegram, telegram_bot, telegram_menu, fw_upgrade, web, telegram_wifi_client),
-          stack_slave(io, ds18b20, ow, i2c, plc, rtc, telegram, logs, ext),
+          stack_slave(io, ds18b20, ow, i2c, plc, rtc, telegram, logs, ext, controllers.sockets()),
           tm(),
-          task_binder(tm, wifi, telegram, ext),
+          task_binder(tm, wifi, telegram, ext, controllers),
           ftest(logs, io, ow, ibutton, ds18b20, i2c, rtc, ext, tm, task_binder),
-          console(plc, wifi, rtc, ftest, i2c, ow, telegram, telegram_menu, configs, ext, network.stackMaster()),
+          console(plc, wifi, rtc, ftest, i2c, ow, telegram, telegram_menu, configs, ext, controllers, network.stackMaster()),
           configs(),
-          configs_manager(configs, wifi, telegram, network, console, telegram_menu, plc),
+          configs_manager(configs, wifi, telegram, network, console, telegram_menu, plc, controllers),
           plc_scan(io, plc)
     {
         logs.setRtc(rtc);
         console.setConfigsManager(configs_manager);
         telegram_menu.setConfigsManager(configs_manager);
         telegram_menu.setStackMaster(*network.stackMaster());
+        telegram_menu.setSockets(controllers.sockets());
         fw_upgrade.setConfigsManager(configs_manager);
         network.setStackConfig(configs_manager);
 #if defined(ESP32)
@@ -247,27 +254,7 @@ struct AppServices
         logs.info(F("APP"), F("Initializing HAL")); 
         if (!hal.begin())
         {
-            switch (hal.lastError())
-            {
-            case Hal::Error::I2c:
-                logs.error(F("APP"), F("HAL I2C Init failed"));
-                break;
-            case Hal::Error::Gpio:
-                logs.error(F("APP"), F("HAL GPIO Init failed"));
-                break;
-            case Hal::Error::Spi:
-                logs.error(F("APP"), F("HAL SPI Init failed"));
-                break;
-            case Hal::Error::OneWire:
-                logs.error(F("APP"), F("HAL OW Init failed"));
-                break;
-            case Hal::Error::Uart:
-                logs.error(F("APP"), F("HAL UART Init failed"));
-                break;
-            default:
-                logs.error(F("APP"), F("HAL Init failed"));
-                break;
-            }
+            logs.error(F("APP"), F("HAL init failed: %s"), Hal::errorName(hal.lastError()));
             ok = false;
         }
 
@@ -355,6 +342,8 @@ struct AppServices
             }
             ok = false;
         }
+
+        controllers.begin();
 
         if (ok)
             logs.info(F("APP"), F("Application init [OK]"));

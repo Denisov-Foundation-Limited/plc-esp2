@@ -15,13 +15,14 @@
 #include "core/network/wifi_manager.hpp"
 #include "core/network/telegram/telegram.hpp"
 #include "hal/gpio/extender.hpp"
+#include "controllers/controllers.hpp"
 
 template <size_t N>
 class TaskBinder
 {
 public:
-    TaskBinder(TaskManager<N> &tm, WifiManager &wifi, TelegramClient &tgbot, Extender &ext)
-        : _tm(tm), _wifi(wifi), _tgbot(tgbot), _ext(ext)
+    TaskBinder(TaskManager<N> &tm, WifiManager &wifi, TelegramClient &tgbot, Extender &ext, Controllers &controllers)
+        : _tm(tm), _wifi(wifi), _tgbot(tgbot), _ext(ext), _controllers(controllers)
     {
     }
 
@@ -30,6 +31,7 @@ public:
         bindWiFiManager();
         bindTgbot();
         bindExtender();
+        bindControllers();
     }
 
     template <typename FtestT>
@@ -46,6 +48,14 @@ public:
     typename TaskManager<N>::Handle getFtestTask() const { return _ftest_task; }
 
 private:
+    typename TaskManager<N>::Handle bindControllers()
+    {
+        typename TaskManager<N>::Options opt;
+        opt.interval_ms = 50;
+        opt.priority = TaskManager<N>::Priority::Normal;
+        return _tm.template add<&Controllers::task>(_controllers, opt);
+    }
+
     typename TaskManager<N>::Handle bindWiFiManager()
     {
         typename TaskManager<N>::Options opt;
@@ -75,6 +85,7 @@ private:
     WifiManager &_wifi;
     TelegramClient &_tgbot;
     Extender &_ext;
+    Controllers &_controllers;
     typename TaskManager<N>::Handle _ftest_task{};
     typename TaskManager<N>::Handle _ext_task{};
 

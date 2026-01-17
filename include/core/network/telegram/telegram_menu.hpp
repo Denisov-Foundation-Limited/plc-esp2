@@ -20,6 +20,7 @@
 #include "core/rtc.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "plc/plc_control.hpp"
+#include "controllers/socket/socket_controller.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/logger.hpp"
@@ -49,6 +50,7 @@ public:
     const String &adminPassword() const { return _admin_password; }
     void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }
     void setStackMaster(StackMaster &master) { _stack_master = &master; }
+    void setSockets(SocketController &sockets) { _sockets = &sockets; }
 
     enum class AllowResult : uint8_t
     {
@@ -123,10 +125,12 @@ private:
         bool awaiting = false;
         bool awaiting_config = false;
         bool awaiting_device = false;
+        bool awaiting_socket = false;
         uint8_t fail_count = 0;
         uint32_t lock_until_ms = 0;
         bool selected_local = true;
         uint32_t selected_node_id = 0;
+        uint8_t socket_action = 0;
     };
 
     std::vector<ChatAuth> _auth;
@@ -256,6 +260,53 @@ private:
             reply += ")";
         }
         return true;
+    }
+
+    static bool cmdSockets_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        (void)reply;
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        _self->sendSocketMenu_(u.chat_id);
+        return true;
+    }
+
+    static bool cmdSocketList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_sockets)
+        {
+            reply = "Sockets unavailable";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        const String text = _self->socketListTextHtml_();
+        bot.sendText(u.chat_id, text, "", "HTML");
+        return true;
+    }
+
+    static bool cmdSocketOn_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        return startSocketAction_(bot, u, reply, 1);
+    }
+
+    static bool cmdSocketOff_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        return startSocketAction_(bot, u, reply, 2);
+    }
+
+    static bool cmdSocketToggle_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        return startSocketAction_(bot, u, reply, 3);
     }
 
     static bool cmdWifiRestart_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
@@ -578,6 +629,45 @@ private:
             return false;
         }
         ChatAuth *st = self->findAuth_(u.chat_id);
+        if (st && st->awaiting_socket)
+        {
+            uint8_t id = 0;
+            if (!parseSocketId_(u.text, id))
+            {
+                self->_bot->sendText(u.chat_id, F("Введите ID розетки (0..71)."));
+                return true;
+            }
+            if (!self->_sockets)
+            {
+                self->_bot->sendText(u.chat_id, F("Sockets unavailable"));
+                st->awaiting_socket = false;
+                st->socket_action = 0;
+                return true;
+            }
+            if (!self->isLocalSelected_(u.chat_id))
+            {
+                self->_bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
+                st->awaiting_socket = false;
+                st->socket_action = 0;
+                return true;
+            }
+            bool ok = false;
+            if (st->socket_action == 1)
+                ok = self->_sockets->setRelayById(id, true);
+            else if (st->socket_action == 2)
+                ok = self->_sockets->setRelayById(id, false);
+            else if (st->socket_action == 3)
+                ok = self->_sockets->toggleRelayById(id);
+            st->awaiting_socket = false;
+            st->socket_action = 0;
+            if (!ok)
+                self->_bot->sendText(u.chat_id, F("Не удалось"));
+            else
+                self->sendSocketMenu_(u.chat_id);
+            return true;
+        }
+        if (self->handleSocketToggleSelection_(u))
+            return true;
         if (self->handleRootDeviceSelection_(u))
             return true;
         if (st && st->awaiting_device)
@@ -703,6 +793,8 @@ private:
         st->fail_count = 0;
         st->lock_until_ms = 0;
         st->awaiting_device = false;
+        st->awaiting_socket = false;
+        st->socket_action = 0;
         st->selected_local = true;
         st->selected_node_id = 0;
     }
@@ -715,20 +807,26 @@ private:
         st->awaiting = false;
         st->awaiting_config = false;
         st->awaiting_device = false;
+        st->awaiting_socket = false;
+        st->socket_action = 0;
     }
 
     TelegramBot *_bot = nullptr;
     Logger *_logs = nullptr;
     StackMaster *_stack_master = nullptr;
+    SocketController *_sockets = nullptr;
 
         static inline const TelegramBot::MenuItem kRootItems[] = {};
 
         static inline const TelegramBot::MenuItem kDeviceItems[] = {
         { "Админка", "Админка", nullptr, nullptr },
+        { "Розетки", "/sockets", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
     };
 
-        static inline const TelegramBot::MenuItem kAdminItems[] = {
+        static inline const TelegramBot::MenuItem kSocketsItems[] = {};
+
+    static inline const TelegramBot::MenuItem kAdminItems[] = {
         { "ПЛК", nullptr, "plc", nullptr },
         { "Часы", nullptr, "rtc", nullptr },
         { "Wi-Fi", nullptr, "wifi", nullptr },
@@ -764,6 +862,7 @@ private:
         static inline const TelegramBot::Menu kMenus[] = {
         { "root", "Выбор устройства", kRootItems, 0, nullptr },
         { "device", "Меню устройства", kDeviceItems, 3, "root" },
+        { "sockets", "Розетки", kSocketsItems, 0, "device" },
         { "admin", "Админка", kAdminItems, 6, "device" },
         { "plc", "ПЛК", kPlcItems, 2, "admin" },
         { "rtc", "Часы", kRtcItems, 2, "admin" },
@@ -790,6 +889,11 @@ private:
         { "/logs", &TelegramMenu::cmdLogs_ },
         { "/device", &TelegramMenu::cmdDevice_ },
         { "/stack_list", &TelegramMenu::cmdStackList_ },
+        { "/sockets", &TelegramMenu::cmdSockets_ },
+        { "/socket_list", &TelegramMenu::cmdSocketList_ },
+        { "/socket_on", &TelegramMenu::cmdSocketOn_ },
+        { "/socket_off", &TelegramMenu::cmdSocketOff_ },
+        { "/socket_toggle", &TelegramMenu::cmdSocketToggle_ },
     };
 
     static inline const size_t kCommandCount = sizeof(kCommands) / sizeof(kCommands[0]);
@@ -848,6 +952,168 @@ private:
         if (user.length() == 0)
             return false;
         return hasAllowedUser_(user);
+    }
+
+    static bool parseSocketIdFromText_(const String &text, uint8_t &out)
+    {
+        const size_t len = text.length();
+        if (len == 0)
+            return false;
+        int start = -1;
+        int end = -1;
+        for (size_t i = 0; i < len; ++i)
+        {
+            const char c = text.charAt(i);
+            if (c >= '0' && c <= '9')
+            {
+                if (start < 0)
+                    start = (int)i;
+                end = (int)i + 1;
+            }
+            else if (start >= 0)
+            {
+                break;
+            }
+        }
+        if (start < 0 || end <= start)
+            return false;
+        String num = text.substring(start, end);
+        return parseSocketId_(num, out);
+    }
+
+    static bool parseSocketId_(const String &text, uint8_t &out)
+    {
+        String t = text;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        for (size_t i = 0; i < t.length(); ++i)
+        {
+            const char c = t[i];
+            if (c < '0' || c > '9')
+                return false;
+        }
+        const int v = t.toInt();
+        if (v < 0 || v >= (int)SocketController::kSocketCount)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
+    static bool parseSocketLabel_(const String &text, uint8_t &out)
+    {
+        String t = text;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        int colon = t.indexOf(':');
+        if (colon > 0)
+        {
+            String head = t.substring(0, colon);
+            head.trim();
+            return parseSocketIdFromText_(head, out);
+        }
+        String low = t;
+        low.toLowerCase();
+        if (low.startsWith("socket"))
+        {
+            String tail = t.substring(6);
+            tail.trim();
+            return parseSocketIdFromText_(tail, out);
+        }
+        return parseSocketIdFromText_(t, out);
+    }
+
+    static bool startSocketAction_(TelegramBot &bot, const TelegramClient::Update &u, String &reply, uint8_t action)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        ChatAuth *st = _self->ensureAuth_(u.chat_id);
+        if (!st)
+            return false;
+        st->awaiting_socket = true;
+        st->socket_action = action;
+        bot.sendText(u.chat_id, F("Введите ID розетки (0..71):"));
+        return true;
+    }
+
+    bool isLocalSelected_(int64_t chat_id) const
+    {
+        const ChatAuth *st = findAuth_(chat_id);
+        if (!st)
+            return true;
+        return st->selected_local || st->selected_node_id == 0;
+    }
+
+    void buildSocketLabels_(std::vector<String> &out) const
+    {
+        out.clear();
+        if (!_sockets)
+            out.reserve(4);
+        else
+            out.reserve(16);
+        if (_sockets)
+        {
+            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+            {
+                const auto *cfg = _sockets->config(i);
+                const auto *st = _sockets->state(i);
+                if (!cfg || !cfg->enabled)
+                    continue;
+                String label;
+                if (st && st->relay_on)
+                    label = F("🟢 ");
+                else
+                    label = F("🔴 ");
+                if (cfg->name.length())
+                {
+                    label += String((unsigned)i);
+                    label += ": ";
+                    label += cfg->name;
+                }
+                else
+                {
+                    label += F("Socket ");
+                    label += String((unsigned)i);
+                }
+                out.push_back(label);
+            }
+        }
+        out.push_back(F("Назад"));
+    }
+
+    String socketListTextHtml_() const
+    {
+        String out = F("Розетки:");
+        if (!_sockets)
+        {
+            out += F("\n  недоступны");
+            return out;
+        }
+        bool any = false;
+        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+        {
+            const auto *cfg = _sockets->config(i);
+            const auto *st = _sockets->state(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            any = true;
+            out += "\n  ";
+            out += String((unsigned)i);
+            out += ": ";
+            if (cfg->name.length())
+                out += escapeHtml_(cfg->name);
+            else
+                out += "-";
+            out += " [";
+            out += st->relay_on ? F("<b>ВКЛ</b>") : F("<b>ВЫКЛ</b>");
+            out += "]";
+        }
+        if (!any)
+            out += F("\n  пусто");
+        return out;
     }
 
     struct DeviceEntry
@@ -962,6 +1228,38 @@ private:
         return out;
     }
 
+    static String escapeHtml_(const String &in)
+    {
+        String out;
+        out.reserve(in.length() + 8);
+        for (size_t i = 0; i < in.length(); ++i)
+        {
+            const char c = in.charAt(i);
+            switch (c)
+            {
+            case '&':
+                out += F("&amp;");
+                break;
+            case '<':
+                out += F("&lt;");
+                break;
+            case '>':
+                out += F("&gt;");
+                break;
+            case '"':
+                out += F("&quot;");
+                break;
+            case '\'':
+                out += F("&#39;");
+                break;
+            default:
+                out += c;
+                break;
+            }
+        }
+        return out;
+    }
+
     static String buildKeyboardMarkup_(const std::vector<String> &labels)
     {
         String out = F("{\"keyboard\":[");
@@ -1005,15 +1303,23 @@ private:
         TelegramMenu *self = static_cast<TelegramMenu *>(ctx);
         if (!self || !menu.id)
             return "";
-        if (strcmp(menu.id, "root") != 0)
-            return "";
-        std::vector<DeviceEntry> devices;
-        self->buildDeviceList_(devices);
-        std::vector<String> labels;
-        labels.reserve(devices.size());
-        for (const auto &d : devices)
-            labels.push_back(d.label);
-        return buildKeyboardMarkup_(labels);
+        if (strcmp(menu.id, "root") == 0)
+        {
+            std::vector<DeviceEntry> devices;
+            self->buildDeviceList_(devices);
+            std::vector<String> labels;
+            labels.reserve(devices.size());
+            for (const auto &d : devices)
+                labels.push_back(d.label);
+            return buildKeyboardMarkup_(labels);
+        }
+        if (strcmp(menu.id, "sockets") == 0)
+        {
+            std::vector<String> labels;
+            self->buildSocketLabels_(labels);
+            return buildKeyboardMarkup_(labels);
+        }
+        return "";
     }
 
     void sendDeviceMenu_(int64_t chat_id, const String &prefix)
@@ -1034,6 +1340,23 @@ private:
         _bot->sendText(chat_id, text, markup);
     }
 
+    void sendSocketMenu_(int64_t chat_id)
+    {
+        if (!_bot)
+            return;
+        if (!isLocalSelected_(chat_id))
+        {
+            _bot->sendText(chat_id, F("Список доступен только для локального устройства"));
+            return;
+        }
+        std::vector<String> labels;
+        buildSocketLabels_(labels);
+        const String markup = buildKeyboardMarkup_(labels);
+        const String list = socketListTextHtml_();
+        _bot->setMenu(chat_id, "sockets");
+        _bot->sendText(chat_id, list, markup, "HTML");
+    }
+
     bool handleRootDeviceSelection_(const TelegramClient::Update &u)
     {
         if (!_bot)
@@ -1049,6 +1372,43 @@ private:
             return true;
         }
         _bot->enterMenu(u.chat_id, "device");
+        return true;
+    }
+
+    bool handleSocketToggleSelection_(const TelegramClient::Update &u)
+    {
+        if (!_bot)
+            return false;
+        const char *menu_id = _bot->currentMenuId(u.chat_id);
+        if (!menu_id || strcmp(menu_id, "sockets") != 0)
+            return false;
+        if (u.text == F("Назад"))
+        {
+            _bot->enterMenu(u.chat_id, "device", adminPrefix_(u.chat_id));
+            return true;
+        }
+        uint8_t id = 0;
+        if (!parseSocketLabel_(u.text, id))
+        {
+            _bot->sendText(u.chat_id, F("Неизвестная розетка"));
+            return true;
+        }
+        if (!_sockets)
+        {
+            _bot->sendText(u.chat_id, F("Sockets unavailable"));
+            return true;
+        }
+        if (!isLocalSelected_(u.chat_id))
+        {
+            _bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
+            return true;
+        }
+        if (!_sockets->toggleRelayById(id))
+        {
+            _bot->sendText(u.chat_id, F("Не удалось"));
+            return true;
+        }
+        sendSocketMenu_(u.chat_id);
         return true;
     }
 
@@ -1070,5 +1430,3 @@ private:
         return false;
     }
 };
-
-

@@ -61,10 +61,16 @@ public:
             listStackNodes_();
             return;
         }
+        if (cmd.startsWith("stack socket "))
+        {
+            handleSocketCmd_(cmd);
+            return;
+        }
         if (!cmd.startsWith("stack send "))
         {
             _c._io->println(F("Usage: stack nodes"));
             _c._io->println(F("       stack send <id> <get|set> <json>"));
+            _c._io->println(F("       stack socket <unit> <on|off|toggle> <id>"));
             return;
         }
         if (!_stack_master)
@@ -223,6 +229,40 @@ public:
         }
     }
 
+    bool requestStackSockets_()
+    {
+        if (!_stack_master)
+            return false;
+        if (_c._configs_manager &&
+            _c._configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
+            return false;
+
+        const size_t count = _stack_master->nodeCount();
+        if (count == 0)
+            return false;
+
+        _pending_sockets_cmd_id = nextStackCmdId_();
+        _pending_sockets_left = (uint8_t)min<size_t>(count, 255);
+        _pending_sockets_scan = true;
+
+        StaticJsonDocument<96> doc;
+        doc["cmd_id"] = _pending_sockets_cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Sockets;
+        doc["action"] = "get";
+        char payload[96] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+
+        for (size_t i = 0; i < count; ++i)
+        {
+            const uint32_t id = _stack_master->nodeIdAt(i);
+            _stack_master->sendTo(id, (uint8_t)StackMsgType::CmdGet,
+                                  (const uint8_t *)payload, len);
+        }
+        return true;
+    }
+
     void requestStackPlc_()
     {
         if (!_stack_master)
@@ -343,6 +383,8 @@ public:
             return;
         if (handleStackPortsReply_(node_id, frame))
             return;
+        if (handleStackSocketsReply_(node_id, frame))
+            return;
         if (handleStackPlcReply_(node_id, frame))
             return;
         if (handleStackRtcReply_(node_id, frame))
@@ -392,6 +434,9 @@ private:
     uint16_t _pending_ports_cmd_id = 0;
     uint8_t _pending_ports_left = 0;
     bool _pending_ports_scan = false;
+    uint16_t _pending_sockets_cmd_id = 0;
+    uint8_t _pending_sockets_left = 0;
+    bool _pending_sockets_scan = false;
     uint16_t _pending_rtc_cmd_id = 0;
     uint8_t _pending_rtc_left = 0;
     bool _pending_rtc_scan = false;
@@ -452,6 +497,100 @@ private:
             _c._io->print(F("  "));
             _c._io->println(ip.length() ? ip : String("-"));
         }
+    }
+
+    void handleSocketCmd_(const String &cmd)
+    {
+        if (!_stack_master)
+        {
+            _c._io->println(F("Stack master unavailable"));
+            return;
+        }
+        if (_c._configs_manager &&
+            _c._configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
+        {
+            _c._io->println(F("Stack role is slave"));
+            return;
+        }
+        String rest = cmd.substring(strlen("stack socket "));
+        rest.trim();
+        const int sp1 = rest.indexOf(' ');
+        if (sp1 <= 0)
+        {
+            _c._io->println(F("Usage: stack socket <unit> <on|off|toggle> <id>"));
+            return;
+        }
+        String unit_str = rest.substring(0, sp1);
+        rest = rest.substring(sp1 + 1);
+        rest.trim();
+        const int sp2 = rest.indexOf(' ');
+        if (sp2 <= 0)
+        {
+            _c._io->println(F("Usage: stack socket <unit> <on|off|toggle> <id>"));
+            return;
+        }
+        String action = rest.substring(0, sp2);
+        action.toLowerCase();
+        String id_str = rest.substring(sp2 + 1);
+        id_str.trim();
+        if (id_str.length() == 0)
+        {
+            _c._io->println(F("Invalid socket id"));
+            return;
+        }
+        uint32_t node_id = resolveUnitToNodeId_(unit_str);
+        if (node_id == 0)
+        {
+            _c._io->println(F("Unknown unit"));
+            return;
+        }
+        uint16_t socket_id = (uint16_t)strtoul(id_str.c_str(), nullptr, 0);
+        if (action != "on" && action != "off" && action != "toggle")
+        {
+            _c._io->println(F("Invalid action"));
+            return;
+        }
+
+        StaticJsonDocument<128> doc;
+        doc["cmd_id"] = nextStackCmdId_();
+        doc["feature"] = (uint8_t)StackFeature::Sockets;
+        doc["action"] = "set";
+        JsonArray items = doc["params"]["items"].to<JsonArray>();
+        JsonObject item = items.add<JsonObject>();
+        item["id"] = socket_id;
+        if (action == "toggle")
+            item["toggle"] = true;
+        else
+            item["state"] = (action == "on");
+
+        char payload[128] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+        {
+            _c._io->println(F("Serialize failed"));
+            return;
+        }
+        const bool ok = _stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                              (const uint8_t *)payload, len);
+        _c._io->println(ok ? F("OK") : F("Send failed"));
+    }
+
+    uint32_t resolveUnitToNodeId_(String unit_str) const
+    {
+        if (!_stack_master)
+            return 0;
+        unit_str.trim();
+        unit_str.toLowerCase();
+        if (unit_str.startsWith("unit"))
+            unit_str = unit_str.substring(4);
+        unit_str.trim();
+        if (unit_str.length() == 0)
+            return 0;
+        const uint32_t idx = (uint32_t)strtoul(unit_str.c_str(), nullptr, 10);
+        if (idx == 0)
+            return 0;
+        const size_t pos = (size_t)(idx - 1);
+        return _stack_master->nodeIdAt(pos);
     }
 
     static String payloadToString_(const uint8_t *data, size_t len)
@@ -624,6 +763,63 @@ private:
             --_pending_ports_left;
         if (_pending_ports_left == 0)
             _pending_ports_scan = false;
+    }
+
+    bool handleStackSocketsReply_(uint32_t node_id, const StackFrame &frame)
+    {
+        if (!_pending_sockets_scan)
+            return false;
+        if (frame.type != (uint8_t)StackMsgType::Ack &&
+            frame.type != (uint8_t)StackMsgType::Err)
+            return false;
+
+        DynamicJsonDocument doc(4096);
+        DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
+        if (err)
+            return false;
+        const uint16_t cmd_id = doc["cmd_id"] | 0;
+        if (cmd_id != _pending_sockets_cmd_id)
+            return false;
+
+        if (frame.type == (uint8_t)StackMsgType::Err || !(doc["ok"] | false))
+        {
+            finishStackSockets_();
+            _c.refreshPrompt_();
+            return true;
+        }
+
+        JsonArrayConst items = doc["data"]["items"].as<JsonArrayConst>();
+        if (items.isNull() || items.size() == 0)
+        {
+            finishStackSockets_();
+            _c.refreshPrompt_();
+            return true;
+        }
+
+        const String unit = stackNodeLabel_(node_id);
+        for (JsonObjectConst o : items)
+        {
+            const uint8_t id = (uint8_t)(o["id"] | 0);
+            const bool enabled = o["enabled"] | false;
+            if (!enabled)
+                continue;
+            const char *name = o["name"] | "-";
+            const int button = o["button"] | -1;
+            const int relay = o["relay"] | -1;
+            const bool state = o["state"] | false;
+            _c.printSocketRow_(unit.c_str(), id, enabled, name, button, relay, state);
+        }
+        finishStackSockets_();
+        _c.refreshPrompt_();
+        return true;
+    }
+
+    void finishStackSockets_()
+    {
+        if (_pending_sockets_left > 0)
+            --_pending_sockets_left;
+        if (_pending_sockets_left == 0)
+            _pending_sockets_scan = false;
     }
 
     bool handleStackExtReply_(uint32_t node_id, const StackFrame &frame)

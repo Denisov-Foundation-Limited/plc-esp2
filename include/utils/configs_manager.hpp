@@ -20,6 +20,7 @@
 #include "core/network/telegram/telegram.hpp"
 #include "core/network/telegram/telegram_menu.hpp"
 #include "core/network/wifi_manager.hpp"
+#include "controllers/controllers.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "plc/plc_control.hpp"
@@ -28,14 +29,16 @@ class ConfigsManager : public ConfigsManagerIface
 {
 public:
     ConfigsManager(Configs &configs, WifiManager &wifi, TelegramClient &telegram,
-                   Network &network, CliConsole &console, TelegramMenu &telegram_menu, PlcControl &plc)
+                   Network &network, CliConsole &console, TelegramMenu &telegram_menu, PlcControl &plc,
+                   Controllers &controllers)
         : _configs(configs),
           _wifi(wifi),
           _telegram(telegram),
           _network(network),
           _console(console),
           _telegram_menu(telegram_menu),
-          _plc(plc)
+          _plc(plc),
+          _controllers(controllers)
     {
     }
 
@@ -92,6 +95,9 @@ public:
         JsonObject s = doc["stack"].to<JsonObject>();
         s["role"] = (_stack_role == StackRole::Master) ? "master" : "slave";
         s["master_host"] = _stack_master_host;
+
+        JsonObject ctrl = doc["controllers"].to<JsonObject>();
+        _controllers.serialize(ctrl);
 
         return _configs.save(doc);
     }
@@ -225,6 +231,11 @@ private:
             if (s["master_host"].is<const char *>())
                 _stack_master_host = s["master_host"].as<const char *>();
         }
+
+        if (doc["controllers"].is<JsonObjectConst>())
+        {
+            _controllers.applyConfig(doc["controllers"].as<JsonObjectConst>());
+        }
     }
 
     Configs &_configs;
@@ -234,6 +245,7 @@ private:
     CliConsole &_console;
     TelegramMenu &_telegram_menu;
     PlcControl &_plc;
+    Controllers &_controllers;
     StackRole _stack_role = StackRole::Master;
     String _stack_master_host;
 };

@@ -32,6 +32,7 @@
 #include "core/cli/cli_enable.hpp"
 #include "core/cli/modules/cli_stack.hpp"
 #include "core/cli/modules/cli_tgbot.hpp"
+#include "core/cli/modules/cli_socket.hpp"
 #include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
@@ -41,6 +42,7 @@
 #include "core/network/stack/stack_protocol.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
+#include "controllers/controllers.hpp"
 
 #if defined(ESP32)
 #include <Update.h>
@@ -54,11 +56,12 @@ public:
     using CLIWifi = CLIWifiT<CliConsole>;
     using CLITgbot = CLITgbotT<CliConsole>;
     using CLIStack = CLIStackT<CliConsole>;
+    using CLISocket = CLISocketT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
                TelegramClient &tgbot, TelegramMenu &tgbot_menu, Configs &configs, Extender &ext,
-              StackMaster *stack_master)
+               Controllers &controllers, StackMaster *stack_master)
         : _plc(plc),
           _wifi(wifi),
           _rtc(rtc),
@@ -69,11 +72,13 @@ public:
           _tgbot_menu(tgbot_menu),
           _configs(configs),
           _ext(ext),
+          _controllers(controllers),
           _wifi_cli(*this),
           _tgbot_cli(*this),
           _stack_cli(*this),
+          _socket_cli(*this, controllers.sockets()),
           _enable(*this, _wifi_cli),
-          _config(*this, _wifi_cli, _tgbot_cli)
+          _config(*this, _wifi_cli, _tgbot_cli, _socket_cli)
     {
         _stack_cli.bind(stack_master);
     }
@@ -183,6 +188,7 @@ public:
     void enterConfigWifi() { _mode = Mode::ConfigWifi; printPrompt_(); }
     void enterConfigTgbot() { _mode = Mode::ConfigTgbot; printPrompt_(); }
     void enterConfigTime() { _mode = Mode::ConfigTime; printPrompt_(); }
+    void enterConfigSocket() { _mode = Mode::ConfigSocket; printPrompt_(); }
     void logout()
     {
         _state = State::NeedUser;
@@ -667,7 +673,8 @@ private:
         Config,
         ConfigWifi,
         ConfigTgbot,
-        ConfigTime
+        ConfigTime,
+        ConfigSocket
     };
 
     enum class State : uint8_t
@@ -696,6 +703,8 @@ private:
             _io->println(F("  show config     - configuration file contents"));
             _io->println(F("  show port <id>  - port details"));
             _io->println(F("  show ports      - list ports"));
+            _io->println(F("  show sockets    - list sockets"));
+            _io->println(F("  show socket <id> - socket details"));
             return;
         }
         if (t == "wifi")
@@ -713,6 +722,11 @@ private:
         if (t == "tgbot")
         {
             _tgbot_cli.printHelpTopic();
+            return;
+        }
+        if (t == "socket")
+        {
+            _socket_cli.printHelpContextLines();
             return;
         }
         if (t == "system")
@@ -745,11 +759,17 @@ private:
             "show ext",
             "show port <id>",
             "show ports",
+            "show sockets",
+            "show socket <id>",
+            "socket toggle <id>",
+            "socket on <id>",
+            "socket off <id>",
             "ftest",
             "copy tftp://<ip>/firmware.bin firmware",
             "copy http://<ip>/firmware.bin firmware",
             "stack nodes",
             "stack send <id> <get|set> <json>",
+            "stack socket <unit> <on|off|toggle> <id>",
             "wifi restart",
             "reload",
             "reset",
@@ -766,7 +786,8 @@ private:
             "help wifi",
             "help user",
             "help system",
-            "help tgbot"};
+            "help tgbot",
+            "help socket"};
         static const size_t kEnableCmdsCount = sizeof(kEnableCmds) / sizeof(kEnableCmds[0]);
 
         static const char *const kConfigCmds[] = {
@@ -777,6 +798,7 @@ private:
             "wifi",
             "tgbot",
             "time",
+            "socket",
             "exit",
             "end",
             "help",
@@ -784,7 +806,8 @@ private:
             "help wifi",
             "help user",
             "help system",
-            "help tgbot"};
+            "help tgbot",
+            "help socket"};
         static const size_t kConfigCmdsCount = sizeof(kConfigCmds) / sizeof(kConfigCmds[0]);
 
         static const char *const kConfigWifiCmds[] = {
@@ -837,6 +860,19 @@ private:
             "help"};
         static const size_t kConfigTimeCmdsCount = sizeof(kConfigTimeCmds) / sizeof(kConfigTimeCmds[0]);
 
+        static const char *const kConfigSocketCmds[] = {
+            "show",
+            "show <id>",
+            "enable <id>",
+            "disable <id>",
+            "name <id> <value>",
+            "button <id> <port|none>",
+            "relay <id> <port|none>",
+            "exit",
+            "end",
+            "help"};
+        static const size_t kConfigSocketCmdsCount = sizeof(kConfigSocketCmds) / sizeof(kConfigSocketCmds[0]);
+
         const char *const *cmds = nullptr;
         size_t count = 0;
         switch (_mode)
@@ -860,6 +896,10 @@ private:
         case Mode::ConfigTime:
             cmds = kConfigTimeCmds;
             count = kConfigTimeCmdsCount;
+            break;
+        case Mode::ConfigSocket:
+            cmds = kConfigSocketCmds;
+            count = kConfigSocketCmdsCount;
             break;
         case Mode::User:
             cmds = kEnableCmds;
@@ -1086,6 +1126,18 @@ private:
             cmdShowTelegram_();
         else if (eq_(what, "config"))
             cmdShowConfig_();
+        else if (eq_(what, "sockets"))
+            _socket_cli.showSockets();
+        else if (startsWith_(what, "socket "))
+        {
+            String tail = what.substring(7);
+            tail.trim();
+            uint16_t id = 0;
+            if (!parseUint_(tail, id))
+                _io->println(F("Usage: show socket <id>"));
+            else
+                _socket_cli.showSocket(id);
+        }
         else
             _io->println(F("Unknown show"));
         printPrompt_();
@@ -1103,6 +1155,20 @@ private:
         String t = a;
         t.toLowerCase();
         return t.startsWith(b);
+    }
+
+    static bool parseUint_(const String &s, uint16_t &out)
+    {
+        if (s.length() == 0)
+            return false;
+        for (size_t i = 0; i < s.length(); ++i)
+        {
+            char c = s[i];
+            if (c < '0' || c > '9')
+                return false;
+        }
+        out = (uint16_t)s.toInt();
+        return true;
     }
 
     void handleLine_(String line)
@@ -1138,6 +1204,9 @@ private:
             break;
         case Mode::ConfigTime:
             _config.handleTimeContext(line);
+            break;
+        case Mode::ConfigSocket:
+            _config.handleSocketContext(line);
             break;
         case Mode::User:
             _enable.handle(line);
@@ -1234,6 +1303,9 @@ private:
             break;
         case Mode::ConfigTime:
             _io->print(F("plc(config-time)# "));
+            break;
+        case Mode::ConfigSocket:
+            _io->print(F("plc(config-socket)# "));
             break;
         }
     }
@@ -1513,6 +1585,7 @@ private:
     TelegramMenu &_tgbot_menu;
     Configs &_configs;
     Extender &_ext;
+    Controllers &_controllers;
     ConfigsManagerIface *_configs_manager = nullptr;
 
     Stream *_io = nullptr;
@@ -1535,6 +1608,7 @@ private:
     CLIWifi _wifi_cli;
     CLITgbot _tgbot_cli;
     CLIStack _stack_cli;
+    CLISocket _socket_cli;
     CLIEnable _enable;
     CLIConfig _config;
     uint32_t _tgbot_last_update_id = 0;
@@ -1842,6 +1916,50 @@ private:
         _io->println(F("  ----------  --  --------  -------  -------  ---- --- ---  --------"));
     }
 
+    void printSocketsHeader_()
+    {
+        _io->println(F("Sockets:"));
+        _io->println(F("  Unit      ID  En  Name             Btn  Relay  State"));
+        _io->println(F("  --------  --  --  ---------------- ---  -----  -----"));
+    }
+
+    void printSocketRow_(const char *unit, uint8_t id, bool enabled,
+                         const char *name, int button, int relay, bool state)
+    {
+        if (!_io)
+            return;
+        char btn_buf[6] = {};
+        char rel_buf[6] = {};
+        const char *btn = "--";
+        const char *rel = "--";
+        if (button >= 0)
+        {
+            snprintf(btn_buf, sizeof(btn_buf), "%d", button);
+            btn = btn_buf;
+        }
+        if (relay >= 0)
+        {
+            snprintf(rel_buf, sizeof(rel_buf), "%d", relay);
+            rel = rel_buf;
+        }
+        _io->print(F("  "));
+        printPadStr_(unit && unit[0] ? unit : "-", 8);
+        _io->print(F("  "));
+        printPad_(id, 2);
+        _io->print(F("  "));
+        printPadStr_(enabled ? F("on") : F("off"), 2);
+        _io->print(F("  "));
+        const char *name_ptr = (name && name[0]) ? name : "-";
+        printPadStr_(name_ptr, 16);
+        _io->print(F("  "));
+        printPadStr_(btn, 3);
+        _io->print(F("  "));
+        printPadStr_(rel, 5);
+        _io->print(F("  "));
+        printPadStr_(state ? F("on") : F("off"), 5);
+        _io->println();
+    }
+
     void printPortRow_(const String &unit, uint8_t id, const PortIO::PortDesc &p)
     {
         _io->print(F("  "));
@@ -1934,15 +2052,31 @@ private:
     {
         if (!_io)
             return;
-        size_t len = strlen(s);
+        if (!s)
+            s = "";
+        size_t len = utf8CharCount_(s);
         if (len >= width)
         {
             _io->print(s);
             return;
         }
+        _io->print(s);
         for (size_t i = 0; i < width - len; ++i)
             _io->print(' ');
-        _io->print(s);
+    }
+
+    static size_t utf8CharCount_(const char *s)
+    {
+        if (!s)
+            return 0;
+        size_t count = 0;
+        for (size_t i = 0; s[i]; ++i)
+        {
+            const uint8_t c = static_cast<uint8_t>(s[i]);
+            if ((c & 0xC0) != 0x80)
+                ++count;
+        }
+        return count;
     }
 
     template <typename>
@@ -1955,6 +2089,8 @@ private:
     friend class CLITgbotT;
     template <typename>
     friend class CLIStackT;
+    template <typename>
+    friend class CLISocketT;
 
 public:
     void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }

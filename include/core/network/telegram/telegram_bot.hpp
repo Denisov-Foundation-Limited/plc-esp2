@@ -112,6 +112,12 @@ public:
         return _client.sendMessageRaw(payload);
     }
 
+    bool sendText(int64_t chat_id, const String &text, const String &reply_markup, const String &parse_mode)
+    {
+        String payload = buildMessagePayload_(chat_id, text, reply_markup, parse_mode);
+        return _client.sendMessageRaw(payload);
+    }
+
     bool showMenu(int64_t chat_id, const Menu *menu, const String &prefix = "")
     {
         if (!menu)
@@ -149,6 +155,15 @@ public:
             return false;
         setChatMenu_(chat_id, menu->id);
         return showMenu(chat_id, menu, prefix);
+    }
+
+    bool setMenu(int64_t chat_id, const char *menu_id)
+    {
+        const Menu *menu = findMenu_(menu_id);
+        if (!menu)
+            return false;
+        setChatMenu_(chat_id, menu->id);
+        return true;
     }
 
     const char *currentMenuId(int64_t chat_id) const
@@ -397,7 +412,8 @@ private:
         return out;
     }
 
-    static String buildMessagePayload_(int64_t chat_id, const String &text, const String &reply_markup)
+    static String buildMessagePayload_(int64_t chat_id, const String &text, const String &reply_markup,
+                                       const String &parse_mode = "")
     {
         String payload = F("{\"chat_id\":");
         payload += String((long long)chat_id);
@@ -408,6 +424,12 @@ private:
         {
             payload += F(",\"reply_markup\":");
             payload += reply_markup;
+        }
+        if (parse_mode.length())
+        {
+            payload += F(",\"parse_mode\":\"");
+            payload += escapeJson_(parse_mode);
+            payload += F("\"");
         }
         payload += F("}");
         return payload;

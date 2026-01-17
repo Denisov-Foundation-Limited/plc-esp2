@@ -27,5 +27,6 @@ enum class StackFeature : uint8_t
     DigitalInputs = 0x0A,
     Telegram = 0x0B,
     Storage = 0x0C,
-    Extenders = 0x0D
+    Extenders = 0x0D,
+    Sockets = 0x0E
 };

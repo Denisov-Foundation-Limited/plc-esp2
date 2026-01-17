@@ -30,13 +30,15 @@
 #include "core/rtc.hpp"
 #include "plc/plc_control.hpp"
 #include "core/network/telegram/telegram.hpp"
+#include "controllers/socket/socket_controller.hpp"
 #include "utils/logger.hpp"
 
 class StackSlaveHandler
 {
 public:
     StackSlaveHandler(IoStack &io, Ds18b20 &ds18b20, OneWireManager &ow, I2CManager &i2c,
-                      PlcControl &plc, RTC &rtc, TelegramClient &telegram, Logger &logs, Extender &ext)
+                      PlcControl &plc, RTC &rtc, TelegramClient &telegram, Logger &logs,
+                      Extender &ext, SocketController &sockets)
         : _io(io),
           _ds18b20(ds18b20),
           _ow(ow),
@@ -45,7 +47,8 @@ public:
           _rtc(rtc),
           _telegram(telegram),
           _logs(logs),
-          _ext(ext)
+          _ext(ext),
+          _sockets(sockets)
     {
     }
 
@@ -77,6 +80,7 @@ private:
     TelegramClient &_telegram;
     Logger &_logs;
     Extender &_ext;
+    SocketController &_sockets;
     StackNode *_node = nullptr;
     static constexpr uint8_t MAX_I2C_ADDRS = 127;
     static constexpr uint8_t MAX_OW_ADDRS = 64;
@@ -160,6 +164,9 @@ private:
             break;
         case StackFeature::Extenders:
             handleExtenders_(cmd_id, action);
+            break;
+        case StackFeature::Sockets:
+            handleSockets_(cmd_id, action, params);
             break;
         default:
             sendErr_(cmd_id, "unknown feature");
@@ -578,6 +585,70 @@ private:
         doc["total"] = (unsigned)LittleFS.totalBytes();
         doc["used"] = (unsigned)LittleFS.usedBytes();
         sendAck_(cmd_id, doc);
+    }
+
+    void handleSockets_(uint16_t cmd_id, const String &action, JsonVariantConst params)
+    {
+        if (action == "get")
+        {
+            JsonDocument doc;
+            JsonArray arr = doc["items"].to<JsonArray>();
+            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+            {
+                const auto *cfg = _sockets.config(i);
+                const auto *st = _sockets.state(i);
+                if (!cfg || !st || !cfg->enabled)
+                    continue;
+                JsonObject o = arr.add<JsonObject>();
+                o["id"] = (unsigned)i;
+                o["enabled"] = cfg->enabled;
+                if (cfg->name.length())
+                    o["name"] = cfg->name;
+                if (cfg->button_port != SocketController::kInvalidPort)
+                    o["button"] = cfg->button_port;
+                if (cfg->relay_port != SocketController::kInvalidPort)
+                    o["relay"] = cfg->relay_port;
+                o["state"] = st->relay_on;
+            }
+            sendAck_(cmd_id, doc);
+            return;
+        }
+        if (action == "set")
+        {
+            if (!params.is<JsonObjectConst>() || !params["items"].is<JsonArrayConst>())
+            {
+                sendErr_(cmd_id, "missing items");
+                return;
+            }
+            JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            for (JsonVariantConst v : items)
+            {
+                if (!v.is<JsonObjectConst>())
+                    continue;
+                JsonObjectConst item = v.as<JsonObjectConst>();
+                if (!item["id"].is<unsigned>())
+                    continue;
+                const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
+                {
+                    _sockets.toggleRelayById(id);
+                    continue;
+                }
+                if (item["state"].is<bool>())
+                {
+                    const bool on = item["state"].as<bool>();
+                    _sockets.setRelayById(id, on);
+                }
+                else if (item["state"].is<int>())
+                {
+                    const bool on = item["state"].as<int>() != 0;
+                    _sockets.setRelayById(id, on);
+                }
+            }
+            sendAck_(cmd_id);
+            return;
+        }
+        sendErr_(cmd_id, "unsupported");
     }
 
     size_t buildStatus_(uint8_t *out, size_t cap)
