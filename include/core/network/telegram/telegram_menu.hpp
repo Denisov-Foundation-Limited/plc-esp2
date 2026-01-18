@@ -52,6 +52,15 @@ public:
     void setStackMaster(StackMaster &master) { _stack_master = &master; }
     void setSockets(SocketController &sockets) { _sockets = &sockets; }
 
+    struct AllowedUser
+    {
+        String username;
+        int64_t chat_id = 0;
+        bool is_admin = false;
+        bool is_notify = false;
+        bool enabled = true;
+    };
+
     enum class AllowResult : uint8_t
     {
         Ok = 0,
@@ -60,15 +69,19 @@ public:
         Full
     };
 
-    void setAllowedUsers(const std::vector<String> &users)
+    void setAllowedUsers(const std::vector<AllowedUser> &users)
     {
         _allowed_users.clear();
         for (size_t i = 0; i < users.size(); ++i)
         {
             if (_allowed_users.size() >= kMaxAllowedUsers)
                 break;
-            String u = normalizeUser_(users[i]);
-            if (u.length() == 0 || hasAllowedUser_(u))
+            AllowedUser u = users[i];
+            u.username = normalizeUsername_(u.username);
+            if (u.username.length() == 0 && u.chat_id == 0)
+                continue;
+            if ((u.username.length() && hasAllowedUsername_(u.username)) ||
+                (u.chat_id != 0 && hasAllowedUserChatId_(u.chat_id)))
                 continue;
             _allowed_users.push_back(u);
         }
@@ -76,10 +89,20 @@ public:
 
     AllowResult addAllowedUser(const String &user)
     {
-        String u = normalizeUser_(user);
-        if (u.length() == 0)
+        AllowedUser u{};
+        u.username = normalizeUsername_(user);
+        u.is_admin = true;
+        return addAllowedUser(u);
+    }
+
+    AllowResult addAllowedUser(const AllowedUser &user)
+    {
+        AllowedUser u = user;
+        u.username = normalizeUsername_(u.username);
+        if (u.username.length() == 0 && u.chat_id == 0)
             return AllowResult::Invalid;
-        if (hasAllowedUser_(u))
+        if ((u.username.length() && hasAllowedUsername_(u.username)) ||
+            (u.chat_id != 0 && hasAllowedUserChatId_(u.chat_id)))
             return AllowResult::Exists;
         if (_allowed_users.size() >= kMaxAllowedUsers)
             return AllowResult::Full;
@@ -89,12 +112,12 @@ public:
 
     bool removeAllowedUser(const String &user)
     {
-        String u = normalizeUser_(user);
+        String u = normalizeUsername_(user);
         if (u.length() == 0)
             return false;
         for (size_t i = 0; i < _allowed_users.size(); ++i)
         {
-            if (_allowed_users[i] == u)
+            if (_allowed_users[i].username == u)
             {
                 _allowed_users.erase(_allowed_users.begin() + (int)i);
                 return true;
@@ -105,7 +128,9 @@ public:
 
     void clearAllowedUsers() { _allowed_users.clear(); }
 
-    const std::vector<String> &allowedUsers() const { return _allowed_users; }
+    const std::vector<AllowedUser> &allowedUsers() const { return _allowed_users; }
+
+    static constexpr size_t kMaxAllowedUsers = 10;
 
 private:
     static inline TelegramMenu *_self = nullptr;
@@ -116,11 +141,12 @@ private:
     String _admin_password;
     Configs &_configs;
     ConfigsManagerIface *_configs_manager = nullptr;
-    std::vector<String> _allowed_users;
+    std::vector<AllowedUser> _allowed_users;
 
     struct ChatAuth
     {
         int64_t chat_id = 0;
+        String user_id;
         bool authorized = false;
         bool awaiting = false;
         bool awaiting_config = false;
@@ -135,8 +161,6 @@ private:
 
     std::vector<ChatAuth> _auth;
     static constexpr size_t kMaxConfigBytes = 8192;
-    static constexpr size_t kMaxAllowedUsers = 10;
-
     static bool requireAdmin_(TelegramMenu &self, TelegramBot &bot, const TelegramClient::Update &u, String &reply)
     {
         (void)bot;
@@ -420,12 +444,29 @@ private:
             return true;
         if (_self->_allowed_users.empty())
         {
-            reply = "Список разрешенных username пуст.";
+            reply = "Список разрешенных пользователей пуст.";
             return true;
         }
-        reply = "Разрешенные username:";
-        for (const auto &name : _self->_allowed_users)
-            reply += "\n  " + name;
+        reply = "Разрешенные пользователи:";
+        for (size_t i = 0; i < _self->_allowed_users.size(); ++i)
+        {
+            const auto &user = _self->_allowed_users[i];
+            reply += "\n  ";
+            reply += String((unsigned)(i + 1));
+            reply += " ";
+            reply += user.username.length() ? user.username : String("-");
+            if (user.chat_id)
+            {
+                reply += " chat=";
+                reply += String((long long)user.chat_id);
+            }
+            reply += " admin=";
+            reply += user.is_admin ? "1" : "0";
+            reply += " notify=";
+            reply += user.is_notify ? "1" : "0";
+            reply += " enabled=";
+            reply += user.enabled ? "1" : "0";
+        }
         return true;
     }
 
@@ -440,10 +481,12 @@ private:
         name.trim();
         if (name.length() == 0)
         {
-            reply = "Использование: /allow_add <username>";
+            reply = "Использование: /allow_add <username> [chat_id] [admin] [notify] [off]";
             return true;
         }
-        AllowResult res = _self->addAllowedUser(name);
+        AllowedUser user{};
+        parseAllowUserSpec_(name, user);
+        AllowResult res = _self->addAllowedUser(user);
         if (res == AllowResult::Ok)
             reply = "OK";
         else if (res == AllowResult::Exists)
@@ -610,6 +653,9 @@ private:
         TelegramMenu *self = static_cast<TelegramMenu *>(ctx);
         if (!self)
             return false;
+        ChatAuth *st = self->ensureAuth_(u.chat_id);
+        if (st)
+            st->user_id = normalizeUsername_(u.from);
         if (!self->isAllowedUser_(u))
         {
             if (self->_bot)
@@ -628,13 +674,14 @@ private:
             self->resetAwaiting_(u.chat_id);
             return false;
         }
-        ChatAuth *st = self->findAuth_(u.chat_id);
+        st = self->findAuth_(u.chat_id);
         if (st && st->awaiting_socket)
         {
             uint8_t id = 0;
             if (!parseSocketId_(u.text, id))
             {
-                self->_bot->sendText(u.chat_id, F("Введите ID розетки (0..71)."));
+                String msg = String("Введите ID розетки (1..") + String(SocketController::kSocketCount) + ").";
+                self->_bot->sendText(u.chat_id, msg);
                 return true;
             }
             if (!self->_sockets)
@@ -925,7 +972,7 @@ private:
                 _bot->sendText(st.chat_id, F("Слишком много неверных попыток. Блокировка 30 сек"));
         }
     }
-    static String normalizeUser_(String user)
+    static String normalizeUsername_(String user)
     {
         user.trim();
         if (user.startsWith("@"))
@@ -934,11 +981,21 @@ private:
         return user;
     }
 
-    bool hasAllowedUser_(const String &user) const
+    bool hasAllowedUsername_(const String &user) const
     {
         for (size_t i = 0; i < _allowed_users.size(); ++i)
         {
-            if (_allowed_users[i] == user)
+            if (_allowed_users[i].username == user)
+                return true;
+        }
+        return false;
+    }
+
+    bool hasAllowedUserChatId_(int64_t chat_id) const
+    {
+        for (size_t i = 0; i < _allowed_users.size(); ++i)
+        {
+            if (_allowed_users[i].chat_id != 0 && _allowed_users[i].chat_id == chat_id)
                 return true;
         }
         return false;
@@ -948,10 +1005,109 @@ private:
     {
         if (_allowed_users.empty())
             return true;
-        String user = normalizeUser_(u.from);
+        size_t idx = 0;
+        if (u.chat_id != 0 && findAllowedUserByChatId_(u.chat_id, idx))
+            return _allowed_users[idx].enabled;
+        String user = normalizeUsername_(u.from);
         if (user.length() == 0)
             return false;
-        return hasAllowedUser_(user);
+        if (findAllowedUserByName_(user, idx))
+            return _allowed_users[idx].enabled;
+        return false;
+    }
+
+    bool isAdminChat_(int64_t chat_id) const
+    {
+        if (_allowed_users.empty())
+            return false;
+        size_t idx = 0;
+        if (chat_id != 0 && findAllowedUserByChatId_(chat_id, idx))
+            return _allowed_users[idx].enabled && _allowed_users[idx].is_admin;
+        const ChatAuth *st = findAuth_(chat_id);
+        if (st && st->user_id.length() && findAllowedUserByName_(st->user_id, idx))
+            return _allowed_users[idx].enabled && _allowed_users[idx].is_admin;
+        return false;
+    }
+
+    bool findAllowedUserByName_(const String &name, size_t &out) const
+    {
+        for (size_t i = 0; i < _allowed_users.size(); ++i)
+        {
+            if (_allowed_users[i].username == name)
+            {
+                out = i;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool findAllowedUserByChatId_(int64_t chat_id, size_t &out) const
+    {
+        for (size_t i = 0; i < _allowed_users.size(); ++i)
+        {
+            if (_allowed_users[i].chat_id != 0 && _allowed_users[i].chat_id == chat_id)
+            {
+                out = i;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static void parseAllowUserSpec_(const String &spec, AllowedUser &out)
+    {
+        out = AllowedUser{};
+        String s = spec;
+        s.trim();
+        if (s.length() == 0)
+            return;
+        int start = 0;
+        int part = 0;
+        while (start < (int)s.length())
+        {
+            int space = s.indexOf(' ', start);
+            if (space < 0)
+                space = s.length();
+            String token = s.substring(start, (size_t)space);
+            token.trim();
+            if (token.length())
+            {
+                if (part == 0)
+                {
+                    out.username = token;
+                }
+                else if (token == "admin")
+                {
+                    out.is_admin = true;
+                }
+                else if (token == "notify")
+                {
+                    out.is_notify = true;
+                }
+                else if (token == "off" || token == "disabled")
+                {
+                    out.enabled = false;
+                }
+                else
+                {
+                    const char *c = token.c_str();
+                    bool numeric = true;
+                    for (size_t i = 0; c[i]; ++i)
+                    {
+                        if (c[i] < '0' || c[i] > '9')
+                        {
+                            numeric = false;
+                            break;
+                        }
+                    }
+                    if (numeric)
+                        out.chat_id = (int64_t)strtoll(c, nullptr, 10);
+                }
+            }
+            start = space + 1;
+            ++part;
+        }
     }
 
     static bool parseSocketIdFromText_(const String &text, uint8_t &out)
@@ -994,7 +1150,7 @@ private:
                 return false;
         }
         const int v = t.toInt();
-        if (v < 0 || v >= (int)SocketController::kSocketCount)
+        if (v <= 0 || v > (int)SocketController::kSocketCount)
             return false;
         out = (uint8_t)v;
         return true;
@@ -1035,7 +1191,8 @@ private:
             return false;
         st->awaiting_socket = true;
         st->socket_action = action;
-        bot.sendText(u.chat_id, F("Введите ID розетки (0..71):"));
+        String msg = String("Введите ID розетки (1..") + String(SocketController::kSocketCount) + "):";
+        bot.sendText(u.chat_id, msg);
         return true;
     }
 
@@ -1058,25 +1215,20 @@ private:
         {
             for (size_t i = 0; i < SocketController::kSocketCount; ++i)
             {
-                const auto *cfg = _sockets->config(i);
-                const auto *st = _sockets->state(i);
+                const auto *cfg = _sockets->configByIndex(i);
                 if (!cfg || !cfg->enabled)
                     continue;
                 String label;
-                if (st && st->relay_on)
-                    label = F("🟢 ");
-                else
-                    label = F("🔴 ");
                 if (cfg->name.length())
                 {
-                    label += String((unsigned)i);
+                    label += String((unsigned)cfg->id);
                     label += ": ";
                     label += cfg->name;
                 }
                 else
                 {
                     label += F("Socket ");
-                    label += String((unsigned)i);
+                    label += String((unsigned)cfg->id);
                 }
                 out.push_back(label);
             }
@@ -1086,7 +1238,7 @@ private:
 
     String socketListTextHtml_() const
     {
-        String out = F("Розетки:");
+        String out = F("<b>Розетки:</b>");
         if (!_sockets)
         {
             out += F("\n  недоступны");
@@ -1095,21 +1247,19 @@ private:
         bool any = false;
         for (size_t i = 0; i < SocketController::kSocketCount; ++i)
         {
-            const auto *cfg = _sockets->config(i);
-            const auto *st = _sockets->state(i);
+            const auto *cfg = _sockets->configByIndex(i);
+            const auto *st = _sockets->stateByIndex(i);
             if (!cfg || !st || !cfg->enabled)
                 continue;
             any = true;
             out += "\n  ";
-            out += String((unsigned)i);
+            out += st->relay_on ? F("🟢 ") : F("🔴 ");
+            out += String((unsigned)cfg->id);
             out += ": ";
             if (cfg->name.length())
                 out += escapeHtml_(cfg->name);
             else
                 out += "-";
-            out += " [";
-            out += st->relay_on ? F("<b>ВКЛ</b>") : F("<b>ВЫКЛ</b>");
-            out += "]";
         }
         if (!any)
             out += F("\n  пусто");
@@ -1317,6 +1467,16 @@ private:
         {
             std::vector<String> labels;
             self->buildSocketLabels_(labels);
+            return buildKeyboardMarkup_(labels);
+        }
+        if (strcmp(menu.id, "device") == 0)
+        {
+            std::vector<String> labels;
+            labels.reserve(3);
+            if (self->isAdminChat_(chat_id))
+                labels.push_back(F("Админка"));
+            labels.push_back(F("Розетки"));
+            labels.push_back(F("Назад"));
             return buildKeyboardMarkup_(labels);
         }
         return "";

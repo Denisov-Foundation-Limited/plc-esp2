@@ -73,6 +73,10 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
     a { color: #7dd3fc; text-decoration: none; }
     .nav { margin-bottom: 12px; }
     .checkbox { display: flex; gap: 8px; align-items: center; }
+    .table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    .table th, .table td { border-bottom: 1px solid #1f2937; padding: 8px; text-align: left; font-size: 12px; }
+    .table th { color: var(--muted); font-weight: 600; }
+    .mini { width: 100%; }
   </style>
 </head>
 <body>
@@ -107,15 +111,15 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
               <input type="checkbox" id="use_proxy" name="use_proxy" %TGBOT_USE_PROXY_CHECKED%>
               <label for="use_proxy">Использовать proxy</label>
             </div>
-            <div>
+            <div class="proxy-field">
               <label>Proxy host</label>
               <input type="text" name="proxy_host" value="%TGBOT_PROXY_HOST%">
             </div>
-            <div>
+            <div class="proxy-field">
               <label>Proxy port</label>
               <input type="number" name="proxy_port" value="%TGBOT_PROXY_PORT%">
             </div>
-            <div>
+            <div class="proxy-field">
               <label>Proxy path</label>
               <input type="text" name="proxy_path" value="%TGBOT_PROXY_PATH%">
             </div>
@@ -123,8 +127,21 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
         </div>
         <div class="section">
           <h2>Allowed users</h2>
-          <label>Список (через запятую)</label>
-          <input type="text" name="allowed_users" value="%TGBOT_ALLOWED_USERS%" placeholder="user1, user2">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>Chat ID</th>
+                <th>Admin</th>
+                <th>Notify</th>
+                <th>Enabled</th>
+              </tr>
+            </thead>
+            <tbody>
+              %TGBOT_ALLOWED_USERS_ROWS%
+            </tbody>
+          </table>
         </div>
         <div class="row" style="margin-top:10px;">
           <button type="submit">Сохранить</button>
@@ -133,6 +150,20 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
       </form>
     </div>
   </div>
+  <script>
+    const useProxy = document.getElementById('use_proxy');
+    const proxyFields = document.querySelectorAll('.proxy-field');
+    function updateProxyFields() {
+      const show = useProxy && useProxy.checked;
+      proxyFields.forEach((el) => {
+        el.style.display = show ? '' : 'none';
+      });
+    }
+    if (useProxy) {
+      useProxy.addEventListener('change', updateProxyFields);
+      updateProxyFields();
+    }
+  </script>
 </body>
 </html>
 )HTML";

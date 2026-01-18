@@ -72,6 +72,9 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
     .status { color: var(--muted); font-size: 12px; }
     a { color: #7dd3fc; text-decoration: none; }
     .nav { margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { text-align: left; padding: 6px; border-bottom: 1px solid #1f2937; }
+    th { color: var(--muted); font-weight: 600; }
   </style>
 </head>
 <body>
@@ -80,6 +83,7 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
       %NAV%
       <h1>Стек</h1>
       <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
+      %STACK_SELF_BLOCK%
       <div class="section">
         <p class="status">Роль: <strong>%STACK_ROLE%</strong></p>
         <form method="POST" action="/stack">
@@ -91,7 +95,7 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
                 <option value="slave" %STACK_ROLE_SLAVE_SEL%>slave</option>
               </select>
             </div>
-            <div>
+            <div id="master-host-field">
               <label>Master host/IP</label>
               <input type="text" name="master_host" value="%STACK_MASTER_HOST%" placeholder="192.168.1.10">
             </div>
@@ -102,8 +106,21 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
           </div>
         </form>
       </div>
+      %STACK_NODES_BLOCK%
     </div>
   </div>
+  <script>
+    const roleSelect = document.querySelector('select[name="role"]');
+    const masterHost = document.getElementById('master-host-field');
+    function updateMasterHost() {
+      if (!roleSelect || !masterHost) return;
+      masterHost.style.display = roleSelect.value === 'slave' ? '' : 'none';
+    }
+    if (roleSelect) {
+      roleSelect.addEventListener('change', updateMasterHost);
+      updateMasterHost();
+    }
+  </script>
 </body>
 </html>
 )HTML";

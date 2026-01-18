@@ -33,6 +33,7 @@
 #include "core/network/web/pages/web_interface_buses.hpp"
 #include "core/network/web/pages/web_interface_stack.hpp"
 #include "core/network/web/pages/web_interface_wifi.hpp"
+#include "core/network/web/pages/web_interface_controllers.hpp"
 #include "core/network/web/pages/web_interface_admin.hpp"
 #include "core/network/web/pages/web_interface_logs.hpp"
 #include "core/network/web/pages/web_interface_telegram.hpp"
@@ -46,6 +47,7 @@
 #include "utils/configs.hpp"
 #include "utils/fs_config.hpp"
 #include "utils/configs_manager_iface.hpp"
+#include "core/network/stack/stack_master.hpp"
 #include "hal/gpio/extender.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
@@ -96,12 +98,15 @@ public:
     }
 
     void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }
+    void setStackMaster(StackMaster &master) { _stack_master = &master; }
 
     void registerRoutes()
     {
         _server.on("/", HTTP_GET, [this](AsyncWebServerRequest *request) { handleIndex_(request); });
         _server.on("/wifi", HTTP_GET, [this](AsyncWebServerRequest *request) { handleWifi_(request); });
         _server.on("/manage", HTTP_GET, [this](AsyncWebServerRequest *request) { handleManage_(request); });
+        _server.on("/controllers", HTTP_GET, [this](AsyncWebServerRequest *request) { handleControllers_(request); });
+        _server.on("/controllers", HTTP_POST, [this](AsyncWebServerRequest *request) { handleControllersSave_(request); });
         _server.on("/ports", HTTP_GET, [this](AsyncWebServerRequest *request) { handlePorts_(request); });
         _server.on("/buses", HTTP_GET, [this](AsyncWebServerRequest *request) { handleBuses_(request); });
         _server.on("/stack", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStack_(request); });
@@ -109,7 +114,6 @@ public:
         _server.on("/sockets", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsSave_(request); });
         _server.on("/telegram", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTelegram_(request); });
         _server.on("/telegram", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTelegramSave_(request); });
-        _server.on("/logout", HTTP_GET, [this](AsyncWebServerRequest *request) { handleLogout_(request); });
         _server.on(
             "/upload", HTTP_POST,
             [this](AsyncWebServerRequest *request) { handleUploadDone_(request); },
@@ -151,8 +155,6 @@ private:
             _log->info(F("WEB"), F("GET / (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceIndexHtml);
         page.replace("%NAV%", navHtml_());
-        const bool logged_out = request->hasParam("logout");
-        page.replace("%LOGOUT_MSG%", logged_out ? "Logged out" : "");
         page.replace("%DEVICE_NAME%", deviceName_());
         page.replace("%DEVICE_STATUS%", _device_status);
         const auto role = stackRole_();
@@ -163,9 +165,10 @@ private:
         page.replace("%STACK_STATUS%", _stack_status);
         page.replace("%BOARD_TEMP%", formatTemp_(boardTemp_()));
         page.replace("%CPU_TEMP%", formatTemp_(cpuTemp_()));
-        page.replace("%RTC_TIME%", rtcTimeStr_());
+        page.replace("%RTC_DATE%", rtcDateStr_());
+        page.replace("%RTC_TIME%", rtcTimeOnlyStr_());
         page.replace("%RTC_TEMP%", formatTemp_(rtcTemp_()));
-        page.replace("%FAN_STATUS%", fanStatusStr_());
+        page.replace("%FAN_STATUS_ICON%", fanStatusIcon_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         sendHtml_(request, page, set_cookie);
     }
@@ -182,7 +185,17 @@ private:
         page.replace("%WIFI_MODE%", _wifi.ap() ? "AP" : "STA");
         page.replace("%WIFI_CUR_SSID%", _wifi.ap() ? _wifi.apSsid() : _wifi.ssid());
         page.replace("%WIFI_IP%", wifiIp_());
-        page.replace("%WIFI_STA_SEG%", wifiStaSegment_());
+        if (_wifi.ap())
+        {
+            page.replace("%WIFI_STA_ROW%", "");
+        }
+        else
+        {
+            String row = "<tr><td>STA</td><td><strong>";
+            row += wifiStaStatus_();
+            row += "</strong></td></tr>";
+            page.replace("%WIFI_STA_ROW%", row);
+        }
         page.replace("%WIFI_STA_SEL%", _wifi.ap() ? "" : "selected");
         page.replace("%WIFI_AP_SEL%", _wifi.ap() ? "selected" : "");
         page.replace("%WIFI_SSID%", _wifi.ssid());
@@ -255,7 +268,7 @@ private:
             _log->info(F("WEB"), F("GET /admin (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceAdminHtml);
         page.replace("%NAV%", navHtml_());
-        page.replace("%ADMIN_STATUS%", (_cli_auth && _cli_auth->adminPasswordSet()) ? "set" : "not set");
+        page.replace("%ADMIN_STATUS%", (_cli_auth && _cli_auth->adminPasswordSet()) ? "установлен" : "не установлен");
         sendHtml_(request, page, set_cookie);
     }
 
@@ -335,8 +348,82 @@ private:
         page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
         page.replace("%STACK_MASTER_HOST%", stackMasterHost_());
         page.replace("%STACK_STATUS%", _stack_status);
+        if (role == ConfigsManagerIface::StackRole::Master)
+        {
+            String self = String("<p class=\"status\">Текущее устройство: <strong>") + deviceName_() +
+                          "</strong> | IP: <strong>" + wifiIp_() + "</strong></p>";
+            page.replace("%STACK_SELF_BLOCK%", self);
+            page.replace("%STACK_NODES_BLOCK%", stackNodesBlockHtml_());
+        }
+        else
+        {
+            page.replace("%STACK_SELF_BLOCK%", "");
+            page.replace("%STACK_NODES_BLOCK%", "");
+        }
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         sendHtml_(request, page, set_cookie);
+    }
+
+    void handleControllers_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("GET /controllers (ip=%s)"), requestIp_(request).c_str());
+        String page = FPSTR(kWebInterfaceControllersHtml);
+        page.replace("%NAV%", navHtml_());
+        if (_controllers)
+        {
+            const bool enabled = _controllers->sockets().controllerEnabled();
+            page.replace("%SOCKETS_ENABLED_CHECKED%", enabled ? "checked" : "");
+            page.replace("%SOCKETS_ENABLED_LABEL%", enabled ? "включены" : "выключены");
+        }
+        else
+        {
+            page.replace("%SOCKETS_ENABLED_CHECKED%", "");
+            page.replace("%SOCKETS_ENABLED_LABEL%", "недоступны");
+        }
+        page.replace("%CONTROLLERS_STATUS%", _controllers_status);
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        sendHtml_(request, page, set_cookie);
+    }
+
+    void handleControllersSave_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!_controllers)
+        {
+            _controllers_status = "Контроллеры недоступны";
+            sendRedirect_(request, "/controllers", set_cookie);
+            return;
+        }
+        const bool enabled = request->hasParam("sockets_enabled", true);
+        bool changed = false;
+        if (_controllers->sockets().controllerEnabled() != enabled)
+        {
+            _controllers->sockets().setControllerEnabled(enabled);
+            changed = true;
+        }
+        bool ok = true;
+        if (changed)
+        {
+            if (!_configs_manager)
+            {
+                ok = false;
+                _controllers_status = "Config manager missing";
+            }
+            else if (!_configs_manager->save())
+            {
+                ok = false;
+                _controllers_status = "Save failed";
+            }
+        }
+        if (ok)
+            _controllers_status = changed ? "Updated" : "No changes";
+        sendRedirect_(request, "/controllers", set_cookie);
     }
 
     void handleSockets_(AsyncWebServerRequest *request)
@@ -351,6 +438,8 @@ private:
         page.replace("%SOCKETS%", listSocketsHtml_());
         page.replace("%DINPUT_JSON%", socketPortOptionsJson_(PortIO::PinType::DInput));
         page.replace("%RELAY_JSON%", socketPortOptionsJson_(PortIO::PinType::Relay));
+        page.replace("%DINPUT_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::DInput));
+        page.replace("%RELAY_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%SOCKETS_STATUS%", _sockets_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         sendHtml_(request, page, set_cookie);
@@ -373,7 +462,7 @@ private:
         page.replace("%TGBOT_PROXY_HOST%", _tgbot ? _tgbot->proxyHost() : String(""));
         page.replace("%TGBOT_PROXY_PORT%", _tgbot ? String((unsigned)_tgbot->proxyPort()) : String("0"));
         page.replace("%TGBOT_PROXY_PATH%", _tgbot ? _tgbot->proxyPath() : String(""));
-        page.replace("%TGBOT_ALLOWED_USERS%", allowedUsersCsv_());
+        page.replace("%TGBOT_ALLOWED_USERS_ROWS%", allowedUsersRowsHtml_());
         page.replace("%TGBOT_STATUS%", _tgbot_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         sendHtml_(request, page, set_cookie);
@@ -394,13 +483,28 @@ private:
         bool changed = false;
         for (size_t i = 0; i < SocketController::kSocketCount; ++i)
         {
-            const String idx = String((unsigned)i);
+            const auto *cfg = sockets.configByIndex(i);
+            if (!cfg)
+                continue;
+            const String idx = String((unsigned)cfg->id);
             const String prefix = String("s") + idx + "_";
-            const bool enabled = request->hasParam(prefix + "en", true);
-            String name = paramValue_(request, prefix + "name");
-            String btn = paramValue_(request, prefix + "btn");
-            String relay = paramValue_(request, prefix + "relay");
-            String action = paramValue_(request, prefix + "action");
+            const String en_key = prefix + "en";
+            const String name_key = prefix + "name";
+            const String btn_key = prefix + "btn";
+            const String relay_key = prefix + "relay";
+            const String action_key = prefix + "action";
+            const bool has_any = request->hasParam(en_key, true) ||
+                                 request->hasParam(name_key, true) ||
+                                 request->hasParam(btn_key, true) ||
+                                 request->hasParam(relay_key, true) ||
+                                 request->hasParam(action_key, true);
+            if (!has_any)
+                continue;
+            const bool enabled = request->hasParam(en_key, true);
+            String name = paramValue_(request, name_key);
+            String btn = paramValue_(request, btn_key);
+            String relay = paramValue_(request, relay_key);
+            String action = paramValue_(request, action_key);
             name.trim();
             uint8_t btn_port = SocketController::kInvalidPort;
             uint8_t relay_port = SocketController::kInvalidPort;
@@ -410,34 +514,31 @@ private:
                 _sockets_status = String("Invalid port for socket ") + idx;
                 break;
             }
-            const auto *cfg = sockets.config(i);
-            if (!cfg)
-                continue;
             if (cfg->name != name)
-                sockets.setName(i, name);
+                sockets.setName(cfg->id, name);
             if (cfg->button_port != btn_port)
-                sockets.setButtonPort(i, btn_port);
+                sockets.setButtonPort(cfg->id, btn_port);
             if (cfg->relay_port != relay_port)
-                sockets.setRelayPort(i, relay_port);
+                sockets.setRelayPort(cfg->id, relay_port);
             if (cfg->enabled != enabled)
-                sockets.setEnabled(i, enabled);
+                sockets.setEnabled(cfg->id, enabled);
             if (action.length())
             {
                 String act = action;
                 act.toLowerCase();
                 if (act == "on")
                 {
-                    sockets.setRelay(i, true);
+                    sockets.setRelay(cfg->id, true);
                     changed = true;
                 }
                 else if (act == "off")
                 {
-                    sockets.setRelay(i, false);
+                    sockets.setRelay(cfg->id, false);
                     changed = true;
                 }
                 else if (act == "toggle")
                 {
-                    sockets.toggleRelay(i);
+                    sockets.toggleRelay(cfg->id);
                     changed = true;
                 }
             }
@@ -526,10 +627,16 @@ private:
             }
         }
 
-        if (_tgbot_menu && request->hasParam("allowed_users", true))
+        if (_tgbot_menu)
         {
-            String raw = request->getParam("allowed_users", true)->value();
-            std::vector<String> users = splitCsv_(raw);
+            std::vector<TelegramMenu::AllowedUser> users;
+            String err;
+            if (!parseAllowedUsers_(request, users, err))
+            {
+                _tgbot_status = err.length() ? err : "Invalid allowed users";
+                sendRedirect_(request, "/telegram", set_cookie);
+                return;
+            }
             _tgbot_menu->setAllowedUsers(users);
             changed = true;
         }
@@ -546,15 +653,6 @@ private:
             _tgbot_status = "Saved";
 
         sendRedirect_(request, "/telegram", set_cookie);
-    }
-
-    void handleLogout_(AsyncWebServerRequest *request)
-    {
-        clearSession_();
-        auto *response = request->beginResponse(302);
-        response->addHeader("Location", "/?logout=1");
-        response->addHeader("Set-Cookie", clearSessionCookie_());
-        request->send(response);
     }
 
     String listFilesHtml_()
@@ -748,57 +846,72 @@ private:
     String listSocketsHtml_()
     {
         if (!_controllers)
-            return "<tr><td colspan=\"5\" style=\"color:#94a3b8\"><strong>No sockets</strong></td></tr>";
+            return "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Нет розеток</strong></td></tr>";
         String items;
         SocketController &sockets = _controllers->sockets();
         bool tmp_state = false;
-        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
-        {
-            const auto *cfg = sockets.config(i);
-            if (!cfg)
-                continue;
-            const bool on = sockets.relayState(i, tmp_state) ? tmp_state : false;
-            items += "<tr";
-            items += on ? " class=\"row-on\"" : " class=\"row-off\"";
-            items += "><td class=\"right\"><strong>";
-            items += String((unsigned)i);
+        auto appendRow = [&](const SocketController::SocketConfig &cfg, bool enabled) {
+            const bool on = enabled && sockets.relayState(cfg.id, tmp_state) ? tmp_state : false;
+            items += "<tr><td class=\"right\"><strong>";
+            items += String((unsigned)cfg.id);
             items += "</strong></td><td><input type=\"checkbox\" name=\"s";
-            items += String((unsigned)i);
+            items += String((unsigned)cfg.id);
             items += "_en\"";
-            if (cfg->enabled)
+            if (enabled)
                 items += " checked";
             items += "></td><td><input class=\"field name\" type=\"text\" name=\"s";
-            items += String((unsigned)i);
+            items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
-            appendHtmlEscaped_(items, cfg->name.c_str());
+            appendHtmlEscaped_(items, cfg.name.c_str());
             items += "\"></td><td><select class=\"field mini socket-select\" data-type=\"dinput\" data-selected=\"";
-            if (cfg->button_port != SocketController::kInvalidPort)
-                items += String((unsigned)cfg->button_port);
+            if (cfg.button_port != SocketController::kInvalidPort)
+                items += String((unsigned)cfg.button_port);
             items += "\" name=\"s";
-            items += String((unsigned)i);
+            items += String((unsigned)cfg.id);
             items += "_btn\"></select></td><td><select class=\"field mini socket-select\" data-type=\"relay\" data-selected=\"";
-            if (cfg->relay_port != SocketController::kInvalidPort)
-                items += String((unsigned)cfg->relay_port);
+            if (cfg.relay_port != SocketController::kInvalidPort)
+                items += String((unsigned)cfg.relay_port);
             items += "\" name=\"s";
-            items += String((unsigned)i);
-            items += "_relay\"></select></td><td>";
-            items += "<button class=\"btn btn-sm btn-on\" name=\"s";
-            items += String((unsigned)i);
-            items += "_action\" value=\"on\" type=\"submit\">ON</button> ";
-            items += "<button class=\"btn btn-sm btn-off\" name=\"s";
-            items += String((unsigned)i);
-            items += "_action\" value=\"off\" type=\"submit\">OFF</button> ";
-            items += "<button class=\"btn btn-sm btn-toggle\" name=\"s";
-            items += String((unsigned)i);
-            items += "_action\" value=\"toggle\" type=\"submit\">TOGGLE</button>";
-            items += " <strong>";
-            items += on ? "on" : "off";
-            items += "</strong></td></tr>";
+            items += String((unsigned)cfg.id);
+            items += "_relay\"></select></td><td class=\"center\"><span class=\"status-dot ";
+            items += on ? "status-on" : "status-off";
+            items += "\"></span></td><td>";
+            items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-action=\"s";
+            items += String((unsigned)cfg.id);
+            items += "_action\"";
+            if (on)
+                items += " checked";
+            if (!enabled)
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "<input type=\"hidden\" name=\"s";
+            items += String((unsigned)cfg.id);
+            items += "_action\" value=\"\">";
+            items += "</td></tr>";
+        };
+
+        const SocketController::SocketConfig *first_disabled = nullptr;
+        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+        {
+            const auto *cfg = sockets.configByIndex(i);
+            if (!cfg)
+                continue;
+            if (cfg->enabled)
+            {
+                appendRow(*cfg, true);
+            }
+            else if (!first_disabled)
+            {
+                first_disabled = cfg;
+            }
         }
+        if (first_disabled)
+            appendRow(*first_disabled, false);
         if (items.length() == 0)
-            items = "<tr><td colspan=\"6\" style=\"color:#94a3b8\"><strong>No sockets</strong></td></tr>";
+            items = "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Нет розеток</strong></td></tr>";
         return items;
     }
+
 
     String listI2cHtml_()
     {
@@ -833,6 +946,55 @@ private:
         return items;
     }
 
+    String stackNodesBlockHtml_() const
+    {
+        String out;
+        out += "<div class=\"section\">";
+        out += "<h2>Слейвы</h2>";
+        out += "<table><thead><tr>";
+        out += "<th>Unit</th><th>DeviceName</th><th>NodeID</th><th>IP</th>";
+        out += "</tr></thead><tbody>";
+        out += listStackNodesHtml_();
+        out += "</tbody></table>";
+        out += "</div>";
+        return out;
+    }
+
+    String listStackNodesHtml_() const
+    {
+        if (!_stack_master)
+            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Нет слейвов</strong></td></tr>";
+        const size_t count = _stack_master->nodeCount();
+        if (count == 0)
+            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Нет слейвов</strong></td></tr>";
+        String items;
+        for (size_t i = 0; i < count; ++i)
+        {
+            const uint32_t id = _stack_master->nodeIdAt(i);
+            const String name = _stack_master->nodeNameAt(i);
+            const String ip = _stack_master->nodeIpAt(i);
+            items += "<tr><td><strong>";
+            if (name.length())
+                appendHtmlEscaped_(items, name.c_str());
+            else
+                items += stackNodeIdHex_(id);
+            items += "</strong></td><td>";
+            if (name.length())
+                appendHtmlEscaped_(items, name.c_str());
+            else
+                items += "-";
+            items += "</td><td>";
+            items += stackNodeIdHex_(id);
+            items += "</td><td>";
+            if (ip.length())
+                appendHtmlEscaped_(items, ip.c_str());
+            else
+                items += "-";
+            items += "</td></tr>";
+        }
+        return items;
+    }
+
     String socketPortOptionsJson_(PortIO::PinType type) const
     {
         String out;
@@ -843,10 +1005,61 @@ private:
             const auto &p = ActiveBoardProfile::PORTS[i];
             if (p.caps == Cap::None || p.type != type)
                 continue;
+            if (p.backend == PortIO::Backend::Extender)
+            {
+                if (!_ext)
+                    continue;
+                const uint8_t dev = p.u.ext.dev;
+                const auto *devs = _ext->devs();
+                if (!devs || dev >= _ext->devCount())
+                    continue;
+                if (devs[dev].type != Extender::Type::MCP23017)
+                    continue;
+                if (!_ext->isPresent(dev))
+                    continue;
+            }
             if (!first)
                 out += ",";
             out += String((unsigned)i);
             first = false;
+        }
+        out += "]";
+        return out;
+    }
+
+    String socketUsedPortsJson_(PortIO::PinType type) const
+    {
+        String out;
+        out += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            SocketController &sockets = _controllers->sockets();
+            bool used[PortIO::PORT_COUNT] = {};
+            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+            {
+                const auto *cfg = sockets.configByIndex(i);
+                if (!cfg)
+                    continue;
+                const uint8_t btn = cfg->button_port;
+                const uint8_t relay = cfg->relay_port;
+                if (btn != SocketController::kInvalidPort && btn < PortIO::PORT_COUNT)
+                    used[btn] = true;
+                if (relay != SocketController::kInvalidPort && relay < PortIO::PORT_COUNT)
+                    used[relay] = true;
+            }
+            for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+            {
+                if (!used[i])
+                    continue;
+                const auto &p = ActiveBoardProfile::PORTS[i];
+                if (p.caps == Cap::None || p.type != type)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += String((unsigned)i);
+                first = false;
+            }
         }
         out += "]";
         return out;
@@ -1228,11 +1441,11 @@ private:
 #if defined(ESP32)
         if (_log && _log->ready())
             _log->info(F("WEB"), F("Reboot request (ip=%s)"), requestIp_(request).c_str());
-        sendText_(request, 200, "text/plain", "Rebooting", set_cookie);
+        sendRedirect_(request, "/", set_cookie);
         delay(100);
         ESP.restart();
 #else
-        sendText_(request, 200, "text/plain", "Not supported", set_cookie);
+        sendRedirect_(request, "/", set_cookie);
 #endif
     }
 
@@ -1448,7 +1661,9 @@ private:
     String navHtml_() const
     {
         String nav = F("<div class=\"nav\">");
-        nav += F("<a href=\"/\">FCPLC</a> | <a href=\"/wifi\">Wi-Fi</a> | <a href=\"/manage\">Прошивка и файлы</a> | <a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a> | <a href=\"/stack\">Стек</a> | <a href=\"/sockets\">Розетки</a> | <a href=\"/telegram\">Telegram</a> | <a href=\"/admin\">Admin</a> | <a href=\"/logs\">Logs</a> | <a href=\"/logout\">Logout</a>");
+        nav += F("<a href=\"/\">FCPLC</a> | <a href=\"/wifi\">Wi-Fi</a> | <a href=\"/manage\">Прошивка и файлы</a> | ");
+        nav += F("<a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a> | <a href=\"/stack\">Стек</a> | ");
+        nav += F("<a href=\"/controllers\">Контроллеры</a> | <a href=\"/telegram\">Telegram</a> | <a href=\"/admin\">Админка</a> | <a href=\"/logs\">Logs</a>");
         nav += F("</div>");
         return nav;
     }
@@ -1711,38 +1926,138 @@ private:
         return String(buf);
     }
 
-    String allowedUsersCsv_() const
+    String rtcDateStr_() const
+    {
+        if (!_rtc)
+            return String("n/a");
+        Ds3231Mz::DateTime dt{};
+        if (!_rtc->Time(dt))
+            return String("n/a");
+        char buf[16] = {};
+        snprintf(buf, sizeof(buf), "%04u-%02u-%02u",
+                 (unsigned)dt.year, (unsigned)dt.month, (unsigned)dt.day);
+        return String(buf);
+    }
+
+    String rtcTimeOnlyStr_() const
+    {
+        if (!_rtc)
+            return String("n/a");
+        Ds3231Mz::DateTime dt{};
+        if (!_rtc->Time(dt))
+            return String("n/a");
+        char buf[16] = {};
+        snprintf(buf, sizeof(buf), "%02u:%02u:%02u",
+                 (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
+        return String(buf);
+    }
+
+    String allowedUsersRowsHtml_() const
     {
         if (!_tgbot_menu)
             return "";
-        const auto &users = _tgbot_menu->allowedUsers();
         String out;
-        for (size_t i = 0; i < users.size(); ++i)
+        const auto &users = _tgbot_menu->allowedUsers();
+        const size_t max = TelegramMenu::kMaxAllowedUsers;
+        auto appendRow = [&](size_t row, const TelegramMenu::AllowedUser &u, bool enabled) {
+            out += "<tr><td>";
+            out += String((unsigned)(row + 1));
+            out += "</td><td><input class=\"mini\" type=\"text\" name=\"au";
+            out += String((unsigned)row);
+            out += "_user\" value=\"";
+            appendHtmlEscaped_(out, u.username.c_str());
+            out += "\"></td><td><input class=\"mini\" type=\"text\" name=\"au";
+            out += String((unsigned)row);
+            out += "_chat\" value=\"";
+            if (u.chat_id)
+                out += String((long long)u.chat_id);
+            out += "\"></td><td><input type=\"checkbox\" name=\"au";
+            out += String((unsigned)row);
+            out += "_admin\"";
+            if (u.is_admin)
+                out += " checked";
+            out += "></td><td><input type=\"checkbox\" name=\"au";
+            out += String((unsigned)row);
+            out += "_notify\"";
+            if (u.is_notify)
+                out += " checked";
+            out += "></td><td><input type=\"checkbox\" name=\"au";
+            out += String((unsigned)row);
+            out += "_enabled\"";
+            if (enabled)
+                out += " checked";
+            out += "></td></tr>";
+        };
+
+        size_t row = 0;
+        bool added_disabled = false;
+        for (size_t i = 0; i < users.size() && row < max; ++i)
         {
-            if (i > 0)
-                out += ", ";
-            out += users[i];
+            const auto &u = users[i];
+            if (u.enabled)
+            {
+                appendRow(row++, u, true);
+            }
+            else if (!added_disabled)
+            {
+                appendRow(row++, u, false);
+                added_disabled = true;
+            }
+        }
+        if (!added_disabled && row < max)
+        {
+            TelegramMenu::AllowedUser empty{};
+            appendRow(row++, empty, false);
         }
         return out;
     }
 
-    static std::vector<String> splitCsv_(const String &input)
+    static bool parseAllowedUsers_(AsyncWebServerRequest *request, std::vector<TelegramMenu::AllowedUser> &out,
+                                   String &err)
     {
-        std::vector<String> out;
-        String s = input;
-        size_t start = 0;
-        while (start < s.length())
+        out.clear();
+        if (!request)
+            return true;
+        const size_t max = TelegramMenu::kMaxAllowedUsers;
+        for (size_t i = 0; i < max; ++i)
         {
-            int comma = s.indexOf(',', (int)start);
-            if (comma < 0)
-                comma = s.length();
-            String token = s.substring(start, (size_t)comma);
-            token.trim();
-            if (token.length())
-                out.push_back(token);
-            start = (size_t)comma + 1;
+            const String user_key = String("au") + String((unsigned)i) + "_user";
+            const String chat_key = String("au") + String((unsigned)i) + "_chat";
+            const String admin_key = String("au") + String((unsigned)i) + "_admin";
+            const String notify_key = String("au") + String((unsigned)i) + "_notify";
+            const String enabled_key = String("au") + String((unsigned)i) + "_enabled";
+            const bool has_any = request->hasParam(user_key, true) ||
+                                 request->hasParam(chat_key, true) ||
+                                 request->hasParam(admin_key, true) ||
+                                 request->hasParam(notify_key, true) ||
+                                 request->hasParam(enabled_key, true);
+            if (!has_any)
+                continue;
+            String user = request->hasParam(user_key, true) ? request->getParam(user_key, true)->value() : "";
+            String chat = request->hasParam(chat_key, true) ? request->getParam(chat_key, true)->value() : "";
+            user.trim();
+            chat.trim();
+            TelegramMenu::AllowedUser u{};
+            u.username = user;
+            u.is_admin = request->hasParam(admin_key, true);
+            u.is_notify = request->hasParam(notify_key, true);
+            u.enabled = request->hasParam(enabled_key, true);
+            if (chat.length())
+            {
+                const char *c = chat.c_str();
+                for (size_t j = 0; c[j]; ++j)
+                {
+                    if (c[j] < '0' || c[j] > '9')
+                    {
+                        err = "Invalid chat id";
+                        return false;
+                    }
+                }
+                u.chat_id = (int64_t)strtoll(c, nullptr, 10);
+            }
+            out.push_back(u);
         }
-        return out;
+        return true;
     }
 
     float rtcTemp_() const
@@ -1755,11 +2070,17 @@ private:
         return temp_c;
     }
 
-    const char *fanStatusStr_() const
+    String fanStatusIcon_() const
     {
         if (!_plc)
             return "n/a";
-        return _plc->fanStatus() ? "On" : "Off";
+        const bool on = _plc->fanStatus();
+        String out = "<span class=\"status-dot ";
+        out += on ? "status-on" : "status-off";
+        out += "\" title=\"";
+        out += on ? "Включен" : "Выключен";
+        out += "\"></span>";
+        return out;
     }
 
     void sendHtml_(AsyncWebServerRequest *request, const String &page, bool set_cookie)
@@ -1795,16 +2116,18 @@ private:
         return cookie;
     }
 
-    static String clearSessionCookie_()
-    {
-        return "plc_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict";
-    }
-
     static void appendHex_(String &out, uint32_t value)
     {
         char buf[9] = {};
         snprintf(buf, sizeof(buf), "%08lX", (unsigned long)value);
         out += buf;
+    }
+
+    static String stackNodeIdHex_(uint32_t value)
+    {
+        String out = "0x";
+        appendHex_(out, value);
+        return out;
     }
 
     static uint32_t rand32_()
@@ -1907,12 +2230,14 @@ private:
     String _stack_status;
     String _device_status;
     String _sockets_status;
+    String _controllers_status;
     bool _auth_enabled = false;
     String _auth_user;
     String _auth_pass;
     CliConsole *_cli_auth = nullptr;
     Extender *_ext = nullptr;
     Logger *_log = nullptr;
+    StackMaster *_stack_master = nullptr;
     String _session_token;
     uint32_t _session_expire_ms = 0;
     uint32_t _session_ttl_ms = 10u * 60u * 1000u;

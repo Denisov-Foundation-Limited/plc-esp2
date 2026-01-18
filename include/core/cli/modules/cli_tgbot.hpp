@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "core/network/telegram/telegram.hpp"
+#include "core/network/telegram/telegram_menu.hpp"
 
 template <typename ConsoleT>
 class CLITgbotT
@@ -33,9 +34,9 @@ public:
         _c._io->println(F("    token <value>           - set bot token"));
         _c._io->println(F("    chat <id>               - set chat id"));
         _c._io->println(F("    insecure on|off         - TLS check"));
-        _c._io->println(F("    allow list              - show allowed usernames"));
-        _c._io->println(F("    allow add <username>    - add allowed username"));
-        _c._io->println(F("    allow del <username>    - remove allowed username"));
+        _c._io->println(F("    allow list              - show allowed users"));
+        _c._io->println(F("    allow add <username> [chat_id] [admin] [notify] [off] - add allowed user"));
+        _c._io->println(F("    allow del <username>    - remove allowed user"));
         _c._io->println(F("    allow clear             - clear allowed list"));
         _c._io->println(F("    send <text>             - send message"));
         _c._io->println(F("    poll                    - poll commands"));
@@ -49,9 +50,9 @@ public:
         _c._io->println(F("  token <value>           - set bot token"));
         _c._io->println(F("  chat <id>               - set chat id"));
         _c._io->println(F("  insecure on|off         - TLS check"));
-        _c._io->println(F("  allow list              - show allowed usernames"));
-        _c._io->println(F("  allow add <username>    - add allowed username"));
-        _c._io->println(F("  allow del <username>    - remove allowed username"));
+        _c._io->println(F("  allow list              - show allowed users"));
+        _c._io->println(F("  allow add <username> [chat_id] [admin] [notify] [off] - add allowed user"));
+        _c._io->println(F("  allow del <username>    - remove allowed user"));
         _c._io->println(F("  allow clear             - clear allowed list"));
         _c._io->println(F("  send <text>             - send message"));
         _c._io->println(F("  poll                    - poll commands"));
@@ -78,8 +79,23 @@ public:
                 _c._io->println(F("Allowed list empty"));
             else
             {
-                for (const auto &name : users)
-                    _c._io->println(name);
+                _c._io->println(F("ID  Username           ChatID       Admin Notify Enabled"));
+                _c._io->println(F("--  -----------------  -----------  ----- ------ -------"));
+                for (size_t i = 0; i < users.size(); ++i)
+                {
+                    const auto &u = users[i];
+                    _c._io->print(String((unsigned)(i + 1)));
+                    _c._io->print(F("  "));
+                    _c._io->print(u.username.length() ? u.username : String("-"));
+                    _c._io->print(F("  "));
+                    _c._io->print(u.chat_id ? String((long long)u.chat_id) : String("-"));
+                    _c._io->print(F("  "));
+                    _c._io->print(u.is_admin ? F("yes") : F("no"));
+                    _c._io->print(F("   "));
+                    _c._io->print(u.is_notify ? F("yes") : F("no"));
+                    _c._io->print(F("   "));
+                    _c._io->println(u.enabled ? F("yes") : F("no"));
+                }
             }
             _c.printPrompt_();
             return true;
@@ -88,7 +104,14 @@ public:
         {
             String v = cmd.substring(10);
             v.trim();
-            auto res = _c._tgbot_menu.addAllowedUser(v);
+            TelegramMenu::AllowedUser u{};
+            if (!parseAllowedUser_(v, u))
+            {
+                _c._io->println(F("Invalid user spec"));
+                _c.printPrompt_();
+                return true;
+            }
+            auto res = _c._tgbot_menu.addAllowedUser(u);
             const uint8_t code = static_cast<uint8_t>(res);
             if (code == 0)
                 _c._io->println(F("OK"));
@@ -97,7 +120,7 @@ public:
             else if (code == 3)
                 _c._io->println(F("List full"));
             else
-                _c._io->println(F("Invalid username"));
+                _c._io->println(F("Invalid id"));
             _c.printPrompt_();
             return true;
         }
@@ -212,4 +235,56 @@ public:
 
 private:
     ConsoleT &_c;
+
+    static bool parseAllowedUser_(const String &input, TelegramMenu::AllowedUser &out)
+    {
+        out = TelegramMenu::AllowedUser{};
+        String s = input;
+        s.trim();
+        if (s.length() == 0)
+            return false;
+        int start = 0;
+        int part = 0;
+        while (start < (int)s.length())
+        {
+            int space = s.indexOf(' ', start);
+            if (space < 0)
+                space = s.length();
+            String token = s.substring(start, (size_t)space);
+            token.trim();
+            if (token.length())
+            {
+                if (part == 0)
+                {
+                    out.username = token;
+                }
+                else if (token == "admin")
+                {
+                    out.is_admin = true;
+                }
+                else if (token == "notify")
+                {
+                    out.is_notify = true;
+                }
+                else
+                {
+                    const char *c = token.c_str();
+                    bool numeric = true;
+                    for (size_t i = 0; c[i]; ++i)
+                    {
+                        if (c[i] < '0' || c[i] > '9')
+                        {
+                            numeric = false;
+                            break;
+                        }
+                    }
+                    if (numeric)
+                        out.chat_id = (int64_t)strtoll(c, nullptr, 10);
+                }
+            }
+            start = space + 1;
+            ++part;
+        }
+        return out.username.length() > 0;
+    }
 };

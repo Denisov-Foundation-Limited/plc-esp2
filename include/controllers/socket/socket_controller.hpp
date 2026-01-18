@@ -26,6 +26,7 @@ public:
 
     struct SocketConfig
     {
+        uint8_t id = 0;
         bool enabled = false;
         uint8_t button_port = kInvalidPort;
         uint8_t relay_port = kInvalidPort;
@@ -55,19 +56,41 @@ public:
                 continue;
             }
             JsonObjectConst obj = v.as<JsonObjectConst>();
-            SocketConfig &cfg = _cfg[idx];
+            uint8_t id = (uint8_t)idx;
+            if (obj["id"].is<unsigned>())
+            {
+                const unsigned raw = obj["id"].as<unsigned>();
+                if (raw <= 0xFFu)
+                    id = (uint8_t)raw;
+            }
+            size_t dst = 0;
+            if (!indexById_(id, dst))
+            {
+                ++idx;
+                continue;
+            }
+            SocketConfig &cfg = _cfg[dst];
+            cfg.id = id;
+            bool enabled_set = false;
             if (obj["enabled"].is<bool>())
+            {
                 cfg.enabled = obj["enabled"].as<bool>();
+                enabled_set = true;
+            }
             if (obj["name"].is<const char *>())
                 cfg.name = obj["name"].as<const char *>();
             parsePort_(obj["button"], cfg.button_port);
             parsePort_(obj["relay"], cfg.relay_port);
+            if (!enabled_set)
+                cfg.enabled = true;
             ++idx;
         }
     }
 
     bool begin()
     {
+        if (!_controller_enabled)
+            return true;
         for (size_t i = 0; i < kSocketCount; ++i)
         {
             SocketConfig &cfg = _cfg[i];
@@ -83,6 +106,8 @@ public:
 
     void task()
     {
+        if (!_controller_enabled)
+            return;
         for (size_t i = 0; i < kSocketCount; ++i)
         {
             SocketConfig &cfg = _cfg[i];
@@ -104,9 +129,12 @@ public:
         }
     }
 
-    bool setRelay(size_t idx, bool on)
+    bool setRelay(size_t id, bool on)
     {
-        if (idx >= kSocketCount)
+        if (!_controller_enabled)
+            return false;
+        size_t idx = 0;
+        if (!indexById_(id, idx))
             return false;
         SocketConfig &cfg = _cfg[idx];
         SocketState &st = _state[idx];
@@ -120,9 +148,12 @@ public:
         return true;
     }
 
-    bool toggleRelay(size_t idx)
+    bool toggleRelay(size_t id)
     {
-        if (idx >= kSocketCount)
+        if (!_controller_enabled)
+            return false;
+        size_t idx = 0;
+        if (!indexById_(id, idx))
             return false;
         SocketConfig &cfg = _cfg[idx];
         SocketState &st = _state[idx];
@@ -134,9 +165,12 @@ public:
         return true;
     }
 
-    bool relayState(size_t idx, bool &out) const
+    bool relayState(size_t id, bool &out) const
     {
-        if (idx >= kSocketCount)
+        if (!_controller_enabled)
+            return false;
+        size_t idx = 0;
+        if (!indexById_(id, idx))
             return false;
         const SocketConfig &cfg = _cfg[idx];
         const SocketState &st = _state[idx];
@@ -150,9 +184,10 @@ public:
     bool toggleRelayById(uint8_t id) { return toggleRelay(id); }
     bool relayStateById(uint8_t id, bool &out) const { return relayState(id, out); }
 
-    bool setEnabled(size_t idx, bool enable)
+    bool setEnabled(size_t id, bool enable)
     {
-        if (idx >= kSocketCount)
+        size_t idx = 0;
+        if (!indexById_(id, idx))
             return false;
         SocketConfig &cfg = _cfg[idx];
         SocketState &st = _state[idx];
@@ -169,9 +204,10 @@ public:
         return true;
     }
 
-    bool setButtonPort(size_t idx, uint8_t port)
+    bool setButtonPort(size_t id, uint8_t port)
     {
-        if (idx >= kSocketCount)
+        size_t idx = 0;
+        if (!indexById_(id, idx))
             return false;
         SocketConfig &cfg = _cfg[idx];
         SocketState &st = _state[idx];
@@ -183,9 +219,10 @@ public:
         return true;
     }
 
-    bool setRelayPort(size_t idx, uint8_t port)
+    bool setRelayPort(size_t id, uint8_t port)
     {
-        if (idx >= kSocketCount)
+        size_t idx = 0;
+        if (!indexById_(id, idx))
             return false;
         SocketConfig &cfg = _cfg[idx];
         SocketState &st = _state[idx];
@@ -197,23 +234,40 @@ public:
         return true;
     }
 
-    bool setName(size_t idx, const String &name)
+    bool setName(size_t id, const String &name)
     {
-        if (idx >= kSocketCount)
+        size_t idx = 0;
+        if (!indexById_(id, idx))
             return false;
         _cfg[idx].name = name;
         _dirty = true;
         return true;
     }
 
-    const SocketConfig *config(size_t idx) const
+    const SocketConfig *config(size_t id) const
+    {
+        size_t idx = 0;
+        if (!indexById_(id, idx))
+            return nullptr;
+        return &_cfg[idx];
+    }
+
+    const SocketState *state(size_t id) const
+    {
+        size_t idx = 0;
+        if (!indexById_(id, idx))
+            return nullptr;
+        return &_state[idx];
+    }
+
+    const SocketConfig *configByIndex(size_t idx) const
     {
         if (idx >= kSocketCount)
             return nullptr;
         return &_cfg[idx];
     }
 
-    const SocketState *state(size_t idx) const
+    const SocketState *stateByIndex(size_t idx) const
     {
         if (idx >= kSocketCount)
             return nullptr;
@@ -224,8 +278,11 @@ public:
     {
         for (size_t i = 0; i < kSocketCount; ++i)
         {
-            JsonObject obj = out.add<JsonObject>();
             const SocketConfig &cfg = _cfg[i];
+            if (!cfg.enabled)
+                continue;
+            JsonObject obj = out.add<JsonObject>();
+            obj["id"] = cfg.id;
             obj["enabled"] = cfg.enabled;
             if (cfg.name.length())
                 obj["name"] = cfg.name;
@@ -291,10 +348,32 @@ public:
         return true;
     }
 
+    bool controllerEnabled() const { return _controller_enabled; }
+
+    void setControllerEnabled(bool enabled)
+    {
+        if (_controller_enabled == enabled)
+            return;
+        _controller_enabled = enabled;
+        if (!_controller_enabled)
+            return;
+        for (size_t i = 0; i < kSocketCount; ++i)
+        {
+            SocketConfig &cfg = _cfg[i];
+            SocketState &st = _state[i];
+            if (!cfg.enabled)
+                continue;
+            st = SocketState{};
+            st.has_button = setupButton_(cfg, st);
+            setupRelay_(cfg, st);
+        }
+    }
+
 private:
     Gpio &_gpio;
     SocketConfig _cfg[kSocketCount];
     SocketState _state[kSocketCount];
+    bool _controller_enabled = true;
     bool _dirty = false;
 
     void reset_()
@@ -303,7 +382,28 @@ private:
         {
             _cfg[i] = SocketConfig{};
             _state[i] = SocketState{};
+            _cfg[i].id = (uint8_t)i;
         }
+    }
+
+    bool indexById_(uint8_t id, size_t &out) const
+    {
+        if (id >= kSocketCount)
+            return false;
+        if (_cfg[id].id == id)
+        {
+            out = id;
+            return true;
+        }
+        for (size_t i = 0; i < kSocketCount; ++i)
+        {
+            if (_cfg[i].id == id)
+            {
+                out = i;
+                return true;
+            }
+        }
+        return false;
     }
 
     static bool parsePort_(JsonVariantConst v, uint8_t &out)

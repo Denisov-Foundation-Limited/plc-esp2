@@ -150,6 +150,7 @@ struct AppServices
         telegram_menu.setStackMaster(*network.stackMaster());
         telegram_menu.setSockets(controllers.sockets());
         fw_upgrade.setConfigsManager(configs_manager);
+        fw_upgrade.setStackMaster(*network.stackMaster());
         network.setStackConfig(configs_manager);
 #if defined(ESP32)
         if (auto *node = network.stackNode())

@@ -595,12 +595,12 @@ private:
             JsonArray arr = doc["items"].to<JsonArray>();
             for (size_t i = 0; i < SocketController::kSocketCount; ++i)
             {
-                const auto *cfg = _sockets.config(i);
-                const auto *st = _sockets.state(i);
+                const auto *cfg = _sockets.configByIndex(i);
+                const auto *st = _sockets.stateByIndex(i);
                 if (!cfg || !st || !cfg->enabled)
                     continue;
                 JsonObject o = arr.add<JsonObject>();
-                o["id"] = (unsigned)i;
+                o["id"] = (unsigned)cfg->id;
                 o["enabled"] = cfg->enabled;
                 if (cfg->name.length())
                     o["name"] = cfg->name;

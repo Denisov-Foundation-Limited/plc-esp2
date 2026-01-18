@@ -80,8 +80,22 @@ public:
         t["proxy_port"] = (unsigned)_telegram.proxyPort();
         t["proxy_path"] = _telegram.proxyPath();
         JsonArray allowed = t["allowed_users"].to<JsonArray>();
-        for (const auto &name : _telegram_menu.allowedUsers())
-            allowed.add(name);
+        size_t allow_idx = 0;
+        for (const auto &user : _telegram_menu.allowedUsers())
+        {
+            if (!user.enabled)
+                continue;
+            JsonObject u = allowed.add<JsonObject>();
+            u["id"] = (unsigned)(allow_idx + 1);
+            if (user.username.length())
+                u["username"] = user.username;
+            if (user.chat_id)
+                u["chat_id"] = (long long)user.chat_id;
+            u["is_admin"] = user.is_admin;
+            u["is_notify"] = user.is_notify;
+            u["enabled"] = user.enabled;
+            ++allow_idx;
+        }
 
         if (_console.adminPasswordSet())
         {
@@ -188,12 +202,35 @@ private:
 
             if (t["allowed_users"].is<JsonArrayConst>())
             {
-                std::vector<String> users;
+                std::vector<TelegramMenu::AllowedUser> users;
                 JsonArrayConst arr = t["allowed_users"].as<JsonArrayConst>();
                 for (JsonVariantConst v : arr)
                 {
                     if (v.is<const char *>())
-                        users.push_back(v.as<const char *>());
+                    {
+                        TelegramMenu::AllowedUser u{};
+                        u.username = v.as<const char *>();
+                        u.is_admin = true;
+                        users.push_back(u);
+                        continue;
+                    }
+                    if (!v.is<JsonObjectConst>())
+                        continue;
+                    JsonObjectConst obj = v.as<JsonObjectConst>();
+                    TelegramMenu::AllowedUser u{};
+                    if (obj["username"].is<const char *>())
+                        u.username = obj["username"].as<const char *>();
+                    if (obj["id"].is<const char *>())
+                        u.username = obj["id"].as<const char *>();
+                    if (obj["chat_id"].is<long long>())
+                        u.chat_id = (int64_t)obj["chat_id"].as<long long>();
+                    if (obj["is_admin"].is<bool>())
+                        u.is_admin = obj["is_admin"].as<bool>();
+                    if (obj["is_notify"].is<bool>())
+                        u.is_notify = obj["is_notify"].as<bool>();
+                    if (obj["enabled"].is<bool>())
+                        u.enabled = obj["enabled"].as<bool>();
+                    users.push_back(u);
                 }
                 _telegram_menu.setAllowedUsers(users);
             }

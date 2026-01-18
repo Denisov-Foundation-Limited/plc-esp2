@@ -72,6 +72,8 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
     .status { color: var(--muted); font-size: 12px; }
     a { color: #7dd3fc; text-decoration: none; }
     .nav { margin-bottom: 12px; }
+    table.status-table { width: 100%; border-collapse: collapse; margin: 8px 0 18px; }
+    table.status-table td { padding: 6px; border-bottom: 1px solid #1f2937; }
   </style>
 </head>
 <body>
@@ -79,7 +81,14 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Wi-Fi</h1>
-      <p class="status">Режим: <strong>%WIFI_MODE%</strong> | SSID: <strong>%WIFI_CUR_SSID%</strong> | IP: <strong>%WIFI_IP%</strong>%WIFI_STA_SEG%</p>
+      <table class="status-table">
+        <tbody>
+          <tr><td>Режим</td><td><strong>%WIFI_MODE%</strong></td></tr>
+          <tr><td>SSID</td><td><strong>%WIFI_CUR_SSID%</strong></td></tr>
+          <tr><td>IP</td><td><strong>%WIFI_IP%</strong></td></tr>
+          %WIFI_STA_ROW%
+        </tbody>
+      </table>
       <form method="POST" action="/wifi">
         <div class="grid">
           <div>
@@ -97,11 +106,11 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
             <label>Пароль</label>
             <input type="password" name="password" placeholder="Введите пароль для STA">
           </div>
-          <div>
+          <div id="ap-ssid-field">
             <label>AP SSID</label>
             <input type="text" name="ap_ssid" value="%WIFI_AP_SSID%" placeholder="SSID AP">
           </div>
-          <div>
+          <div id="ap-pass-field">
             <label>Пароль AP</label>
             <input type="password" name="ap_password" placeholder="Введите пароль для AP">
           </div>
@@ -113,6 +122,21 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
       </form>
     </div>
   </div>
+  <script>
+    const modeSelect = document.querySelector('select[name="mode"]');
+    const apSsid = document.getElementById('ap-ssid-field');
+    const apPass = document.getElementById('ap-pass-field');
+    function updateApFields() {
+      if (!modeSelect) return;
+      const show = modeSelect.value === 'ap';
+      if (apSsid) apSsid.style.display = show ? '' : 'none';
+      if (apPass) apPass.style.display = show ? '' : 'none';
+    }
+    if (modeSelect) {
+      modeSelect.addEventListener('change', updateApFields);
+      updateApFields();
+    }
+  </script>
 </body>
 </html>
 )HTML";

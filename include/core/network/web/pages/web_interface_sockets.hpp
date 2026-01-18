@@ -53,6 +53,7 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     th, td { text-align: left; padding: 6px; border-bottom: 1px solid #1f2937; }
     th { color: var(--muted); font-weight: 600; }
     .right { text-align: right; }
+    .center { text-align: center; }
     .nav { margin-bottom: 12px; }
     .status { margin: 8px 0 16px; color: var(--accent); font-weight: 600; }
     .field {
@@ -80,10 +81,47 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     .btn-on { background: #22c55e; color: #0b1220; }
     .btn-off { background: #f97316; color: #0b1220; }
     .btn-toggle { background: #38bdf8; color: #0b1220; }
-    .row-on { background: rgba(34, 197, 94, 0.12); }
-    .row-off { background: rgba(148, 163, 184, 0.08); }
+    .status-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
+    }
+    .status-on { background: #22c55e; }
+    .status-off { background: #ef4444; }
     .mini { width: 72px; }
     .name { width: 180px; }
+    .actions { margin-top: 14px; }
+    .switch {
+      display: inline-block;
+      width: 40px;
+      height: 20px;
+      vertical-align: middle;
+      flex: 0 0 auto;
+    }
+    .switch input { display: none; }
+    .track {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      height: 100%;
+      padding: 2px;
+      background: #ef4444;
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      transition: .2s;
+    }
+    .knob {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #0b1220;
+      transition: .2s;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.3);
+    }
+    input:checked + .track { background: #22c55e; }
+    input:checked + .track .knob { transform: translateX(20px); }
   </style>
 </head>
 <body>
@@ -93,24 +131,25 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       <h1>Розетки</h1>
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <div class="status">%SOCKETS_STATUS%</div>
-      <form method="POST" action="/sockets">
+      <form method="POST" action="/sockets" id="sockets-form">
         <table>
           <thead>
             <tr>
               <th class="right">ID</th>
-              <th>En</th>
-              <th>Name</th>
-              <th>Button</th>
-              <th>Relay</th>
-              <th>State</th>
+              <th>Вкл</th>
+              <th>Имя</th>
+              <th>Кнопка</th>
+              <th>Реле</th>
+              <th class="center">Статус</th>
+              <th>Управление</th>
             </tr>
           </thead>
           <tbody>
             %SOCKETS%
           </tbody>
         </table>
-        <p>
-          <button class="btn" type="submit">Save</button>
+        <p class="actions">
+          <button class="btn" type="submit">Сохранить</button>
         </p>
       </form>
     </div>
@@ -120,10 +159,18 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       dinput: %DINPUT_JSON%,
       relay: %RELAY_JSON%
     };
-    function buildOptions(list, selected) {
+    const socketUsed = {
+      dinput: %DINPUT_USED_JSON%,
+      relay: %RELAY_USED_JSON%
+    };
+    function buildOptions(list, selected, type) {
       let html = '<option value="">-</option>';
+      const used = socketUsed[type] || [];
       for (let i = 0; i < list.length; i++) {
         const val = String(list[i]);
+        if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
+          continue;
+        }
         html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + val + '</option>';
       }
       return html;
@@ -132,7 +179,20 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       const type = el.dataset.type;
       const selected = el.dataset.selected || '';
       const list = socketOptions[type] || [];
-      el.innerHTML = buildOptions(list, selected);
+      el.innerHTML = buildOptions(list, selected, type);
+    });
+    const socketsForm = document.getElementById('sockets-form');
+    document.querySelectorAll('input.socket-toggle').forEach((el) => {
+      el.addEventListener('change', () => {
+        const name = el.dataset.action;
+        const hidden = document.querySelector('input[name="' + name + '"]');
+        if (hidden) {
+          hidden.value = el.checked ? 'on' : 'off';
+        }
+        if (socketsForm) {
+          socketsForm.submit();
+        }
+      });
     });
   </script>
 </body>

@@ -82,6 +82,18 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
     .notice:empty { display: none; }
     a { color: #7dd3fc; text-decoration: none; }
     .nav { margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { text-align: left; padding: 6px; border-bottom: 1px solid #1f2937; }
+    th { color: var(--muted); font-weight: 600; }
+    .status-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
+    }
+    .status-on { background: #22c55e; }
+    .status-off { background: #ef4444; }
   </style>
 </head>
 <body>
@@ -89,17 +101,21 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>FCPLC</h1>
-      <div class="notice">%LOGOUT_MSG%</div>
       <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
       <p>Управление контроллером FCPLC</p>
       <div class="section">
         <h2>Статус</h2>
-        <p class="status">Имя устройства: <strong>%DEVICE_NAME%</strong></p>
-        <p class="status">RTC: <strong>%RTC_TIME%</strong></p>
-        <p class="status">RTC температура: <strong>%RTC_TEMP%</strong></p>
-        <p class="status">Температура платы: <strong>%BOARD_TEMP%</strong></p>
-        <p class="status">CPU: <strong>%CPU_TEMP%</strong></p>
-        <p class="status">Вентилятор: <strong>%FAN_STATUS%</strong></p>
+        <table>
+          <tbody>
+            <tr><td>Имя устройства</td><td><strong>%DEVICE_NAME%</strong></td></tr>
+            <tr><td>Дата</td><td><strong>%RTC_DATE%</strong></td></tr>
+            <tr><td>Время</td><td><strong>%RTC_TIME%</strong></td></tr>
+            <tr><td>RTC температура</td><td><strong>%RTC_TEMP%</strong></td></tr>
+            <tr><td>Температура платы</td><td><strong>%BOARD_TEMP%</strong></td></tr>
+            <tr><td>CPU</td><td><strong>%CPU_TEMP%</strong></td></tr>
+            <tr><td>Вентилятор</td><td>%FAN_STATUS_ICON%</td></tr>
+          </tbody>
+        </table>
       </div>
       <div class="section">
         <h2>Имя устройства</h2>

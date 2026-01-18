@@ -53,14 +53,14 @@ public:
         _c.printSocketsHeader_();
         for (size_t i = 0; i < SocketController::kSocketCount; ++i)
         {
-            const SocketController::SocketConfig *cfg = _sockets.config(i);
-            const SocketController::SocketState *st = _sockets.state(i);
+            const SocketController::SocketConfig *cfg = _sockets.configByIndex(i);
+            const SocketController::SocketState *st = _sockets.stateByIndex(i);
             if (!cfg || !st || !cfg->enabled)
                 continue;
             any = true;
             const int button = (cfg->button_port == SocketController::kInvalidPort) ? -1 : cfg->button_port;
             const int relay = (cfg->relay_port == SocketController::kInvalidPort) ? -1 : cfg->relay_port;
-            _c.printSocketRow_("CPU", (uint8_t)i, cfg->enabled,
+            _c.printSocketRow_("CPU", cfg->id, cfg->enabled,
                                cfg->name.c_str(), button, relay, st->relay_on);
         }
         const bool requested = _c._stack_cli.requestStackSockets_();
@@ -68,10 +68,10 @@ public:
             _c._io->println(F("  none"));
     }
 
-    void showSocket(size_t idx)
+    void showSocket(size_t id)
     {
-        const SocketController::SocketConfig *cfg = _sockets.config(idx);
-        const SocketController::SocketState *st = _sockets.state(idx);
+        const SocketController::SocketConfig *cfg = _sockets.config(id);
+        const SocketController::SocketState *st = _sockets.state(id);
         if (!cfg || !st)
         {
             _c._io->println(F("Invalid socket id"));
@@ -81,7 +81,7 @@ public:
         _c.printSocketsHeader_();
         const int button = (cfg->button_port == SocketController::kInvalidPort) ? -1 : cfg->button_port;
         const int relay = (cfg->relay_port == SocketController::kInvalidPort) ? -1 : cfg->relay_port;
-        _c.printSocketRow_("CPU", (uint8_t)idx, cfg->enabled,
+        _c.printSocketRow_("CPU", cfg->id, cfg->enabled,
                            cfg->name.c_str(), button, relay, st->relay_on);
     }
 
@@ -189,6 +189,12 @@ public:
                 _c.printPrompt_();
                 return true;
             }
+            if (port != SocketController::kInvalidPort && isPortUsedByOther_(id, port))
+            {
+                _c._io->println(F("Port already in use"));
+                _c.printPrompt_();
+                return true;
+            }
             const bool ok = is_button ? _sockets.setButtonPort(id, port) : _sockets.setRelayPort(id, port);
             if (!ok)
                 _c._io->println(F("Failed"));
@@ -238,5 +244,20 @@ private:
             return false;
         out = (uint8_t)v;
         return true;
+    }
+
+    bool isPortUsedByOther_(uint16_t id, uint8_t port) const
+    {
+        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+        {
+            const auto *cfg = _sockets.configByIndex(i);
+            if (!cfg)
+                continue;
+            if (cfg->id == id)
+                continue;
+            if (cfg->button_port == port || cfg->relay_port == port)
+                return true;
+        }
+        return false;
     }
 };

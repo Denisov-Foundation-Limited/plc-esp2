@@ -17,7 +17,7 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Admin Password</title>
+  <title>Админка</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -76,12 +76,12 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Admin Password</h1>
-      <p class="status">Status: <strong>%ADMIN_STATUS%</strong></p>
+      <h1>Админка</h1>
+      <p class="status">Статус: <strong>%ADMIN_STATUS%</strong></p>
       <form method="POST" action="/admin">
-        <label for="password">New password</label>
-        <input id="password" type="password" name="password" placeholder="Enter new password">
-        <button type="submit">Save</button>
+        <label for="password">Новый пароль</label>
+        <input id="password" type="password" name="password" placeholder="Введите новый пароль">
+        <button type="submit">Сохранить</button>
       </form>
     </div>
   </div>

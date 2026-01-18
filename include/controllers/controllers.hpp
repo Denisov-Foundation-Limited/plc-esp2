@@ -44,6 +44,8 @@ public:
 
     void applyConfig(JsonObjectConst cfg)
     {
+        if (cfg["sockets_enabled"].is<bool>())
+            _sockets.setControllerEnabled(cfg["sockets_enabled"].as<bool>());
         if (!cfg["sockets"].is<JsonArrayConst>())
             return;
         _sockets.applyConfig(cfg["sockets"].as<JsonArrayConst>());
@@ -51,6 +53,7 @@ public:
 
     void serialize(JsonObject out) const
     {
+        out["sockets_enabled"] = _sockets.controllerEnabled();
         JsonArray arr = out["sockets"].to<JsonArray>();
         _sockets.serialize(arr);
     }
