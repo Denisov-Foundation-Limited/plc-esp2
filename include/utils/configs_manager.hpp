@@ -28,6 +28,8 @@
 class ConfigsManager : public ConfigsManagerIface
 {
 public:
+    static constexpr size_t kConfigDocCapacity = 12288;
+
     ConfigsManager(Configs &configs, WifiManager &wifi, TelegramClient &telegram,
                    Network &network, CliConsole &console, TelegramMenu &telegram_menu, PlcControl &plc,
                    Controllers &controllers)
@@ -49,28 +51,28 @@ public:
 
     bool loadConfigs()
     {
-        JsonDocument doc;
-        if (!_configs.load(doc))
+        _doc.clear();
+        if (!_configs.load(_doc))
         {
             if (_configs.lastError() == Configs::Error::OpenRead)
                 return true;
             return false;
         }
-        applyConfig_(doc);
+        applyConfig_(_doc);
         return true;
     }
 
     bool save() override
     {
-        JsonDocument doc;
-        JsonObject w = doc["wifi"].to<JsonObject>();
+        _doc.clear();
+        JsonObject w = _doc["wifi"].to<JsonObject>();
         w["ssid"] = _wifi.ssid();
         w["password"] = _wifi.password();
         w["ap"] = _wifi.ap();
         w["ap_ssid"] = _wifi.apSsid();
         w["ap_password"] = _wifi.apPassword();
 
-        JsonObject t = doc["telegram"].to<JsonObject>();
+        JsonObject t = _doc["telegram"].to<JsonObject>();
         t["token"] = _telegram.token();
         t["chat_id"] = (long long)_telegram.chatId();
         t["insecure"] = _telegram.insecure();
@@ -99,21 +101,21 @@ public:
 
         if (_console.adminPasswordSet())
         {
-            JsonObject a = doc["admin"].to<JsonObject>();
+            JsonObject a = _doc["admin"].to<JsonObject>();
             a["password_hash"] = _console.adminPasswordHashHex();
         }
 
-        JsonObject plc = doc["plc"].to<JsonObject>();
+        JsonObject plc = _doc["plc"].to<JsonObject>();
         plc["device_name"] = _plc.deviceName();
 
-        JsonObject s = doc["stack"].to<JsonObject>();
+        JsonObject s = _doc["stack"].to<JsonObject>();
         s["role"] = (_stack_role == StackRole::Master) ? "master" : "slave";
         s["master_host"] = _stack_master_host;
 
-        JsonObject ctrl = doc["controllers"].to<JsonObject>();
+        JsonObject ctrl = _doc["controllers"].to<JsonObject>();
         _controllers.serialize(ctrl);
 
-        return _configs.save(doc);
+        return _configs.save(_doc);
     }
 
     bool save(const JsonDocument &doc) override
@@ -285,4 +287,5 @@ private:
     Controllers &_controllers;
     StackRole _stack_role = StackRole::Master;
     String _stack_master_host;
+    DynamicJsonDocument _doc{kConfigDocCapacity};
 };

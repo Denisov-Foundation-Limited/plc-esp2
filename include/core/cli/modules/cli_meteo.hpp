@@ -23,6 +23,22 @@ public:
     CLIMeteoT(ConsoleT &console, MeteoController &meteo)
         : _c(console), _meteo(meteo) {}
 
+    void printHeader()
+    {
+        printHeader_();
+    }
+
+    void printRow(const char *unit, uint8_t id, bool enabled,
+                  const char *name, const char *type, const char *temp, const char *hum, const char *info)
+    {
+        printRow_(unit, id, enabled, name, type, temp, hum, info);
+    }
+
+    void printIdRangeInline() const
+    {
+        printIdRangeInline_();
+    }
+
     void printHelpEnable()
     {
         _c._io->println(F("    show meteo       - list meteo sensors"));
@@ -44,6 +60,9 @@ public:
         _c._io->print(F("    show <id>"));
         printIdRangeInline_();
         _c._io->println(F("                - sensor details"));
+        _c._io->print(F("    name <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <text>          - set sensor name"));
         _c._io->print(F("    enable <id>"));
         printIdRangeInline_();
         _c._io->println(F("              - enable sensor"));
@@ -64,7 +83,7 @@ public:
     void showSensors()
     {
         bool any = false;
-        _c.printMeteoHeader_();
+        printHeader_();
         for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
         {
             const auto *cfg = _meteo.configByIndex(i);
@@ -72,9 +91,10 @@ public:
             if (!cfg || !st || !cfg->enabled)
                 continue;
             any = true;
-            printRow_(*cfg, *st);
+            printSensorRow_(*cfg, *st);
         }
-        if (!any)
+        const bool requested = _c._stack_cli.requestStackMeteo_();
+        if (!any && !requested)
             _c._io->println(F("  none"));
     }
 
@@ -88,8 +108,8 @@ public:
             return;
         }
         _c._io->println(F("Meteo sensor:"));
-        _c.printMeteoHeader_();
-        printRow_(*cfg, *st);
+        printHeader_();
+        printSensorRow_(*cfg, *st);
     }
 
     bool handleContext(const String &line)
@@ -133,6 +153,35 @@ public:
                 return true;
             }
             if (!_meteo.setEnabled(id, enable))
+                _c._io->println(F("Failed"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("name "))
+        {
+            String rest = cmd.substring(5);
+            rest.trim();
+            const int space = rest.indexOf(' ');
+            if (space <= 0)
+            {
+                _c._io->println(F("Usage: name <id> <text>"));
+                _c.printPrompt_();
+                return true;
+            }
+            String id_str = rest.substring(0, space);
+            String name_str = rest.substring(space + 1);
+            id_str.trim();
+            name_str.trim();
+            uint16_t id = 0;
+            if (!parseId_(id_str, id))
+            {
+                printInvalidSensorId_();
+                _c.printPrompt_();
+                return true;
+            }
+            if (!_meteo.setName(id, name_str))
                 _c._io->println(F("Failed"));
             else
                 _c._io->println(F("OK"));
@@ -326,7 +375,56 @@ private:
         return true;
     }
 
-    void printRow_(const MeteoController::SensorConfig &cfg, const MeteoController::SensorState &st)
+    void printHeader_()
+    {
+        _c._io->println(F("Meteo:"));
+        _c._io->println(F("  Unit      ID  En  Name             Type     TempC   Hum  Pin  Addr"));
+        _c._io->println(F("  --------  --  --  ---------------- -------  ------ ---- --- ----------------"));
+    }
+
+    void printRow_(const char *unit, uint8_t id, bool enabled,
+                   const char *name, const char *type, const char *temp, const char *hum, const char *info)
+    {
+        if (!_c._io)
+            return;
+        _c._io->print(F("  "));
+        printPadStrFixed_(unit && unit[0] ? unit : "-", 8);
+        _c._io->print(F("  "));
+        _c.printPad_(id, 2);
+        _c._io->print(F("  "));
+        _c.printPadStr_(enabled ? F("on") : F("off"), 2);
+        _c._io->print(F("  "));
+        const char *name_ptr = (name && name[0]) ? name : "-";
+        printPadStrFixed_(name_ptr, 16);
+        _c._io->print(F("  "));
+        printPadStrFixed_(type ? type : "-", 7);
+        _c._io->print(F("  "));
+        printPadStrFixed_(temp ? temp : "-", 6);
+        _c._io->print(F("  "));
+        printPadStrFixed_(hum ? hum : "-", 4);
+        _c._io->print(F("  "));
+        const char *pin = "--";
+        const char *addr = "--";
+        char pin_buf[6] = {};
+        if (info && info[0] != '\0')
+        {
+            if (!strncmp(info, "pin=", 4))
+            {
+                snprintf(pin_buf, sizeof(pin_buf), "%s", info + 4);
+                pin = pin_buf;
+            }
+            else
+            {
+                addr = info;
+            }
+        }
+        printPadStrFixed_(pin, 3);
+        _c._io->print(F("  "));
+        printPadStrFixed_(addr, 16);
+        _c._io->println();
+    }
+
+    void printSensorRow_(const MeteoController::SensorConfig &cfg, const MeteoController::SensorState &st)
     {
         char temp_buf[10] = {};
         char hum_buf[10] = {};
@@ -364,7 +462,8 @@ private:
             }
         }
 
-        _c.printMeteoRow_("CPU", cfg.id, cfg.enabled, MeteoController::typeName(cfg.type), temp, hum, info);
+        printRow_("CPU", cfg.id, cfg.enabled, cfg.name.c_str(),
+                  MeteoController::typeName(cfg.type), temp, hum, info);
     }
 
     void printIdRangeInline_() const
@@ -372,6 +471,36 @@ private:
         _c._io->print(F(" (1.."));
         _c._io->print(MeteoController::kSensorCount);
         _c._io->print(F(")"));
+    }
+
+    void printPadStrFixed_(const char *s, uint8_t width)
+    {
+        if (!_c._io)
+            return;
+        if (!s)
+            s = "";
+        const char *p = s;
+        size_t count = 0;
+        while (*p && count < width)
+        {
+            const uint8_t c = static_cast<uint8_t>(*p);
+            size_t len = 1;
+            if ((c & 0x80) == 0x00)
+                len = 1;
+            else if ((c & 0xE0) == 0xC0)
+                len = 2;
+            else if ((c & 0xF0) == 0xE0)
+                len = 3;
+            else if ((c & 0xF8) == 0xF0)
+                len = 4;
+            if (strlen(p) < len)
+                break;
+            _c._io->write(reinterpret_cast<const uint8_t *>(p), len);
+            p += len;
+            ++count;
+        }
+        for (size_t i = count; i < width; ++i)
+            _c._io->print(' ');
     }
 
     void printInvalidSensorId_() const

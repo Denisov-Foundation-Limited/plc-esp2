@@ -113,7 +113,10 @@ private:
             _sockets.applySnapshot(snap.enabled_mask, snap.state_mask, EepromStorage::kSocketMaskBytes);
         EepromStorage::ThermoSnapshot tsnap;
         if (_storage.loadThermo(tsnap))
+        {
             _thermo.applySnapshot(tsnap.power_mask, EepromStorage::kThermoMaskBytes);
+            _thermo.applyTargetSnapshot(tsnap.target_t10, EepromStorage::kThermoCount);
+        }
     }
 
     void saveIfNeeded_()
@@ -135,6 +138,7 @@ private:
         {
             EepromStorage::ThermoSnapshot tsnap;
             _thermo.buildSnapshot(tsnap.power_mask, EepromStorage::kThermoMaskBytes);
+            _thermo.buildTargetSnapshot(tsnap.target_t10, EepromStorage::kThermoCount);
             if (_storage.saveThermo(tsnap))
                 saved = true;
         }

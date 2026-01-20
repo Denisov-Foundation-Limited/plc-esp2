@@ -719,11 +719,11 @@ private:
         _io->println(F(" - socket details"));
         _io->println(F("  show meteo      - list meteo sensors"));
         _io->print(F("  show meteo <id>"));
-        printMeteoIdRangeInline_();
+        _meteo_cli.printIdRangeInline();
         _io->println(F(" - sensor details"));
         _io->println(F("  show thermo     - list thermo devices"));
         _io->print(F("  show thermo <id>"));
-        printThermoIdRangeInline_();
+        _thermo_cli.printIdRangeInline();
         _io->println(F(" - device details"));
             return;
         }
@@ -804,8 +804,6 @@ private:
             "stack nodes",
             "stack send <id> <get|set> <json>",
             "stack socket <unit> <on|off|toggle> <id>",
-            "stack meteo",
-            "stack thermo",
             "stack thermo <unit> <on|off|toggle> <id>",
             "wifi restart",
             "reload",
@@ -1233,7 +1231,7 @@ private:
             if (!parseUint_(tail, id))
             {
                 _io->print(F("Usage: show meteo <id>"));
-                printMeteoIdRangeInline_();
+                _meteo_cli.printIdRangeInline();
                 _io->println();
             }
             else
@@ -1249,7 +1247,7 @@ private:
             if (!parseUint_(tail, id))
             {
                 _io->print(F("Usage: show thermo <id>"));
-                printThermoIdRangeInline_();
+                _thermo_cli.printIdRangeInline();
                 _io->println();
             }
             else
@@ -2058,105 +2056,6 @@ private:
     {
         _io->print(F(" (1.."));
         _io->print(SocketController::kSocketCount);
-        _io->print(F(")"));
-    }
-
-    void printMeteoHeader_()
-    {
-        _io->println(F("Meteo sensors:"));
-        _io->println(F("  Unit      ID  En  Type     TempC   Hum  Info"));
-        _io->println(F("  --------  --  --  -------  ------  ---  ----------------"));
-    }
-
-    void printMeteoRow_(const char *unit, uint8_t id, bool enabled,
-                        const char *type, const char *temp, const char *hum, const char *info)
-    {
-        if (!_io)
-            return;
-        _io->print(F("  "));
-        printPadStr_(unit && unit[0] ? unit : "-", 8);
-        _io->print(F("  "));
-        printPad_(id, 2);
-        _io->print(F("  "));
-        printPadStr_(enabled ? F("on") : F("off"), 2);
-        _io->print(F("  "));
-        printPadStr_(type ? type : "-", 7);
-        _io->print(F("  "));
-        printPadStr_(temp ? temp : "-", 6);
-        _io->print(F("  "));
-        printPadStr_(hum ? hum : "-", 3);
-        _io->print(F("  "));
-        printPadStr_(info ? info : "-", 16);
-        _io->println();
-    }
-
-    void printMeteoIdRangeInline_()
-    {
-        _io->print(F(" (1.."));
-        _io->print(MeteoController::kSensorCount);
-        _io->print(F(")"));
-    }
-
-    void printThermoHeader_()
-    {
-        _io->println(F("Thermo devices:"));
-        _io->println(F("  Unit      ID  En  Mode        Sens  Target  Hyst  Heat  Cool  Btn  Pwr  H  C"));
-        _io->println(F("  --------  --  --  ----------  ----  ------  ----  ----  ----  ---  ---  -- --"));
-    }
-
-    void printThermoRow_(const char *unit, const ThermoController::DeviceConfig &cfg,
-                         const ThermoController::DeviceState &st)
-    {
-        if (!_io)
-            return;
-        char buf[12] = {};
-        _io->print(F("  "));
-        printPadStr_(unit && unit[0] ? unit : "-", 8);
-        _io->print(F("  "));
-        printPad_(cfg.id, 2);
-        _io->print(F("  "));
-        printPadStr_(cfg.enabled ? F("on") : F("off"), 2);
-        _io->print(F("  "));
-        printPadStr_(ThermoController::modeName(cfg.mode), 10);
-        _io->print(F("  "));
-        if (cfg.sensor_id)
-            printPad_(cfg.sensor_id, 4);
-        else
-            printPadStr_(F("--"), 4);
-        _io->print(F("  "));
-        dtostrf(cfg.target_c, 0, 2, buf);
-        printPadStr_(buf, 6);
-        _io->print(F("  "));
-        dtostrf(cfg.hysteresis, 0, 2, buf);
-        printPadStr_(buf, 4);
-        _io->print(F("  "));
-        if (cfg.heat_port != ThermoController::kInvalidPort)
-            printPad_(cfg.heat_port, 4);
-        else
-            printPadStr_(F("--"), 4);
-        _io->print(F("  "));
-        if (cfg.cool_port != ThermoController::kInvalidPort)
-            printPad_(cfg.cool_port, 4);
-        else
-            printPadStr_(F("--"), 4);
-        _io->print(F("  "));
-        if (cfg.button_port != ThermoController::kInvalidPort)
-            printPad_(cfg.button_port, 3);
-        else
-            printPadStr_(F("---"), 3);
-        _io->print(F("  "));
-        printPadStr_(st.power_on ? F("on") : F("off"), 3);
-        _io->print(F("  "));
-        printPadStr_(st.heat_on ? F("on") : F("off"), 2);
-        _io->print(F(" "));
-        printPadStr_(st.cool_on ? F("on") : F("off"), 2);
-        _io->println();
-    }
-
-    void printThermoIdRangeInline_()
-    {
-        _io->print(F(" (1.."));
-        _io->print(ThermoController::kDeviceCount);
         _io->print(F(")"));
     }
 

@@ -91,10 +91,14 @@ private:
     StackNode *_node = nullptr;
     static constexpr uint8_t MAX_I2C_ADDRS = 127;
     static constexpr uint8_t MAX_OW_ADDRS = 64;
+    static constexpr size_t kDocCapacity = 4096;
     I2cEntry _last_i2c[MAX_I2C_ADDRS] = {};
     uint8_t _last_i2c_count = 0;
     OwEntry _last_ow[MAX_OW_ADDRS] = {};
     uint8_t _last_ow_count = 0;
+    DynamicJsonDocument _rx_doc{kDocCapacity};
+    DynamicJsonDocument _tx_doc{kDocCapacity};
+    DynamicJsonDocument _msg_doc{kDocCapacity};
 
     static void onFrame_(void *ctx, const StackFrame &frame)
     {
@@ -117,19 +121,19 @@ private:
         if (frame.type != (uint8_t)StackMsgType::CmdGet && frame.type != (uint8_t)StackMsgType::CmdSet)
             return;
 
-        JsonDocument doc;
-        DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
+        _rx_doc.clear();
+        DeserializationError err = deserializeJson(_rx_doc, frame.payload, frame.payload_len);
         if (err)
         {
             sendErr_(0, "json parse");
             return;
         }
 
-        const uint16_t cmd_id = doc["cmd_id"] | 0;
-        const uint8_t feature = (uint8_t)(doc["feature"] | 0);
-        String action = doc["action"] | "";
+        const uint16_t cmd_id = _rx_doc["cmd_id"] | 0;
+        const uint8_t feature = (uint8_t)(_rx_doc["feature"] | 0);
+        String action = _rx_doc["action"] | "";
         action.toLowerCase();
-        JsonVariantConst params = doc["params"];
+        JsonVariantConst params = _rx_doc["params"];
 
         switch ((StackFeature)feature)
         {
@@ -191,7 +195,8 @@ private:
     {
         if (action == "get_info")
         {
-            JsonDocument doc;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
             doc["uptime_ms"] = (uint32_t)millis();
             doc["board"] = ActiveBoardProfile::UI_NAME;
             doc["fw_version"] = "";
@@ -212,7 +217,8 @@ private:
     {
         if (action == "get_state")
         {
-            JsonDocument doc;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
             JsonArray arr = doc["ports"].to<JsonArray>();
             if (params.is<JsonObjectConst>() && params["ids"].is<JsonArrayConst>())
             {
@@ -273,7 +279,8 @@ private:
         _ds18b20.listSerials(serials);
         if (action == "list")
         {
-            JsonDocument doc;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
             JsonArray arr = doc["serials"].to<JsonArray>();
             for (const auto &s : serials)
                 arr.add(s);
@@ -282,7 +289,8 @@ private:
         }
         if (action == "read_all")
         {
-            JsonDocument doc;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
             JsonArray arr = doc["items"].to<JsonArray>();
             for (const auto &s : serials)
             {
@@ -307,7 +315,8 @@ private:
             scanI2c_();
         if (action == "run" || action == "get_last")
         {
-            JsonDocument doc;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
             JsonArray arr = doc["items"].to<JsonArray>();
             for (uint8_t i = 0; i < _last_i2c_count; ++i)
             {
@@ -330,7 +339,8 @@ private:
             scanOw_();
         if (action == "run" || action == "get_last")
         {
-            JsonDocument doc;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
             JsonArray arr = doc["items"].to<JsonArray>();
             for (uint8_t i = 0; i < _last_ow_count; ++i)
             {
@@ -354,7 +364,8 @@ private:
             sendErr_(cmd_id, "unsupported");
             return;
         }
-        JsonDocument doc;
+        _tx_doc.clear();
+        JsonDocument &doc = _tx_doc;
         JsonArray arr = doc["items"].to<JsonArray>();
         const auto *devs = _ext.devs();
         if (devs)
@@ -381,7 +392,8 @@ private:
     {
         if (action == "get_status")
         {
-            JsonDocument doc;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
             doc["mode"] = _plc.fanManualMode() ? "manual" : "auto";
             doc["fan_on"] = _plc.fanStatus();
             doc["board_temp"] = _plc.boardTemp();
@@ -449,7 +461,8 @@ private:
                      (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
             float t = 0.0f;
             _rtc.readTemp(t);
-            JsonDocument doc;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
             doc["date"] = date_buf;
             doc["time"] = time_buf;
             doc["weekday"] = (unsigned)dt.day_of_week;
@@ -484,7 +497,8 @@ private:
             sendErr_(cmd_id, "unsupported");
             return;
         }
-        JsonDocument doc;
+        _tx_doc.clear();
+        JsonDocument &doc = _tx_doc;
         doc["board_temp"] = _plc.boardTemp();
         doc["cpu_temp"] = _plc.cpuTemp();
         doc["fan_on"] = _plc.fanStatus();
@@ -497,7 +511,8 @@ private:
     {
         if (action == "get")
         {
-            JsonDocument doc;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
             JsonArray arr = doc["items"].to<JsonArray>();
             for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
             {
@@ -544,7 +559,8 @@ private:
             sendErr_(cmd_id, "unsupported");
             return;
         }
-        JsonDocument doc;
+        _tx_doc.clear();
+        JsonDocument &doc = _tx_doc;
         JsonArray arr = doc["items"].to<JsonArray>();
         for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
         {
@@ -567,7 +583,8 @@ private:
             sendErr_(cmd_id, "unsupported");
             return;
         }
-        JsonDocument doc;
+        _tx_doc.clear();
+        JsonDocument &doc = _tx_doc;
         doc["token_set"] = _telegram.token().length() > 0;
         doc["chat_id"] = (long long)_telegram.chatId();
         doc["insecure"] = _telegram.insecure();
@@ -584,7 +601,8 @@ private:
             sendErr_(cmd_id, "unsupported");
             return;
         }
-        JsonDocument doc;
+        _tx_doc.clear();
+        JsonDocument &doc = _tx_doc;
         JsonArray arr = doc["files"].to<JsonArray>();
         File root = LittleFS.open("/");
         File file = root.openNextFile();
@@ -604,7 +622,8 @@ private:
     {
         if (action == "get")
         {
-            JsonDocument doc;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
             JsonArray arr = doc["items"].to<JsonArray>();
             for (size_t i = 0; i < SocketController::kSocketCount; ++i)
             {
@@ -671,7 +690,8 @@ private:
             sendErr_(cmd_id, "unsupported");
             return;
         }
-        JsonDocument doc;
+        _tx_doc.clear();
+        JsonDocument &doc = _tx_doc;
         JsonArray arr = doc["items"].to<JsonArray>();
         for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
         {
@@ -682,6 +702,8 @@ private:
             JsonObject o = arr.add<JsonObject>();
             o["id"] = (unsigned)cfg->id;
             o["enabled"] = cfg->enabled;
+            if (cfg->name.length())
+                o["name"] = cfg->name;
             o["type"] = MeteoController::typeName(cfg->type);
             if (cfg->type == MeteoController::SensorType::Dht22 &&
                 cfg->dht_pin != MeteoController::kInvalidPin)
@@ -707,7 +729,8 @@ private:
     {
         if (action == "get")
         {
-            JsonDocument doc;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
             JsonArray arr = doc["items"].to<JsonArray>();
             for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
             {
@@ -718,6 +741,8 @@ private:
                 JsonObject o = arr.add<JsonObject>();
                 o["id"] = (unsigned)cfg->id;
                 o["enabled"] = cfg->enabled;
+                if (cfg->name.length())
+                    o["name"] = cfg->name;
                 o["sensor"] = (unsigned)cfg->sensor_id;
                 o["mode"] = ThermoController::modeName(cfg->mode);
                 o["target"] = cfg->target_c;
@@ -1042,27 +1067,29 @@ private:
 
     void sendAck_(uint16_t cmd_id)
     {
-        JsonDocument empty;
-        sendAck_(cmd_id, empty);
+        _msg_doc.clear();
+        _msg_doc["cmd_id"] = cmd_id;
+        _msg_doc["ok"] = true;
+        sendJson_((uint8_t)StackMsgType::Ack, _msg_doc);
     }
 
     void sendAck_(uint16_t cmd_id, const JsonDocument &data)
     {
-        JsonDocument doc;
-        doc["cmd_id"] = cmd_id;
-        doc["ok"] = true;
+        _msg_doc.clear();
+        _msg_doc["cmd_id"] = cmd_id;
+        _msg_doc["ok"] = true;
         if (!data.isNull())
-            doc["data"] = data.as<JsonVariantConst>();
-        sendJson_((uint8_t)StackMsgType::Ack, doc);
+            _msg_doc["data"] = data.as<JsonVariantConst>();
+        sendJson_((uint8_t)StackMsgType::Ack, _msg_doc);
     }
 
     void sendErr_(uint16_t cmd_id, const char *msg)
     {
-        JsonDocument doc;
-        doc["cmd_id"] = cmd_id;
-        doc["ok"] = false;
-        doc["error"] = msg ? msg : "error";
-        sendJson_((uint8_t)StackMsgType::Err, doc);
+        _msg_doc.clear();
+        _msg_doc["cmd_id"] = cmd_id;
+        _msg_doc["ok"] = false;
+        _msg_doc["error"] = msg ? msg : "error";
+        sendJson_((uint8_t)StackMsgType::Err, _msg_doc);
     }
 
     void sendJson_(uint8_t type, JsonDocument &doc)

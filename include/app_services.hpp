@@ -58,6 +58,7 @@
 #include "utils/logger.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager.hpp"
+#include "utils/meteo_history.hpp"
 #include "core/network/web/web_interface.hpp"
 #include "core/plc_scan.hpp"
 #include "hal/gpio/extender_impl.hpp"
@@ -90,6 +91,7 @@ struct AppServices
     IoStack io;
     Gpio gpio;
     Controllers controllers;
+    MeteoHistory meteo_history;
     Hal hal;
     PlcControl plc;
     TelegramBot telegram_bot;
@@ -127,6 +129,7 @@ struct AppServices
           io(portio),
           gpio(io),
           controllers(gpio, ow, eeprom_storage, logs),
+          meteo_history(rtc, controllers.meteo()),
           hal(ow, i2c, spi, uart, gpio, logs),
           plc(i2c, io),
           telegram(logs),
@@ -374,6 +377,12 @@ struct AppServices
 
         task_binder.bindFtest(ftest);
         task_binder.bindAll();
+        {
+            TaskManager<TASK_MGR_TSK_COUNT>::Options opt;
+            opt.interval_ms = 60000;
+            opt.priority = TaskManager<TASK_MGR_TSK_COUNT>::Priority::Low;
+            tm.template add<&MeteoHistory::task>(meteo_history, opt);
+        }
         plc_scan.begin();
 
         return ok;

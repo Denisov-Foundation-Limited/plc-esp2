@@ -41,6 +41,7 @@ public:
         uint8_t dht_pin = kInvalidPin;
         uint8_t ds18_addr[kAddrLen] = {};
         bool ds18_addr_set = false;
+        String name;
     };
 
     struct SensorState
@@ -93,8 +94,21 @@ public:
                 continue;
             }
             JsonObjectConst obj = v.as<JsonObjectConst>();
-            SensorConfig &cfg = _cfg[idx];
-            cfg.id = (uint8_t)(idx + 1);
+            uint8_t id = (uint8_t)(idx + 1);
+            if (obj["id"].is<unsigned>())
+            {
+                const unsigned raw = obj["id"].as<unsigned>();
+                if (raw <= 0xFFu)
+                    id = (uint8_t)raw;
+            }
+            size_t dst = 0;
+            if (!indexById_(id, dst))
+            {
+                ++idx;
+                continue;
+            }
+            SensorConfig &cfg = _cfg[dst];
+            cfg.id = id;
             bool enabled_set = false;
             if (obj["enabled"].is<bool>())
             {
@@ -115,6 +129,8 @@ public:
                 parsePin_(obj["pin"], cfg.dht_pin);
             if (cfg.type == SensorType::Ds18b20 && obj["addr"].is<const char *>())
                 cfg.ds18_addr_set = parseHexAddr(obj["addr"].as<const char *>(), cfg.ds18_addr);
+            if (obj["name"].is<const char *>())
+                cfg.name = obj["name"].as<const char *>();
 
             if (!enabled_set)
                 cfg.enabled = true;
@@ -132,6 +148,8 @@ public:
             JsonObject obj = out.add<JsonObject>();
             obj["id"] = cfg.id;
             obj["enabled"] = cfg.enabled;
+            if (cfg.name.length())
+                obj["name"] = cfg.name;
             obj["type"] = typeName_(cfg.type);
             if (cfg.type == SensorType::Dht22 && cfg.dht_pin != kInvalidPin)
                 obj["pin"] = cfg.dht_pin;
@@ -151,6 +169,8 @@ public:
             return;
         _controller_enabled = enabled;
         _ds_conv_pending = false;
+        _ds_conv_ready = false;
+        _ds_last_conv_ms = 0;
         if (!_controller_enabled)
             return;
         _dht22_pin = kInvalidPin;
@@ -232,6 +252,15 @@ public:
         return true;
     }
 
+    bool setName(size_t id, const String &name)
+    {
+        size_t idx = 0;
+        if (!indexById_(id, idx))
+            return false;
+        _cfg[idx].name = name;
+        return true;
+    }
+
     const SensorConfig *config(size_t id) const
     {
         size_t idx = 0;
@@ -306,6 +335,8 @@ private:
     DHT22 _dht22;
     uint8_t _dht22_pin = kInvalidPin;
     bool _ds_conv_pending = false;
+    bool _ds_conv_ready = false;
+    uint32_t _ds_last_conv_ms = 0;
     SensorConfig _cfg[kSensorCount];
     SensorState _state[kSensorCount];
     bool _controller_enabled = false;
@@ -315,6 +346,8 @@ private:
     {
         _dht22_pin = kInvalidPin;
         _ds_conv_pending = false;
+        _ds_conv_ready = false;
+        _ds_last_conv_ms = 0;
         for (size_t i = 0; i < kSensorCount; ++i)
         {
             _cfg[i] = SensorConfig{};
@@ -357,19 +390,8 @@ private:
             st.last_read_ms = now;
             return true;
         }
-        if (!_ds_conv_pending)
-        {
-            if (!_ds18b20.startConversion())
-            {
-                st.ok = false;
-                st.has_temp = false;
-                st.last_read_ms = now;
-                return true;
-            }
-            _ds_conv_pending = true;
-            return true;
-        }
-        if (!_ds18b20.ready())
+        updateDs18Conversion_(now);
+        if (_ds_conv_pending || !_ds_conv_ready)
             return false;
         float t = 0.0f;
         uint8_t addr[kAddrLen] = {};
@@ -387,7 +409,6 @@ private:
         }
         st.ok = ok;
         st.last_read_ms = now;
-        _ds_conv_pending = false;
         return true;
     }
 
@@ -479,5 +500,28 @@ private:
         if (c >= 'a' && c <= 'f')
             return 10 + (c - 'a');
         return -1;
+    }
+
+    void updateDs18Conversion_(uint32_t now)
+    {
+        if (!_ds_bus)
+            return;
+        if (_ds_conv_pending)
+        {
+            if (_ds18b20.ready())
+            {
+                _ds_conv_pending = false;
+                _ds_conv_ready = true;
+                _ds_last_conv_ms = now;
+            }
+            return;
+        }
+        if (!_ds_conv_ready || (uint32_t)(now - _ds_last_conv_ms) >= kDs18b20IntervalMs)
+        {
+            if (_ds18b20.startConversion())
+                _ds_conv_pending = true;
+            else
+                _ds_conv_ready = false;
+        }
     }
 };

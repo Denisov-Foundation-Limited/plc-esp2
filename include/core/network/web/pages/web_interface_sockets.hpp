@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -122,6 +122,19 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     }
     input:checked + .track { background: #22c55e; }
     input:checked + .track .knob { transform: translateX(20px); }
+    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { min-width: 720px; }
+    @media (max-width: 720px) {
+      .wrap { margin: 20px auto; }
+      .card { padding: 16px; }
+      h1 { font-size: 20px; }
+      table { min-width: 640px; font-size: 12px; }
+      th, td { padding: 5px; }
+      .field { padding: 5px 6px; }
+      .btn { padding: 8px 12px; }
+      .mini { width: 64px; }
+      .name { width: 140px; }
+    }
   </style>
 </head>
 <body>
@@ -132,6 +145,7 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <div class="status">%SOCKETS_STATUS%</div>
       <form method="POST" action="/sockets" id="sockets-form">
+        <div class="table-wrap">
         <table>
           <thead>
             <tr>
@@ -148,6 +162,7 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
             %SOCKETS%
           </tbody>
         </table>
+        </div>
         <p class="actions">
           <button class="btn" type="submit">Сохранить</button>
         </p>
@@ -205,3 +220,11 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+
+
+
+
+
+
+

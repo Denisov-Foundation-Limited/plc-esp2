@@ -80,11 +80,9 @@ public:
             _c._io->print(F("    stack socket <unit> <on|off|toggle> <id>"));
             printSocketIdRangeInline_();
             _c._io->println(F(" - control socket"));
-            _c._io->println(F("    stack meteo     - list meteo sensors on stack"));
             _c._io->print(F("    stack thermo <unit> <on|off|toggle> <id>"));
             printThermoIdRangeInline_();
             _c._io->println(F(" - control thermo device"));
-            _c._io->println(F("    stack thermo    - list thermo devices on stack"));
             _wifi.printHelpEnable();
             _c._io->println(F("    reload          - restart controller"));
             _c._io->println(F("    reset           - restart controller"));

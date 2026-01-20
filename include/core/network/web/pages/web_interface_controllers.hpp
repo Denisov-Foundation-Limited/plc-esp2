@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -102,6 +102,13 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
       color: var(--muted);
       font-size: 12px;
     }
+    @media (max-width: 720px) {
+      .wrap { margin: 20px auto; }
+      .card { padding: 16px; }
+      h1 { font-size: 20px; }
+      .tile-head { flex-wrap: wrap; }
+      .grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -179,3 +186,6 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+
+

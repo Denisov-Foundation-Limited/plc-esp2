@@ -64,28 +64,6 @@ public:
             listStackNodes_();
             return;
         }
-        if (cmd == "stack meteo")
-        {
-            if (!canRequestStackExt_())
-            {
-                printStackUnavailable_();
-                return;
-            }
-            _c.printMeteoHeader_();
-            requestStackMeteo_();
-            return;
-        }
-        if (cmd == "stack thermo")
-        {
-            if (!canRequestStackExt_())
-            {
-                printStackUnavailable_();
-                return;
-            }
-            _c.printThermoHeader_();
-            requestStackThermo_();
-            return;
-        }
         if (cmd.startsWith("stack socket "))
         {
             handleSocketCmd_(cmd);
@@ -103,11 +81,9 @@ public:
             _c._io->print(F("       stack socket <unit> <on|off|toggle> <id>"));
             printSocketIdRangeInline_();
             _c._io->println();
-            _c._io->println(F("       stack meteo"));
             _c._io->print(F("       stack thermo <unit> <on|off|toggle> <id>"));
             printThermoIdRangeInline_();
             _c._io->println();
-            _c._io->println(F("       stack thermo"));
             return;
         }
         if (!_stack_master)
@@ -844,7 +820,8 @@ private:
             frame.type != (uint8_t)StackMsgType::Err)
             return false;
 
-        DynamicJsonDocument doc(4096);
+        static DynamicJsonDocument doc(4096);
+        doc.clear();
         DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
         if (err)
             return false;
@@ -896,7 +873,8 @@ private:
             frame.type != (uint8_t)StackMsgType::Err)
             return false;
 
-        DynamicJsonDocument doc(4096);
+        static DynamicJsonDocument doc(4096);
+        doc.clear();
         DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
         if (err)
             return false;
@@ -948,7 +926,8 @@ private:
             frame.type != (uint8_t)StackMsgType::Err)
             return false;
 
-        DynamicJsonDocument doc(4096);
+        static DynamicJsonDocument doc(4096);
+        doc.clear();
         DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
         if (err)
             return false;
@@ -1005,7 +984,8 @@ private:
             frame.type != (uint8_t)StackMsgType::Err)
             return false;
 
-        DynamicJsonDocument doc(4096);
+        static DynamicJsonDocument doc(4096);
+        doc.clear();
         DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
         if (err)
             return false;
@@ -1062,7 +1042,8 @@ private:
             frame.type != (uint8_t)StackMsgType::Err)
             return false;
 
-        DynamicJsonDocument doc(4096);
+        static DynamicJsonDocument doc(4096);
+        doc.clear();
         DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
         if (err)
             return false;
@@ -1129,7 +1110,10 @@ private:
                 if (addr && addr[0] != '\0')
                     info = addr;
             }
-            _c.printMeteoRow_(unit.c_str(), id, enabled, type, temp_str, hum_str, info);
+            const char *name = nullptr;
+            if (o["name"].is<const char *>())
+                name = o["name"].as<const char *>();
+            _c._meteo_cli.printRow(unit.c_str(), id, enabled, name, type, temp_str, hum_str, info);
         }
         finishStackMeteo_();
         _c.refreshPrompt_();
@@ -1152,7 +1136,8 @@ private:
             frame.type != (uint8_t)StackMsgType::Err)
             return false;
 
-        DynamicJsonDocument doc(4096);
+        static DynamicJsonDocument doc(4096);
+        doc.clear();
         DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
         if (err)
             return false;
@@ -1182,6 +1167,8 @@ private:
             ThermoController::DeviceState st{};
             cfg.id = (uint8_t)(o["id"] | 0);
             cfg.enabled = o["enabled"] | false;
+            if (o["name"].is<const char *>())
+                cfg.name = o["name"].as<const char *>();
             cfg.sensor_id = (uint8_t)(o["sensor"] | 0);
             cfg.mode = parseThermoMode_(o["mode"] | "off");
             cfg.target_c = o["target"] | 0.0f;
@@ -1198,7 +1185,7 @@ private:
             st.power_on = o["power_on"] | false;
             st.heat_on = o["heat_on"] | false;
             st.cool_on = o["cool_on"] | false;
-            _c.printThermoRow_(unit.c_str(), cfg, st);
+            _c._thermo_cli.printRow(unit.c_str(), cfg, st);
         }
         finishStackThermo_();
         _c.refreshPrompt_();
@@ -1221,7 +1208,8 @@ private:
             frame.type != (uint8_t)StackMsgType::Err)
             return false;
 
-        DynamicJsonDocument doc(4096);
+        static DynamicJsonDocument doc(4096);
+        doc.clear();
         DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
         if (err)
             return false;
@@ -1277,7 +1265,8 @@ private:
             frame.type != (uint8_t)StackMsgType::Err)
             return false;
 
-        DynamicJsonDocument doc(4096);
+        static DynamicJsonDocument doc(4096);
+        doc.clear();
         DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
         if (err)
             return false;
@@ -1382,7 +1371,8 @@ private:
             frame.type != (uint8_t)StackMsgType::Err)
             return false;
 
-        DynamicJsonDocument doc(4096);
+        static DynamicJsonDocument doc(4096);
+        doc.clear();
         DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
         if (err)
             return false;

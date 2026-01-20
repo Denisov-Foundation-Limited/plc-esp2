@@ -86,7 +86,11 @@ public:
         _menu_markup_ctx = ctx;
     }
 
-    void setMaxChats(size_t max_chats) { _max_chats = max_chats; }
+    void setMaxChats(size_t max_chats)
+    {
+        _max_chats = max_chats;
+        _chat_states.reserve(_max_chats);
+    }
 
     bool processUpdates(const std::vector<TelegramClient::Update> &updates)
     {
@@ -416,6 +420,7 @@ private:
                                        const String &parse_mode = "")
     {
         String payload = F("{\"chat_id\":");
+        payload.reserve(text.length() + reply_markup.length() + parse_mode.length() + 64);
         payload += String((long long)chat_id);
         payload += F(",\"text\":\"");
         payload += escapeJson_(text);
@@ -438,6 +443,7 @@ private:
     static String buildMenuMarkup_(const Menu &menu)
     {
         String out = F("{\"keyboard\":[");
+        out.reserve(menu.count * 32 + 64);
         const size_t cols = 2;
         for (size_t i = 0; i < menu.count; ++i)
         {

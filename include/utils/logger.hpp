@@ -275,7 +275,7 @@ private:
     template <Level L>
     void writeJson_(const __FlashStringHelper *tag, const char *msg)
     {
-        JsonDocument doc;
+        StaticJsonDocument<512> doc;
 #if LOGGER_USE_TIMESTAMP
         if (_rtc)
         {

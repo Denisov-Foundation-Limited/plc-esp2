@@ -27,6 +27,22 @@ public:
     CLIThermoT(ConsoleT &console, ThermoController &thermo, MeteoController &meteo)
         : _c(console), _thermo(thermo), _meteo(meteo) {}
 
+    void printHeader()
+    {
+        printHeader_();
+    }
+
+    void printRow(const char *unit, const ThermoController::DeviceConfig &cfg,
+                  const ThermoController::DeviceState &st)
+    {
+        printRow_(unit, cfg, st);
+    }
+
+    void printIdRangeInline() const
+    {
+        printIdRangeInline_();
+    }
+
     void printHelpEnable()
     {
         _c._io->println(F("    show thermo     - list thermo devices"));
@@ -48,6 +64,9 @@ public:
         _c._io->print(F("    show <id>"));
         printIdRangeInline_();
         _c._io->println(F("                - device details"));
+        _c._io->print(F("    name <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <text>          - set device name"));
         _c._io->print(F("    enable <id>"));
         printIdRangeInline_();
         _c._io->println(F("              - enable device"));
@@ -80,7 +99,7 @@ public:
     void showDevices()
     {
         bool any = false;
-        _c.printThermoHeader_();
+        printHeader_();
         for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
         {
             const auto *cfg = _thermo.configByIndex(i);
@@ -88,9 +107,10 @@ public:
             if (!cfg || !st || !cfg->enabled)
                 continue;
             any = true;
-            _c.printThermoRow_("CPU", *cfg, *st);
+            printRow_("CPU", *cfg, *st);
         }
-        if (!any)
+        const bool requested = _c._stack_cli.requestStackThermo_();
+        if (!any && !requested)
             _c._io->println(F("  none"));
     }
 
@@ -104,8 +124,8 @@ public:
             return;
         }
         _c._io->println(F("Thermo device:"));
-        _c.printThermoHeader_();
-        _c.printThermoRow_("CPU", *cfg, *st);
+        printHeader_();
+        printRow_("CPU", *cfg, *st);
     }
 
     bool handleContext(const String &line)
@@ -149,6 +169,35 @@ public:
                 return true;
             }
             if (!_thermo.setEnabled(id, enable))
+                _c._io->println(F("Failed"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("name "))
+        {
+            String rest = cmd.substring(5);
+            rest.trim();
+            const int space = rest.indexOf(' ');
+            if (space <= 0)
+            {
+                _c._io->println(F("Usage: name <id> <text>"));
+                _c.printPrompt_();
+                return true;
+            }
+            String id_str = rest.substring(0, space);
+            String name_str = rest.substring(space + 1);
+            id_str.trim();
+            name_str.trim();
+            uint16_t id = 0;
+            if (!parseId_(id_str, id))
+            {
+                printInvalidId_();
+                _c.printPrompt_();
+                return true;
+            }
+            if (!_thermo.setName(id, name_str))
                 _c._io->println(F("Failed"));
             else
                 _c._io->println(F("OK"));
@@ -479,6 +528,70 @@ private:
         _c._io->print(F(" (1.."));
         _c._io->print(ThermoController::kDeviceCount);
         _c._io->print(F(")"));
+    }
+
+    void printHeader_()
+    {
+        _c._io->println(F("Thermo:"));
+        _c._io->println(F("  Unit      ID  En  Name             Mode        Sens  Target  Hyst  Heat  Cool  Btn  Power  State"));
+        _c._io->println(F("  --------  --  --  ---------------- ----------  ----  ------  ----  ----  ----  ---  -----  -----"));
+    }
+
+    void printRow_(const char *unit, const ThermoController::DeviceConfig &cfg,
+                   const ThermoController::DeviceState &st)
+    {
+        if (!_c._io)
+            return;
+        char buf[12] = {};
+        _c._io->print(F("  "));
+        _c.printPadStr_(unit && unit[0] ? unit : "-", 8);
+        _c._io->print(F("  "));
+        _c.printPad_(cfg.id, 2);
+        _c._io->print(F("  "));
+        _c.printPadStr_(cfg.enabled ? F("on") : F("off"), 2);
+        _c._io->print(F("  "));
+        const char *name_ptr = cfg.name.length() ? cfg.name.c_str() : "-";
+        _c.printPadStr_(name_ptr, 16);
+        _c._io->print(F("  "));
+        _c.printPadStr_(ThermoController::modeName(cfg.mode), 10);
+        _c._io->print(F("  "));
+        if (cfg.sensor_id)
+            _c.printPad_(cfg.sensor_id, 4);
+        else
+            _c.printPadStr_(F("--"), 4);
+        _c._io->print(F("  "));
+        dtostrf(cfg.target_c, 0, 2, buf);
+        _c.printPadStr_(buf, 6);
+        _c._io->print(F("  "));
+        dtostrf(cfg.hysteresis, 0, 2, buf);
+        _c.printPadStr_(buf, 4);
+        _c._io->print(F("  "));
+        if (cfg.heat_port != ThermoController::kInvalidPort)
+            _c.printPad_(cfg.heat_port, 4);
+        else
+            _c.printPadStr_(F("--"), 4);
+        _c._io->print(F("  "));
+        if (cfg.cool_port != ThermoController::kInvalidPort)
+            _c.printPad_(cfg.cool_port, 4);
+        else
+            _c.printPadStr_(F("--"), 4);
+        _c._io->print(F("  "));
+        if (cfg.button_port != ThermoController::kInvalidPort)
+            _c.printPad_(cfg.button_port, 3);
+        else
+            _c.printPadStr_(F("---"), 3);
+        _c._io->print(F("  "));
+        _c.printPadStr_(st.power_on ? F("on") : F("off"), 5);
+        _c._io->print(F("  "));
+        const __FlashStringHelper *state = F("idle");
+        if (!st.power_on || cfg.mode == ThermoController::Mode::Off)
+            state = F("off");
+        else if (st.heat_on)
+            state = F("heat");
+        else if (st.cool_on)
+            state = F("cool");
+        _c.printPadStr_(state, 5);
+        _c._io->println();
     }
 
     void printInvalidId_() const

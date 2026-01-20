@@ -25,6 +25,7 @@ public:
     static constexpr uint16_t kSocketMaskBytes = (kSocketCount + 7) / 8;
     static constexpr uint16_t kThermoCount = 20;
     static constexpr uint16_t kThermoMaskBytes = (kThermoCount + 7) / 8;
+    static constexpr uint16_t kThermoTargetBytes = (uint16_t)(kThermoCount * sizeof(int16_t));
 
     struct SocketSnapshot
     {
@@ -35,6 +36,7 @@ public:
     struct ThermoSnapshot
     {
         uint8_t power_mask[kThermoMaskBytes] = {};
+        int16_t target_t10[kThermoCount] = {};
     };
 
     EepromStorage() = default;
@@ -144,6 +146,9 @@ public:
         const uint16_t off = base + sizeof(hdr);
         if (!_eeprom->write(off, snap.power_mask, kThermoMaskBytes))
             return false;
+        if (!_eeprom->write(off + kThermoMaskBytes, reinterpret_cast<const uint8_t *>(snap.target_t10),
+                            kThermoTargetBytes))
+            return false;
         _thermo_last_slot = slot;
         _thermo_last_seq = seq;
         _thermo_has_seq = true;
@@ -181,6 +186,9 @@ public:
         const uint16_t off = thermoSlotBase_(best_slot) + sizeof(best_hdr);
         if (!_eeprom->read(off, out.power_mask, kThermoMaskBytes))
             return false;
+        if (!_eeprom->read(off + kThermoMaskBytes, reinterpret_cast<uint8_t *>(out.target_t10),
+                           kThermoTargetBytes))
+            return false;
         _thermo_last_slot = best_slot;
         _thermo_last_seq = best_hdr.seq;
         _thermo_has_seq = true;
@@ -208,7 +216,7 @@ private:
     static constexpr uint16_t kVersion = 2;
     static constexpr uint16_t kLegacyVersion = 1;
     static constexpr uint32_t kThermoMagic = 0x45535032u; // "ESP2"
-    static constexpr uint16_t kThermoVersion = 1;
+    static constexpr uint16_t kThermoVersion = 2;
 
     At24lc512 *_eeprom = nullptr;
     uint16_t _base = kDefaultBase;
@@ -236,7 +244,7 @@ private:
 
     uint16_t thermoSlotSize_() const
     {
-        return (uint16_t)(sizeof(ThermoHeader) + kThermoMaskBytes);
+        return (uint16_t)(sizeof(ThermoHeader) + kThermoMaskBytes + kThermoTargetBytes);
     }
 
     uint16_t thermoBase_() const

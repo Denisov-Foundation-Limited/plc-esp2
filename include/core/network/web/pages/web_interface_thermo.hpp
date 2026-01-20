@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -115,6 +115,22 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
     .actions { margin-top: 14px; }
     .mini { width: 90px; }
     .temp { width: 80px; }
+    .name { width: 140px; }
+    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { min-width: 760px; }
+    @media (max-width: 720px) {
+      .wrap { margin: 20px auto; }
+      .card { padding: 16px; }
+      h1 { font-size: 20px; }
+      table { min-width: 680px; font-size: 12px; }
+      th, td { padding: 5px; }
+      .field { padding: 5px 6px; }
+      .btn { padding: 8px 12px; }
+      .mini { width: 64px; }
+      .addr { width: 140px; }
+      .name { width: 120px; }
+      .temp { width: 70px; }
+    }
   </style>
 </head>
 <body>
@@ -125,11 +141,13 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <div class="status">%THERMO_STATUS%</div>
       <form method="POST" action="/thermo" id="thermo-form">
+        <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th class="right">ID</th>
               <th>Вкл</th>
+              <th>Имя</th>
               <th>Датчик</th>
               <th>Режим</th>
               <th class="right">Цель</th>
@@ -145,6 +163,7 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
             %THERMO_ROWS%
           </tbody>
         </table>
+        </div>
         <p class="actions">
           <button class="btn" type="submit">Сохранить</button>
         </p>
@@ -179,6 +198,11 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       el.innerHTML = buildOptions(list, selected, type);
     });
     const thermoForm = document.getElementById('thermo-form');
+    let thermoDirty = false;
+    if (thermoForm) {
+      thermoForm.addEventListener('input', () => { thermoDirty = true; });
+      thermoForm.addEventListener('change', () => { thermoDirty = true; });
+    }
     document.querySelectorAll('input.thermo-power').forEach((el) => {
       el.addEventListener('change', () => {
         const name = el.dataset.action;
@@ -191,7 +215,21 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
         }
       });
     });
+    const scrollKey = 'thermo_scroll_y';
+    const savedScroll = sessionStorage.getItem(scrollKey);
+    if (savedScroll) {
+      const y = parseInt(savedScroll, 10);
+      if (!Number.isNaN(y)) {
+        window.scrollTo(0, y);
+      }
+    }
+    window.addEventListener('scroll', () => {
+      sessionStorage.setItem(scrollKey, String(window.scrollY));
+    }, { passive: true });
     setInterval(() => {
+      if (thermoDirty) {
+        return;
+      }
       const el = document.activeElement;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')) {
         return;
@@ -202,3 +240,11 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+
+
+
+
+
+
+

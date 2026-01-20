@@ -14,6 +14,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <string.h>
+#include <math.h>
 
 #include "controllers/meteo_controller.hpp"
 #include "hal/gpio/gpio.hpp"
@@ -26,6 +27,7 @@ public:
     static constexpr uint8_t kInvalidPort = 0xFF;
     static constexpr uint8_t kInvalidSensor = 0;
     static constexpr size_t kMaskBytes = (kDeviceCount + 7) / 8;
+    static constexpr int16_t kInvalidTarget = 0x7FFF;
 
     enum class Mode : uint8_t
     {
@@ -43,6 +45,7 @@ public:
         uint8_t heat_port = kInvalidPort;
         uint8_t cool_port = kInvalidPort;
         uint8_t button_port = kInvalidPort;
+        String name;
         float target_c = 22.0f;
         float hysteresis = 0.5f;
         Mode mode = Mode::Auto;
@@ -139,6 +142,8 @@ public:
             parsePort_(obj["heat"], cfg.heat_port);
             parsePort_(obj["cool"], cfg.cool_port);
             parsePort_(obj["button"], cfg.button_port);
+            if (obj["name"].is<const char *>())
+                cfg.name = obj["name"].as<const char *>();
             parseFloat_(obj["target"], cfg.target_c);
             parseFloat_(obj["hyst"], cfg.hysteresis);
             if (obj["mode"].is<const char *>() || obj["mode"].is<unsigned>())
@@ -159,6 +164,8 @@ public:
             JsonObject obj = out.add<JsonObject>();
             obj["id"] = cfg.id;
             obj["enabled"] = cfg.enabled;
+            if (cfg.name.length())
+                obj["name"] = cfg.name;
             if (cfg.sensor_id != kInvalidSensor)
                 obj["sensor"] = cfg.sensor_id;
             obj["mode"] = modeName_(cfg.mode);
@@ -247,6 +254,21 @@ public:
         }
     }
 
+    void buildTargetSnapshot(int16_t *targets, size_t count) const
+    {
+        if (!targets)
+            return;
+        const size_t limit = (count < kDeviceCount) ? count : kDeviceCount;
+        for (size_t i = 0; i < limit; ++i)
+        {
+            const float v = _cfg[i].target_c * 10.0f;
+            const float clamped = min(max(v, -32766.0f), 32766.0f);
+            targets[i] = (int16_t)lroundf(clamped);
+        }
+        for (size_t i = limit; i < count; ++i)
+            targets[i] = kInvalidTarget;
+    }
+
     void applySnapshot(const uint8_t *power_mask, size_t bytes)
     {
         if (!power_mask)
@@ -268,6 +290,20 @@ public:
                 if (!st.power_on)
                     writeOff_(cfg, st);
             }
+        }
+    }
+
+    void applyTargetSnapshot(const int16_t *targets, size_t count)
+    {
+        if (!targets)
+            return;
+        const size_t limit = (count < kDeviceCount) ? count : kDeviceCount;
+        for (size_t i = 0; i < limit; ++i)
+        {
+            const int16_t v = targets[i];
+            if (v == kInvalidTarget)
+                continue;
+            _cfg[i].target_c = (float)v / 10.0f;
         }
     }
 
@@ -331,6 +367,7 @@ public:
         if (!indexById_(id, idx))
             return false;
         _cfg[idx].target_c = target_c;
+        _dirty = true;
         return true;
     }
 
@@ -342,6 +379,15 @@ public:
         if (hyst < 0.0f)
             hyst = -hyst;
         _cfg[idx].hysteresis = hyst;
+        return true;
+    }
+
+    bool setName(size_t id, const String &name)
+    {
+        size_t idx = 0;
+        if (!indexById_(id, idx))
+            return false;
+        _cfg[idx].name = name;
         return true;
     }
 

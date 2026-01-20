@@ -186,10 +186,11 @@ public:
             _last_error = F("chat_id not set");
             return false;
         }
-        JsonDocument doc;
+        StaticJsonDocument<256> doc;
         doc["chat_id"] = _chat_id;
         doc["text"] = text;
         String payload;
+        payload.reserve(text.length() + 64);
         serializeJson(doc, payload);
         return sendCommand_(F("sendMessage"), payload);
     }

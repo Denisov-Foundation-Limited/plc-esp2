@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -161,6 +161,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET / (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceIndexHtml);
+        page.reserve(page.length() + 2048);
         page.replace("%NAV%", navHtml_());
         page.replace("%DEVICE_NAME%", deviceName_());
         page.replace("%DEVICE_STATUS%", _device_status);
@@ -188,6 +189,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /wifi (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceWifiHtml);
+        page.reserve(page.length() + 1536);
         page.replace("%NAV%", navHtml_());
         page.replace("%WIFI_MODE%", _wifi.ap() ? "AP" : "STA");
         page.replace("%WIFI_CUR_SSID%", _wifi.ap() ? _wifi.apSsid() : _wifi.ssid());
@@ -219,6 +221,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /manage (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceManageHtml);
+        page.reserve(page.length() + 4096);
         page.replace("%NAV%", navHtml_());
         page.replace("%FILES%", listFilesHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
@@ -233,11 +236,13 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /logs (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceLogsHtml);
+        page.reserve(page.length() + 4096);
         page.replace("%NAV%", navHtml_());
         String lines;
         if (_log)
         {
             const size_t count = _log->recentCount();
+            lines.reserve(count * 96 + 64);
             if (count == 0)
             {
                 lines = "No logs";
@@ -274,6 +279,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /admin (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceAdminHtml);
+        page.reserve(page.length() + 512);
         page.replace("%NAV%", navHtml_());
         page.replace("%ADMIN_STATUS%", (_cli_auth && _cli_auth->adminPasswordSet()) ? "установлен" : "не установлен");
         sendHtml_(request, page, set_cookie);
@@ -319,6 +325,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /ports (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfacePortsHtml);
+        page.reserve(page.length() + 2048);
         page.replace("%NAV%", navHtml_());
         page.replace("%PORTS%", listPortsHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
@@ -333,6 +340,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /buses (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceBusesHtml);
+        page.reserve(page.length() + 3072);
         page.replace("%NAV%", navHtml_());
         page.replace("%I2C%", listI2cHtml_());
         page.replace("%OW%", listOwHtml_());
@@ -348,6 +356,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /stack (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceStackHtml);
+        page.reserve(page.length() + 4096);
         page.replace("%NAV%", navHtml_());
         const auto role = stackRole_();
         page.replace("%STACK_ROLE%", stackRoleName_(role));
@@ -379,6 +388,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /controllers (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceControllersHtml);
+        page.reserve(page.length() + 2048);
         page.replace("%NAV%", navHtml_());
         if (_controllers)
         {
@@ -478,6 +488,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /sockets (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceSocketsHtml);
+        page.reserve(page.length() + 8192);
         page.replace("%NAV%", navHtml_());
         page.replace("%SOCKETS%", listSocketsHtml_());
         page.replace("%DINPUT_JSON%", socketPortOptionsJson_(PortIO::PinType::DInput));
@@ -497,6 +508,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /meteo (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceMeteoHtml);
+        page.reserve(page.length() + 8192);
         page.replace("%NAV%", navHtml_());
         page.replace("%METEO_ROWS%", listMeteoHtml_());
         page.replace("%METEO_STATUS%", _meteo_status);
@@ -514,6 +526,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /thermo (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceThermoHtml);
+        page.reserve(page.length() + 8192);
         page.replace("%NAV%", navHtml_());
         page.replace("%THERMO_ROWS%", listThermoHtml_());
         page.replace("%THERMO_STATUS%", _thermo_status);
@@ -533,6 +546,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /telegram (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceTelegramHtml);
+        page.reserve(page.length() + 4096);
         page.replace("%NAV%", navHtml_());
         page.replace("%TGBOT_TOKEN%", _tgbot ? _tgbot->token() : String(""));
         page.replace("%TGBOT_CHAT_ID%", _tgbot ? String((long long)_tgbot->chatId()) : String("0"));
@@ -662,10 +676,12 @@ private:
             const String idx = String((unsigned)cfg->id);
             const String prefix = String("m") + idx + "_";
             const String en_key = prefix + "en";
+            const String name_key = prefix + "name";
             const String type_key = prefix + "type";
             const String pin_key = prefix + "pin";
             const String addr_key = prefix + "addr";
             const bool has_any = request->hasParam(en_key, true) ||
+                                 request->hasParam(name_key, true) ||
                                  request->hasParam(type_key, true) ||
                                  request->hasParam(pin_key, true) ||
                                  request->hasParam(addr_key, true);
@@ -673,6 +689,8 @@ private:
                 continue;
 
             const bool enabled = request->hasParam(en_key, true);
+            String name = paramValue_(request, name_key);
+            name.trim();
             const String type_str = paramValue_(request, type_key);
             const String pin_str = paramValue_(request, pin_key);
             const String addr_str = paramValue_(request, addr_key);
@@ -705,6 +723,11 @@ private:
             if (cfg->enabled != enabled)
             {
                 meteo.setEnabled(cfg->id, enabled);
+                changed = true;
+            }
+            if (cfg->name != name)
+            {
+                meteo.setName(cfg->id, name);
                 changed = true;
             }
             if (cfg->type != type)
@@ -773,6 +796,7 @@ private:
             const String idx = String((unsigned)cfg->id);
             const String prefix = String("t") + idx + "_";
             const String en_key = prefix + "en";
+            const String name_key = prefix + "name";
             const String sensor_key = prefix + "sensor";
             const String mode_key = prefix + "mode";
             const String target_key = prefix + "target";
@@ -782,6 +806,7 @@ private:
             const String button_key = prefix + "button";
             const String power_key = prefix + "power";
             const bool has_any = request->hasParam(en_key, true) ||
+                                 request->hasParam(name_key, true) ||
                                  request->hasParam(sensor_key, true) ||
                                  request->hasParam(mode_key, true) ||
                                  request->hasParam(target_key, true) ||
@@ -802,6 +827,8 @@ private:
             const String cool_str = paramValue_(request, cool_key);
             const String button_str = paramValue_(request, button_key);
             const String power_str = paramValue_(request, power_key);
+            String name = paramValue_(request, name_key);
+            name.trim();
             const bool has_power = (power_str == "on" || power_str == "off" || power_str == "1" || power_str == "0" ||
                                     power_str == "true" || power_str == "false");
             const bool power_on = (power_str == "on" || power_str == "1" || power_str == "true");
@@ -870,6 +897,11 @@ private:
             if (cfg->enabled != enabled)
             {
                 thermo.setEnabled(cfg->id, enabled);
+                changed = true;
+            }
+            if (cfg->name != name)
+            {
+                thermo.setName(cfg->id, name);
                 changed = true;
             }
             if (cfg->sensor_id != sensor_id)
@@ -1034,6 +1066,7 @@ private:
     String listFilesHtml_()
     {
         String items;
+        items.reserve(2048);
         File root = LittleFS.open("/");
         File file = root.openNextFile();
         while (file)
@@ -1167,6 +1200,7 @@ private:
     String listPortsHtml_()
     {
         String items;
+        items.reserve(2048);
         for (uint16_t i = 0; i < PortIO::PORT_COUNT; ++i)
         {
             const auto &p = ActiveBoardProfile::PORTS[i];
@@ -1224,6 +1258,7 @@ private:
         if (!_controllers)
             return "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Нет розеток</strong></td></tr>";
         String items;
+        items.reserve(4096);
         SocketController &sockets = _controllers->sockets();
         bool tmp_state = false;
         auto appendRow = [&](const SocketController::SocketConfig &cfg, bool enabled) {
@@ -1292,8 +1327,9 @@ private:
     String listMeteoHtml_()
     {
         if (!_controllers)
-            return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>Meteo unavailable</strong></td></tr>";
+            return "<tr><td colspan=\"10\" style=\"color:#94a3b8\"><strong>Meteo unavailable</strong></td></tr>";
         String items;
+        items.reserve(4096);
         MeteoController &meteo = _controllers->meteo();
         const uint32_t now = millis();
 
@@ -1359,7 +1395,11 @@ private:
             items += "_en\"";
             if (enabled)
                 items += " checked";
-            items += "></td><td><select class=\"field mini meteo-type\" name=\"m";
+            items += "></td><td><input class=\"field name\" type=\"text\" name=\"m";
+            items += String((unsigned)cfg.id);
+            items += "_name\" value=\"";
+            appendHtmlEscaped_(items, cfg.name.c_str());
+            items += "\"></td><td><select class=\"field mini meteo-type\" name=\"m";
             items += String((unsigned)cfg.id);
             items += "_type\">";
             appendTypeOption("none", "none", cfg.type == MeteoController::SensorType::None);
@@ -1405,15 +1445,16 @@ private:
         if (first_disabled && first_disabled_state)
             appendRow(*first_disabled, *first_disabled_state, false);
         if (items.length() == 0)
-            items = "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>Meteo empty</strong></td></tr>";
+            items = "<tr><td colspan=\"10\" style=\"color:#94a3b8\"><strong>Meteo empty</strong></td></tr>";
         return items;
     }
 
     String listThermoHtml_()
     {
         if (!_controllers)
-            return "<tr><td colspan=\"11\" style=\"color:#94a3b8\"><strong>Thermo unavailable</strong></td></tr>";
+            return "<tr><td colspan=\"12\" style=\"color:#94a3b8\"><strong>Thermo unavailable</strong></td></tr>";
         String items;
+        items.reserve(4096);
         ThermoController &thermo = _controllers->thermo();
         uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
 
@@ -1435,7 +1476,11 @@ private:
             items += "_en\"";
             if (enabled)
                 items += " checked";
-            items += "></td><td><select class=\"field mini\" name=\"t";
+            items += "></td><td><input class=\"field name\" type=\"text\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_name\" value=\"";
+            appendHtmlEscaped_(items, cfg.name.c_str());
+            items += "\"></td><td><select class=\"field mini\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_sensor\">";
             items += meteoSensorOptionsHtml_(cfg.sensor_id, sensor_used);
@@ -1524,7 +1569,7 @@ private:
         if (first_disabled && first_disabled_state)
             appendRow(*first_disabled, *first_disabled_state, false);
         if (items.length() == 0)
-            items = "<tr><td colspan=\"11\" style=\"color:#94a3b8\"><strong>Thermo empty</strong></td></tr>";
+            items = "<tr><td colspan=\"12\" style=\"color:#94a3b8\"><strong>Thermo empty</strong></td></tr>";
         return items;
     }
 
@@ -1533,6 +1578,7 @@ private:
         if (!_i2c)
             return "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>none</strong></td></tr>";
         String items;
+        items.reserve(1024);
         bool scanned[3] = {false, false, false};
         for (uint8_t i = 0; i < ActiveBoardProfile::I2C_COUNT; ++i)
         {
@@ -1564,6 +1610,7 @@ private:
     String stackNodesBlockHtml_() const
     {
         String out;
+        out.reserve(1024);
         out += "<div class=\"section\">";
         out += "<h2>Слейвы</h2>";
         out += "<table><thead><tr>";
@@ -1583,6 +1630,7 @@ private:
         if (count == 0)
             return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Нет слейвов</strong></td></tr>";
         String items;
+        items.reserve(1024);
         for (size_t i = 0; i < count; ++i)
         {
             const uint32_t id = _stack_master->nodeIdAt(i);
@@ -1613,6 +1661,7 @@ private:
     String socketPortOptionsJson_(PortIO::PinType type) const
     {
         String out;
+        out.reserve(128);
         out += "[";
         bool first = true;
         for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
@@ -1645,6 +1694,7 @@ private:
     String socketUsedPortsJson_(PortIO::PinType type) const
     {
         String out;
+        out.reserve(128);
         out += "[";
         bool first = true;
         if (_controllers)
@@ -1688,6 +1738,7 @@ private:
     String meteoUsedPinsJson_() const
     {
         String out;
+        out.reserve(128);
         out += "[";
         bool first = true;
         if (_controllers)
@@ -1730,6 +1781,7 @@ private:
     String thermoUsedPortsJson_(PortIO::PinType type) const
     {
         String out;
+        out.reserve(128);
         out += "[";
         bool first = true;
         if (_controllers)
@@ -1773,6 +1825,7 @@ private:
         if (!_ow)
             return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>none</strong></td></tr>";
         String items;
+        items.reserve(1024);
         for (uint8_t i = 0; i < ActiveBoardProfile::ONEWIRE_COUNT; ++i)
         {
             OneWireBus *bus = _ow->busPtrByIndex(i);
@@ -2226,6 +2279,7 @@ private:
         if (_log && _log->ready())
             _log->info(F("WEB"), F("GET /status (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceStatusHtml);
+        page.reserve(page.length() + 2048);
         page.replace("%NAV%", navHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         page.replace("%STATUS%", _last_status.length() ? _last_status : "No data");
@@ -2945,7 +2999,7 @@ private:
 
     void sendHtml_(AsyncWebServerRequest *request, const String &page, bool set_cookie)
     {
-        auto *response = request->beginResponse(200, "text/html", page);
+        auto *response = request->beginResponse(200, "text/html; charset=utf-8", page);
         if (set_cookie)
             response->addHeader("Set-Cookie", sessionCookie_());
         request->send(response);
@@ -2953,7 +3007,10 @@ private:
 
     void sendText_(AsyncWebServerRequest *request, int code, const char *type, const String &text, bool set_cookie)
     {
-        auto *response = request->beginResponse(code, type, text);
+        String content_type = type;
+        if (content_type.startsWith("text/") && content_type.indexOf("charset=") < 0)
+            content_type += "; charset=utf-8";
+        auto *response = request->beginResponse(code, content_type, text);
         if (set_cookie)
             response->addHeader("Set-Cookie", sessionCookie_());
         request->send(response);
@@ -3106,6 +3163,7 @@ private:
     bool _upload_set_cookie = false;
     bool _ota_set_cookie = false;
 };
+
 
 
 
