@@ -30,7 +30,9 @@
 #include "core/rtc.hpp"
 #include "plc/plc_control.hpp"
 #include "core/network/telegram/telegram.hpp"
-#include "controllers/socket/socket_controller.hpp"
+#include "controllers/meteo_controller.hpp"
+#include "controllers/socket_controller.hpp"
+#include "controllers/thermo_controller.hpp"
 #include "utils/logger.hpp"
 
 class StackSlaveHandler
@@ -38,7 +40,8 @@ class StackSlaveHandler
 public:
     StackSlaveHandler(IoStack &io, Ds18b20 &ds18b20, OneWireManager &ow, I2CManager &i2c,
                       PlcControl &plc, RTC &rtc, TelegramClient &telegram, Logger &logs,
-                      Extender &ext, SocketController &sockets)
+                      Extender &ext, SocketController &sockets, MeteoController &meteo,
+                      ThermoController &thermo)
         : _io(io),
           _ds18b20(ds18b20),
           _ow(ow),
@@ -48,7 +51,9 @@ public:
           _telegram(telegram),
           _logs(logs),
           _ext(ext),
-          _sockets(sockets)
+          _sockets(sockets),
+          _meteo(meteo),
+          _thermo(thermo)
     {
     }
 
@@ -81,6 +86,8 @@ private:
     Logger &_logs;
     Extender &_ext;
     SocketController &_sockets;
+    MeteoController &_meteo;
+    ThermoController &_thermo;
     StackNode *_node = nullptr;
     static constexpr uint8_t MAX_I2C_ADDRS = 127;
     static constexpr uint8_t MAX_OW_ADDRS = 64;
@@ -167,6 +174,12 @@ private:
             break;
         case StackFeature::Sockets:
             handleSockets_(cmd_id, action, params);
+            break;
+        case StackFeature::Meteo:
+            handleMeteo_(cmd_id, action);
+            break;
+        case StackFeature::Thermo:
+            handleThermo_(cmd_id, action, params);
             break;
         default:
             sendErr_(cmd_id, "unknown feature");
@@ -643,6 +656,118 @@ private:
                 {
                     const bool on = item["state"].as<int>() != 0;
                     _sockets.setRelayById(id, on);
+                }
+            }
+            sendAck_(cmd_id);
+            return;
+        }
+        sendErr_(cmd_id, "unsupported");
+    }
+
+    void handleMeteo_(uint16_t cmd_id, const String &action)
+    {
+        if (action != "get")
+        {
+            sendErr_(cmd_id, "unsupported");
+            return;
+        }
+        JsonDocument doc;
+        JsonArray arr = doc["items"].to<JsonArray>();
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = _meteo.configByIndex(i);
+            const auto *st = _meteo.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            JsonObject o = arr.add<JsonObject>();
+            o["id"] = (unsigned)cfg->id;
+            o["enabled"] = cfg->enabled;
+            o["type"] = MeteoController::typeName(cfg->type);
+            if (cfg->type == MeteoController::SensorType::Dht22 &&
+                cfg->dht_pin != MeteoController::kInvalidPin)
+                o["pin"] = cfg->dht_pin;
+            if (cfg->type == MeteoController::SensorType::Ds18b20 && cfg->ds18_addr_set)
+            {
+                char hex[17] = {};
+                MeteoController::formatHexAddr(cfg->ds18_addr, hex);
+                o["addr"] = hex;
+            }
+            if (st->has_temp)
+                o["temp_c"] = st->temp_c;
+            if (st->has_humidity)
+                o["hum"] = st->humidity;
+            o["has_temp"] = st->has_temp;
+            o["has_hum"] = st->has_humidity;
+            o["ok"] = st->ok;
+        }
+        sendAck_(cmd_id, doc);
+    }
+
+    void handleThermo_(uint16_t cmd_id, const String &action, JsonVariantConst params)
+    {
+        if (action == "get")
+        {
+            JsonDocument doc;
+            JsonArray arr = doc["items"].to<JsonArray>();
+            for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+            {
+                const auto *cfg = _thermo.configByIndex(i);
+                const auto *st = _thermo.stateByIndex(i);
+                if (!cfg || !st || !cfg->enabled)
+                    continue;
+                JsonObject o = arr.add<JsonObject>();
+                o["id"] = (unsigned)cfg->id;
+                o["enabled"] = cfg->enabled;
+                o["sensor"] = (unsigned)cfg->sensor_id;
+                o["mode"] = ThermoController::modeName(cfg->mode);
+                o["target"] = cfg->target_c;
+                o["hyst"] = cfg->hysteresis;
+                if (cfg->heat_port != ThermoController::kInvalidPort)
+                    o["heat"] = cfg->heat_port;
+                if (cfg->cool_port != ThermoController::kInvalidPort)
+                    o["cool"] = cfg->cool_port;
+                if (cfg->button_port != ThermoController::kInvalidPort)
+                    o["button"] = cfg->button_port;
+                o["power_on"] = st->power_on;
+                o["heat_on"] = st->heat_on;
+                o["cool_on"] = st->cool_on;
+            }
+            sendAck_(cmd_id, doc);
+            return;
+        }
+        if (action == "set")
+        {
+            if (!params.is<JsonObjectConst>() || !params["items"].is<JsonArrayConst>())
+            {
+                sendErr_(cmd_id, "missing items");
+                return;
+            }
+            JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            for (JsonVariantConst v : items)
+            {
+                if (!v.is<JsonObjectConst>())
+                    continue;
+                JsonObjectConst item = v.as<JsonObjectConst>();
+                if (!item["id"].is<unsigned>())
+                    continue;
+                const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
+                {
+                    _thermo.togglePower(id, "stack");
+                    continue;
+                }
+                if (item["power"].is<bool>() || item["power"].is<int>())
+                {
+                    const bool on = item["power"].is<bool>() ? item["power"].as<bool>()
+                                                             : (item["power"].as<int>() != 0);
+                    _thermo.setPower(id, on, "stack");
+                    continue;
+                }
+                if (item["state"].is<bool>() || item["state"].is<int>())
+                {
+                    const bool on = item["state"].is<bool>() ? item["state"].as<bool>()
+                                                             : (item["state"].as<int>() != 0);
+                    _thermo.setPower(id, on, "stack");
                 }
             }
             sendAck_(cmd_id);

@@ -17,6 +17,7 @@
 
 #include "hal/gpio/gpio.hpp"
 #include "hal/gpio/gpio_caps.hpp"
+#include "utils/logger.hpp"
 
 class SocketController
 {
@@ -40,7 +41,7 @@ public:
         bool has_button = false;
     };
 
-    explicit SocketController(Gpio &gpio) : _gpio(gpio) {}
+    explicit SocketController(Gpio &gpio, Logger *logs = nullptr) : _gpio(gpio), _logs(logs) {}
 
     void applyConfig(JsonArrayConst sockets)
     {
@@ -56,7 +57,7 @@ public:
                 continue;
             }
             JsonObjectConst obj = v.as<JsonObjectConst>();
-            uint8_t id = (uint8_t)idx;
+            uint8_t id = (uint8_t)(idx + 1);
             if (obj["id"].is<unsigned>())
             {
                 const unsigned raw = obj["id"].as<unsigned>();
@@ -124,6 +125,9 @@ public:
                 st.relay_on = !st.relay_on;
                 writeRelay_(cfg, st.relay_on);
                 _dirty = true;
+                if (_logs)
+                    _logs->info(F("SOCKET"), F("id=%u state=%s src=button"),
+                                (unsigned)cfg.id, st.relay_on ? "on" : "off");
             }
             st.last_button = pressed;
         }
@@ -145,6 +149,9 @@ public:
         st.relay_on = on;
         writeRelay_(cfg, st.relay_on);
         _dirty = true;
+        if (_logs)
+            _logs->info(F("SOCKET"), F("id=%u state=%s"),
+                        (unsigned)cfg.id, st.relay_on ? "on" : "off");
         return true;
     }
 
@@ -162,6 +169,9 @@ public:
         st.relay_on = !st.relay_on;
         writeRelay_(cfg, st.relay_on);
         _dirty = true;
+        if (_logs)
+            _logs->info(F("SOCKET"), F("id=%u state=%s src=toggle"),
+                        (unsigned)cfg.id, st.relay_on ? "on" : "off");
         return true;
     }
 
@@ -201,6 +211,8 @@ public:
         st.has_button = setupButton_(cfg, st);
         setupRelay_(cfg, st);
         _dirty = true;
+        if (_logs)
+            _logs->info(F("SOCKET"), F("id=%u enabled=1"), (unsigned)cfg.id);
         return true;
     }
 
@@ -373,8 +385,9 @@ private:
     Gpio &_gpio;
     SocketConfig _cfg[kSocketCount];
     SocketState _state[kSocketCount];
-    bool _controller_enabled = true;
+    bool _controller_enabled = false;
     bool _dirty = false;
+    Logger *_logs = nullptr;
 
     void reset_()
     {
@@ -382,17 +395,18 @@ private:
         {
             _cfg[i] = SocketConfig{};
             _state[i] = SocketState{};
-            _cfg[i].id = (uint8_t)i;
+            _cfg[i].id = (uint8_t)(i + 1);
         }
     }
 
     bool indexById_(uint8_t id, size_t &out) const
     {
-        if (id >= kSocketCount)
+        if (id == 0 || id > kSocketCount)
             return false;
-        if (_cfg[id].id == id)
+        const size_t direct = static_cast<size_t>(id - 1);
+        if (_cfg[direct].id == id)
         {
-            out = id;
+            out = direct;
             return true;
         }
         for (size_t i = 0; i < kSocketCount; ++i)

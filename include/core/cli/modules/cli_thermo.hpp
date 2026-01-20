@@ -1,0 +1,490 @@
+/**********************************************************************/
+/*                                                                    */
+/* Programmable Logic Controller for ESP microcontrollers             */
+/*                                                                    */
+/* Copyright (C) 2026 Denisov Foundation Limited                      */
+/* License: GPLv3                                                     */
+/* Written by Sergey Denisov aka LittleBuster                         */
+/* Email: DenisovFoundationLtd@gmail.com                              */
+/*                                                                    */
+/**********************************************************************/
+
+#pragma once
+
+#include <Arduino.h>
+#include <stdint.h>
+
+#include "boards/board_profile.hpp"
+#include "controllers/meteo_controller.hpp"
+#include "controllers/thermo_controller.hpp"
+#include "hal/gpio/portio.hpp"
+#include "hal/gpio/extender.hpp"
+
+template <typename ConsoleT>
+class CLIThermoT
+{
+public:
+    CLIThermoT(ConsoleT &console, ThermoController &thermo, MeteoController &meteo)
+        : _c(console), _thermo(thermo), _meteo(meteo) {}
+
+    void printHelpEnable()
+    {
+        _c._io->println(F("    show thermo     - list thermo devices"));
+        _c._io->print(F("    show thermo <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" - device details"));
+    }
+
+    void printHelpConfigLines()
+    {
+        _c._io->println(F("  Thermo:"));
+        _c._io->println(F("    thermo                  - enter Thermo context"));
+    }
+
+    void printHelpContextLines()
+    {
+        _c._io->println(F("  Thermo:"));
+        _c._io->println(F("    show                     - list thermo devices"));
+        _c._io->print(F("    show <id>"));
+        printIdRangeInline_();
+        _c._io->println(F("                - device details"));
+        _c._io->print(F("    enable <id>"));
+        printIdRangeInline_();
+        _c._io->println(F("              - enable device"));
+        _c._io->print(F("    disable <id>"));
+        printIdRangeInline_();
+        _c._io->println(F("             - disable device"));
+        _c._io->print(F("    mode <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <off|heat|cool|auto> - set mode"));
+        _c._io->print(F("    sensor <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <sensor|none>       - set meteo sensor"));
+        _c._io->print(F("    target <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <temp>              - set target temperature"));
+        _c._io->print(F("    hyst <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <temp>               - set hysteresis"));
+        _c._io->print(F("    heat <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <port|none>         - set heat relay port"));
+        _c._io->print(F("    cool <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <port|none>         - set cool relay port"));
+        _c._io->print(F("    button <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <port|none>         - set button port"));
+    }
+
+    void showDevices()
+    {
+        bool any = false;
+        _c.printThermoHeader_();
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = _thermo.configByIndex(i);
+            const auto *st = _thermo.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            any = true;
+            _c.printThermoRow_("CPU", *cfg, *st);
+        }
+        if (!any)
+            _c._io->println(F("  none"));
+    }
+
+    void showDevice(size_t id)
+    {
+        const auto *cfg = _thermo.config(id);
+        const auto *st = _thermo.state(id);
+        if (!cfg || !st)
+        {
+            printInvalidId_();
+            return;
+        }
+        _c._io->println(F("Thermo device:"));
+        _c.printThermoHeader_();
+        _c.printThermoRow_("CPU", *cfg, *st);
+    }
+
+    bool handleContext(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String lower = cmd;
+        lower.toLowerCase();
+
+        if (lower == "show")
+        {
+            showDevices();
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("show "))
+        {
+            String tail = cmd.substring(5);
+            tail.trim();
+            uint16_t id = 0;
+            if (!parseId_(tail, id))
+            {
+                printInvalidId_();
+                _c.printPrompt_();
+                return true;
+            }
+            showDevice(id);
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("enable ") || lower.startsWith("disable "))
+        {
+            const bool enable = lower.startsWith("enable ");
+            String tail = cmd.substring(enable ? 7 : 8);
+            tail.trim();
+            uint16_t id = 0;
+            if (!parseId_(tail, id))
+            {
+                printInvalidId_();
+                _c.printPrompt_();
+                return true;
+            }
+            if (!_thermo.setEnabled(id, enable))
+                _c._io->println(F("Failed"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("mode "))
+        {
+            String rest = cmd.substring(5);
+            rest.trim();
+            const int space = rest.indexOf(' ');
+            if (space <= 0)
+            {
+                _c._io->println(F("Usage: mode <id> <off|heat|cool|auto>"));
+                _c.printPrompt_();
+                return true;
+            }
+            String id_str = rest.substring(0, space);
+            String mode_str = rest.substring(space + 1);
+            id_str.trim();
+            mode_str.trim();
+            uint16_t id = 0;
+            if (!parseId_(id_str, id))
+            {
+                printInvalidId_();
+                _c.printPrompt_();
+                return true;
+            }
+            ThermoController::Mode mode = ThermoController::Mode::Off;
+            if (!parseMode_(mode_str, mode))
+            {
+                _c._io->println(F("Invalid mode"));
+                _c.printPrompt_();
+                return true;
+            }
+            if (!_thermo.setMode(id, mode))
+                _c._io->println(F("Failed"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("sensor "))
+        {
+            String rest = cmd.substring(7);
+            rest.trim();
+            const int space = rest.indexOf(' ');
+            if (space <= 0)
+            {
+                _c._io->println(F("Usage: sensor <id> <sensor|none>"));
+                _c.printPrompt_();
+                return true;
+            }
+            String id_str = rest.substring(0, space);
+            String val_str = rest.substring(space + 1);
+            id_str.trim();
+            val_str.trim();
+            uint16_t id = 0;
+            if (!parseId_(id_str, id))
+            {
+                printInvalidId_();
+                _c.printPrompt_();
+                return true;
+            }
+            uint8_t sensor = ThermoController::kInvalidSensor;
+            if (!parseSensor_(val_str, sensor))
+            {
+                _c._io->println(F("Invalid sensor"));
+                _c.printPrompt_();
+                return true;
+            }
+            if (sensor != ThermoController::kInvalidSensor && !isMeteoActive_(sensor))
+            {
+                _c._io->println(F("Meteo sensor not active"));
+                _c.printPrompt_();
+                return true;
+            }
+            if (!_thermo.setSensor(id, sensor))
+                _c._io->println(F("Failed"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("target ") || lower.startsWith("hyst "))
+        {
+            const bool is_target = lower.startsWith("target ");
+            String rest = cmd.substring(is_target ? 7 : 5);
+            rest.trim();
+            const int space = rest.indexOf(' ');
+            if (space <= 0)
+            {
+                _c._io->println(F("Usage: target|hyst <id> <temp>"));
+                _c.printPrompt_();
+                return true;
+            }
+            String id_str = rest.substring(0, space);
+            String val_str = rest.substring(space + 1);
+            id_str.trim();
+            val_str.trim();
+            uint16_t id = 0;
+            if (!parseId_(id_str, id))
+            {
+                printInvalidId_();
+                _c.printPrompt_();
+                return true;
+            }
+            float val = 0.0f;
+            if (!parseFloat_(val_str, val))
+            {
+                _c._io->println(F("Invalid value"));
+                _c.printPrompt_();
+                return true;
+            }
+            const bool ok = is_target ? _thermo.setTarget(id, val) : _thermo.setHysteresis(id, val);
+            if (!ok)
+                _c._io->println(F("Failed"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("heat ") || lower.startsWith("cool ") || lower.startsWith("button "))
+        {
+            const bool is_heat = lower.startsWith("heat ");
+            const bool is_cool = lower.startsWith("cool ");
+            String rest = cmd.substring(is_heat ? 5 : (is_cool ? 5 : 7));
+            rest.trim();
+            const int space = rest.indexOf(' ');
+            if (space <= 0)
+            {
+                _c._io->println(F("Usage: heat|cool|button <id> <port|none>"));
+                _c.printPrompt_();
+                return true;
+            }
+            String id_str = rest.substring(0, space);
+            String port_str = rest.substring(space + 1);
+            id_str.trim();
+            port_str.trim();
+            uint16_t id = 0;
+            if (!parseId_(id_str, id))
+            {
+                printInvalidId_();
+                _c.printPrompt_();
+                return true;
+            }
+            uint8_t port = ThermoController::kInvalidPort;
+            if (!parsePort_(port_str, port))
+            {
+                _c._io->println(F("Invalid port"));
+                _c.printPrompt_();
+                return true;
+            }
+            const PortIO::PinType type = is_heat || is_cool ? PortIO::PinType::Relay : PortIO::PinType::DInput;
+            if (port != ThermoController::kInvalidPort && !isPortSelectable_(port, type))
+            {
+                _c._io->println(F("Port not available"));
+                _c.printPrompt_();
+                return true;
+            }
+            if (port != ThermoController::kInvalidPort && isPortUsedByOther_(id, port))
+            {
+                _c._io->println(F("Port already in use"));
+                _c.printPrompt_();
+                return true;
+            }
+            bool ok = false;
+            if (is_heat)
+                ok = _thermo.setHeatPort(id, port);
+            else if (is_cool)
+                ok = _thermo.setCoolPort(id, port);
+            else
+                ok = _thermo.setButtonPort(id, port);
+            if (!ok)
+                _c._io->println(F("Failed"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+
+        return false;
+    }
+
+private:
+    ConsoleT &_c;
+    ThermoController &_thermo;
+    MeteoController &_meteo;
+
+    static bool parseId_(const String &s, uint16_t &out)
+    {
+        if (s.length() == 0)
+            return false;
+        for (size_t i = 0; i < s.length(); ++i)
+            if (s[i] < '0' || s[i] > '9')
+                return false;
+        const int v = s.toInt();
+        if (v < 1 || v > (int)ThermoController::kDeviceCount)
+            return false;
+        out = (uint16_t)v;
+        return true;
+    }
+
+    static bool parsePort_(const String &s, uint8_t &out)
+    {
+        String t = s;
+        t.toLowerCase();
+        if (t == "none" || t == "-")
+        {
+            out = ThermoController::kInvalidPort;
+            return true;
+        }
+        if (t.length() == 0)
+            return false;
+        for (size_t i = 0; i < t.length(); ++i)
+            if (t[i] < '0' || t[i] > '9')
+                return false;
+        const int v = t.toInt();
+        if (v < 0 || v > 255)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
+    static bool parseSensor_(const String &s, uint8_t &out)
+    {
+        String t = s;
+        t.toLowerCase();
+        if (t == "none" || t == "-")
+        {
+            out = ThermoController::kInvalidSensor;
+            return true;
+        }
+        if (t.length() == 0)
+            return false;
+        for (size_t i = 0; i < t.length(); ++i)
+            if (t[i] < '0' || t[i] > '9')
+                return false;
+        const int v = t.toInt();
+        if (v < 0 || v > (int)MeteoController::kSensorCount)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
+    static bool parseFloat_(const String &s, float &out)
+    {
+        if (s.length() == 0)
+            return false;
+        const char *c = s.c_str();
+        char *end = nullptr;
+        const float v = strtof(c, &end);
+        if (end == c)
+            return false;
+        out = v;
+        return true;
+    }
+
+    static bool parseMode_(const String &s, ThermoController::Mode &out)
+    {
+        String t = s;
+        t.toLowerCase();
+        if (t == "off" || t == "none")
+        {
+            out = ThermoController::Mode::Off;
+            return true;
+        }
+        if (t == "heat" || t == "heat_only" || t == "only_heat")
+        {
+            out = ThermoController::Mode::Heat;
+            return true;
+        }
+        if (t == "cool" || t == "cool_only" || t == "only_cool")
+        {
+            out = ThermoController::Mode::Cool;
+            return true;
+        }
+        if (t == "auto")
+        {
+            out = ThermoController::Mode::Auto;
+            return true;
+        }
+        return false;
+    }
+
+    bool isMeteoActive_(uint8_t id) const
+    {
+        const auto *cfg = _meteo.config(id);
+        return cfg && cfg->enabled;
+    }
+
+    bool isPortSelectable_(uint8_t port, PortIO::PinType type) const
+    {
+        if (port >= PortIO::PORT_COUNT)
+            return false;
+        const auto &p = ActiveBoardProfile::PORTS[port];
+        if (p.caps == Cap::None)
+            return false;
+        if (p.type != type)
+            return false;
+        if (p.backend != PortIO::Backend::Extender)
+            return true;
+        const auto *devs = _c._ext.devs();
+        if (!devs || p.u.ext.dev >= _c._ext.devCount())
+            return false;
+        if (devs[p.u.ext.dev].type != Extender::Type::MCP23017)
+            return false;
+        return _c._ext.isPresent(p.u.ext.dev);
+    }
+
+    bool isPortUsedByOther_(uint16_t id, uint8_t port) const
+    {
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = _thermo.configByIndex(i);
+            if (!cfg)
+                continue;
+            if (cfg->id == id)
+                continue;
+            if (cfg->heat_port == port || cfg->cool_port == port || cfg->button_port == port)
+                return true;
+        }
+        return false;
+    }
+
+    void printIdRangeInline_() const
+    {
+        _c._io->print(F(" (1.."));
+        _c._io->print(ThermoController::kDeviceCount);
+        _c._io->print(F(")"));
+    }
+
+    void printInvalidId_() const
+    {
+        _c._io->print(F("Invalid thermo id (1.."));
+        _c._io->print(ThermoController::kDeviceCount);
+        _c._io->println(F(")"));
+    }
+};

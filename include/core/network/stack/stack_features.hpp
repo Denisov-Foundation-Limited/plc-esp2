@@ -28,5 +28,7 @@ enum class StackFeature : uint8_t
     Telegram = 0x0B,
     Storage = 0x0C,
     Extenders = 0x0D,
-    Sockets = 0x0E
+    Sockets = 0x0E,
+    Meteo = 0x0F,
+    Thermo = 0x10
 };

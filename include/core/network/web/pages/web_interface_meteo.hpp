@@ -11,13 +11,13 @@
 
 #pragma once
 
-static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
+static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Розетки</title>
+  <title>Метео</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -38,7 +38,7 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       background-attachment: fixed;
       color: var(--text);
     }
-    .wrap { max-width: 980px; margin: 40px auto; padding: 0 16px; }
+    .wrap { max-width: 1100px; margin: 40px auto; padding: 0 16px; }
     .card {
       background: linear-gradient(180deg, #0f172a 0%, #0b1220 100%);
       border: 1px solid #1f2937;
@@ -73,14 +73,6 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       font-weight: 700;
       cursor: pointer;
     }
-    .btn-sm {
-      padding: 6px 10px;
-      border-radius: 8px;
-      font-size: 12px;
-    }
-    .btn-on { background: #22c55e; color: #0b1220; }
-    .btn-off { background: #f97316; color: #0b1220; }
-    .btn-toggle { background: #38bdf8; color: #0b1220; }
     .status-dot {
       display: inline-block;
       width: 10px;
@@ -88,64 +80,40 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       border-radius: 50%;
       box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
     }
-    .status-on { background: #22c55e; }
-    .status-off { background: #ef4444; }
-    .mini { width: 72px; }
-    .name { width: 180px; }
+    .status-ok { background: #22c55e; }
+    .status-err { background: #ef4444; }
+    .status-na { background: #64748b; }
     .actions { margin-top: 14px; }
-    .switch {
-      display: inline-block;
-      width: 40px;
-      height: 20px;
-      vertical-align: middle;
-      flex: 0 0 auto;
-    }
-    .switch input { display: none; }
-    .track {
-      display: flex;
-      align-items: center;
-      width: 100%;
-      height: 100%;
-      padding: 2px;
-      background: #ef4444;
-      border-radius: 999px;
-      border: 1px solid #1f2937;
-      transition: .2s;
-    }
-    .knob {
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      background: #0b1220;
-      transition: .2s;
-      box-shadow: 0 0 0 1px rgba(0,0,0,0.3);
-    }
-    input:checked + .track { background: #22c55e; }
-    input:checked + .track .knob { transform: translateX(20px); }
+    .mini { width: 90px; }
+    .addr { width: 160px; }
+    .temp { width: 90px; }
+    .hum { width: 90px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Розетки</h1>
+      <h1>Метео</h1>
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
-      <div class="status">%SOCKETS_STATUS%</div>
-      <form method="POST" action="/sockets" id="sockets-form">
+      <div class="status">%METEO_STATUS%</div>
+      <form method="POST" action="/meteo" id="meteo-form">
         <table>
           <thead>
             <tr>
               <th class="right">ID</th>
               <th>Вкл</th>
-              <th>Имя</th>
-              <th>Кнопка</th>
-              <th>Реле</th>
-              <th class="center">Статус</th>
-              <th>Управление</th>
+              <th>Тип</th>
+              <th>Пин</th>
+              <th>Адрес</th>
+              <th class="right">Темп</th>
+              <th class="right">Влажн</th>
+              <th class="center">OK</th>
+              <th class="right">Возраст</th>
             </tr>
           </thead>
           <tbody>
-            %SOCKETS%
+            %METEO_ROWS%
           </tbody>
         </table>
         <p class="actions">
@@ -155,44 +123,52 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     </div>
   </div>
   <script>
-    const socketOptions = {
-      dinput: %DINPUT_JSON%,
-      relay: %RELAY_JSON%
-    };
-    const socketUsed = {
-      dinput: %DINPUT_USED_JSON%,
-      relay: %RELAY_USED_JSON%
-    };
-    function buildOptions(list, selected, type) {
+    const sensorOptions = %SENSOR_JSON%;
+    const sensorUsed = %SENSOR_USED_JSON%;
+
+    function buildOptions(list, selected) {
       let html = '<option value="">-</option>';
-      const used = socketUsed[type] || [];
       for (let i = 0; i < list.length; i++) {
         const val = String(list[i]);
-        if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
+        if (sensorUsed.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
           continue;
         }
         html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + val + '</option>';
       }
       return html;
     }
-    document.querySelectorAll('select.socket-select').forEach((el) => {
-      const type = el.dataset.type;
+
+    document.querySelectorAll('select.meteo-pin').forEach((el) => {
       const selected = el.dataset.selected || '';
-      const list = socketOptions[type] || [];
-      el.innerHTML = buildOptions(list, selected, type);
+      el.innerHTML = buildOptions(sensorOptions || [], selected);
     });
-    const socketsForm = document.getElementById('sockets-form');
-    document.querySelectorAll('input.socket-toggle').forEach((el) => {
-      el.addEventListener('change', () => {
-        const name = el.dataset.action;
-        const hidden = document.querySelector('input[name="' + name + '"]');
-        if (hidden) {
-          hidden.value = el.checked ? 'on' : 'off';
-        }
-        if (socketsForm) {
-          socketsForm.submit();
-        }
-      });
+
+    function setDisabled(el, disabled) {
+      if (!el) {
+        return;
+      }
+      if (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') {
+        el.disabled = disabled;
+      }
+    }
+
+    function updateRow(row) {
+      const type = row.querySelector('select.meteo-type');
+      const pinCell = row.querySelector('.pin-cell');
+      const addrCell = row.querySelector('.addr-cell');
+      const pinSelect = pinCell ? pinCell.querySelector('select') : null;
+      const addrInput = addrCell ? addrCell.querySelector('input') : null;
+      const val = type ? type.value : 'none';
+      setDisabled(pinSelect, val !== 'dht22');
+      setDisabled(addrInput, val !== 'ds18b20');
+    }
+
+    document.querySelectorAll('select.meteo-type').forEach((el) => {
+      const row = el.closest('tr');
+      if (row) {
+        updateRow(row);
+        el.addEventListener('change', () => updateRow(row));
+      }
     });
     setInterval(() => {
       const el = document.activeElement;

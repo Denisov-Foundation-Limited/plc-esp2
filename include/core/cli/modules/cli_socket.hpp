@@ -14,7 +14,7 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-#include "controllers/socket/socket_controller.hpp"
+#include "controllers/socket_controller.hpp"
 
 template <typename ConsoleT>
 class CLISocketT
@@ -26,7 +26,9 @@ public:
     void printHelpEnable()
     {
         _c._io->println(F("    show sockets   - list sockets"));
-        _c._io->println(F("    show socket <id> - socket details"));
+        _c._io->print(F("    show socket <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" - socket details"));
     }
 
     void printHelpConfigLines()
@@ -39,12 +41,24 @@ public:
     {
         _c._io->println(F("  Sockets:"));
         _c._io->println(F("    show                     - list sockets"));
-        _c._io->println(F("    show <id>                - socket details"));
-        _c._io->println(F("    enable <id>              - enable socket"));
-        _c._io->println(F("    disable <id>             - disable socket"));
-        _c._io->println(F("    name <id> <value>        - set socket name"));
-        _c._io->println(F("    button <id> <port|none>  - set button port"));
-        _c._io->println(F("    relay <id> <port|none>   - set relay port"));
+        _c._io->print(F("    show <id>"));
+        printIdRangeInline_();
+        _c._io->println(F("                - socket details"));
+        _c._io->print(F("    enable <id>"));
+        printIdRangeInline_();
+        _c._io->println(F("              - enable socket"));
+        _c._io->print(F("    disable <id>"));
+        printIdRangeInline_();
+        _c._io->println(F("             - disable socket"));
+        _c._io->print(F("    name <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <value>        - set socket name"));
+        _c._io->print(F("    button <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <port|none>  - set button port"));
+        _c._io->print(F("    relay <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <port|none>   - set relay port"));
     }
 
     void showSockets()
@@ -74,7 +88,7 @@ public:
         const SocketController::SocketState *st = _sockets.state(id);
         if (!cfg || !st)
         {
-            _c._io->println(F("Invalid socket id"));
+            printInvalidSocketId_();
             return;
         }
         _c._io->println(F("Socket:"));
@@ -105,7 +119,7 @@ public:
             uint16_t id = 0;
             if (!parseId_(tail, id))
             {
-                _c._io->println(F("Invalid socket id"));
+                printInvalidSocketId_();
                 _c.printPrompt_();
                 return true;
             }
@@ -121,7 +135,7 @@ public:
             uint16_t id = 0;
             if (!parseId_(tail, id))
             {
-                _c._io->println(F("Invalid socket id"));
+                printInvalidSocketId_();
                 _c.printPrompt_();
                 return true;
             }
@@ -149,7 +163,7 @@ public:
             uint16_t id = 0;
             if (!parseId_(id_str, id))
             {
-                _c._io->println(F("Invalid socket id"));
+                printInvalidSocketId_();
                 _c.printPrompt_();
                 return true;
             }
@@ -178,7 +192,7 @@ public:
             uint16_t id = 0;
             if (!parseId_(id_str, id))
             {
-                _c._io->println(F("Invalid socket id"));
+                printInvalidSocketId_();
                 _c.printPrompt_();
                 return true;
             }
@@ -219,7 +233,7 @@ private:
             if (s[i] < '0' || s[i] > '9')
                 return false;
         const int v = s.toInt();
-        if (v < 0 || v >= (int)SocketController::kSocketCount)
+        if (v < 1 || v > (int)SocketController::kSocketCount)
             return false;
         out = (uint16_t)v;
         return true;
@@ -259,5 +273,19 @@ private:
                 return true;
         }
         return false;
+    }
+
+    void printIdRangeInline_() const
+    {
+        _c._io->print(F(" (1.."));
+        _c._io->print(SocketController::kSocketCount);
+        _c._io->print(F(")"));
+    }
+
+    void printInvalidSocketId_() const
+    {
+        _c._io->print(F("Invalid socket id (1.."));
+        _c._io->print(SocketController::kSocketCount);
+        _c._io->println(F(")"));
     }
 };

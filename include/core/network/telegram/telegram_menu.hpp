@@ -20,7 +20,9 @@
 #include "core/rtc.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "plc/plc_control.hpp"
-#include "controllers/socket/socket_controller.hpp"
+#include "controllers/socket_controller.hpp"
+#include "controllers/meteo_controller.hpp"
+#include "controllers/thermo_controller.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/logger.hpp"
@@ -51,6 +53,8 @@ public:
     void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }
     void setStackMaster(StackMaster &master) { _stack_master = &master; }
     void setSockets(SocketController &sockets) { _sockets = &sockets; }
+    void setMeteo(MeteoController &meteo) { _meteo = &meteo; }
+    void setThermo(ThermoController &thermo) { _thermo = &thermo; }
 
     struct AllowedUser
     {
@@ -297,6 +301,48 @@ private:
         return true;
     }
 
+    static bool cmdMeteo_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        (void)reply;
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_meteo)
+        {
+            reply = "Метео недоступно";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        _self->sendMeteoMenu_(u.chat_id);
+        return true;
+    }
+
+    static bool cmdThermo_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        (void)reply;
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_thermo)
+        {
+            reply = "Термо недоступно";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        _self->sendThermoMenu_(u.chat_id);
+        return true;
+    }
+
     static bool cmdSocketList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
     {
         if (!_self)
@@ -305,7 +351,7 @@ private:
             return true;
         if (!_self->_sockets)
         {
-            reply = "Sockets unavailable";
+            reply = "Розетки недоступны";
             return true;
         }
         if (!_self->isLocalSelected_(u.chat_id))
@@ -314,6 +360,108 @@ private:
             return true;
         }
         const String text = _self->socketListTextHtml_();
+        bot.sendText(u.chat_id, text, "", "HTML");
+        return true;
+    }
+
+    static bool cmdMeteoList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_meteo)
+        {
+            reply = "Метео недоступно";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        const String text = _self->meteoListTextHtml_();
+        bot.sendText(u.chat_id, text, "", "HTML");
+        return true;
+    }
+
+    static bool cmdMeteoShow_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_meteo)
+        {
+            reply = "Метео недоступно";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        const char *cmd = "/meteo_show";
+        String tail = u.text.substring(strlen(cmd));
+        tail.trim();
+        uint8_t id = 0;
+        if (!parseMeteoId_(tail, id))
+        {
+            reply = "Использование: /meteo_show <id>";
+            return true;
+        }
+        const String text = _self->meteoSensorTextHtml_(id);
+        bot.sendText(u.chat_id, text, "", "HTML");
+        return true;
+    }
+
+    static bool cmdThermoList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_thermo)
+        {
+            reply = "Термо недоступно";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        const String text = _self->thermoListTextHtml_();
+        bot.sendText(u.chat_id, text, "", "HTML");
+        return true;
+    }
+
+    static bool cmdThermoShow_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_thermo)
+        {
+            reply = "Термо недоступно";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        const char *cmd = "/thermo_show";
+        String tail = u.text.substring(strlen(cmd));
+        tail.trim();
+        uint8_t id = 0;
+        if (!parseThermoId_(tail, id))
+        {
+            reply = "Использование: /thermo_show <id>";
+            return true;
+        }
+        const String text = _self->thermoDeviceTextHtml_(id);
         bot.sendText(u.chat_id, text, "", "HTML");
         return true;
     }
@@ -389,16 +537,16 @@ private:
             return true;
         if (!_self->_logs)
         {
-            reply = "Logger unavailable";
+            reply = "Логгер недоступен";
             return true;
         }
         const size_t count = _self->_logs->recentCount();
         if (count == 0)
         {
-            reply = "Logs: empty";
+            reply = "Логи пусты";
             return true;
         }
-        reply = "Logs:\n";
+        reply = "Логи:\n";
         char buf[LOGGER_BUFFER_SIZE] = {};
         static constexpr size_t kMaxReply = 3900;
         for (size_t i = 0; i < count; ++i)
@@ -686,7 +834,7 @@ private:
             }
             if (!self->_sockets)
             {
-                self->_bot->sendText(u.chat_id, F("Sockets unavailable"));
+                self->_bot->sendText(u.chat_id, F("Розетки недоступны"));
                 st->awaiting_socket = false;
                 st->socket_action = 0;
                 return true;
@@ -714,6 +862,10 @@ private:
             return true;
         }
         if (self->handleSocketToggleSelection_(u))
+            return true;
+        if (self->handleMeteoSelection_(u))
+            return true;
+        if (self->handleThermoSelection_(u))
             return true;
         if (self->handleRootDeviceSelection_(u))
             return true;
@@ -862,23 +1014,29 @@ private:
     Logger *_logs = nullptr;
     StackMaster *_stack_master = nullptr;
     SocketController *_sockets = nullptr;
+    MeteoController *_meteo = nullptr;
+    ThermoController *_thermo = nullptr;
 
         static inline const TelegramBot::MenuItem kRootItems[] = {};
 
-        static inline const TelegramBot::MenuItem kDeviceItems[] = {
+    static inline const TelegramBot::MenuItem kDeviceItems[] = {
         { "Админка", "Админка", nullptr, nullptr },
         { "Розетки", "/sockets", nullptr, nullptr },
+        { "Метео", "/meteo", nullptr, nullptr },
+        { "Термо", "/thermo", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
     };
 
-        static inline const TelegramBot::MenuItem kSocketsItems[] = {};
+    static inline const TelegramBot::MenuItem kSocketsItems[] = {};
+    static inline const TelegramBot::MenuItem kMeteoItems[] = {};
+    static inline const TelegramBot::MenuItem kThermoItems[] = {};
 
     static inline const TelegramBot::MenuItem kAdminItems[] = {
         { "ПЛК", nullptr, "plc", nullptr },
         { "Часы", nullptr, "rtc", nullptr },
         { "Wi-Fi", nullptr, "wifi", nullptr },
         { "Настройки", nullptr, "settings", nullptr },
-        { "Logs", "/logs", nullptr, nullptr },
+        { "Логи", "/logs", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
     };
 
@@ -906,10 +1064,12 @@ private:
         { "Назад", "/back", nullptr, nullptr },
     };
 
-        static inline const TelegramBot::Menu kMenus[] = {
+    static inline const TelegramBot::Menu kMenus[] = {
         { "root", "Выбор устройства", kRootItems, 0, nullptr },
-        { "device", "Меню устройства", kDeviceItems, 3, "root" },
+        { "device", "Меню устройства", kDeviceItems, 5, "root" },
         { "sockets", "Розетки", kSocketsItems, 0, "device" },
+        { "meteo", "Метео", kMeteoItems, 0, "device" },
+        { "thermo", "Термо", kThermoItems, 0, "device" },
         { "admin", "Админка", kAdminItems, 6, "device" },
         { "plc", "ПЛК", kPlcItems, 2, "admin" },
         { "rtc", "Часы", kRtcItems, 2, "admin" },
@@ -941,6 +1101,12 @@ private:
         { "/socket_on", &TelegramMenu::cmdSocketOn_ },
         { "/socket_off", &TelegramMenu::cmdSocketOff_ },
         { "/socket_toggle", &TelegramMenu::cmdSocketToggle_ },
+        { "/meteo", &TelegramMenu::cmdMeteo_ },
+        { "/meteo_list", &TelegramMenu::cmdMeteoList_ },
+        { "/meteo_show", &TelegramMenu::cmdMeteoShow_ },
+        { "/thermo", &TelegramMenu::cmdThermo_ },
+        { "/thermo_list", &TelegramMenu::cmdThermoList_ },
+        { "/thermo_show", &TelegramMenu::cmdThermoShow_ },
     };
 
     static inline const size_t kCommandCount = sizeof(kCommands) / sizeof(kCommands[0]);
@@ -1180,6 +1346,152 @@ private:
         return parseSocketIdFromText_(t, out);
     }
 
+    static bool parseMeteoIdFromText_(const String &text, uint8_t &out)
+    {
+        const size_t len = text.length();
+        if (len == 0)
+            return false;
+        int start = -1;
+        int end = -1;
+        for (size_t i = 0; i < len; ++i)
+        {
+            const char c = text.charAt(i);
+            if (c >= '0' && c <= '9')
+            {
+                if (start < 0)
+                    start = (int)i;
+                end = (int)i + 1;
+            }
+            else if (start >= 0)
+            {
+                break;
+            }
+        }
+        if (start < 0 || end <= start)
+            return false;
+        String num = text.substring(start, end);
+        return parseMeteoId_(num, out);
+    }
+
+    static bool parseMeteoId_(const String &text, uint8_t &out)
+    {
+        String t = text;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        for (size_t i = 0; i < t.length(); ++i)
+        {
+            const char c = t[i];
+            if (c < '0' || c > '9')
+                return false;
+        }
+        const int v = t.toInt();
+        if (v <= 0 || v > (int)MeteoController::kSensorCount)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
+    static bool parseMeteoLabel_(const String &text, uint8_t &out)
+    {
+        String t = text;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        int colon = t.indexOf(':');
+        if (colon > 0)
+        {
+            String head = t.substring(0, colon);
+            head.trim();
+            return parseMeteoIdFromText_(head, out);
+        }
+        String low = t;
+        low.toLowerCase();
+        if (low.startsWith("meteo"))
+        {
+            String tail = t.substring(5);
+            tail.trim();
+            return parseMeteoIdFromText_(tail, out);
+        }
+        if (low.startsWith("sensor"))
+        {
+            String tail = t.substring(6);
+            tail.trim();
+            return parseMeteoIdFromText_(tail, out);
+        }
+        return parseMeteoIdFromText_(t, out);
+    }
+
+    static bool parseThermoIdFromText_(const String &text, uint8_t &out)
+    {
+        const size_t len = text.length();
+        if (len == 0)
+            return false;
+        int start = -1;
+        int end = -1;
+        for (size_t i = 0; i < len; ++i)
+        {
+            const char c = text.charAt(i);
+            if (c >= '0' && c <= '9')
+            {
+                if (start < 0)
+                    start = (int)i;
+                end = (int)i + 1;
+            }
+            else if (start >= 0)
+            {
+                break;
+            }
+        }
+        if (start < 0 || end <= start)
+            return false;
+        String num = text.substring(start, end);
+        return parseThermoId_(num, out);
+    }
+
+    static bool parseThermoId_(const String &text, uint8_t &out)
+    {
+        String t = text;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        for (size_t i = 0; i < t.length(); ++i)
+        {
+            const char c = t[i];
+            if (c < '0' || c > '9')
+                return false;
+        }
+        const int v = t.toInt();
+        if (v <= 0 || v > (int)ThermoController::kDeviceCount)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
+    static bool parseThermoLabel_(const String &text, uint8_t &out)
+    {
+        String t = text;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        int colon = t.indexOf(':');
+        if (colon > 0)
+        {
+            String head = t.substring(0, colon);
+            head.trim();
+            return parseThermoIdFromText_(head, out);
+        }
+        String low = t;
+        low.toLowerCase();
+        if (low.startsWith("thermo"))
+        {
+            String tail = t.substring(6);
+            tail.trim();
+            return parseThermoIdFromText_(tail, out);
+        }
+        return parseThermoIdFromText_(t, out);
+    }
+
     static bool startSocketAction_(TelegramBot &bot, const TelegramClient::Update &u, String &reply, uint8_t action)
     {
         if (!_self)
@@ -1236,6 +1548,52 @@ private:
         out.push_back(F("Назад"));
     }
 
+    void buildMeteoLabels_(std::vector<String> &out) const
+    {
+        out.clear();
+        if (!_meteo)
+        {
+            out.reserve(1);
+            out.push_back(F("Назад"));
+            return;
+        }
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = _meteo->configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            String label;
+            label += String((unsigned)cfg->id);
+            label += ": ";
+            label += MeteoController::typeName(cfg->type);
+            out.push_back(label);
+        }
+        out.push_back(F("Назад"));
+    }
+
+    void buildThermoLabels_(std::vector<String> &out) const
+    {
+        out.clear();
+        if (!_thermo)
+        {
+            out.reserve(1);
+            out.push_back(F("Назад"));
+            return;
+        }
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = _thermo->configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            String label;
+            label += String((unsigned)cfg->id);
+            label += ": ";
+            label += thermoModeLabel_(cfg->mode);
+            out.push_back(label);
+        }
+        out.push_back(F("Назад"));
+    }
+
     String socketListTextHtml_() const
     {
         String out = F("<b>Розетки:</b>");
@@ -1253,7 +1611,7 @@ private:
                 continue;
             any = true;
             out += "\n  ";
-            out += st->relay_on ? F("🟢 ") : F("🔴 ");
+            out += st->relay_on ? F("?? ") : F("?? ");
             out += String((unsigned)cfg->id);
             out += ": ";
             if (cfg->name.length())
@@ -1264,6 +1622,211 @@ private:
         if (!any)
             out += F("\n  пусто");
         return out;
+    }
+
+    String meteoListTextHtml_() const
+    {
+        String out = F("<b>Метео:</b>");
+        if (!_meteo)
+        {
+            out += F("\n  недоступно");
+            return out;
+        }
+        bool any = false;
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = _meteo->configByIndex(i);
+            const auto *st = _meteo->stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            any = true;
+            out += "\n  ";
+            out += String((unsigned)cfg->id);
+            out += ": ";
+            out += MeteoController::typeName(cfg->type);
+            if (st->has_temp)
+            {
+                char buf[10] = {};
+                dtostrf(st->temp_c, 0, 1, buf);
+                out += " t=";
+                out += buf;
+            }
+            if (st->has_humidity)
+            {
+                char buf[10] = {};
+                dtostrf(st->humidity, 0, 1, buf);
+                out += " h=";
+                out += buf;
+            }
+            if (!st->has_temp && !st->has_humidity)
+                out += " -";
+        }
+        if (!any)
+            out += F("\n  пусто");
+        return out;
+    }
+
+    String meteoSensorTextHtml_(uint8_t id) const
+    {
+        if (!_meteo)
+            return F("Метео недоступно");
+        const auto *cfg = _meteo->config(id);
+        const auto *st = _meteo->state(id);
+        if (!cfg || !st)
+            return F("Неверный датчик");
+        String out = F("<b>Датчик метео:</b>");
+        out += "\n  id: ";
+        out += String((unsigned)cfg->id);
+        out += "\n  enabled: ";
+        out += cfg->enabled ? "1" : "0";
+        out += "\n  type: ";
+        out += MeteoController::typeName(cfg->type);
+        if (cfg->type == MeteoController::SensorType::Dht22)
+        {
+            out += "\n  pin: ";
+            if (cfg->dht_pin != MeteoController::kInvalidPin)
+                out += String((unsigned)cfg->dht_pin);
+            else
+                out += "-";
+        }
+        if (cfg->type == MeteoController::SensorType::Ds18b20)
+        {
+            out += "\n  addr: ";
+            if (cfg->ds18_addr_set)
+            {
+                char hex[17] = {};
+                MeteoController::formatHexAddr(cfg->ds18_addr, hex);
+                out += hex;
+            }
+            else
+            {
+                out += "-";
+            }
+        }
+        out += "\n  temp: ";
+        if (st->has_temp)
+        {
+            char buf[10] = {};
+            dtostrf(st->temp_c, 0, 2, buf);
+            out += buf;
+        }
+        else
+        {
+            out += "-";
+        }
+        out += "\n  hum: ";
+        if (st->has_humidity)
+        {
+            char buf[10] = {};
+            dtostrf(st->humidity, 0, 1, buf);
+            out += buf;
+        }
+        else
+        {
+            out += "-";
+        }
+        out += "\n  ok: ";
+        if (st->last_read_ms == 0)
+            out += "-";
+        else
+            out += st->ok ? "OK" : "ERR";
+        return out;
+    }
+
+    String thermoListTextHtml_() const
+    {
+        String out = F("<b>Термо:</b>");
+        if (!_thermo)
+        {
+            out += F("\n  недоступно");
+            return out;
+        }
+        bool any = false;
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = _thermo->configByIndex(i);
+            const auto *st = _thermo->stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            any = true;
+            out += "\n  ";
+            out += String((unsigned)cfg->id);
+            out += ": ";
+            out += thermoModeLabel_(cfg->mode);
+            out += " питание=";
+            out += st->power_on ? "вкл" : "выкл";
+            out += " нагрев=";
+            out += st->heat_on ? "вкл" : "выкл";
+            out += " охлажд=";
+            out += st->cool_on ? "вкл" : "выкл";
+        }
+        if (!any)
+            out += F("\n  пусто");
+        return out;
+    }
+
+    String thermoDeviceTextHtml_(uint8_t id) const
+    {
+        if (!_thermo)
+            return F("Термо недоступно");
+        const auto *cfg = _thermo->config(id);
+        const auto *st = _thermo->state(id);
+        if (!cfg || !st)
+            return F("Неверное устройство");
+        String out = F("<b>Термо устройство:</b>");
+        out += "\n  id: ";
+        out += String((unsigned)cfg->id);
+        out += "\n  enabled: ";
+        out += cfg->enabled ? "1" : "0";
+        out += "\n  режим: ";
+        out += thermoModeLabel_(cfg->mode);
+        out += "\n  датчик: ";
+        if (cfg->sensor_id)
+            out += String((unsigned)cfg->sensor_id);
+        else
+            out += "-";
+        out += "\n  цель: ";
+        out += String(cfg->target_c, 2);
+        out += "\n  гист: ";
+        out += String(cfg->hysteresis, 2);
+        out += "\n  порт_нагрева: ";
+        if (cfg->heat_port != ThermoController::kInvalidPort)
+            out += String((unsigned)cfg->heat_port);
+        else
+            out += "-";
+        out += "\n  порт_охл: ";
+        if (cfg->cool_port != ThermoController::kInvalidPort)
+            out += String((unsigned)cfg->cool_port);
+        else
+            out += "-";
+        out += "\n  кнопка: ";
+        if (cfg->button_port != ThermoController::kInvalidPort)
+            out += String((unsigned)cfg->button_port);
+        else
+            out += "-";
+        out += "\n  питание: ";
+        out += st->power_on ? "вкл" : "выкл";
+        out += "\n  нагрев: ";
+        out += st->heat_on ? "вкл" : "выкл";
+        out += "\n  охлаждение: ";
+        out += st->cool_on ? "вкл" : "выкл";
+        return out;
+    }
+
+    static const char *thermoModeLabel_(ThermoController::Mode mode)
+    {
+        switch (mode)
+        {
+        case ThermoController::Mode::Heat:
+            return "только нагрев";
+        case ThermoController::Mode::Cool:
+            return "только охлаждение";
+        case ThermoController::Mode::Auto:
+            return "авто";
+        case ThermoController::Mode::Off:
+        default:
+            return "выкл";
+        }
     }
 
     struct DeviceEntry
@@ -1469,13 +2032,27 @@ private:
             self->buildSocketLabels_(labels);
             return buildKeyboardMarkup_(labels);
         }
+        if (strcmp(menu.id, "meteo") == 0)
+        {
+            std::vector<String> labels;
+            self->buildMeteoLabels_(labels);
+            return buildKeyboardMarkup_(labels);
+        }
+        if (strcmp(menu.id, "thermo") == 0)
+        {
+            std::vector<String> labels;
+            self->buildThermoLabels_(labels);
+            return buildKeyboardMarkup_(labels);
+        }
         if (strcmp(menu.id, "device") == 0)
         {
             std::vector<String> labels;
-            labels.reserve(3);
+            labels.reserve(5);
             if (self->isAdminChat_(chat_id))
                 labels.push_back(F("Админка"));
             labels.push_back(F("Розетки"));
+            labels.push_back(F("Метео"));
+            labels.push_back(F("Термо"));
             labels.push_back(F("Назад"));
             return buildKeyboardMarkup_(labels);
         }
@@ -1517,6 +2094,40 @@ private:
         _bot->sendText(chat_id, list, markup, "HTML");
     }
 
+    void sendMeteoMenu_(int64_t chat_id)
+    {
+        if (!_bot)
+            return;
+        if (!isLocalSelected_(chat_id))
+        {
+            _bot->sendText(chat_id, F("Список доступен только для локального устройства"));
+            return;
+        }
+        std::vector<String> labels;
+        buildMeteoLabels_(labels);
+        const String markup = buildKeyboardMarkup_(labels);
+        const String list = meteoListTextHtml_();
+        _bot->setMenu(chat_id, "meteo");
+        _bot->sendText(chat_id, list, markup, "HTML");
+    }
+
+    void sendThermoMenu_(int64_t chat_id)
+    {
+        if (!_bot)
+            return;
+        if (!isLocalSelected_(chat_id))
+        {
+            _bot->sendText(chat_id, F("Список доступен только для локального устройства"));
+            return;
+        }
+        std::vector<String> labels;
+        buildThermoLabels_(labels);
+        const String markup = buildKeyboardMarkup_(labels);
+        const String list = thermoListTextHtml_();
+        _bot->setMenu(chat_id, "thermo");
+        _bot->sendText(chat_id, list, markup, "HTML");
+    }
+
     bool handleRootDeviceSelection_(const TelegramClient::Update &u)
     {
         if (!_bot)
@@ -1555,7 +2166,7 @@ private:
         }
         if (!_sockets)
         {
-            _bot->sendText(u.chat_id, F("Sockets unavailable"));
+            _bot->sendText(u.chat_id, F("Розетки недоступны"));
             return true;
         }
         if (!isLocalSelected_(u.chat_id))
@@ -1569,6 +2180,72 @@ private:
             return true;
         }
         sendSocketMenu_(u.chat_id);
+        return true;
+    }
+
+    bool handleMeteoSelection_(const TelegramClient::Update &u)
+    {
+        if (!_bot)
+            return false;
+        const char *menu_id = _bot->currentMenuId(u.chat_id);
+        if (!menu_id || strcmp(menu_id, "meteo") != 0)
+            return false;
+        if (u.text == F("Назад"))
+        {
+            _bot->enterMenu(u.chat_id, "device", adminPrefix_(u.chat_id));
+            return true;
+        }
+        uint8_t id = 0;
+        if (!parseMeteoLabel_(u.text, id))
+        {
+            _bot->sendText(u.chat_id, F("Неизвестный датчик"));
+            return true;
+        }
+        if (!_meteo)
+        {
+            _bot->sendText(u.chat_id, F("Метео недоступно"));
+            return true;
+        }
+        if (!isLocalSelected_(u.chat_id))
+        {
+            _bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
+            return true;
+        }
+        const String text = meteoSensorTextHtml_(id);
+        _bot->sendText(u.chat_id, text, "", "HTML");
+        return true;
+    }
+
+    bool handleThermoSelection_(const TelegramClient::Update &u)
+    {
+        if (!_bot)
+            return false;
+        const char *menu_id = _bot->currentMenuId(u.chat_id);
+        if (!menu_id || strcmp(menu_id, "thermo") != 0)
+            return false;
+        if (u.text == F("Назад"))
+        {
+            _bot->enterMenu(u.chat_id, "device", adminPrefix_(u.chat_id));
+            return true;
+        }
+        uint8_t id = 0;
+        if (!parseThermoLabel_(u.text, id))
+        {
+            _bot->sendText(u.chat_id, F("Неизвестное устройство"));
+            return true;
+        }
+        if (!_thermo)
+        {
+            _bot->sendText(u.chat_id, F("Термо недоступно"));
+            return true;
+        }
+        if (!isLocalSelected_(u.chat_id))
+        {
+            _bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
+            return true;
+        }
+        const String text = thermoDeviceTextHtml_(id);
+        _bot->sendText(u.chat_id, text, "", "HTML");
         return true;
     }
 

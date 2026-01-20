@@ -113,6 +113,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
       <div class="grid">
         <div class="tile">
           <form method="POST" action="/controllers" id="sockets-form">
+            <input type="hidden" name="ctrl" value="sockets">
             <div class="tile-head">
               <a href="/sockets">Розетки</a>
               <label class="switch">
@@ -125,6 +126,36 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Розетки: <strong>%SOCKETS_ENABLED_LABEL%</strong></span>
           <span class="status">%CONTROLLERS_STATUS%</span>
         </div>
+        <div class="tile">
+          <form method="POST" action="/controllers" id="meteo-form">
+            <input type="hidden" name="ctrl" value="meteo">
+            <div class="tile-head">
+              <a href="/meteo">Метео</a>
+              <label class="switch">
+                <input type="checkbox" id="meteo-enabled" name="meteo_enabled" %METEO_ENABLED_CHECKED%>
+                <span class="track"><span class="knob"></span></span>
+              </label>
+            </div>
+          </form>
+          <span>Температура и влажность</span>
+          <span class="status">Метео: <strong>%METEO_ENABLED_LABEL%</strong></span>
+          <span class="status">%METEO_STATUS%</span>
+        </div>
+        <div class="tile">
+          <form method="POST" action="/controllers" id="thermo-form">
+            <input type="hidden" name="ctrl" value="thermo">
+            <div class="tile-head">
+              <a href="/thermo">Термо</a>
+              <label class="switch">
+                <input type="checkbox" id="thermo-enabled" name="thermo_enabled" %THERMO_ENABLED_CHECKED%>
+                <span class="track"><span class="knob"></span></span>
+              </label>
+            </div>
+          </form>
+          <span>Климат: нагрев/охлаждение/авто</span>
+          <span class="status">Термо: <strong>%THERMO_ENABLED_LABEL%</strong></span>
+          <span class="status">%THERMO_STATUS%</span>
+        </div>
       </div>
     </div>
   </div>
@@ -133,6 +164,16 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
     const socketsForm = document.getElementById('sockets-form');
     if (socketsToggle && socketsForm) {
       socketsToggle.addEventListener('change', () => socketsForm.submit());
+    }
+    const meteoToggle = document.getElementById('meteo-enabled');
+    const meteoForm = document.getElementById('meteo-form');
+    if (meteoToggle && meteoForm) {
+      meteoToggle.addEventListener('change', () => meteoForm.submit());
+    }
+    const thermoToggle = document.getElementById('thermo-enabled');
+    const thermoForm = document.getElementById('thermo-form');
+    if (thermoToggle && thermoForm) {
+      thermoToggle.addEventListener('change', () => thermoForm.submit());
     }
   </script>
 </body>

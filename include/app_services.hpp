@@ -126,7 +126,7 @@ struct AppServices
           portio(ActiveBoardProfile::PORTS, &ext),
           io(portio),
           gpio(io),
-          controllers(gpio, eeprom_storage, logs),
+          controllers(gpio, ow, eeprom_storage, logs),
           hal(ow, i2c, spi, uart, gpio, logs),
           plc(i2c, io),
           telegram(logs),
@@ -135,7 +135,8 @@ struct AppServices
           web(ActiveBoardProfile::WEB_PORT),
           fw_upgrade(web, console, wifi, configs, plc, rtc, telegram, telegram_menu, logs, ext, i2c, ow, controllers),
           network(logs, wifi, telegram, telegram_bot, telegram_menu, fw_upgrade, web, telegram_wifi_client),
-          stack_slave(io, ds18b20, ow, i2c, plc, rtc, telegram, logs, ext, controllers.sockets()),
+          stack_slave(io, ds18b20, ow, i2c, plc, rtc, telegram, logs, ext,
+                      controllers.sockets(), controllers.meteo(), controllers.thermo()),
           tm(),
           task_binder(tm, wifi, telegram, ext, controllers),
           ftest(logs, io, ow, ibutton, ds18b20, i2c, rtc, ext, tm, task_binder),
@@ -149,6 +150,8 @@ struct AppServices
         telegram_menu.setConfigsManager(configs_manager);
         telegram_menu.setStackMaster(*network.stackMaster());
         telegram_menu.setSockets(controllers.sockets());
+        telegram_menu.setMeteo(controllers.meteo());
+        telegram_menu.setThermo(controllers.thermo());
         fw_upgrade.setConfigsManager(configs_manager);
         fw_upgrade.setStackMaster(*network.stackMaster());
         network.setStackConfig(configs_manager);
@@ -257,6 +260,24 @@ struct AppServices
         {
             logs.error(F("APP"), F("HAL init failed: %s"), Hal::errorName(hal.lastError()));
             ok = false;
+        }
+
+        logs.info(F("APP"), F("Initializing EEPROM"));
+        {
+            const auto cfg = ActiveBoardProfile::EEPROM;
+            TwoWire *wire = i2c.wirePtr(cfg.bus_num);
+            const bool eeprom_ok = wire && eeprom.begin(*wire, cfg.addr);
+            eeprom_storage.setReady(eeprom_ok);
+            if (!eeprom_ok)
+                logs.warn(F("APP"), F("EEPROM init failed"));
+            else
+            {
+                const uint32_t used = eeprom.usedBytes();
+                const uint32_t total = At24lc512::capacityBytes();
+                const uint32_t free = At24lc512::remainingBytes(used);
+                logs.info(F("APP"), F("EEPROM used: %lu free: %lu total: %lu"),
+                          (unsigned long)used, (unsigned long)free, (unsigned long)total);
+            }
         }
 
         logs.info(F("APP"), F("Initializing RTC"));

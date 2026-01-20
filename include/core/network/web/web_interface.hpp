@@ -16,6 +16,7 @@
 #include <vector>
 #include <LittleFS.h>
 #include <WiFi.h>
+#include <string.h>
 
 #if defined(ESP32)
 #include <AsyncTCP.h>
@@ -34,6 +35,8 @@
 #include "core/network/web/pages/web_interface_stack.hpp"
 #include "core/network/web/pages/web_interface_wifi.hpp"
 #include "core/network/web/pages/web_interface_controllers.hpp"
+#include "core/network/web/pages/web_interface_meteo.hpp"
+#include "core/network/web/pages/web_interface_thermo.hpp"
 #include "core/network/web/pages/web_interface_admin.hpp"
 #include "core/network/web/pages/web_interface_logs.hpp"
 #include "core/network/web/pages/web_interface_telegram.hpp"
@@ -112,6 +115,10 @@ public:
         _server.on("/stack", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStack_(request); });
         _server.on("/sockets", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSockets_(request); });
         _server.on("/sockets", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsSave_(request); });
+        _server.on("/meteo", HTTP_GET, [this](AsyncWebServerRequest *request) { handleMeteo_(request); });
+        _server.on("/meteo", HTTP_POST, [this](AsyncWebServerRequest *request) { handleMeteoSave_(request); });
+        _server.on("/thermo", HTTP_GET, [this](AsyncWebServerRequest *request) { handleThermo_(request); });
+        _server.on("/thermo", HTTP_POST, [this](AsyncWebServerRequest *request) { handleThermoSave_(request); });
         _server.on("/telegram", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTelegram_(request); });
         _server.on("/telegram", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTelegramSave_(request); });
         _server.on(
@@ -378,13 +385,25 @@ private:
             const bool enabled = _controllers->sockets().controllerEnabled();
             page.replace("%SOCKETS_ENABLED_CHECKED%", enabled ? "checked" : "");
             page.replace("%SOCKETS_ENABLED_LABEL%", enabled ? "включены" : "выключены");
+            const bool meteo_enabled = _controllers->meteo().controllerEnabled();
+            page.replace("%METEO_ENABLED_CHECKED%", meteo_enabled ? "checked" : "");
+            page.replace("%METEO_ENABLED_LABEL%", meteo_enabled ? "включен" : "выключен");
+            const bool thermo_enabled = _controllers->thermo().controllerEnabled();
+            page.replace("%THERMO_ENABLED_CHECKED%", thermo_enabled ? "checked" : "");
+            page.replace("%THERMO_ENABLED_LABEL%", thermo_enabled ? "включен" : "выключен");
         }
         else
         {
             page.replace("%SOCKETS_ENABLED_CHECKED%", "");
             page.replace("%SOCKETS_ENABLED_LABEL%", "недоступны");
+            page.replace("%METEO_ENABLED_CHECKED%", "");
+            page.replace("%METEO_ENABLED_LABEL%", "недоступен");
+            page.replace("%THERMO_ENABLED_CHECKED%", "");
+            page.replace("%THERMO_ENABLED_LABEL%", "недоступен");
         }
         page.replace("%CONTROLLERS_STATUS%", _controllers_status);
+        page.replace("%METEO_STATUS%", _meteo_status);
+        page.replace("%THERMO_STATUS%", _thermo_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         sendHtml_(request, page, set_cookie);
     }
@@ -400,12 +419,35 @@ private:
             sendRedirect_(request, "/controllers", set_cookie);
             return;
         }
-        const bool enabled = request->hasParam("sockets_enabled", true);
+        const String ctrl = paramValue_(request, "ctrl");
         bool changed = false;
-        if (_controllers->sockets().controllerEnabled() != enabled)
+        bool power_changed = false;
+        if (ctrl.length() == 0 || ctrl == "sockets")
         {
-            _controllers->sockets().setControllerEnabled(enabled);
-            changed = true;
+            const bool enabled = request->hasParam("sockets_enabled", true);
+            if (_controllers->sockets().controllerEnabled() != enabled)
+            {
+                _controllers->sockets().setControllerEnabled(enabled);
+                changed = true;
+            }
+        }
+        if (ctrl.length() == 0 || ctrl == "meteo")
+        {
+            const bool meteo_enabled = request->hasParam("meteo_enabled", true);
+            if (_controllers->meteo().controllerEnabled() != meteo_enabled)
+            {
+                _controllers->meteo().setControllerEnabled(meteo_enabled);
+                changed = true;
+            }
+        }
+        if (ctrl.length() == 0 || ctrl == "thermo")
+        {
+            const bool thermo_enabled = request->hasParam("thermo_enabled", true);
+            if (_controllers->thermo().controllerEnabled() != thermo_enabled)
+            {
+                _controllers->thermo().setControllerEnabled(thermo_enabled);
+                changed = true;
+            }
         }
         bool ok = true;
         if (changed)
@@ -423,6 +465,8 @@ private:
         }
         if (ok)
             _controllers_status = changed ? "Updated" : "No changes";
+        _meteo_status = _controllers_status;
+        _thermo_status = _controllers_status;
         sendRedirect_(request, "/controllers", set_cookie);
     }
 
@@ -441,6 +485,42 @@ private:
         page.replace("%DINPUT_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::DInput));
         page.replace("%RELAY_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%SOCKETS_STATUS%", _sockets_status);
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        sendHtml_(request, page, set_cookie);
+    }
+
+    void handleMeteo_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("GET /meteo (ip=%s)"), requestIp_(request).c_str());
+        String page = FPSTR(kWebInterfaceMeteoHtml);
+        page.replace("%NAV%", navHtml_());
+        page.replace("%METEO_ROWS%", listMeteoHtml_());
+        page.replace("%METEO_STATUS%", _meteo_status);
+        page.replace("%SENSOR_JSON%", meteoPortOptionsJson_());
+        page.replace("%SENSOR_USED_JSON%", meteoUsedPinsJson_());
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        sendHtml_(request, page, set_cookie);
+    }
+
+    void handleThermo_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (_log && _log->ready())
+            _log->info(F("WEB"), F("GET /thermo (ip=%s)"), requestIp_(request).c_str());
+        String page = FPSTR(kWebInterfaceThermoHtml);
+        page.replace("%NAV%", navHtml_());
+        page.replace("%THERMO_ROWS%", listThermoHtml_());
+        page.replace("%THERMO_STATUS%", _thermo_status);
+        page.replace("%THERMO_DINPUT_JSON%", thermoPortOptionsJson_(PortIO::PinType::DInput));
+        page.replace("%THERMO_RELAY_JSON%", thermoPortOptionsJson_(PortIO::PinType::Relay));
+        page.replace("%THERMO_DINPUT_USED_JSON%", thermoUsedPortsJson_(PortIO::PinType::DInput));
+        page.replace("%THERMO_RELAY_USED_JSON%", thermoUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         sendHtml_(request, page, set_cookie);
     }
@@ -559,6 +639,302 @@ private:
         if (ok)
             _sockets_status = changed ? "Updated" : "Saved";
         sendRedirect_(request, "/sockets", set_cookie);
+    }
+
+    void handleMeteoSave_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!_controllers)
+        {
+            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            return;
+        }
+        MeteoController &meteo = _controllers->meteo();
+        bool ok = true;
+        bool changed = false;
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = meteo.configByIndex(i);
+            if (!cfg)
+                continue;
+            const String idx = String((unsigned)cfg->id);
+            const String prefix = String("m") + idx + "_";
+            const String en_key = prefix + "en";
+            const String type_key = prefix + "type";
+            const String pin_key = prefix + "pin";
+            const String addr_key = prefix + "addr";
+            const bool has_any = request->hasParam(en_key, true) ||
+                                 request->hasParam(type_key, true) ||
+                                 request->hasParam(pin_key, true) ||
+                                 request->hasParam(addr_key, true);
+            if (!has_any)
+                continue;
+
+            const bool enabled = request->hasParam(en_key, true);
+            const String type_str = paramValue_(request, type_key);
+            const String pin_str = paramValue_(request, pin_key);
+            const String addr_str = paramValue_(request, addr_key);
+
+            MeteoController::SensorType type = MeteoController::SensorType::None;
+            if (!parseMeteoType_(type_str, type))
+            {
+                ok = false;
+                _meteo_status = String("Invalid type for sensor ") + idx;
+                break;
+            }
+
+            uint8_t pin = MeteoController::kInvalidPin;
+            if (!parseMeteoPin_(pin_str, pin))
+            {
+                ok = false;
+                _meteo_status = String("Invalid pin for sensor ") + idx;
+                break;
+            }
+
+            uint8_t addr[MeteoController::kAddrLen] = {};
+            bool addr_set = false;
+            if (!parseMeteoAddr_(addr_str, addr, addr_set))
+            {
+                ok = false;
+                _meteo_status = String("Invalid addr for sensor ") + idx;
+                break;
+            }
+
+            if (cfg->enabled != enabled)
+            {
+                meteo.setEnabled(cfg->id, enabled);
+                changed = true;
+            }
+            if (cfg->type != type)
+            {
+                meteo.setType(cfg->id, type);
+                changed = true;
+            }
+            if (type == MeteoController::SensorType::Dht22)
+            {
+                if (cfg->dht_pin != pin)
+                {
+                    meteo.setDht22Pin(cfg->id, pin);
+                    changed = true;
+                }
+            }
+            else if (type == MeteoController::SensorType::Ds18b20)
+            {
+                const bool addr_equal = (cfg->ds18_addr_set == addr_set) &&
+                                        (!addr_set || (memcmp(cfg->ds18_addr, addr, MeteoController::kAddrLen) == 0));
+                if (!addr_equal)
+                {
+                    meteo.setDs18b20Addr(cfg->id, addr, addr_set);
+                    changed = true;
+                }
+            }
+        }
+
+        if (ok)
+        {
+            if (!_configs_manager)
+            {
+                ok = false;
+                _meteo_status = "Config manager missing";
+            }
+            else if (changed && !_configs_manager->save())
+            {
+                ok = false;
+                _meteo_status = "Save failed";
+            }
+        }
+        if (ok)
+            _meteo_status = changed ? "Updated" : "Saved";
+        sendRedirect_(request, "/meteo", set_cookie);
+    }
+
+    void handleThermoSave_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!_controllers)
+        {
+            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            return;
+        }
+        ThermoController &thermo = _controllers->thermo();
+        uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
+        bool ok = true;
+        bool changed = false;
+        bool power_changed = false;
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = thermo.configByIndex(i);
+            if (!cfg)
+                continue;
+            const String idx = String((unsigned)cfg->id);
+            const String prefix = String("t") + idx + "_";
+            const String en_key = prefix + "en";
+            const String sensor_key = prefix + "sensor";
+            const String mode_key = prefix + "mode";
+            const String target_key = prefix + "target";
+            const String hyst_key = prefix + "hyst";
+            const String heat_key = prefix + "heat";
+            const String cool_key = prefix + "cool";
+            const String button_key = prefix + "button";
+            const String power_key = prefix + "power";
+            const bool has_any = request->hasParam(en_key, true) ||
+                                 request->hasParam(sensor_key, true) ||
+                                 request->hasParam(mode_key, true) ||
+                                 request->hasParam(target_key, true) ||
+                                 request->hasParam(hyst_key, true) ||
+                                 request->hasParam(heat_key, true) ||
+                                 request->hasParam(cool_key, true) ||
+                                 request->hasParam(button_key, true) ||
+                                 request->hasParam(power_key, true);
+            if (!has_any)
+                continue;
+
+            const bool enabled = request->hasParam(en_key, true);
+            const String sensor_str = paramValue_(request, sensor_key);
+            const String mode_str = paramValue_(request, mode_key);
+            const String target_str = paramValue_(request, target_key);
+            const String hyst_str = paramValue_(request, hyst_key);
+            const String heat_str = paramValue_(request, heat_key);
+            const String cool_str = paramValue_(request, cool_key);
+            const String button_str = paramValue_(request, button_key);
+            const String power_str = paramValue_(request, power_key);
+            const bool has_power = (power_str == "on" || power_str == "off" || power_str == "1" || power_str == "0" ||
+                                    power_str == "true" || power_str == "false");
+            const bool power_on = (power_str == "on" || power_str == "1" || power_str == "true");
+
+            uint8_t sensor_id = ThermoController::kInvalidSensor;
+            if (!parseThermoSensor_(sensor_str, sensor_id))
+            {
+                ok = false;
+                _thermo_status = String("Invalid sensor for device ") + idx;
+                break;
+            }
+            if (enabled && sensor_id != ThermoController::kInvalidSensor)
+            {
+                if (!isMeteoSensorActive_(sensor_id))
+                {
+                    ok = false;
+                    _thermo_status = String("Датчик не активен (") + idx + ")";
+                    break;
+                }
+                if (sensor_id <= MeteoController::kSensorCount && sensor_used[sensor_id])
+                {
+                    ok = false;
+                    _thermo_status = String("Датчик уже используется (") + idx + ")";
+                    break;
+                }
+                if (sensor_id <= MeteoController::kSensorCount)
+                    sensor_used[sensor_id] = 1;
+            }
+
+            ThermoController::Mode mode = ThermoController::Mode::Off;
+            if (!parseThermoMode_(mode_str, mode))
+            {
+                ok = false;
+                _thermo_status = String("Invalid mode for device ") + idx;
+                break;
+            }
+
+            float target = cfg->target_c;
+            if (!parseThermoFloat_(target_str, target))
+            {
+                ok = false;
+                _thermo_status = String("Invalid target for device ") + idx;
+                break;
+            }
+
+            float hyst = cfg->hysteresis;
+            if (!parseThermoFloat_(hyst_str, hyst))
+            {
+                ok = false;
+                _thermo_status = String("Invalid hyst for device ") + idx;
+                break;
+            }
+
+            uint8_t heat_port = ThermoController::kInvalidPort;
+            uint8_t cool_port = ThermoController::kInvalidPort;
+            uint8_t button_port = ThermoController::kInvalidPort;
+            if (!parseSocketPort_(heat_str, heat_port) ||
+                !parseSocketPort_(cool_str, cool_port) ||
+                !parseSocketPort_(button_str, button_port))
+            {
+                ok = false;
+                _thermo_status = String("Invalid port for device ") + idx;
+                break;
+            }
+
+            if (cfg->enabled != enabled)
+            {
+                thermo.setEnabled(cfg->id, enabled);
+                changed = true;
+            }
+            if (cfg->sensor_id != sensor_id)
+            {
+                thermo.setSensor(cfg->id, sensor_id);
+                changed = true;
+            }
+            if (cfg->mode != mode)
+            {
+                thermo.setMode(cfg->id, mode);
+                changed = true;
+            }
+            if (cfg->target_c != target)
+            {
+                thermo.setTarget(cfg->id, target);
+                changed = true;
+            }
+            if (cfg->hysteresis != hyst)
+            {
+                thermo.setHysteresis(cfg->id, hyst);
+                changed = true;
+            }
+            if (cfg->heat_port != heat_port)
+            {
+                thermo.setHeatPort(cfg->id, heat_port);
+                changed = true;
+            }
+            if (cfg->cool_port != cool_port)
+            {
+                thermo.setCoolPort(cfg->id, cool_port);
+                changed = true;
+            }
+            if (cfg->button_port != button_port)
+            {
+                thermo.setButtonPort(cfg->id, button_port);
+                changed = true;
+            }
+            if (has_power)
+            {
+                const auto *st = thermo.state(cfg->id);
+                const bool cur_power = st ? st->power_on : true;
+                if (cur_power != power_on)
+                {
+                    thermo.setPower(cfg->id, power_on, "web");
+                    power_changed = true;
+                }
+            }
+        }
+
+        if (ok)
+        {
+            if (!_configs_manager)
+            {
+                ok = false;
+                _thermo_status = "Config manager missing";
+            }
+            else if (changed && !_configs_manager->save())
+            {
+                ok = false;
+                _thermo_status = "Save failed";
+            }
+        }
+        if (ok)
+            _thermo_status = (changed || power_changed) ? "Updated" : "Saved";
+        sendRedirect_(request, "/thermo", set_cookie);
     }
 
     void handleTelegramSave_(AsyncWebServerRequest *request)
@@ -913,6 +1289,245 @@ private:
     }
 
 
+    String listMeteoHtml_()
+    {
+        if (!_controllers)
+            return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>Meteo unavailable</strong></td></tr>";
+        String items;
+        MeteoController &meteo = _controllers->meteo();
+        const uint32_t now = millis();
+
+        auto appendTypeOption = [&](const char *value, const char *label, bool selected) {
+            items += "<option value=\"";
+            items += value;
+            items += "\"";
+            if (selected)
+                items += " selected";
+            items += ">";
+            items += label;
+            items += "</option>";
+        };
+
+        auto appendRow = [&](const MeteoController::SensorConfig &cfg, const MeteoController::SensorState &st,
+                             bool enabled) {
+            const bool has_read = st.last_read_ms != 0;
+            char temp_buf[12] = {};
+            char hum_buf[12] = {};
+            char age_buf[16] = {};
+            const char *temp = "--";
+            const char *hum = "--";
+            String ok = "<span class=\"status-dot status-na\" title=\"N/A\"></span>";
+            const char *age = "-";
+
+            if (st.has_temp)
+            {
+                dtostrf(st.temp_c, 0, 2, temp_buf);
+                temp = temp_buf;
+            }
+            if (st.has_humidity)
+            {
+                dtostrf(st.humidity, 0, 1, hum_buf);
+                hum = hum_buf;
+            }
+            if (has_read)
+            {
+                ok = st.ok ? "<span class=\"status-dot status-ok\" title=\"OK\"></span>"
+                           : "<span class=\"status-dot status-err\" title=\"ERR\"></span>";
+                const uint32_t age_s = (uint32_t)((now - st.last_read_ms) / 1000u);
+                snprintf(age_buf, sizeof(age_buf), "%lus", (unsigned long)age_s);
+                age = age_buf;
+            }
+
+            String pin;
+            if (cfg.type == MeteoController::SensorType::Dht22 && cfg.dht_pin != MeteoController::kInvalidPin)
+                pin = String((unsigned)cfg.dht_pin);
+
+            String addr;
+            if (cfg.type == MeteoController::SensorType::Ds18b20 && cfg.ds18_addr_set)
+            {
+                char hex[17] = {};
+                MeteoController::formatHexAddr(cfg.ds18_addr, hex);
+                addr = hex;
+            }
+
+            items += "<tr data-row=\"";
+            items += String((unsigned)cfg.id);
+            items += "\"><td class=\"right\"><strong>";
+            items += String((unsigned)cfg.id);
+            items += "</strong></td><td><input type=\"checkbox\" name=\"m";
+            items += String((unsigned)cfg.id);
+            items += "_en\"";
+            if (enabled)
+                items += " checked";
+            items += "></td><td><select class=\"field mini meteo-type\" name=\"m";
+            items += String((unsigned)cfg.id);
+            items += "_type\">";
+            appendTypeOption("none", "none", cfg.type == MeteoController::SensorType::None);
+            appendTypeOption("ds18b20", "ds18b20", cfg.type == MeteoController::SensorType::Ds18b20);
+            appendTypeOption("dht22", "dht22", cfg.type == MeteoController::SensorType::Dht22);
+            items += "</select></td><td class=\"pin-cell\"><select class=\"field mini meteo-pin\" data-selected=\"";
+            items += pin;
+            items += "\" name=\"m";
+            items += String((unsigned)cfg.id);
+            items += "_pin\"></select></td><td class=\"addr-cell\"><input class=\"field addr meteo-addr\" type=\"text\" name=\"m";
+            items += String((unsigned)cfg.id);
+            items += "_addr\" value=\"";
+            items += addr;
+            items += "\"></td><td class=\"right\">";
+            items += temp;
+            items += "</td><td class=\"right hum-cell\">";
+            items += hum;
+            items += "</td><td class=\"center\">";
+            items += ok;
+            items += "</td><td class=\"right\">";
+            items += age;
+            items += "</td></tr>";
+        };
+
+        const MeteoController::SensorConfig *first_disabled = nullptr;
+        const MeteoController::SensorState *first_disabled_state = nullptr;
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = meteo.configByIndex(i);
+            const auto *st = meteo.stateByIndex(i);
+            if (!cfg || !st)
+                continue;
+            if (cfg->enabled)
+            {
+                appendRow(*cfg, *st, true);
+            }
+            else if (!first_disabled)
+            {
+                first_disabled = cfg;
+                first_disabled_state = st;
+            }
+        }
+        if (first_disabled && first_disabled_state)
+            appendRow(*first_disabled, *first_disabled_state, false);
+        if (items.length() == 0)
+            items = "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>Meteo empty</strong></td></tr>";
+        return items;
+    }
+
+    String listThermoHtml_()
+    {
+        if (!_controllers)
+            return "<tr><td colspan=\"11\" style=\"color:#94a3b8\"><strong>Thermo unavailable</strong></td></tr>";
+        String items;
+        ThermoController &thermo = _controllers->thermo();
+        uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
+
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = thermo.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            if (cfg->sensor_id && cfg->sensor_id <= MeteoController::kSensorCount)
+                sensor_used[cfg->sensor_id]++;
+        }
+
+        auto appendRow = [&](const ThermoController::DeviceConfig &cfg, const ThermoController::DeviceState &st,
+                             bool enabled) {
+            items += "<tr><td class=\"right\"><strong>";
+            items += String((unsigned)cfg.id);
+            items += "</strong></td><td><input type=\"checkbox\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_en\"";
+            if (enabled)
+                items += " checked";
+            items += "></td><td><select class=\"field mini\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_sensor\">";
+            items += meteoSensorOptionsHtml_(cfg.sensor_id, sensor_used);
+            items += "</select></td><td><select class=\"field mini\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_mode\">";
+            items += "<option value=\"off\"";
+            if (cfg.mode == ThermoController::Mode::Off)
+                items += " selected";
+            items += ">off</option>";
+            items += "<option value=\"heat\"";
+            if (cfg.mode == ThermoController::Mode::Heat)
+                items += " selected";
+            items += ">heat only</option>";
+            items += "<option value=\"cool\"";
+            if (cfg.mode == ThermoController::Mode::Cool)
+                items += " selected";
+            items += ">cool only</option>";
+            items += "<option value=\"auto\"";
+            if (cfg.mode == ThermoController::Mode::Auto)
+                items += " selected";
+            items += ">auto</option>";
+            items += "</select></td><td class=\"right\"><input class=\"field temp\" type=\"text\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_target\" value=\"";
+            items += String(cfg.target_c, 2);
+            items += "\"></td><td class=\"right\"><input class=\"field temp\" type=\"text\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_hyst\" value=\"";
+            items += String(cfg.hysteresis, 2);
+            items += "\"></td><td class=\"right\"><select class=\"field mini thermo-select\" data-type=\"relay\" data-selected=\"";
+            if (cfg.heat_port != ThermoController::kInvalidPort)
+                items += String((unsigned)cfg.heat_port);
+            items += "\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_heat\"></select></td><td class=\"right\"><select class=\"field mini thermo-select\" data-type=\"relay\" data-selected=\"";
+            if (cfg.cool_port != ThermoController::kInvalidPort)
+                items += String((unsigned)cfg.cool_port);
+            items += "\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_cool\"></select></td><td class=\"right\"><select class=\"field mini thermo-select\" data-type=\"dinput\" data-selected=\"";
+            if (cfg.button_port != ThermoController::kInvalidPort)
+                items += String((unsigned)cfg.button_port);
+            items += "\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_button\"></select></td><td class=\"center\">";
+            if (st.heat_on)
+                items += "<span class=\"status-dot status-heat\" title=\"Heat\"></span>";
+            else if (st.cool_on)
+                items += "<span class=\"status-dot status-cool\" title=\"Cool\"></span>";
+            else
+                items += "<span class=\"status-dot status-idle\" title=\"Idle\"></span>";
+            items += "</td><td class=\"center\">";
+            const bool ui_power_on = enabled ? st.power_on : false;
+            items += "<label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_power\"";
+            if (ui_power_on)
+                items += " checked";
+            if (!enabled)
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "<input type=\"hidden\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_power\" value=\"\"></td></tr>";
+        };
+
+        const ThermoController::DeviceConfig *first_disabled = nullptr;
+        const ThermoController::DeviceState *first_disabled_state = nullptr;
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = thermo.configByIndex(i);
+            const auto *st = thermo.stateByIndex(i);
+            if (!cfg || !st)
+                continue;
+            if (cfg->enabled)
+            {
+                appendRow(*cfg, *st, true);
+            }
+            else if (!first_disabled)
+            {
+                first_disabled = cfg;
+                first_disabled_state = st;
+            }
+        }
+        if (first_disabled && first_disabled_state)
+            appendRow(*first_disabled, *first_disabled_state, false);
+        if (items.length() == 0)
+            items = "<tr><td colspan=\"11\" style=\"color:#94a3b8\"><strong>Thermo empty</strong></td></tr>";
+        return items;
+    }
+
     String listI2cHtml_()
     {
         if (!_i2c)
@@ -1047,6 +1662,94 @@ private:
                     used[btn] = true;
                 if (relay != SocketController::kInvalidPort && relay < PortIO::PORT_COUNT)
                     used[relay] = true;
+            }
+            for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+            {
+                if (!used[i])
+                    continue;
+                const auto &p = ActiveBoardProfile::PORTS[i];
+                if (p.caps == Cap::None || p.type != type)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += String((unsigned)i);
+                first = false;
+            }
+        }
+        out += "]";
+        return out;
+    }
+
+    String meteoPortOptionsJson_() const
+    {
+        return socketPortOptionsJson_(PortIO::PinType::Sensor);
+    }
+
+    String meteoUsedPinsJson_() const
+    {
+        String out;
+        out += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            MeteoController &meteo = _controllers->meteo();
+            bool used[PortIO::PORT_COUNT] = {};
+            for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+            {
+                const auto *cfg = meteo.configByIndex(i);
+                if (!cfg)
+                    continue;
+                if (cfg->type != MeteoController::SensorType::Dht22)
+                    continue;
+                const uint8_t pin = cfg->dht_pin;
+                if (pin != MeteoController::kInvalidPin && pin < PortIO::PORT_COUNT)
+                    used[pin] = true;
+            }
+            for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+            {
+                if (!used[i])
+                    continue;
+                const auto &p = ActiveBoardProfile::PORTS[i];
+                if (p.caps == Cap::None || p.type != PortIO::PinType::Sensor)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += String((unsigned)i);
+                first = false;
+            }
+        }
+        out += "]";
+        return out;
+    }
+
+    String thermoPortOptionsJson_(PortIO::PinType type) const
+    {
+        return socketPortOptionsJson_(type);
+    }
+
+    String thermoUsedPortsJson_(PortIO::PinType type) const
+    {
+        String out;
+        out += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            ThermoController &thermo = _controllers->thermo();
+            bool used[PortIO::PORT_COUNT] = {};
+            for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+            {
+                const auto *cfg = thermo.configByIndex(i);
+                if (!cfg)
+                    continue;
+                const uint8_t heat = cfg->heat_port;
+                const uint8_t cool = cfg->cool_port;
+                const uint8_t button = cfg->button_port;
+                if (heat != ThermoController::kInvalidPort && heat < PortIO::PORT_COUNT)
+                    used[heat] = true;
+                if (cool != ThermoController::kInvalidPort && cool < PortIO::PORT_COUNT)
+                    used[cool] = true;
+                if (button != ThermoController::kInvalidPort && button < PortIO::PORT_COUNT)
+                    used[button] = true;
             }
             for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
             {
@@ -1746,6 +2449,163 @@ private:
         return true;
     }
 
+    static bool parseMeteoType_(const String &input, MeteoController::SensorType &out)
+    {
+        String t = input;
+        t.trim();
+        t.toLowerCase();
+        if (t.length() == 0 || t == "none")
+        {
+            out = MeteoController::SensorType::None;
+            return true;
+        }
+        if (t == "ds18b20")
+        {
+            out = MeteoController::SensorType::Ds18b20;
+            return true;
+        }
+        if (t == "dht22")
+        {
+            out = MeteoController::SensorType::Dht22;
+            return true;
+        }
+        return false;
+    }
+
+    static bool parseMeteoPin_(const String &input, uint8_t &out)
+    {
+        String t = input;
+        t.trim();
+        t.toLowerCase();
+        if (t.length() == 0 || t == "-" || t == "none")
+        {
+            out = MeteoController::kInvalidPin;
+            return true;
+        }
+        for (size_t i = 0; i < t.length(); ++i)
+            if (t[i] < '0' || t[i] > '9')
+                return false;
+        const unsigned long v = strtoul(t.c_str(), nullptr, 10);
+        if (v > 255)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
+    static bool parseMeteoAddr_(const String &input, uint8_t out[MeteoController::kAddrLen], bool &set)
+    {
+        String t = input;
+        t.trim();
+        t.toLowerCase();
+        if (t.length() == 0 || t == "-" || t == "none")
+        {
+            set = false;
+            return true;
+        }
+        set = MeteoController::parseHexAddr(t.c_str(), out);
+        return set;
+    }
+
+    static bool parseThermoSensor_(const String &input, uint8_t &out)
+    {
+        String t = input;
+        t.trim();
+        t.toLowerCase();
+        if (t.length() == 0 || t == "-" || t == "none")
+        {
+            out = ThermoController::kInvalidSensor;
+            return true;
+        }
+        for (size_t i = 0; i < t.length(); ++i)
+            if (t[i] < '0' || t[i] > '9')
+                return false;
+        const unsigned long v = strtoul(t.c_str(), nullptr, 10);
+        if (v > MeteoController::kSensorCount)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
+    static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
+    {
+        String t = input;
+        t.trim();
+        t.toLowerCase();
+        if (t.length() == 0 || t == "off" || t == "none")
+        {
+            out = ThermoController::Mode::Off;
+            return true;
+        }
+        if (t == "heat" || t == "heat_only" || t == "only_heat")
+        {
+            out = ThermoController::Mode::Heat;
+            return true;
+        }
+        if (t == "cool" || t == "cool_only" || t == "only_cool")
+        {
+            out = ThermoController::Mode::Cool;
+            return true;
+        }
+        if (t == "auto")
+        {
+            out = ThermoController::Mode::Auto;
+            return true;
+        }
+        return false;
+    }
+
+    static bool parseThermoFloat_(const String &input, float &out)
+    {
+        String t = input;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        const char *c = t.c_str();
+        char *end = nullptr;
+        const float v = strtof(c, &end);
+        if (end == c)
+            return false;
+        out = v;
+        return true;
+    }
+
+    String meteoSensorOptionsHtml_(uint8_t selected, const uint8_t used[MeteoController::kSensorCount + 1]) const
+    {
+        String out;
+        out += "<option value=\"\">-</option>";
+        if (!_controllers)
+            return out;
+        MeteoController &meteo = _controllers->meteo();
+        for (uint8_t id = 1; id <= MeteoController::kSensorCount; ++id)
+        {
+            const auto *cfg = meteo.config(id);
+            if (!cfg || !cfg->enabled)
+                continue;
+            const bool is_used = (id <= MeteoController::kSensorCount) && (used[id] > 0) && (id != selected);
+            out += "<option value=\"";
+            out += String((unsigned)id);
+            out += "\"";
+            if (id == selected)
+                out += " selected";
+            if (is_used)
+                out += " disabled";
+            out += ">";
+            out += String((unsigned)id);
+            if (is_used)
+                out += " (занят)";
+            out += "</option>";
+        }
+        return out;
+    }
+
+    bool isMeteoSensorActive_(uint8_t id) const
+    {
+        if (!_controllers)
+            return false;
+        const auto *cfg = _controllers->meteo().config(id);
+        return cfg && cfg->enabled;
+    }
+
     static String paramValue_(AsyncWebServerRequest *request, const String &name)
     {
         if (!request || !request->hasParam(name, true))
@@ -2231,6 +3091,8 @@ private:
     String _device_status;
     String _sockets_status;
     String _controllers_status;
+    String _meteo_status;
+    String _thermo_status;
     bool _auth_enabled = false;
     String _auth_user;
     String _auth_pass;

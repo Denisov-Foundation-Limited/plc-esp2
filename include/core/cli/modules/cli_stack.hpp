@@ -20,6 +20,9 @@
 #include "core/network/stack/stack_master.hpp"
 #include "core/network/stack/stack_features.hpp"
 #include "core/network/stack/stack_protocol.hpp"
+#include "controllers/meteo_controller.hpp"
+#include "controllers/socket_controller.hpp"
+#include "controllers/thermo_controller.hpp"
 #include "utils/configs_manager_iface.hpp"
 
 template <typename ConsoleT>
@@ -61,16 +64,50 @@ public:
             listStackNodes_();
             return;
         }
+        if (cmd == "stack meteo")
+        {
+            if (!canRequestStackExt_())
+            {
+                printStackUnavailable_();
+                return;
+            }
+            _c.printMeteoHeader_();
+            requestStackMeteo_();
+            return;
+        }
+        if (cmd == "stack thermo")
+        {
+            if (!canRequestStackExt_())
+            {
+                printStackUnavailable_();
+                return;
+            }
+            _c.printThermoHeader_();
+            requestStackThermo_();
+            return;
+        }
         if (cmd.startsWith("stack socket "))
         {
             handleSocketCmd_(cmd);
+            return;
+        }
+        if (cmd.startsWith("stack thermo "))
+        {
+            handleThermoCmd_(cmd);
             return;
         }
         if (!cmd.startsWith("stack send "))
         {
             _c._io->println(F("Usage: stack nodes"));
             _c._io->println(F("       stack send <id> <get|set> <json>"));
-            _c._io->println(F("       stack socket <unit> <on|off|toggle> <id>"));
+            _c._io->print(F("       stack socket <unit> <on|off|toggle> <id>"));
+            printSocketIdRangeInline_();
+            _c._io->println();
+            _c._io->println(F("       stack meteo"));
+            _c._io->print(F("       stack thermo <unit> <on|off|toggle> <id>"));
+            printThermoIdRangeInline_();
+            _c._io->println();
+            _c._io->println(F("       stack thermo"));
             return;
         }
         if (!_stack_master)
@@ -263,6 +300,74 @@ public:
         return true;
     }
 
+    bool requestStackMeteo_()
+    {
+        if (!_stack_master)
+            return false;
+        if (_c._configs_manager &&
+            _c._configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
+            return false;
+
+        const size_t count = _stack_master->nodeCount();
+        if (count == 0)
+            return false;
+
+        _pending_meteo_cmd_id = nextStackCmdId_();
+        _pending_meteo_left = (uint8_t)min<size_t>(count, 255);
+        _pending_meteo_scan = true;
+
+        StaticJsonDocument<96> doc;
+        doc["cmd_id"] = _pending_meteo_cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Meteo;
+        doc["action"] = "get";
+        char payload[96] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+
+        for (size_t i = 0; i < count; ++i)
+        {
+            const uint32_t id = _stack_master->nodeIdAt(i);
+            _stack_master->sendTo(id, (uint8_t)StackMsgType::CmdGet,
+                                  (const uint8_t *)payload, len);
+        }
+        return true;
+    }
+
+    bool requestStackThermo_()
+    {
+        if (!_stack_master)
+            return false;
+        if (_c._configs_manager &&
+            _c._configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
+            return false;
+
+        const size_t count = _stack_master->nodeCount();
+        if (count == 0)
+            return false;
+
+        _pending_thermo_cmd_id = nextStackCmdId_();
+        _pending_thermo_left = (uint8_t)min<size_t>(count, 255);
+        _pending_thermo_scan = true;
+
+        StaticJsonDocument<96> doc;
+        doc["cmd_id"] = _pending_thermo_cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Thermo;
+        doc["action"] = "get";
+        char payload[96] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+
+        for (size_t i = 0; i < count; ++i)
+        {
+            const uint32_t id = _stack_master->nodeIdAt(i);
+            _stack_master->sendTo(id, (uint8_t)StackMsgType::CmdGet,
+                                  (const uint8_t *)payload, len);
+        }
+        return true;
+    }
+
     void requestStackPlc_()
     {
         if (!_stack_master)
@@ -385,6 +490,10 @@ public:
             return;
         if (handleStackSocketsReply_(node_id, frame))
             return;
+        if (handleStackMeteoReply_(node_id, frame))
+            return;
+        if (handleStackThermoReply_(node_id, frame))
+            return;
         if (handleStackPlcReply_(node_id, frame))
             return;
         if (handleStackRtcReply_(node_id, frame))
@@ -437,6 +546,12 @@ private:
     uint16_t _pending_sockets_cmd_id = 0;
     uint8_t _pending_sockets_left = 0;
     bool _pending_sockets_scan = false;
+    uint16_t _pending_meteo_cmd_id = 0;
+    uint8_t _pending_meteo_left = 0;
+    bool _pending_meteo_scan = false;
+    uint16_t _pending_thermo_cmd_id = 0;
+    uint8_t _pending_thermo_left = 0;
+    bool _pending_thermo_scan = false;
     uint16_t _pending_rtc_cmd_id = 0;
     uint8_t _pending_rtc_left = 0;
     bool _pending_rtc_scan = false;
@@ -499,6 +614,26 @@ private:
         }
     }
 
+    void printStackUnavailable_() const
+    {
+        if (!_stack_master)
+        {
+            _c._io->println(F("Stack master unavailable"));
+            return;
+        }
+        if (_c._configs_manager &&
+            _c._configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
+        {
+            _c._io->println(F("Stack role is slave"));
+            return;
+        }
+        if (_stack_master->nodeCount() == 0)
+        {
+            _c._io->println(F("Stack nodes: none"));
+            return;
+        }
+    }
+
     void handleSocketCmd_(const String &cmd)
     {
         if (!_stack_master)
@@ -517,7 +652,9 @@ private:
         const int sp1 = rest.indexOf(' ');
         if (sp1 <= 0)
         {
-            _c._io->println(F("Usage: stack socket <unit> <on|off|toggle> <id>"));
+            _c._io->print(F("Usage: stack socket <unit> <on|off|toggle> <id>"));
+            printSocketIdRangeInline_();
+            _c._io->println();
             return;
         }
         String unit_str = rest.substring(0, sp1);
@@ -526,7 +663,9 @@ private:
         const int sp2 = rest.indexOf(' ');
         if (sp2 <= 0)
         {
-            _c._io->println(F("Usage: stack socket <unit> <on|off|toggle> <id>"));
+            _c._io->print(F("Usage: stack socket <unit> <on|off|toggle> <id>"));
+            printSocketIdRangeInline_();
+            _c._io->println();
             return;
         }
         String action = rest.substring(0, sp2);
@@ -535,7 +674,7 @@ private:
         id_str.trim();
         if (id_str.length() == 0)
         {
-            _c._io->println(F("Invalid socket id"));
+            printInvalidSocketId_();
             return;
         }
         uint32_t node_id = resolveUnitToNodeId_(unit_str);
@@ -545,6 +684,11 @@ private:
             return;
         }
         uint16_t socket_id = (uint16_t)strtoul(id_str.c_str(), nullptr, 0);
+        if (!isSocketIdValid_(socket_id))
+        {
+            printInvalidSocketId_();
+            return;
+        }
         if (action != "on" && action != "off" && action != "toggle")
         {
             _c._io->println(F("Invalid action"));
@@ -573,6 +717,94 @@ private:
         const bool ok = _stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
                                               (const uint8_t *)payload, len);
         _c._io->println(ok ? F("OK") : F("Send failed"));
+    }
+
+    void handleThermoCmd_(const String &cmd)
+    {
+        if (!_stack_master)
+        {
+            _c._io->println(F("Stack master unavailable"));
+            return;
+        }
+        if (_c._configs_manager &&
+            _c._configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
+        {
+            _c._io->println(F("Stack role is slave"));
+            return;
+        }
+        String rest = cmd.substring(strlen("stack thermo "));
+        rest.trim();
+        const int sp1 = rest.indexOf(' ');
+        if (sp1 <= 0)
+        {
+            printThermoUsage_();
+            return;
+        }
+        String unit_str = rest.substring(0, sp1);
+        rest = rest.substring(sp1 + 1);
+        rest.trim();
+        const int sp2 = rest.indexOf(' ');
+        if (sp2 <= 0)
+        {
+            printThermoUsage_();
+            return;
+        }
+        String action = rest.substring(0, sp2);
+        action.toLowerCase();
+        String id_str = rest.substring(sp2 + 1);
+        id_str.trim();
+        if (id_str.length() == 0)
+        {
+            printInvalidThermoId_();
+            return;
+        }
+        uint32_t node_id = resolveUnitToNodeId_(unit_str);
+        if (node_id == 0)
+        {
+            _c._io->println(F("Unknown unit"));
+            return;
+        }
+        uint16_t thermo_id = (uint16_t)strtoul(id_str.c_str(), nullptr, 0);
+        if (!isThermoIdValid_(thermo_id))
+        {
+            printInvalidThermoId_();
+            return;
+        }
+        if (action != "on" && action != "off" && action != "toggle")
+        {
+            _c._io->println(F("Invalid action"));
+            return;
+        }
+
+        StaticJsonDocument<128> doc;
+        doc["cmd_id"] = nextStackCmdId_();
+        doc["feature"] = (uint8_t)StackFeature::Thermo;
+        doc["action"] = "set";
+        JsonArray items = doc["params"]["items"].to<JsonArray>();
+        JsonObject item = items.add<JsonObject>();
+        item["id"] = thermo_id;
+        if (action == "toggle")
+            item["toggle"] = true;
+        else
+            item["power"] = (action == "on");
+
+        char payload[128] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+        {
+            _c._io->println(F("Serialize failed"));
+            return;
+        }
+        const bool ok = _stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                              (const uint8_t *)payload, len);
+        _c._io->println(ok ? F("OK") : F("Send failed"));
+    }
+
+    void printThermoUsage_() const
+    {
+        _c._io->print(F("Usage: stack thermo <unit> <on|off|toggle> <id>"));
+        printThermoIdRangeInline_();
+        _c._io->println();
     }
 
     uint32_t resolveUnitToNodeId_(String unit_str) const
@@ -820,6 +1052,165 @@ private:
             --_pending_sockets_left;
         if (_pending_sockets_left == 0)
             _pending_sockets_scan = false;
+    }
+
+    bool handleStackMeteoReply_(uint32_t node_id, const StackFrame &frame)
+    {
+        if (!_pending_meteo_scan)
+            return false;
+        if (frame.type != (uint8_t)StackMsgType::Ack &&
+            frame.type != (uint8_t)StackMsgType::Err)
+            return false;
+
+        DynamicJsonDocument doc(4096);
+        DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
+        if (err)
+            return false;
+        const uint16_t cmd_id = doc["cmd_id"] | 0;
+        if (cmd_id != _pending_meteo_cmd_id)
+            return false;
+
+        if (frame.type == (uint8_t)StackMsgType::Err || !(doc["ok"] | false))
+        {
+            finishStackMeteo_();
+            _c.refreshPrompt_();
+            return true;
+        }
+
+        JsonArrayConst items = doc["data"]["items"].as<JsonArrayConst>();
+        if (items.isNull() || items.size() == 0)
+        {
+            finishStackMeteo_();
+            _c.refreshPrompt_();
+            return true;
+        }
+
+        const String unit = stackNodeLabel_(node_id);
+        for (JsonObjectConst o : items)
+        {
+            const uint8_t id = (uint8_t)(o["id"] | 0);
+            const bool enabled = o["enabled"] | false;
+            if (!enabled)
+                continue;
+            const char *type = o["type"] | "-";
+            const bool has_temp = o["has_temp"] | false;
+            const bool has_hum = o["has_hum"] | false;
+            const float temp = o["temp_c"] | 0.0f;
+            const float hum = o["hum"] | 0.0f;
+            char temp_buf[10] = {};
+            char hum_buf[10] = {};
+            const char *temp_str = "--";
+            const char *hum_str = "--";
+            if (has_temp)
+            {
+                dtostrf(temp, 0, 2, temp_buf);
+                temp_str = temp_buf;
+            }
+            if (has_hum)
+            {
+                dtostrf(hum, 0, 1, hum_buf);
+                hum_str = hum_buf;
+            }
+
+            char info_buf[24] = {};
+            const char *info = "-";
+            if (strcmp(type, "dht22") == 0)
+            {
+                if (o["pin"].is<unsigned>())
+                {
+                    const unsigned pin = o["pin"].as<unsigned>();
+                    snprintf(info_buf, sizeof(info_buf), "pin=%u", pin);
+                    info = info_buf;
+                }
+            }
+            else if (strcmp(type, "ds18b20") == 0)
+            {
+                const char *addr = o["addr"] | "";
+                if (addr && addr[0] != '\0')
+                    info = addr;
+            }
+            _c.printMeteoRow_(unit.c_str(), id, enabled, type, temp_str, hum_str, info);
+        }
+        finishStackMeteo_();
+        _c.refreshPrompt_();
+        return true;
+    }
+
+    void finishStackMeteo_()
+    {
+        if (_pending_meteo_left > 0)
+            --_pending_meteo_left;
+        if (_pending_meteo_left == 0)
+            _pending_meteo_scan = false;
+    }
+
+    bool handleStackThermoReply_(uint32_t node_id, const StackFrame &frame)
+    {
+        if (!_pending_thermo_scan)
+            return false;
+        if (frame.type != (uint8_t)StackMsgType::Ack &&
+            frame.type != (uint8_t)StackMsgType::Err)
+            return false;
+
+        DynamicJsonDocument doc(4096);
+        DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
+        if (err)
+            return false;
+        const uint16_t cmd_id = doc["cmd_id"] | 0;
+        if (cmd_id != _pending_thermo_cmd_id)
+            return false;
+
+        if (frame.type == (uint8_t)StackMsgType::Err || !(doc["ok"] | false))
+        {
+            finishStackThermo_();
+            _c.refreshPrompt_();
+            return true;
+        }
+
+        JsonArrayConst items = doc["data"]["items"].as<JsonArrayConst>();
+        if (items.isNull() || items.size() == 0)
+        {
+            finishStackThermo_();
+            _c.refreshPrompt_();
+            return true;
+        }
+
+        const String unit = stackNodeLabel_(node_id);
+        for (JsonObjectConst o : items)
+        {
+            ThermoController::DeviceConfig cfg{};
+            ThermoController::DeviceState st{};
+            cfg.id = (uint8_t)(o["id"] | 0);
+            cfg.enabled = o["enabled"] | false;
+            cfg.sensor_id = (uint8_t)(o["sensor"] | 0);
+            cfg.mode = parseThermoMode_(o["mode"] | "off");
+            cfg.target_c = o["target"] | 0.0f;
+            cfg.hysteresis = o["hyst"] | 0.0f;
+            cfg.heat_port = ThermoController::kInvalidPort;
+            cfg.cool_port = ThermoController::kInvalidPort;
+            cfg.button_port = ThermoController::kInvalidPort;
+            if (o["heat"].is<unsigned>())
+                cfg.heat_port = (uint8_t)o["heat"].as<unsigned>();
+            if (o["cool"].is<unsigned>())
+                cfg.cool_port = (uint8_t)o["cool"].as<unsigned>();
+            if (o["button"].is<unsigned>())
+                cfg.button_port = (uint8_t)o["button"].as<unsigned>();
+            st.power_on = o["power_on"] | false;
+            st.heat_on = o["heat_on"] | false;
+            st.cool_on = o["cool_on"] | false;
+            _c.printThermoRow_(unit.c_str(), cfg, st);
+        }
+        finishStackThermo_();
+        _c.refreshPrompt_();
+        return true;
+    }
+
+    void finishStackThermo_()
+    {
+        if (_pending_thermo_left > 0)
+            --_pending_thermo_left;
+        if (_pending_thermo_left == 0)
+            _pending_thermo_scan = false;
     }
 
     bool handleStackExtReply_(uint32_t node_id, const StackFrame &frame)
@@ -1079,6 +1470,19 @@ private:
         return (role == ConfigsManagerIface::StackRole::Master) ? F("master") : F("slave");
     }
 
+    static ThermoController::Mode parseThermoMode_(const char *mode)
+    {
+        if (!mode || mode[0] == '\0')
+            return ThermoController::Mode::Off;
+        if (strcmp(mode, "heat") == 0 || strcmp(mode, "heat_only") == 0 || strcmp(mode, "only_heat") == 0)
+            return ThermoController::Mode::Heat;
+        if (strcmp(mode, "cool") == 0 || strcmp(mode, "cool_only") == 0 || strcmp(mode, "only_cool") == 0)
+            return ThermoController::Mode::Cool;
+        if (strcmp(mode, "auto") == 0)
+            return ThermoController::Mode::Auto;
+        return ThermoController::Mode::Off;
+    }
+
     const char *mapStackLocToExt_(const char *loc) const
     {
         if (!loc || loc[0] == '\0')
@@ -1109,5 +1513,43 @@ private:
         if (strcmp(num, "10") == 0)
             return "EXT_10";
         return "UNKNOWN";
+    }
+
+    static bool isSocketIdValid_(uint16_t id)
+    {
+        return id >= 1 && id <= SocketController::kSocketCount;
+    }
+
+    static bool isThermoIdValid_(uint16_t id)
+    {
+        return id >= 1 && id <= ThermoController::kDeviceCount;
+    }
+
+    void printSocketIdRangeInline_() const
+    {
+        _c._io->print(F(" (1.."));
+        _c._io->print(SocketController::kSocketCount);
+        _c._io->print(F(")"));
+    }
+
+    void printThermoIdRangeInline_() const
+    {
+        _c._io->print(F(" (1.."));
+        _c._io->print(ThermoController::kDeviceCount);
+        _c._io->print(F(")"));
+    }
+
+    void printInvalidSocketId_() const
+    {
+        _c._io->print(F("Invalid socket id (1.."));
+        _c._io->print(SocketController::kSocketCount);
+        _c._io->println(F(")"));
+    }
+
+    void printInvalidThermoId_() const
+    {
+        _c._io->print(F("Invalid thermo id (1.."));
+        _c._io->print(ThermoController::kDeviceCount);
+        _c._io->println(F(")"));
     }
 };

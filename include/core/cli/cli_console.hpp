@@ -33,6 +33,8 @@
 #include "core/cli/modules/cli_stack.hpp"
 #include "core/cli/modules/cli_tgbot.hpp"
 #include "core/cli/modules/cli_socket.hpp"
+#include "core/cli/modules/cli_meteo.hpp"
+#include "core/cli/modules/cli_thermo.hpp"
 #include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
@@ -57,6 +59,8 @@ public:
     using CLITgbot = CLITgbotT<CliConsole>;
     using CLIStack = CLIStackT<CliConsole>;
     using CLISocket = CLISocketT<CliConsole>;
+    using CLIMeteo = CLIMeteoT<CliConsole>;
+    using CLIThermo = CLIThermoT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
@@ -77,8 +81,10 @@ public:
           _tgbot_cli(*this),
           _stack_cli(*this),
           _socket_cli(*this, controllers.sockets()),
+          _meteo_cli(*this, controllers.meteo()),
+          _thermo_cli(*this, controllers.thermo(), controllers.meteo()),
           _enable(*this, _wifi_cli),
-          _config(*this, _wifi_cli, _tgbot_cli, _socket_cli)
+          _config(*this, _wifi_cli, _tgbot_cli, _socket_cli, _meteo_cli, _thermo_cli)
     {
         _stack_cli.bind(stack_master);
     }
@@ -189,6 +195,8 @@ public:
     void enterConfigTgbot() { _mode = Mode::ConfigTgbot; printPrompt_(); }
     void enterConfigTime() { _mode = Mode::ConfigTime; printPrompt_(); }
     void enterConfigSocket() { _mode = Mode::ConfigSocket; printPrompt_(); }
+    void enterConfigMeteo() { _mode = Mode::ConfigMeteo; printPrompt_(); }
+    void enterConfigThermo() { _mode = Mode::ConfigThermo; printPrompt_(); }
     void logout()
     {
         _state = State::NeedUser;
@@ -674,7 +682,9 @@ private:
         ConfigWifi,
         ConfigTgbot,
         ConfigTime,
-        ConfigSocket
+        ConfigSocket,
+        ConfigMeteo,
+        ConfigThermo
     };
 
     enum class State : uint8_t
@@ -703,8 +713,18 @@ private:
             _io->println(F("  show config     - configuration file contents"));
             _io->println(F("  show port <id>  - port details"));
             _io->println(F("  show ports      - list ports"));
-            _io->println(F("  show sockets    - list sockets"));
-            _io->println(F("  show socket <id> - socket details"));
+        _io->println(F("  show sockets    - list sockets"));
+        _io->print(F("  show socket <id>"));
+        printSocketIdRangeInline_();
+        _io->println(F(" - socket details"));
+        _io->println(F("  show meteo      - list meteo sensors"));
+        _io->print(F("  show meteo <id>"));
+        printMeteoIdRangeInline_();
+        _io->println(F(" - sensor details"));
+        _io->println(F("  show thermo     - list thermo devices"));
+        _io->print(F("  show thermo <id>"));
+        printThermoIdRangeInline_();
+        _io->println(F(" - device details"));
             return;
         }
         if (t == "wifi")
@@ -727,6 +747,16 @@ private:
         if (t == "socket")
         {
             _socket_cli.printHelpContextLines();
+            return;
+        }
+        if (t == "meteo")
+        {
+            _meteo_cli.printHelpContextLines();
+            return;
+        }
+        if (t == "thermo")
+        {
+            _thermo_cli.printHelpContextLines();
             return;
         }
         if (t == "system")
@@ -761,6 +791,10 @@ private:
             "show ports",
             "show sockets",
             "show socket <id>",
+            "show meteo",
+            "show meteo <id>",
+            "show thermo",
+            "show thermo <id>",
             "socket toggle <id>",
             "socket on <id>",
             "socket off <id>",
@@ -770,6 +804,9 @@ private:
             "stack nodes",
             "stack send <id> <get|set> <json>",
             "stack socket <unit> <on|off|toggle> <id>",
+            "stack meteo",
+            "stack thermo",
+            "stack thermo <unit> <on|off|toggle> <id>",
             "wifi restart",
             "reload",
             "reset",
@@ -787,7 +824,9 @@ private:
             "help user",
             "help system",
             "help tgbot",
-            "help socket"};
+            "help socket",
+            "help meteo",
+            "help thermo"};
         static const size_t kEnableCmdsCount = sizeof(kEnableCmds) / sizeof(kEnableCmds[0]);
 
         static const char *const kConfigCmds[] = {
@@ -799,6 +838,8 @@ private:
             "tgbot",
             "time",
             "socket",
+            "meteo",
+            "thermo",
             "exit",
             "end",
             "help",
@@ -807,7 +848,9 @@ private:
             "help user",
             "help system",
             "help tgbot",
-            "help socket"};
+            "help socket",
+            "help meteo",
+            "help thermo"};
         static const size_t kConfigCmdsCount = sizeof(kConfigCmds) / sizeof(kConfigCmds[0]);
 
         static const char *const kConfigWifiCmds[] = {
@@ -873,6 +916,36 @@ private:
             "help"};
         static const size_t kConfigSocketCmdsCount = sizeof(kConfigSocketCmds) / sizeof(kConfigSocketCmds[0]);
 
+        static const char *const kConfigMeteoCmds[] = {
+            "show",
+            "show <id>",
+            "enable <id>",
+            "disable <id>",
+            "type <id> <none|ds18b20|dht22>",
+            "addr <id> <hex|none>",
+            "pin <id> <pin|none>",
+            "exit",
+            "end",
+            "help"};
+        static const size_t kConfigMeteoCmdsCount = sizeof(kConfigMeteoCmds) / sizeof(kConfigMeteoCmds[0]);
+
+        static const char *const kConfigThermoCmds[] = {
+            "show",
+            "show <id>",
+            "enable <id>",
+            "disable <id>",
+            "mode <id> <off|heat|cool|auto>",
+            "sensor <id> <sensor|none>",
+            "target <id> <temp>",
+            "hyst <id> <temp>",
+            "heat <id> <port|none>",
+            "cool <id> <port|none>",
+            "button <id> <port|none>",
+            "exit",
+            "end",
+            "help"};
+        static const size_t kConfigThermoCmdsCount = sizeof(kConfigThermoCmds) / sizeof(kConfigThermoCmds[0]);
+
         const char *const *cmds = nullptr;
         size_t count = 0;
         switch (_mode)
@@ -900,6 +973,14 @@ private:
         case Mode::ConfigSocket:
             cmds = kConfigSocketCmds;
             count = kConfigSocketCmdsCount;
+            break;
+        case Mode::ConfigMeteo:
+            cmds = kConfigMeteoCmds;
+            count = kConfigMeteoCmdsCount;
+            break;
+        case Mode::ConfigThermo:
+            cmds = kConfigThermoCmds;
+            count = kConfigThermoCmdsCount;
             break;
         case Mode::User:
             cmds = kEnableCmds;
@@ -1134,9 +1215,45 @@ private:
             tail.trim();
             uint16_t id = 0;
             if (!parseUint_(tail, id))
-                _io->println(F("Usage: show socket <id>"));
+            {
+                _io->print(F("Usage: show socket <id>"));
+                printSocketIdRangeInline_();
+                _io->println();
+            }
             else
                 _socket_cli.showSocket(id);
+        }
+        else if (eq_(what, "meteo"))
+            _meteo_cli.showSensors();
+        else if (startsWith_(what, "meteo "))
+        {
+            String tail = what.substring(6);
+            tail.trim();
+            uint16_t id = 0;
+            if (!parseUint_(tail, id))
+            {
+                _io->print(F("Usage: show meteo <id>"));
+                printMeteoIdRangeInline_();
+                _io->println();
+            }
+            else
+                _meteo_cli.showSensor(id);
+        }
+        else if (eq_(what, "thermo"))
+            _thermo_cli.showDevices();
+        else if (startsWith_(what, "thermo "))
+        {
+            String tail = what.substring(7);
+            tail.trim();
+            uint16_t id = 0;
+            if (!parseUint_(tail, id))
+            {
+                _io->print(F("Usage: show thermo <id>"));
+                printThermoIdRangeInline_();
+                _io->println();
+            }
+            else
+                _thermo_cli.showDevice(id);
         }
         else
             _io->println(F("Unknown show"));
@@ -1207,6 +1324,12 @@ private:
             break;
         case Mode::ConfigSocket:
             _config.handleSocketContext(line);
+            break;
+        case Mode::ConfigMeteo:
+            _config.handleMeteoContext(line);
+            break;
+        case Mode::ConfigThermo:
+            _config.handleThermoContext(line);
             break;
         case Mode::User:
             _enable.handle(line);
@@ -1306,6 +1429,12 @@ private:
             break;
         case Mode::ConfigSocket:
             _io->print(F("plc(config-socket)# "));
+            break;
+        case Mode::ConfigMeteo:
+            _io->print(F("plc(config-meteo)# "));
+            break;
+        case Mode::ConfigThermo:
+            _io->print(F("plc(config-thermo)# "));
             break;
         }
     }
@@ -1609,6 +1738,8 @@ private:
     CLITgbot _tgbot_cli;
     CLIStack _stack_cli;
     CLISocket _socket_cli;
+    CLIMeteo _meteo_cli;
+    CLIThermo _thermo_cli;
     CLIEnable _enable;
     CLIConfig _config;
     uint32_t _tgbot_last_update_id = 0;
@@ -1923,6 +2054,112 @@ private:
         _io->println(F("  --------  --  --  ---------------- ---  -----  -----"));
     }
 
+    void printSocketIdRangeInline_()
+    {
+        _io->print(F(" (1.."));
+        _io->print(SocketController::kSocketCount);
+        _io->print(F(")"));
+    }
+
+    void printMeteoHeader_()
+    {
+        _io->println(F("Meteo sensors:"));
+        _io->println(F("  Unit      ID  En  Type     TempC   Hum  Info"));
+        _io->println(F("  --------  --  --  -------  ------  ---  ----------------"));
+    }
+
+    void printMeteoRow_(const char *unit, uint8_t id, bool enabled,
+                        const char *type, const char *temp, const char *hum, const char *info)
+    {
+        if (!_io)
+            return;
+        _io->print(F("  "));
+        printPadStr_(unit && unit[0] ? unit : "-", 8);
+        _io->print(F("  "));
+        printPad_(id, 2);
+        _io->print(F("  "));
+        printPadStr_(enabled ? F("on") : F("off"), 2);
+        _io->print(F("  "));
+        printPadStr_(type ? type : "-", 7);
+        _io->print(F("  "));
+        printPadStr_(temp ? temp : "-", 6);
+        _io->print(F("  "));
+        printPadStr_(hum ? hum : "-", 3);
+        _io->print(F("  "));
+        printPadStr_(info ? info : "-", 16);
+        _io->println();
+    }
+
+    void printMeteoIdRangeInline_()
+    {
+        _io->print(F(" (1.."));
+        _io->print(MeteoController::kSensorCount);
+        _io->print(F(")"));
+    }
+
+    void printThermoHeader_()
+    {
+        _io->println(F("Thermo devices:"));
+        _io->println(F("  Unit      ID  En  Mode        Sens  Target  Hyst  Heat  Cool  Btn  Pwr  H  C"));
+        _io->println(F("  --------  --  --  ----------  ----  ------  ----  ----  ----  ---  ---  -- --"));
+    }
+
+    void printThermoRow_(const char *unit, const ThermoController::DeviceConfig &cfg,
+                         const ThermoController::DeviceState &st)
+    {
+        if (!_io)
+            return;
+        char buf[12] = {};
+        _io->print(F("  "));
+        printPadStr_(unit && unit[0] ? unit : "-", 8);
+        _io->print(F("  "));
+        printPad_(cfg.id, 2);
+        _io->print(F("  "));
+        printPadStr_(cfg.enabled ? F("on") : F("off"), 2);
+        _io->print(F("  "));
+        printPadStr_(ThermoController::modeName(cfg.mode), 10);
+        _io->print(F("  "));
+        if (cfg.sensor_id)
+            printPad_(cfg.sensor_id, 4);
+        else
+            printPadStr_(F("--"), 4);
+        _io->print(F("  "));
+        dtostrf(cfg.target_c, 0, 2, buf);
+        printPadStr_(buf, 6);
+        _io->print(F("  "));
+        dtostrf(cfg.hysteresis, 0, 2, buf);
+        printPadStr_(buf, 4);
+        _io->print(F("  "));
+        if (cfg.heat_port != ThermoController::kInvalidPort)
+            printPad_(cfg.heat_port, 4);
+        else
+            printPadStr_(F("--"), 4);
+        _io->print(F("  "));
+        if (cfg.cool_port != ThermoController::kInvalidPort)
+            printPad_(cfg.cool_port, 4);
+        else
+            printPadStr_(F("--"), 4);
+        _io->print(F("  "));
+        if (cfg.button_port != ThermoController::kInvalidPort)
+            printPad_(cfg.button_port, 3);
+        else
+            printPadStr_(F("---"), 3);
+        _io->print(F("  "));
+        printPadStr_(st.power_on ? F("on") : F("off"), 3);
+        _io->print(F("  "));
+        printPadStr_(st.heat_on ? F("on") : F("off"), 2);
+        _io->print(F(" "));
+        printPadStr_(st.cool_on ? F("on") : F("off"), 2);
+        _io->println();
+    }
+
+    void printThermoIdRangeInline_()
+    {
+        _io->print(F(" (1.."));
+        _io->print(ThermoController::kDeviceCount);
+        _io->print(F(")"));
+    }
+
     void printSocketRow_(const char *unit, uint8_t id, bool enabled,
                          const char *name, int button, int relay, bool state)
     {
@@ -2091,6 +2328,10 @@ private:
     friend class CLIStackT;
     template <typename>
     friend class CLISocketT;
+    template <typename>
+    friend class CLIMeteoT;
+    template <typename>
+    friend class CLIThermoT;
 
 public:
     void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }

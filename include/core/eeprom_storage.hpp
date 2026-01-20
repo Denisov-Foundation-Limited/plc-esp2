@@ -13,6 +13,7 @@
 
 #include <Arduino.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "hal/at24lc512.hpp"
 
@@ -22,6 +23,8 @@ public:
     static constexpr uint16_t kDefaultBase = 0;
     static constexpr uint16_t kSocketCount = 72;
     static constexpr uint16_t kSocketMaskBytes = (kSocketCount + 7) / 8;
+    static constexpr uint16_t kThermoCount = 20;
+    static constexpr uint16_t kThermoMaskBytes = (kThermoCount + 7) / 8;
 
     struct SocketSnapshot
     {
@@ -29,11 +32,22 @@ public:
         uint8_t state_mask[kSocketMaskBytes] = {};
     };
 
+    struct ThermoSnapshot
+    {
+        uint8_t power_mask[kThermoMaskBytes] = {};
+    };
+
     EepromStorage() = default;
     explicit EepromStorage(At24lc512 &eeprom) : _eeprom(&eeprom) {}
 
     void bind(At24lc512 &eeprom) { _eeprom = &eeprom; }
     void setBase(uint16_t base) { _base = base; }
+    void setWearLevelSlots(uint16_t slots) { _wl_slots = (slots == 0) ? 1 : slots; }
+    void setThermoBase(uint16_t base)
+    {
+        _thermo_base = base;
+        _thermo_base_set = true;
+    }
     void setReady(bool ready) { _ready = ready; }
     bool isReady() const { return _ready; }
 
@@ -41,33 +55,136 @@ public:
     {
         if (!_eeprom)
             return false;
+        uint16_t slot = 0;
+        uint32_t seq = 1;
+        if (_wl_slots > 1 && _has_seq)
+        {
+            slot = (uint16_t)((_last_slot + 1) % _wl_slots);
+            seq = _last_seq + 1;
+        }
+        const uint16_t base = slotBase_(slot);
         StorageHeader hdr{};
         hdr.magic = kMagic;
         hdr.version = kVersion;
         hdr.socket_count = kSocketCount;
-        const uint16_t base = _base;
+        hdr.seq = seq;
         if (!_eeprom->write(base, reinterpret_cast<const uint8_t *>(&hdr), sizeof(hdr)))
             return false;
         const uint16_t off = base + sizeof(hdr);
         if (!_eeprom->write(off, snap.enabled_mask, kSocketMaskBytes))
             return false;
-        return _eeprom->write(off + kSocketMaskBytes, snap.state_mask, kSocketMaskBytes);
+        if (!_eeprom->write(off + kSocketMaskBytes, snap.state_mask, kSocketMaskBytes))
+            return false;
+        _last_slot = slot;
+        _last_seq = seq;
+        _has_seq = true;
+        return true;
     }
 
     bool loadSockets(SocketSnapshot &out)
     {
         if (!_eeprom)
             return false;
-        StorageHeader hdr{};
-        const uint16_t base = _base;
-        if (!_eeprom->read(base, reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)))
+        StorageHeader best_hdr{};
+        uint16_t best_slot = 0;
+        bool found = false;
+
+        const uint16_t slots = (_wl_slots == 0) ? 1 : _wl_slots;
+        for (uint16_t i = 0; i < slots; ++i)
+        {
+            StorageHeader hdr{};
+            const uint16_t base = slotBase_(i);
+            if (!_eeprom->read(base, reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)))
+                continue;
+            if (hdr.magic != kMagic || hdr.version != kVersion || hdr.socket_count != kSocketCount)
+                continue;
+            if (!found || isSeqNewer_(hdr.seq, best_hdr.seq))
+            {
+                best_hdr = hdr;
+                best_slot = i;
+                found = true;
+            }
+        }
+
+        if (found)
+        {
+            const uint16_t off = slotBase_(best_slot) + sizeof(best_hdr);
+            if (!_eeprom->read(off, out.enabled_mask, kSocketMaskBytes))
+                return false;
+            if (!_eeprom->read(off + kSocketMaskBytes, out.state_mask, kSocketMaskBytes))
+                return false;
+            _last_slot = best_slot;
+            _last_seq = best_hdr.seq;
+            _has_seq = true;
+            return true;
+        }
+
+        return loadLegacy_(out);
+    }
+
+    bool saveThermo(const ThermoSnapshot &snap)
+    {
+        if (!_eeprom)
             return false;
-        if (hdr.magic != kMagic || hdr.version != kVersion || hdr.socket_count != kSocketCount)
+        uint16_t slot = 0;
+        uint32_t seq = 1;
+        if (_wl_slots > 1 && _thermo_has_seq)
+        {
+            slot = (uint16_t)((_thermo_last_slot + 1) % _wl_slots);
+            seq = _thermo_last_seq + 1;
+        }
+        const uint16_t base = thermoSlotBase_(slot);
+        ThermoHeader hdr{};
+        hdr.magic = kThermoMagic;
+        hdr.version = kThermoVersion;
+        hdr.thermo_count = kThermoCount;
+        hdr.seq = seq;
+        if (!_eeprom->write(base, reinterpret_cast<const uint8_t *>(&hdr), sizeof(hdr)))
             return false;
         const uint16_t off = base + sizeof(hdr);
-        if (!_eeprom->read(off, out.enabled_mask, kSocketMaskBytes))
+        if (!_eeprom->write(off, snap.power_mask, kThermoMaskBytes))
             return false;
-        return _eeprom->read(off + kSocketMaskBytes, out.state_mask, kSocketMaskBytes);
+        _thermo_last_slot = slot;
+        _thermo_last_seq = seq;
+        _thermo_has_seq = true;
+        return true;
+    }
+
+    bool loadThermo(ThermoSnapshot &out)
+    {
+        if (!_eeprom)
+            return false;
+        ThermoHeader best_hdr{};
+        uint16_t best_slot = 0;
+        bool found = false;
+
+        const uint16_t slots = (_wl_slots == 0) ? 1 : _wl_slots;
+        for (uint16_t i = 0; i < slots; ++i)
+        {
+            ThermoHeader hdr{};
+            const uint16_t base = thermoSlotBase_(i);
+            if (!_eeprom->read(base, reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)))
+                continue;
+            if (hdr.magic != kThermoMagic || hdr.version != kThermoVersion || hdr.thermo_count != kThermoCount)
+                continue;
+            if (!found || isSeqNewer_(hdr.seq, best_hdr.seq))
+            {
+                best_hdr = hdr;
+                best_slot = i;
+                found = true;
+            }
+        }
+
+        if (!found)
+            return false;
+
+        const uint16_t off = thermoSlotBase_(best_slot) + sizeof(best_hdr);
+        if (!_eeprom->read(off, out.power_mask, kThermoMaskBytes))
+            return false;
+        _thermo_last_slot = best_slot;
+        _thermo_last_seq = best_hdr.seq;
+        _thermo_has_seq = true;
+        return true;
     }
 
 private:
@@ -76,12 +193,82 @@ private:
         uint32_t magic = 0;
         uint16_t version = 0;
         uint16_t socket_count = 0;
+        uint32_t seq = 0;
+    };
+
+    struct ThermoHeader
+    {
+        uint32_t magic = 0;
+        uint16_t version = 0;
+        uint16_t thermo_count = 0;
+        uint32_t seq = 0;
     };
 
     static constexpr uint32_t kMagic = 0x45535031u; // "ESP1"
-    static constexpr uint16_t kVersion = 1;
+    static constexpr uint16_t kVersion = 2;
+    static constexpr uint16_t kLegacyVersion = 1;
+    static constexpr uint32_t kThermoMagic = 0x45535032u; // "ESP2"
+    static constexpr uint16_t kThermoVersion = 1;
 
     At24lc512 *_eeprom = nullptr;
     uint16_t _base = kDefaultBase;
     bool _ready = false;
+    uint16_t _wl_slots = 1;
+    uint16_t _last_slot = 0;
+    uint32_t _last_seq = 0;
+    bool _has_seq = false;
+    bool _thermo_base_set = false;
+    uint16_t _thermo_base = 0;
+    uint16_t _thermo_last_slot = 0;
+    uint32_t _thermo_last_seq = 0;
+    bool _thermo_has_seq = false;
+
+    uint16_t slotBase_(uint16_t slot) const
+    {
+        const uint32_t base = (uint32_t)_base + (uint32_t)slot * slotSize_();
+        return (uint16_t)base;
+    }
+
+    uint16_t slotSize_() const
+    {
+        return (uint16_t)(sizeof(StorageHeader) + 2u * kSocketMaskBytes);
+    }
+
+    uint16_t thermoSlotSize_() const
+    {
+        return (uint16_t)(sizeof(ThermoHeader) + kThermoMaskBytes);
+    }
+
+    uint16_t thermoBase_() const
+    {
+        if (_thermo_base_set)
+            return _thermo_base;
+        const uint32_t base = (uint32_t)_base + (uint32_t)_wl_slots * slotSize_();
+        return (uint16_t)base;
+    }
+
+    uint16_t thermoSlotBase_(uint16_t slot) const
+    {
+        const uint32_t base = (uint32_t)thermoBase_() + (uint32_t)slot * thermoSlotSize_();
+        return (uint16_t)base;
+    }
+
+    static bool isSeqNewer_(uint32_t a, uint32_t b)
+    {
+        return (uint32_t)(a - b) < 0x80000000u;
+    }
+
+    bool loadLegacy_(SocketSnapshot &out)
+    {
+        StorageHeader hdr{};
+        const uint16_t base = _base;
+        if (!_eeprom->read(base, reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)))
+            return false;
+        if (hdr.magic != kMagic || hdr.version != kLegacyVersion || hdr.socket_count != kSocketCount)
+            return false;
+        const uint16_t off = base + sizeof(hdr);
+        if (!_eeprom->read(off, out.enabled_mask, kSocketMaskBytes))
+            return false;
+        return _eeprom->read(off + kSocketMaskBytes, out.state_mask, kSocketMaskBytes);
+    }
 };

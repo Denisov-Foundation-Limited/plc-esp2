@@ -14,6 +14,9 @@
 #include <Arduino.h>
 
 #include "core/cli/modules/cli_wifi.hpp"
+#include "controllers/socket_controller.hpp"
+#include "controllers/meteo_controller.hpp"
+#include "controllers/thermo_controller.hpp"
 
 template <typename ConsoleT>
 class CLIEnableT
@@ -48,17 +51,40 @@ public:
             _c._io->println(F("    show port <id>  - port details"));
             _c._io->println(F("    show ports      - list ports"));
             _c._io->println(F("    show sockets    - list sockets"));
-            _c._io->println(F("    show socket <id> - socket details"));
-            _c._io->println(F("    socket toggle <id> - toggle socket relay"));
-            _c._io->println(F("    socket on <id>     - relay ON"));
-            _c._io->println(F("    socket off <id>    - relay OFF"));
+            _c._io->print(F("    show socket <id>"));
+            printSocketIdRangeInline_();
+            _c._io->println(F(" - socket details"));
+            _c._io->println(F("    show meteo      - list meteo sensors"));
+            _c._io->print(F("    show meteo <id>"));
+            printMeteoIdRangeInline_();
+            _c._io->println(F(" - sensor details"));
+            _c._io->println(F("    show thermo     - list thermo devices"));
+            _c._io->print(F("    show thermo <id>"));
+            printThermoIdRangeInline_();
+            _c._io->println(F(" - device details"));
+            _c._io->print(F("    socket toggle <id>"));
+            printSocketIdRangeInline_();
+            _c._io->println(F(" - toggle socket relay"));
+            _c._io->print(F("    socket on <id>"));
+            printSocketIdRangeInline_();
+            _c._io->println(F("     - relay ON"));
+            _c._io->print(F("    socket off <id>"));
+            printSocketIdRangeInline_();
+            _c._io->println(F("    - relay OFF"));
             _c._io->println(F("  Actions:"));
             _c._io->println(F("    ftest           - start functional test task"));
             _c._io->println(F("    copy tftp://<ip>/firmware.bin firmware - update firmware"));
             _c._io->println(F("    copy http://<ip>/firmware.bin firmware - update firmware"));
             _c._io->println(F("    stack nodes     - list stack nodes"));
             _c._io->println(F("    stack send <id> <get|set> <json> - send stack command"));
-            _c._io->println(F("    stack socket <unit> <on|off|toggle> <id> - control socket"));
+            _c._io->print(F("    stack socket <unit> <on|off|toggle> <id>"));
+            printSocketIdRangeInline_();
+            _c._io->println(F(" - control socket"));
+            _c._io->println(F("    stack meteo     - list meteo sensors on stack"));
+            _c._io->print(F("    stack thermo <unit> <on|off|toggle> <id>"));
+            printThermoIdRangeInline_();
+            _c._io->println(F(" - control thermo device"));
+            _c._io->println(F("    stack thermo    - list thermo devices on stack"));
             _wifi.printHelpEnable();
             _c._io->println(F("    reload          - restart controller"));
             _c._io->println(F("    reset           - restart controller"));
@@ -97,7 +123,15 @@ public:
             uint16_t id = 0;
             if (!_c.parseUint_(tail, id))
             {
-                _c._io->println(F("Usage: socket toggle <id>"));
+                _c._io->print(F("Usage: socket toggle <id>"));
+                printSocketIdRangeInline_();
+                _c._io->println();
+                _c.printPrompt_();
+                return;
+            }
+            if (!isSocketIdValid_(id))
+            {
+                printInvalidSocketId_();
                 _c.printPrompt_();
                 return;
             }
@@ -116,7 +150,15 @@ public:
             uint16_t id = 0;
             if (!_c.parseUint_(tail, id))
             {
-                _c._io->println(F("Usage: socket on|off <id>"));
+                _c._io->print(F("Usage: socket on|off <id>"));
+                printSocketIdRangeInline_();
+                _c._io->println();
+                _c.printPrompt_();
+                return;
+            }
+            if (!isSocketIdValid_(id))
+            {
+                printInvalidSocketId_();
                 _c.printPrompt_();
                 return;
             }
@@ -199,4 +241,37 @@ private:
 
     ConsoleT &_c;
     CLIWifiT<ConsoleT> &_wifi;
+
+    static bool isSocketIdValid_(uint16_t id)
+    {
+        return id >= 1 && id <= SocketController::kSocketCount;
+    }
+
+    void printSocketIdRangeInline_() const
+    {
+        _c._io->print(F(" (1.."));
+        _c._io->print(SocketController::kSocketCount);
+        _c._io->print(F(")"));
+    }
+
+    void printMeteoIdRangeInline_() const
+    {
+        _c._io->print(F(" (1.."));
+        _c._io->print(MeteoController::kSensorCount);
+        _c._io->print(F(")"));
+    }
+
+    void printThermoIdRangeInline_() const
+    {
+        _c._io->print(F(" (1.."));
+        _c._io->print(ThermoController::kDeviceCount);
+        _c._io->print(F(")"));
+    }
+
+    void printInvalidSocketId_() const
+    {
+        _c._io->print(F("Invalid socket id (1.."));
+        _c._io->print(SocketController::kSocketCount);
+        _c._io->println(F(")"));
+    }
 };

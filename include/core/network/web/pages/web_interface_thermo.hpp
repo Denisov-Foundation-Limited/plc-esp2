@@ -11,13 +11,13 @@
 
 #pragma once
 
-static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
+static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Розетки</title>
+  <title>Термо</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -38,7 +38,7 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       background-attachment: fixed;
       color: var(--text);
     }
-    .wrap { max-width: 980px; margin: 40px auto; padding: 0 16px; }
+    .wrap { max-width: 1200px; margin: 40px auto; padding: 0 16px; }
     .card {
       background: linear-gradient(180deg, #0f172a 0%, #0b1220 100%);
       border: 1px solid #1f2937;
@@ -73,14 +73,6 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       font-weight: 700;
       cursor: pointer;
     }
-    .btn-sm {
-      padding: 6px 10px;
-      border-radius: 8px;
-      font-size: 12px;
-    }
-    .btn-on { background: #22c55e; color: #0b1220; }
-    .btn-off { background: #f97316; color: #0b1220; }
-    .btn-toggle { background: #38bdf8; color: #0b1220; }
     .status-dot {
       display: inline-block;
       width: 10px;
@@ -88,11 +80,9 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       border-radius: 50%;
       box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
     }
-    .status-on { background: #22c55e; }
-    .status-off { background: #ef4444; }
-    .mini { width: 72px; }
-    .name { width: 180px; }
-    .actions { margin-top: 14px; }
+    .status-heat { background: #f97316; }
+    .status-cool { background: #38bdf8; }
+    .status-idle { background: #64748b; }
     .switch {
       display: inline-block;
       width: 40px;
@@ -122,30 +112,37 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     }
     input:checked + .track { background: #22c55e; }
     input:checked + .track .knob { transform: translateX(20px); }
+    .actions { margin-top: 14px; }
+    .mini { width: 90px; }
+    .temp { width: 80px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Розетки</h1>
+      <h1>Термо</h1>
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
-      <div class="status">%SOCKETS_STATUS%</div>
-      <form method="POST" action="/sockets" id="sockets-form">
+      <div class="status">%THERMO_STATUS%</div>
+      <form method="POST" action="/thermo" id="thermo-form">
         <table>
           <thead>
             <tr>
               <th class="right">ID</th>
               <th>Вкл</th>
-              <th>Имя</th>
-              <th>Кнопка</th>
-              <th>Реле</th>
+              <th>Датчик</th>
+              <th>Режим</th>
+              <th class="right">Цель</th>
+              <th class="right">Гист</th>
+              <th class="right">Нагрев</th>
+              <th class="right">Охлажд</th>
+              <th class="right">Кнопка</th>
               <th class="center">Статус</th>
-              <th>Управление</th>
+              <th class="center">Питание</th>
             </tr>
           </thead>
           <tbody>
-            %SOCKETS%
+            %THERMO_ROWS%
           </tbody>
         </table>
         <p class="actions">
@@ -155,17 +152,17 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     </div>
   </div>
   <script>
-    const socketOptions = {
-      dinput: %DINPUT_JSON%,
-      relay: %RELAY_JSON%
+    const thermoOptions = {
+      relay: %THERMO_RELAY_JSON%,
+      dinput: %THERMO_DINPUT_JSON%
     };
-    const socketUsed = {
-      dinput: %DINPUT_USED_JSON%,
-      relay: %RELAY_USED_JSON%
+    const thermoUsed = {
+      relay: %THERMO_RELAY_USED_JSON%,
+      dinput: %THERMO_DINPUT_USED_JSON%
     };
     function buildOptions(list, selected, type) {
       let html = '<option value="">-</option>';
-      const used = socketUsed[type] || [];
+      const used = thermoUsed[type] || [];
       for (let i = 0; i < list.length; i++) {
         const val = String(list[i]);
         if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
@@ -175,22 +172,22 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       }
       return html;
     }
-    document.querySelectorAll('select.socket-select').forEach((el) => {
+    document.querySelectorAll('select.thermo-select').forEach((el) => {
       const type = el.dataset.type;
       const selected = el.dataset.selected || '';
-      const list = socketOptions[type] || [];
+      const list = thermoOptions[type] || [];
       el.innerHTML = buildOptions(list, selected, type);
     });
-    const socketsForm = document.getElementById('sockets-form');
-    document.querySelectorAll('input.socket-toggle').forEach((el) => {
+    const thermoForm = document.getElementById('thermo-form');
+    document.querySelectorAll('input.thermo-power').forEach((el) => {
       el.addEventListener('change', () => {
         const name = el.dataset.action;
         const hidden = document.querySelector('input[name="' + name + '"]');
         if (hidden) {
           hidden.value = el.checked ? 'on' : 'off';
         }
-        if (socketsForm) {
-          socketsForm.submit();
+        if (thermoForm) {
+          thermoForm.submit();
         }
       });
     });
