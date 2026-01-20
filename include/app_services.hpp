@@ -90,22 +90,24 @@ struct AppServices
     PortIO portio;
     IoStack io;
     Gpio gpio;
-    Controllers controllers;
-    MeteoHistory meteo_history;
     Hal hal;
     PlcControl plc;
+    Configs configs;
     TelegramBot telegram_bot;
     TelegramMenu telegram_menu;
-    Network network;
-    StackSlaveHandler stack_slave;
-    AsyncWebServer web;
-    WebInterface fw_upgrade;
+    Controllers controllers;
+    MeteoHistory meteo_history;
 
     TaskManager<TASK_MGR_TSK_COUNT> tm;
     TaskBinder<TASK_MGR_TSK_COUNT> task_binder;
     Ftest ftest;
     CliConsole console;
-    Configs configs;
+
+    AsyncWebServer web;
+    WebInterface fw_upgrade;
+    Network network;
+    StackSlaveHandler stack_slave;
+
     ConfigsManager configs_manager;
     PlcScanLoop plc_scan;
 
@@ -124,37 +126,39 @@ struct AppServices
           lm75ad(),
           sim800l(),
           telegram_wifi_client(),
+          telegram(logs),
           ext(i2c, ActiveBoardProfile::EXT_DEVS, &logs),
           portio(ActiveBoardProfile::PORTS, &ext),
           io(portio),
           gpio(io),
-          controllers(gpio, ow, eeprom_storage, logs),
-          meteo_history(rtc, controllers.meteo()),
           hal(ow, i2c, spi, uart, gpio, logs),
           plc(i2c, io),
-          telegram(logs),
+          configs(),
           telegram_bot(telegram),
           telegram_menu(plc, wifi, rtc, telegram_bot, configs, logs),
+          controllers(gpio, ow, eeprom_storage, logs, telegram_bot, telegram_menu),
+          meteo_history(rtc, controllers.meteo()),
+          tm(),
+          task_binder(tm, wifi, telegram, ext, controllers, meteo_history),
+          ftest(logs, io, ow, ibutton, ds18b20, i2c, rtc, ext, tm, task_binder),
+          console(plc, wifi, rtc, ftest, i2c, ow, telegram, telegram_menu, configs, ext, controllers, nullptr),
           web(ActiveBoardProfile::WEB_PORT),
           fw_upgrade(web, console, wifi, configs, plc, rtc, telegram, telegram_menu, logs, ext, i2c, ow, controllers),
           network(logs, wifi, telegram, telegram_bot, telegram_menu, fw_upgrade, web, telegram_wifi_client),
           stack_slave(io, ds18b20, ow, i2c, plc, rtc, telegram, logs, ext,
                       controllers.sockets(), controllers.meteo(), controllers.thermo()),
-          tm(),
-          task_binder(tm, wifi, telegram, ext, controllers),
-          ftest(logs, io, ow, ibutton, ds18b20, i2c, rtc, ext, tm, task_binder),
-          console(plc, wifi, rtc, ftest, i2c, ow, telegram, telegram_menu, configs, ext, controllers, network.stackMaster()),
-          configs(),
           configs_manager(configs, wifi, telegram, network, console, telegram_menu, plc, controllers),
           plc_scan(io, plc)
     {
         logs.setRtc(rtc);
+        console.setStackMaster(network.stackMaster());
         console.setConfigsManager(configs_manager);
         telegram_menu.setConfigsManager(configs_manager);
         telegram_menu.setStackMaster(*network.stackMaster());
         telegram_menu.setSockets(controllers.sockets());
         telegram_menu.setMeteo(controllers.meteo());
         telegram_menu.setThermo(controllers.thermo());
+        telegram_menu.setTanks(controllers.tanks());
         fw_upgrade.setConfigsManager(configs_manager);
         fw_upgrade.setStackMaster(*network.stackMaster());
         network.setStackConfig(configs_manager);
@@ -377,12 +381,6 @@ struct AppServices
 
         task_binder.bindFtest(ftest);
         task_binder.bindAll();
-        {
-            TaskManager<TASK_MGR_TSK_COUNT>::Options opt;
-            opt.interval_ms = 60000;
-            opt.priority = TaskManager<TASK_MGR_TSK_COUNT>::Priority::Low;
-            tm.template add<&MeteoHistory::task>(meteo_history, opt);
-        }
         plc_scan.begin();
 
         return ok;

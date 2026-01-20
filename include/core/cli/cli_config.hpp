@@ -18,6 +18,7 @@
 #include "core/cli/modules/cli_socket.hpp"
 #include "core/cli/modules/cli_meteo.hpp"
 #include "core/cli/modules/cli_thermo.hpp"
+#include "core/cli/modules/cli_tank.hpp"
 #include "utils/configs_manager_iface.hpp"
 
 template <typename ConsoleT>
@@ -25,8 +26,17 @@ class CLIConfigT
 {
 public:
     CLIConfigT(ConsoleT &console, CLIWifiT<ConsoleT> &wifi, CLITgbotT<ConsoleT> &tgbot,
-               CLISocketT<ConsoleT> &socket, CLIMeteoT<ConsoleT> &meteo, CLIThermoT<ConsoleT> &thermo)
-        : _c(console), _wifi(wifi), _tgbot(tgbot), _socket(socket), _meteo(meteo), _thermo(thermo) {}
+               CLISocketT<ConsoleT> &socket, CLIMeteoT<ConsoleT> &meteo, CLIThermoT<ConsoleT> &thermo,
+               CLITankT<ConsoleT> &tank)
+        : _c(console),
+          _wifi(wifi),
+          _tgbot(tgbot),
+          _socket(socket),
+          _meteo(meteo),
+          _thermo(thermo),
+          _tank(tank)
+    {
+    }
 
     void handle(const String &line)
     {
@@ -61,6 +71,7 @@ public:
             _socket.printHelpConfigLines();
             _meteo.printHelpConfigLines();
             _thermo.printHelpConfigLines();
+            _tank.printHelpConfigLines();
             _c._io->println(F("  Session:"));
             _c._io->println(F("    exit                     - return to enable"));
             _c._io->println(F("    end                      - return to enable"));
@@ -100,6 +111,11 @@ public:
         if (lower == "thermo")
         {
             _c.enterConfigThermo();
+            return;
+        }
+        if (lower == "tank")
+        {
+            _c.enterConfigTank();
             return;
         }
         if (lower.startsWith("stack "))
@@ -487,6 +503,48 @@ public:
         _c.printPrompt_();
     }
 
+    void handleTankContext(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String lower = cmd;
+        lower.toLowerCase();
+
+        if (lower.startsWith("help "))
+        {
+            String topic = cmd.substring(5);
+            topic.trim();
+            _c.showHelpTopic_(topic);
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "help" || lower == "?")
+        {
+            _c._io->println(F("Commands (config-tank):"));
+            _tank.printHelpContextLines();
+            _c._io->println(F("  Session:"));
+            _c._io->println(F("    exit                - return to config"));
+            _c._io->println(F("    end                 - return to enable"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "exit")
+        {
+            _c.enterConfig();
+            return;
+        }
+        if (lower == "end")
+        {
+            _c.enterEnable();
+            return;
+        }
+        if (_tank.handleContext(cmd))
+            return;
+
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
+    }
+
 private:
     bool handleAdminPassword_(const String &cmd, const String &lower)
     {
@@ -630,4 +688,5 @@ private:
     CLISocketT<ConsoleT> &_socket;
     CLIMeteoT<ConsoleT> &_meteo;
     CLIThermoT<ConsoleT> &_thermo;
+    CLITankT<ConsoleT> &_tank;
 };

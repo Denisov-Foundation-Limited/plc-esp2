@@ -41,7 +41,7 @@ public:
         bool has_button = false;
     };
 
-    explicit SocketController(Gpio &gpio, Logger *logs = nullptr) : _gpio(gpio), _logs(logs) {}
+    SocketController(Gpio &gpio, Logger &logs) : _gpio(gpio), _logs(logs) {}
 
     void applyConfig(JsonArrayConst sockets)
     {
@@ -125,9 +125,8 @@ public:
                 st.relay_on = !st.relay_on;
                 writeRelay_(cfg, st.relay_on);
                 _dirty = true;
-                if (_logs)
-                    _logs->info(F("SOCKET"), F("id=%u state=%s src=button"),
-                                (unsigned)cfg.id, st.relay_on ? "on" : "off");
+                _logs.info(F("SOCKET"), F("id: %u state: %s src: button"),
+                           (unsigned)cfg.id, st.relay_on ? "on" : "off");
             }
             st.last_button = pressed;
         }
@@ -149,9 +148,8 @@ public:
         st.relay_on = on;
         writeRelay_(cfg, st.relay_on);
         _dirty = true;
-        if (_logs)
-            _logs->info(F("SOCKET"), F("id=%u state=%s"),
-                        (unsigned)cfg.id, st.relay_on ? "on" : "off");
+        _logs.info(F("SOCKET"), F("id: %u state: %s"),
+                   (unsigned)cfg.id, st.relay_on ? "on" : "off");
         return true;
     }
 
@@ -169,9 +167,8 @@ public:
         st.relay_on = !st.relay_on;
         writeRelay_(cfg, st.relay_on);
         _dirty = true;
-        if (_logs)
-            _logs->info(F("SOCKET"), F("id=%u state=%s src=toggle"),
-                        (unsigned)cfg.id, st.relay_on ? "on" : "off");
+        _logs.info(F("SOCKET"), F("id: %u state: %s src: toggle"),
+                   (unsigned)cfg.id, st.relay_on ? "on" : "off");
         return true;
     }
 
@@ -211,8 +208,7 @@ public:
         st.has_button = setupButton_(cfg, st);
         setupRelay_(cfg, st);
         _dirty = true;
-        if (_logs)
-            _logs->info(F("SOCKET"), F("id=%u enabled=1"), (unsigned)cfg.id);
+        _logs.info(F("SOCKET"), F("id: %u enabled: 1"), (unsigned)cfg.id);
         return true;
     }
 
@@ -387,7 +383,7 @@ private:
     SocketState _state[kSocketCount];
     bool _controller_enabled = false;
     bool _dirty = false;
-    Logger *_logs = nullptr;
+    Logger &_logs;
 
     void reset_()
     {

@@ -26,6 +26,8 @@ public:
     static constexpr uint16_t kThermoCount = 20;
     static constexpr uint16_t kThermoMaskBytes = (kThermoCount + 7) / 8;
     static constexpr uint16_t kThermoTargetBytes = (uint16_t)(kThermoCount * sizeof(int16_t));
+    static constexpr uint16_t kTankCount = 20;
+    static constexpr uint16_t kTankMaskBytes = (kTankCount + 7) / 8;
 
     struct SocketSnapshot
     {
@@ -39,6 +41,11 @@ public:
         int16_t target_t10[kThermoCount] = {};
     };
 
+    struct TankSnapshot
+    {
+        uint8_t power_mask[kTankMaskBytes] = {};
+    };
+
     EepromStorage() = default;
     explicit EepromStorage(At24lc512 &eeprom) : _eeprom(&eeprom) {}
 
@@ -49,6 +56,11 @@ public:
     {
         _thermo_base = base;
         _thermo_base_set = true;
+    }
+    void setTankBase(uint16_t base)
+    {
+        _tank_base = base;
+        _tank_base_set = true;
     }
     void setReady(bool ready) { _ready = ready; }
     bool isReady() const { return _ready; }
@@ -195,6 +207,71 @@ public:
         return true;
     }
 
+    bool saveTanks(const TankSnapshot &snap)
+    {
+        if (!_eeprom)
+            return false;
+        uint16_t slot = 0;
+        uint32_t seq = 1;
+        if (_wl_slots > 1 && _tank_has_seq)
+        {
+            slot = (uint16_t)((_tank_last_slot + 1) % _wl_slots);
+            seq = _tank_last_seq + 1;
+        }
+        const uint16_t base = tankSlotBase_(slot);
+        TankHeader hdr{};
+        hdr.magic = kTankMagic;
+        hdr.version = kTankVersion;
+        hdr.tank_count = kTankCount;
+        hdr.seq = seq;
+        if (!_eeprom->write(base, reinterpret_cast<const uint8_t *>(&hdr), sizeof(hdr)))
+            return false;
+        const uint16_t off = base + sizeof(hdr);
+        if (!_eeprom->write(off, snap.power_mask, kTankMaskBytes))
+            return false;
+        _tank_last_slot = slot;
+        _tank_last_seq = seq;
+        _tank_has_seq = true;
+        return true;
+    }
+
+    bool loadTanks(TankSnapshot &out)
+    {
+        if (!_eeprom)
+            return false;
+        TankHeader best_hdr{};
+        uint16_t best_slot = 0;
+        bool found = false;
+
+        const uint16_t slots = (_wl_slots == 0) ? 1 : _wl_slots;
+        for (uint16_t i = 0; i < slots; ++i)
+        {
+            TankHeader hdr{};
+            const uint16_t base = tankSlotBase_(i);
+            if (!_eeprom->read(base, reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)))
+                continue;
+            if (hdr.magic != kTankMagic || hdr.version != kTankVersion || hdr.tank_count != kTankCount)
+                continue;
+            if (!found || isSeqNewer_(hdr.seq, best_hdr.seq))
+            {
+                best_hdr = hdr;
+                best_slot = i;
+                found = true;
+            }
+        }
+
+        if (!found)
+            return false;
+
+        const uint16_t off = tankSlotBase_(best_slot) + sizeof(best_hdr);
+        if (!_eeprom->read(off, out.power_mask, kTankMaskBytes))
+            return false;
+        _tank_last_slot = best_slot;
+        _tank_last_seq = best_hdr.seq;
+        _tank_has_seq = true;
+        return true;
+    }
+
 private:
     struct StorageHeader
     {
@@ -212,11 +289,21 @@ private:
         uint32_t seq = 0;
     };
 
+    struct TankHeader
+    {
+        uint32_t magic = 0;
+        uint16_t version = 0;
+        uint16_t tank_count = 0;
+        uint32_t seq = 0;
+    };
+
     static constexpr uint32_t kMagic = 0x45535031u; // "ESP1"
     static constexpr uint16_t kVersion = 2;
     static constexpr uint16_t kLegacyVersion = 1;
     static constexpr uint32_t kThermoMagic = 0x45535032u; // "ESP2"
     static constexpr uint16_t kThermoVersion = 2;
+    static constexpr uint32_t kTankMagic = 0x45535033u; // "ESP3"
+    static constexpr uint16_t kTankVersion = 1;
 
     At24lc512 *_eeprom = nullptr;
     uint16_t _base = kDefaultBase;
@@ -230,6 +317,11 @@ private:
     uint16_t _thermo_last_slot = 0;
     uint32_t _thermo_last_seq = 0;
     bool _thermo_has_seq = false;
+    bool _tank_base_set = false;
+    uint16_t _tank_base = 0;
+    uint16_t _tank_last_slot = 0;
+    uint32_t _tank_last_seq = 0;
+    bool _tank_has_seq = false;
 
     uint16_t slotBase_(uint16_t slot) const
     {
@@ -247,6 +339,11 @@ private:
         return (uint16_t)(sizeof(ThermoHeader) + kThermoMaskBytes + kThermoTargetBytes);
     }
 
+    uint16_t tankSlotSize_() const
+    {
+        return (uint16_t)(sizeof(TankHeader) + kTankMaskBytes);
+    }
+
     uint16_t thermoBase_() const
     {
         if (_thermo_base_set)
@@ -255,9 +352,23 @@ private:
         return (uint16_t)base;
     }
 
+    uint16_t tankBase_() const
+    {
+        if (_tank_base_set)
+            return _tank_base;
+        const uint32_t base = (uint32_t)thermoBase_() + (uint32_t)_wl_slots * thermoSlotSize_();
+        return (uint16_t)base;
+    }
+
     uint16_t thermoSlotBase_(uint16_t slot) const
     {
         const uint32_t base = (uint32_t)thermoBase_() + (uint32_t)slot * thermoSlotSize_();
+        return (uint16_t)base;
+    }
+
+    uint16_t tankSlotBase_(uint16_t slot) const
+    {
+        const uint32_t base = (uint32_t)tankBase_() + (uint32_t)slot * tankSlotSize_();
         return (uint16_t)base;
     }
 

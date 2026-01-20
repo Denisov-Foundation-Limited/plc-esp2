@@ -17,6 +17,7 @@
 #include "controllers/socket_controller.hpp"
 #include "controllers/meteo_controller.hpp"
 #include "controllers/thermo_controller.hpp"
+#include "controllers/tank_controller.hpp"
 
 template <typename ConsoleT>
 class CLIEnableT
@@ -62,6 +63,10 @@ public:
             _c._io->print(F("    show thermo <id>"));
             printThermoIdRangeInline_();
             _c._io->println(F(" - device details"));
+            _c._io->println(F("    show tanks      - list tanks"));
+            _c._io->print(F("    show tank <id>"));
+            printTankIdRangeInline_();
+            _c._io->println(F(" - tank details"));
             _c._io->print(F("    socket toggle <id>"));
             printSocketIdRangeInline_();
             _c._io->println(F(" - toggle socket relay"));
@@ -263,6 +268,13 @@ private:
     {
         _c._io->print(F(" (1.."));
         _c._io->print(ThermoController::kDeviceCount);
+        _c._io->print(F(")"));
+    }
+
+    void printTankIdRangeInline_() const
+    {
+        _c._io->print(F(" (1.."));
+        _c._io->print(TankController::kTankCount);
         _c._io->print(F(")"));
     }
 

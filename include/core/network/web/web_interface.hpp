@@ -37,6 +37,7 @@
 #include "core/network/web/pages/web_interface_controllers.hpp"
 #include "core/network/web/pages/web_interface_meteo.hpp"
 #include "core/network/web/pages/web_interface_thermo.hpp"
+#include "core/network/web/pages/web_interface_tanks.hpp"
 #include "core/network/web/pages/web_interface_admin.hpp"
 #include "core/network/web/pages/web_interface_logs.hpp"
 #include "core/network/web/pages/web_interface_telegram.hpp"
@@ -119,6 +120,8 @@ public:
         _server.on("/meteo", HTTP_POST, [this](AsyncWebServerRequest *request) { handleMeteoSave_(request); });
         _server.on("/thermo", HTTP_GET, [this](AsyncWebServerRequest *request) { handleThermo_(request); });
         _server.on("/thermo", HTTP_POST, [this](AsyncWebServerRequest *request) { handleThermoSave_(request); });
+        _server.on("/tanks", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTanks_(request); });
+        _server.on("/tanks", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTanksSave_(request); });
         _server.on("/telegram", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTelegram_(request); });
         _server.on("/telegram", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTelegramSave_(request); });
         _server.on(
@@ -158,8 +161,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET / (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceIndexHtml);
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", navHtml_());
@@ -186,8 +187,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /wifi (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceWifiHtml);
         page.reserve(page.length() + 1536);
         page.replace("%NAV%", navHtml_());
@@ -218,8 +217,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /manage (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceManageHtml);
         page.reserve(page.length() + 4096);
         page.replace("%NAV%", navHtml_());
@@ -233,8 +230,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /logs (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceLogsHtml);
         page.reserve(page.length() + 4096);
         page.replace("%NAV%", navHtml_());
@@ -276,8 +271,6 @@ private:
             if (!checkAuth_(request, &set_cookie))
                 return;
         }
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /admin (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceAdminHtml);
         page.reserve(page.length() + 512);
         page.replace("%NAV%", navHtml_());
@@ -312,8 +305,6 @@ private:
         }
         if (_configs_manager)
             _configs_manager->save();
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("Admin password updated (ip=%s)"), requestIp_(request).c_str());
         sendRedirect_(request, "/", set_cookie);
     }
 
@@ -322,8 +313,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /ports (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfacePortsHtml);
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", navHtml_());
@@ -337,8 +326,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /buses (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceBusesHtml);
         page.reserve(page.length() + 3072);
         page.replace("%NAV%", navHtml_());
@@ -353,8 +340,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /stack (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceStackHtml);
         page.reserve(page.length() + 4096);
         page.replace("%NAV%", navHtml_());
@@ -366,7 +351,7 @@ private:
         page.replace("%STACK_STATUS%", _stack_status);
         if (role == ConfigsManagerIface::StackRole::Master)
         {
-            String self = String("<p class=\"status\">Текущее устройство: <strong>") + deviceName_() +
+            String self = String("<p class=\"status\">Текущий контроллер: <strong>") + deviceName_() +
                           "</strong> | IP: <strong>" + wifiIp_() + "</strong></p>";
             page.replace("%STACK_SELF_BLOCK%", self);
             page.replace("%STACK_NODES_BLOCK%", stackNodesBlockHtml_());
@@ -385,8 +370,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /controllers (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceControllersHtml);
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", navHtml_());
@@ -397,23 +380,29 @@ private:
             page.replace("%SOCKETS_ENABLED_LABEL%", enabled ? "включены" : "выключены");
             const bool meteo_enabled = _controllers->meteo().controllerEnabled();
             page.replace("%METEO_ENABLED_CHECKED%", meteo_enabled ? "checked" : "");
-            page.replace("%METEO_ENABLED_LABEL%", meteo_enabled ? "включен" : "выключен");
+            page.replace("%METEO_ENABLED_LABEL%", meteo_enabled ? "включено" : "выключено");
             const bool thermo_enabled = _controllers->thermo().controllerEnabled();
             page.replace("%THERMO_ENABLED_CHECKED%", thermo_enabled ? "checked" : "");
-            page.replace("%THERMO_ENABLED_LABEL%", thermo_enabled ? "включен" : "выключен");
+            page.replace("%THERMO_ENABLED_LABEL%", thermo_enabled ? "включено" : "выключено");
+            const bool tanks_enabled = _controllers->tanks().controllerEnabled();
+            page.replace("%TANKS_ENABLED_CHECKED%", tanks_enabled ? "checked" : "");
+            page.replace("%TANKS_ENABLED_LABEL%", tanks_enabled ? "включены" : "выключены");
         }
         else
         {
             page.replace("%SOCKETS_ENABLED_CHECKED%", "");
-            page.replace("%SOCKETS_ENABLED_LABEL%", "недоступны");
+            page.replace("%SOCKETS_ENABLED_LABEL%", "недоступно");
             page.replace("%METEO_ENABLED_CHECKED%", "");
-            page.replace("%METEO_ENABLED_LABEL%", "недоступен");
+            page.replace("%METEO_ENABLED_LABEL%", "недоступно");
             page.replace("%THERMO_ENABLED_CHECKED%", "");
-            page.replace("%THERMO_ENABLED_LABEL%", "недоступен");
+            page.replace("%THERMO_ENABLED_LABEL%", "недоступно");
+            page.replace("%TANKS_ENABLED_CHECKED%", "");
+            page.replace("%TANKS_ENABLED_LABEL%", "недоступно");
         }
         page.replace("%CONTROLLERS_STATUS%", _controllers_status);
         page.replace("%METEO_STATUS%", _meteo_status);
         page.replace("%THERMO_STATUS%", _thermo_status);
+        page.replace("%TANKS_STATUS%", _tanks_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         sendHtml_(request, page, set_cookie);
     }
@@ -459,6 +448,15 @@ private:
                 changed = true;
             }
         }
+        if (ctrl.length() == 0 || ctrl == "tanks")
+        {
+            const bool tanks_enabled = request->hasParam("tanks_enabled", true);
+            if (_controllers->tanks().controllerEnabled() != tanks_enabled)
+            {
+                _controllers->tanks().setControllerEnabled(tanks_enabled);
+                changed = true;
+            }
+        }
         bool ok = true;
         if (changed)
         {
@@ -477,6 +475,7 @@ private:
             _controllers_status = changed ? "Updated" : "No changes";
         _meteo_status = _controllers_status;
         _thermo_status = _controllers_status;
+        _tanks_status = _controllers_status;
         sendRedirect_(request, "/controllers", set_cookie);
     }
 
@@ -485,8 +484,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /sockets (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceSocketsHtml);
         page.reserve(page.length() + 8192);
         page.replace("%NAV%", navHtml_());
@@ -505,8 +502,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /meteo (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceMeteoHtml);
         page.reserve(page.length() + 8192);
         page.replace("%NAV%", navHtml_());
@@ -523,8 +518,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /thermo (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceThermoHtml);
         page.reserve(page.length() + 8192);
         page.replace("%NAV%", navHtml_());
@@ -543,8 +536,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /telegram (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceTelegramHtml);
         page.reserve(page.length() + 4096);
         page.replace("%NAV%", navHtml_());
@@ -969,6 +960,162 @@ private:
         sendRedirect_(request, "/thermo", set_cookie);
     }
 
+    void handleTanks_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        String page = FPSTR(kWebInterfaceTanksHtml);
+        page.reserve(page.length() + 8192);
+        page.replace("%NAV%", navHtml_());
+        page.replace("%TANK_STATUS%", _tanks_status);
+        page.replace("%TANK_ITEMS%", listTanksHtml_());
+        page.replace("%TANK_DINPUT_JSON%", tankPortOptionsJson_(PortIO::PinType::DInput));
+        page.replace("%TANK_RELAY_JSON%", tankPortOptionsJson_(PortIO::PinType::Relay));
+        page.replace("%TANK_DINPUT_USED_JSON%", tankUsedPortsJson_(PortIO::PinType::DInput));
+        page.replace("%TANK_RELAY_USED_JSON%", tankUsedPortsJson_(PortIO::PinType::Relay));
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        sendHtml_(request, page, set_cookie);
+    }
+
+    void handleTanksSave_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!_controllers)
+        {
+            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            return;
+        }
+        TankController &tanks = _controllers->tanks();
+        bool ok = true;
+        bool changed = false;
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = tanks.configByIndex(i);
+            if (!cfg)
+                continue;
+            const String idx = String((unsigned)cfg->id);
+            const String prefix = String("k") + idx + "_";
+            const String en_key = prefix + "en";
+            const String power_key = prefix + "power";
+            const String name_key = prefix + "name";
+            const String low_key = prefix + "low";
+            const String mid_key = prefix + "mid";
+            const String full_key = prefix + "full";
+            const String valve_key = prefix + "valve";
+            const String pump_key = prefix + "pump";
+            const String alarm_key = prefix + "alarm";
+            const bool has_any = request->hasParam(en_key, true) ||
+                                 request->hasParam(power_key, true) ||
+                                 request->hasParam(name_key, true) ||
+                                 request->hasParam(low_key, true) ||
+                                 request->hasParam(mid_key, true) ||
+                                 request->hasParam(full_key, true) ||
+                                 request->hasParam(valve_key, true) ||
+                                 request->hasParam(pump_key, true) ||
+                                 request->hasParam(alarm_key, true);
+            if (!has_any)
+                continue;
+
+            const bool enabled = request->hasParam(en_key, true);
+            const bool power_on = request->hasParam(power_key, true);
+            String name = paramValue_(request, name_key);
+            name.trim();
+            const String low_str = paramValue_(request, low_key);
+            const String mid_str = paramValue_(request, mid_key);
+            const String full_str = paramValue_(request, full_key);
+            const String valve_str = paramValue_(request, valve_key);
+            const String pump_str = paramValue_(request, pump_key);
+            const String alarm_str = paramValue_(request, alarm_key);
+
+            uint8_t low_port = TankController::kInvalidPort;
+            uint8_t mid_port = TankController::kInvalidPort;
+            uint8_t full_port = TankController::kInvalidPort;
+            uint8_t valve_port = TankController::kInvalidPort;
+            uint8_t pump_port = TankController::kInvalidPort;
+            uint8_t alarm_port = TankController::kInvalidPort;
+            if (!parseSocketPort_(low_str, low_port) ||
+                !parseSocketPort_(mid_str, mid_port) ||
+                !parseSocketPort_(full_str, full_port) ||
+                !parseSocketPort_(valve_str, valve_port) ||
+                !parseSocketPort_(pump_str, pump_port) ||
+                !parseSocketPort_(alarm_str, alarm_port))
+            {
+                ok = false;
+                _tanks_status = String("Неверный порт для бака ") + idx;
+                break;
+            }
+
+            if (cfg->enabled != enabled)
+            {
+                tanks.setEnabled(cfg->id, enabled);
+                changed = true;
+            }
+            if (cfg->power_on != power_on)
+            {
+                tanks.setPower(cfg->id, power_on);
+                changed = true;
+            }
+            if (cfg->name != name)
+            {
+                tanks.setName(cfg->id, name);
+                changed = true;
+            }
+            if (cfg->level_low != low_port)
+            {
+                tanks.setLevelLow(cfg->id, low_port);
+                changed = true;
+            }
+            if (cfg->level_mid != mid_port)
+            {
+                tanks.setLevelMid(cfg->id, mid_port);
+                changed = true;
+            }
+            if (cfg->level_full != full_port)
+            {
+                tanks.setLevelFull(cfg->id, full_port);
+                changed = true;
+            }
+            if (cfg->relay_valve != valve_port)
+            {
+                tanks.setValveRelay(cfg->id, valve_port);
+                changed = true;
+            }
+            if (cfg->relay_pump != pump_port)
+            {
+                tanks.setPumpRelay(cfg->id, pump_port);
+                changed = true;
+            }
+            if (cfg->relay_alarm != alarm_port)
+            {
+                tanks.setAlarmRelay(cfg->id, alarm_port);
+                changed = true;
+            }
+        }
+
+        if (ok)
+        {
+            if (changed)
+            {
+                if (!_configs_manager)
+                {
+                    ok = false;
+                    _tanks_status = "Менеджер конфигурации недоступен";
+                }
+                else if (!_configs_manager->save())
+                {
+                    ok = false;
+                    _tanks_status = "Сохранение не удалось";
+                }
+            }
+        }
+        if (ok)
+            _tanks_status = changed ? "Обновлено" : "Сохранено";
+        sendRedirect_(request, "/tanks", set_cookie);
+    }
+
     void handleTelegramSave_(AsyncWebServerRequest *request)
     {
         bool set_cookie = false;
@@ -1256,7 +1403,7 @@ private:
     String listSocketsHtml_()
     {
         if (!_controllers)
-            return "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Нет розеток</strong></td></tr>";
+            return "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
         String items;
         items.reserve(4096);
         SocketController &sockets = _controllers->sockets();
@@ -1319,7 +1466,7 @@ private:
         if (first_disabled)
             appendRow(*first_disabled, false);
         if (items.length() == 0)
-            items = "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Нет розеток</strong></td></tr>";
+            items = "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Розетки отсутствуют</strong></td></tr>";
         return items;
     }
 
@@ -1573,6 +1720,100 @@ private:
         return items;
     }
 
+    String listTanksHtml_()
+    {
+        if (!_controllers)
+            return "<tr><td colspan=\"11\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
+        String items;
+        items.reserve(4096);
+        TankController &tanks = _controllers->tanks();
+
+        auto appendRow = [&](const TankController::TankConfig &cfg, const TankController::TankState &st,
+                             bool enabled) {
+            const char *level = "пусто";
+            if (st.level_full)
+                level = "полный";
+            else if (st.level_mid)
+                level = "средний";
+            else if (st.level_low)
+                level = "низкий";
+
+            items += "<tr><td class=\"right\"><strong>";
+            items += String((unsigned)cfg.id);
+            items += "</strong></td><td><input type=\"checkbox\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_en\"";
+            if (enabled)
+                items += " checked";
+            items += "></td><td><input class=\"field name\" type=\"text\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_name\" value=\"";
+            appendHtmlEscaped_(items, cfg.name.c_str());
+            items += "\"></td><td class=\"right\"><select class=\"field mini tank-select\" data-type=\"dinput\" data-selected=\"";
+            if (cfg.level_low != TankController::kInvalidPort)
+                items += String((unsigned)cfg.level_low);
+            items += "\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_low\"></select></td><td class=\"right\"><select class=\"field mini tank-select\" data-type=\"dinput\" data-selected=\"";
+            if (cfg.level_mid != TankController::kInvalidPort)
+                items += String((unsigned)cfg.level_mid);
+            items += "\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_mid\"></select></td><td class=\"right\"><select class=\"field mini tank-select\" data-type=\"dinput\" data-selected=\"";
+            if (cfg.level_full != TankController::kInvalidPort)
+                items += String((unsigned)cfg.level_full);
+            items += "\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_full\"></select></td><td class=\"right\"><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
+            if (cfg.relay_valve != TankController::kInvalidPort)
+                items += String((unsigned)cfg.relay_valve);
+            items += "\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_valve\"></select></td><td class=\"right\"><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
+            if (cfg.relay_pump != TankController::kInvalidPort)
+                items += String((unsigned)cfg.relay_pump);
+            items += "\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_pump\"></select></td><td class=\"right\"><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
+            if (cfg.relay_alarm != TankController::kInvalidPort)
+                items += String((unsigned)cfg.relay_alarm);
+            items += "\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_alarm\"></select></td><td class=\"center\">";
+            items += level;
+            items += "</td><td class=\"center\"><label class=\"switch\"><input type=\"checkbox\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_power\"";
+            if (cfg.power_on)
+                items += " checked";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></td></tr>";
+        };
+
+        const TankController::TankConfig *first_disabled = nullptr;
+        const TankController::TankState *first_disabled_state = nullptr;
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = tanks.configByIndex(i);
+            const auto *st = tanks.stateByIndex(i);
+            if (!cfg || !st)
+                continue;
+            if (cfg->enabled)
+            {
+                appendRow(*cfg, *st, true);
+            }
+            else if (!first_disabled)
+            {
+                first_disabled = cfg;
+                first_disabled_state = st;
+            }
+        }
+        if (first_disabled && first_disabled_state)
+            appendRow(*first_disabled, *first_disabled_state, false);
+        if (items.length() == 0)
+            items = "<tr><td colspan=\"11\" style=\"color:#94a3b8\"><strong>Баки отсутствуют</strong></td></tr>";
+        return items;
+    }
+
     String listI2cHtml_()
     {
         if (!_i2c)
@@ -1612,7 +1853,7 @@ private:
         String out;
         out.reserve(1024);
         out += "<div class=\"section\">";
-        out += "<h2>Слейвы</h2>";
+        out += "<h2>Контроллеры</h2>";
         out += "<table><thead><tr>";
         out += "<th>Unit</th><th>DeviceName</th><th>NodeID</th><th>IP</th>";
         out += "</tr></thead><tbody>";
@@ -1625,10 +1866,10 @@ private:
     String listStackNodesHtml_() const
     {
         if (!_stack_master)
-            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Нет слейвов</strong></td></tr>";
+            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Стек недоступен</strong></td></tr>";
         const size_t count = _stack_master->nodeCount();
         if (count == 0)
-            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Нет слейвов</strong></td></tr>";
+            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Контроллеров нет</strong></td></tr>";
         String items;
         items.reserve(1024);
         for (size_t i = 0; i < count; ++i)
@@ -1820,6 +2061,68 @@ private:
         return out;
     }
 
+    String tankPortOptionsJson_(PortIO::PinType type) const
+    {
+        return socketPortOptionsJson_(type);
+    }
+
+    String tankUsedPortsJson_(PortIO::PinType type) const
+    {
+        String out;
+        out.reserve(128);
+        out += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            TankController &tanks = _controllers->tanks();
+            bool used[PortIO::PORT_COUNT] = {};
+            for (size_t i = 0; i < TankController::kTankCount; ++i)
+            {
+                const auto *cfg = tanks.configByIndex(i);
+                if (!cfg)
+                    continue;
+                if (type == PortIO::PinType::DInput)
+                {
+                    const uint8_t low = cfg->level_low;
+                    const uint8_t mid = cfg->level_mid;
+                    const uint8_t full = cfg->level_full;
+                    if (low != TankController::kInvalidPort && low < PortIO::PORT_COUNT)
+                        used[low] = true;
+                    if (mid != TankController::kInvalidPort && mid < PortIO::PORT_COUNT)
+                        used[mid] = true;
+                    if (full != TankController::kInvalidPort && full < PortIO::PORT_COUNT)
+                        used[full] = true;
+                }
+                else if (type == PortIO::PinType::Relay)
+                {
+                    const uint8_t valve = cfg->relay_valve;
+                    const uint8_t pump = cfg->relay_pump;
+                    const uint8_t alarm = cfg->relay_alarm;
+                    if (valve != TankController::kInvalidPort && valve < PortIO::PORT_COUNT)
+                        used[valve] = true;
+                    if (pump != TankController::kInvalidPort && pump < PortIO::PORT_COUNT)
+                        used[pump] = true;
+                    if (alarm != TankController::kInvalidPort && alarm < PortIO::PORT_COUNT)
+                        used[alarm] = true;
+                }
+            }
+            for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+            {
+                if (!used[i])
+                    continue;
+                const auto &p = ActiveBoardProfile::PORTS[i];
+                if (p.caps == Cap::None || p.type != type)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += String((unsigned)i);
+                first = false;
+            }
+        }
+        out += "]";
+        return out;
+    }
+
     String listOwHtml_()
     {
         if (!_ow)
@@ -1873,8 +2176,6 @@ private:
                 _upload_error = "Invalid file name";
                 return;
             }
-            if (_log && _log->ready())
-                _log->info(F("WEB"), F("Upload start %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
             if (!isAllowedExt_(path))
             {
                 _upload_ok = false;
@@ -1925,8 +2226,6 @@ private:
             _ota_error = "";
             _ota_size = 0;
             _ota_name = filename;
-            if (_log && _log->ready())
-                _log->info(F("WEB"), F("OTA start %s (ip=%s)"), filename.c_str(), requestIp_(request).c_str());
             if (!Update.begin(UPDATE_SIZE_UNKNOWN))
             {
                 _ota_ok = false;
@@ -1969,17 +2268,7 @@ private:
             _last_status = _upload_error.length() ? _upload_error : "Upload failed";
         else
             _last_status = "Upload complete";
-        if (_log && _log->ready())
-        {
-            const String name = _upload_name.length() ? _upload_name : String("-");
-            if (_upload_ok)
-                _log->info(F("WEB"), F("Upload done %s size=%lu (ip=%s)"), name.c_str(), (unsigned long)_upload_size,
-                           requestIp_(request).c_str());
-            else
-                _log->warn(F("WEB"), F("Upload fail %s size=%lu err=%s (ip=%s)"), name.c_str(),
-                           (unsigned long)_upload_size, _upload_error.c_str(), requestIp_(request).c_str());
-        }
-        sendRedirect_(request, "/status", _upload_set_cookie);
+sendRedirect_(request, "/status", _upload_set_cookie);
         _upload_set_cookie = false;
     }
 
@@ -1989,17 +2278,7 @@ private:
             _last_status = _ota_error.length() ? _ota_error : "Firmware update failed";
         else
             _last_status = "Firmware updated. Rebooting...";
-        if (_log && _log->ready())
-        {
-            const String name = _ota_name.length() ? _ota_name : String("-");
-            if (_ota_ok)
-                _log->info(F("WEB"), F("OTA done %s size=%lu (ip=%s)"), name.c_str(), (unsigned long)_ota_size,
-                           requestIp_(request).c_str());
-            else
-                _log->warn(F("WEB"), F("OTA fail %s size=%lu err=%s (ip=%s)"), name.c_str(), (unsigned long)_ota_size,
-                           _ota_error.c_str(), requestIp_(request).c_str());
-        }
-        sendRedirect_(request, "/status", _ota_set_cookie);
+sendRedirect_(request, "/status", _ota_set_cookie);
         _ota_set_cookie = false;
 #if defined(ESP32)
         if (_ota_ok)
@@ -2085,20 +2364,7 @@ private:
             _wifi_status = "Wi-Fi applied, but save failed";
         else
             _wifi_status = "Wi-Fi updated";
-
-        if (_log && _log->ready())
-        {
-            if (!changed)
-                _log->info(F("WEB"), F("WiFi save: no changes (ip=%s)"), requestIp_(request).c_str());
-            else if (wifi_ok && save_ok)
-                _log->info(F("WEB"), F("WiFi save ok (mode=%s, ssid=%s, ap_ssid=%s, ip=%s)"),
-                           _wifi.ap() ? "AP" : "STA", _wifi.ssid().c_str(), _wifi.apSsid().c_str(),
-                           requestIp_(request).c_str());
-            else
-                _log->warn(F("WEB"), F("WiFi save fail wifi=%s save=%s (ip=%s)"), wifi_ok ? "ok" : "err",
-                           save_ok ? "ok" : "err", requestIp_(request).c_str());
-        }
-        sendRedirect_(request, "/", set_cookie);
+sendRedirect_(request, "/", set_cookie);
     }
 
     void handleStackSave_(AsyncWebServerRequest *request)
@@ -2195,8 +2461,6 @@ private:
         if (!checkAuth_(request, &set_cookie))
             return;
 #if defined(ESP32)
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("Reboot request (ip=%s)"), requestIp_(request).c_str());
         sendRedirect_(request, "/", set_cookie);
         delay(100);
         ESP.restart();
@@ -2223,13 +2487,9 @@ private:
         }
         if (!LittleFS.exists(path))
         {
-            if (_log && _log->ready())
-                _log->warn(F("WEB"), F("Download missing %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
             sendText_(request, 404, "text/plain", "File not found", set_cookie);
             return;
         }
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("Download %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
         auto *response = request->beginResponse(LittleFS, path, "application/octet-stream");
         if (set_cookie)
             response->addHeader("Set-Cookie", sessionCookie_());
@@ -2252,19 +2512,13 @@ private:
             sendText_(request, 400, "text/plain", "Invalid path", set_cookie);
             return;
         }
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("Delete request %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
         if (!LittleFS.exists(path))
         {
-            if (_log && _log->ready())
-                _log->warn(F("WEB"), F("Delete missing %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
             sendText_(request, 404, "text/plain", "File not found", set_cookie);
             return;
         }
         if (!LittleFS.remove(path))
         {
-            if (_log && _log->ready())
-                _log->warn(F("WEB"), F("Delete failed %s (ip=%s)"), path.c_str(), requestIp_(request).c_str());
             sendText_(request, 500, "text/plain", "Delete failed", set_cookie);
             return;
         }
@@ -2276,8 +2530,6 @@ private:
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
-        if (_log && _log->ready())
-            _log->info(F("WEB"), F("GET /status (ip=%s)"), requestIp_(request).c_str());
         String page = FPSTR(kWebInterfaceStatusHtml);
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", navHtml_());
@@ -2307,9 +2559,6 @@ private:
         {
             if (!_cli_auth->adminPasswordSet())
             {
-                if (_log && _log->ready())
-                    _log->warn(F("WEB"), F("Auth rejected (admin password not set, ip=%s, url=%s)"),
-                               requestIp_(request).c_str(), request->url().c_str());
                 sendRedirect_(request, "/admin", false);
                 return false;
             }
@@ -2343,10 +2592,6 @@ private:
                     return true;
                 }
             }
-            if (_log && _log->ready())
-                _log->warn(F("WEB"), F("Auth failed (ip=%s, url=%s)"),
-                           requestIp_(request).c_str(),
-                           request->url().c_str());
             requestBasicAuth_(request);
             return false;
         }
@@ -2359,9 +2604,6 @@ private:
                 *set_cookie = true;
             return true;
         }
-        if (_log && _log->ready())
-            _log->warn(F("WEB"), F("Auth failed (ip=%s, url=%s)"), requestIp_(request).c_str(),
-                       request->url().c_str());
         requestBasicAuth_(request);
         return false;
     }
@@ -2992,7 +3234,7 @@ private:
         String out = "<span class=\"status-dot ";
         out += on ? "status-on" : "status-off";
         out += "\" title=\"";
-        out += on ? "Включен" : "Выключен";
+        out += on ? "включен" : "выключен";
         out += "\"></span>";
         return out;
     }
@@ -3150,6 +3392,7 @@ private:
     String _controllers_status;
     String _meteo_status;
     String _thermo_status;
+    String _tanks_status;
     bool _auth_enabled = false;
     String _auth_user;
     String _auth_pass;
@@ -3163,6 +3406,8 @@ private:
     bool _upload_set_cookie = false;
     bool _ota_set_cookie = false;
 };
+
+
 
 
 

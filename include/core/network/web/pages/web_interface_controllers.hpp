@@ -163,6 +163,21 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Термо: <strong>%THERMO_ENABLED_LABEL%</strong></span>
           <span class="status">%THERMO_STATUS%</span>
         </div>
+        <div class="tile">
+          <form method="POST" action="/controllers" id="tanks-form">
+            <input type="hidden" name="ctrl" value="tanks">
+            <div class="tile-head">
+              <a href="/tanks">Баки</a>
+              <label class="switch">
+                <input type="checkbox" id="tanks-enabled" name="tanks_enabled" %TANKS_ENABLED_CHECKED%>
+                <span class="track"><span class="knob"></span></span>
+              </label>
+            </div>
+          </form>
+          <span>Уровень воды и автоматика</span>
+          <span class="status">Баки: <strong>%TANKS_ENABLED_LABEL%</strong></span>
+          <span class="status">%TANKS_STATUS%</span>
+        </div>
       </div>
     </div>
   </div>
@@ -181,6 +196,11 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
     const thermoForm = document.getElementById('thermo-form');
     if (thermoToggle && thermoForm) {
       thermoToggle.addEventListener('change', () => thermoForm.submit());
+    }
+    const tanksToggle = document.getElementById('tanks-enabled');
+    const tanksForm = document.getElementById('tanks-form');
+    if (tanksToggle && tanksForm) {
+      tanksToggle.addEventListener('change', () => tanksForm.submit());
     }
   </script>
 </body>

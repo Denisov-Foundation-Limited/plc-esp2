@@ -17,6 +17,7 @@
 #include <vector>
 #include <LittleFS.h>
 
+#include "core/network/telegram/telegram_allowed_users.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
 #include "core/rtc.hpp"
 #include "core/network/wifi_manager.hpp"
@@ -24,13 +25,14 @@
 #include "controllers/socket_controller.hpp"
 #include "controllers/meteo_controller.hpp"
 #include "controllers/thermo_controller.hpp"
+#include "controllers/tank_controller.hpp"
 #include "utils/meteo_history.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/logger.hpp"
 #include "core/network/stack/stack_master.hpp"
 
-class TelegramMenu
+class TelegramMenu : public TelegramAllowedUsersProvider
 {
 public:
     TelegramMenu(PlcControl &plc, WifiManager &wifi, RTC &rtc, TelegramBot &bot, Configs &configs, Logger &logs)
@@ -57,15 +59,9 @@ public:
     void setSockets(SocketController &sockets) { _sockets = &sockets; }
     void setMeteo(MeteoController &meteo) { _meteo = &meteo; }
     void setThermo(ThermoController &thermo) { _thermo = &thermo; }
+    void setTanks(TankController &tanks) { _tanks = &tanks; }
 
-    struct AllowedUser
-    {
-        String username;
-        int64_t chat_id = 0;
-        bool is_admin = false;
-        bool is_notify = false;
-        bool enabled = true;
-    };
+    using AllowedUser = TelegramAllowedUser;
 
     enum class AllowResult : uint8_t
     {
@@ -134,7 +130,7 @@ public:
 
     void clearAllowedUsers() { _allowed_users.clear(); }
 
-    const std::vector<AllowedUser> &allowedUsers() const { return _allowed_users; }
+    const std::vector<AllowedUser> &allowedUsers() const override { return _allowed_users; }
 
     static constexpr size_t kMaxAllowedUsers = 10;
 
@@ -159,12 +155,14 @@ private:
         bool awaiting_device = false;
         bool awaiting_socket = false;
         bool awaiting_thermo = false;
+        bool awaiting_tank = false;
         uint8_t fail_count = 0;
         uint32_t lock_until_ms = 0;
         bool selected_local = true;
         uint32_t selected_node_id = 0;
         uint8_t socket_action = 0;
         uint8_t selected_thermo_id = 0;
+        uint8_t selected_tank_id = 0;
     };
 
     std::vector<ChatAuth> _auth;
@@ -351,6 +349,27 @@ private:
         return true;
     }
 
+    static bool cmdTanks_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        (void)reply;
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_tanks)
+        {
+            reply = "Баки недоступны";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        _self->sendTanksMenu_(u.chat_id);
+        return true;
+    }
+
     static bool cmdSocketList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
     {
         if (!_self)
@@ -444,6 +463,27 @@ private:
         return true;
     }
 
+    static bool cmdTanksList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_tanks)
+        {
+            reply = "Баки недоступны";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        const String text = _self->tankListTextHtml_();
+        bot.sendText(u.chat_id, text, "", "HTML");
+        return true;
+    }
+
     static bool cmdThermoShow_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
     {
         if (!_self)
@@ -470,6 +510,36 @@ private:
             return true;
         }
         _self->sendThermoDevice_(u.chat_id, id);
+        return true;
+    }
+
+    static bool cmdTanksShow_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_tanks)
+        {
+            reply = "Баки недоступны";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        const char *cmd = "/tanks_show";
+        String tail = u.text.substring(strlen(cmd));
+        tail.trim();
+        uint8_t id = 0;
+        if (!parseTankId_(tail, id))
+        {
+            reply = "Использование: /tanks_show <id>";
+            return true;
+        }
+        const String text = _self->tankDeviceTextHtml_(id);
+        bot.sendText(u.chat_id, text, "", "HTML");
         return true;
     }
 
@@ -871,11 +941,15 @@ private:
         }
         if (self->handleThermoAction_(u))
             return true;
+        if (self->handleTankAction_(u))
+            return true;
         if (self->handleSocketToggleSelection_(u))
             return true;
         if (self->handleMeteoSelection_(u))
             return true;
         if (self->handleThermoSelection_(u))
+            return true;
+        if (self->handleTankSelection_(u))
             return true;
         if (self->handleRootDeviceSelection_(u))
             return true;
@@ -1007,6 +1081,8 @@ private:
         st->socket_action = 0;
         st->awaiting_thermo = false;
         st->selected_thermo_id = 0;
+        st->awaiting_tank = false;
+        st->selected_tank_id = 0;
         st->selected_local = true;
         st->selected_node_id = 0;
     }
@@ -1023,6 +1099,8 @@ private:
         st->socket_action = 0;
         st->awaiting_thermo = false;
         st->selected_thermo_id = 0;
+        st->awaiting_tank = false;
+        st->selected_tank_id = 0;
     }
 
     TelegramBot *_bot = nullptr;
@@ -1031,6 +1109,7 @@ private:
     SocketController *_sockets = nullptr;
     MeteoController *_meteo = nullptr;
     ThermoController *_thermo = nullptr;
+    TankController *_tanks = nullptr;
 
         static inline const TelegramBot::MenuItem kRootItems[] = {};
 
@@ -1039,12 +1118,14 @@ private:
         { "Розетки", "/sockets", nullptr, nullptr },
         { "Метео", "/meteo", nullptr, nullptr },
         { "Термо", "/thermo", nullptr, nullptr },
+        { "Баки", "/tanks", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
     };
 
     static inline const TelegramBot::MenuItem kSocketsItems[] = {};
     static inline const TelegramBot::MenuItem kMeteoItems[] = {};
     static inline const TelegramBot::MenuItem kThermoItems[] = {};
+    static inline const TelegramBot::MenuItem kTanksItems[] = {};
 
     static inline const TelegramBot::MenuItem kAdminItems[] = {
         { "ПЛК", nullptr, "plc", nullptr },
@@ -1081,10 +1162,11 @@ private:
 
     static inline const TelegramBot::Menu kMenus[] = {
         { "root", "Выбор устройства", kRootItems, 0, nullptr },
-        { "device", "Меню устройства", kDeviceItems, 5, "root" },
+        { "device", "Меню устройства", kDeviceItems, 6, "root" },
         { "sockets", "Розетки", kSocketsItems, 0, "device" },
         { "meteo", "Метео", kMeteoItems, 0, "device" },
         { "thermo", "Термо", kThermoItems, 0, "device" },
+        { "tanks", "Баки", kTanksItems, 0, "device" },
         { "admin", "Админка", kAdminItems, 6, "device" },
         { "plc", "ПЛК", kPlcItems, 2, "admin" },
         { "rtc", "Часы", kRtcItems, 2, "admin" },
@@ -1122,6 +1204,9 @@ private:
         { "/thermo", &TelegramMenu::cmdThermo_ },
         { "/thermo_list", &TelegramMenu::cmdThermoList_ },
         { "/thermo_show", &TelegramMenu::cmdThermoShow_ },
+        { "/tanks", &TelegramMenu::cmdTanks_ },
+        { "/tanks_list", &TelegramMenu::cmdTanksList_ },
+        { "/tanks_show", &TelegramMenu::cmdTanksShow_ },
     };
 
     static inline const size_t kCommandCount = sizeof(kCommands) / sizeof(kCommands[0]);
@@ -1507,6 +1592,76 @@ private:
         return parseThermoIdFromText_(t, out);
     }
 
+    static bool parseTankIdFromText_(const String &text, uint8_t &out)
+    {
+        const size_t len = text.length();
+        if (len == 0)
+            return false;
+        int start = -1;
+        int end = -1;
+        for (size_t i = 0; i < len; ++i)
+        {
+            const char c = text.charAt(i);
+            if (c >= '0' && c <= '9')
+            {
+                if (start < 0)
+                    start = (int)i;
+                end = (int)i + 1;
+            }
+            else if (start >= 0)
+            {
+                break;
+            }
+        }
+        if (start < 0 || end <= start)
+            return false;
+        String num = text.substring(start, end);
+        return parseTankId_(num, out);
+    }
+
+    static bool parseTankId_(const String &text, uint8_t &out)
+    {
+        String t = text;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        for (size_t i = 0; i < t.length(); ++i)
+        {
+            const char c = t[i];
+            if (c < '0' || c > '9')
+                return false;
+        }
+        const int v = t.toInt();
+        if (v <= 0 || v > (int)TankController::kTankCount)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
+    static bool parseTankLabel_(const String &text, uint8_t &out)
+    {
+        String t = text;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        int colon = t.indexOf(':');
+        if (colon > 0)
+        {
+            String head = t.substring(0, colon);
+            head.trim();
+            return parseTankIdFromText_(head, out);
+        }
+        String low = t;
+        low.toLowerCase();
+        if (low.startsWith("tank"))
+        {
+            String tail = t.substring(4);
+            tail.trim();
+            return parseTankIdFromText_(tail, out);
+        }
+        return parseTankIdFromText_(t, out);
+    }
+
     static bool startSocketAction_(TelegramBot &bot, const TelegramClient::Update &u, String &reply, uint8_t action)
     {
         if (!_self)
@@ -1624,6 +1779,33 @@ private:
             {
                 label += thermoModeLabel_(cfg->mode);
             }
+            out.push_back(label);
+        }
+        out.push_back(F("Назад"));
+    }
+
+    void buildTankLabels_(std::vector<String> &out) const
+    {
+        out.clear();
+        if (!_tanks)
+        {
+            out.reserve(1);
+            out.push_back(F("Назад"));
+            return;
+        }
+        out.reserve(TankController::kTankCount + 1);
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = _tanks->configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            String label;
+            label += String((unsigned)cfg->id);
+            label += ": ";
+            if (cfg->name.length())
+                label += cfg->name;
+            else
+                label += F("Tank");
             out.push_back(label);
         }
         out.push_back(F("Назад"));
@@ -1939,19 +2121,21 @@ private:
                 out += "<b>-</b>";
             }
             out += " режим: ";
+            out += "<b>";
             out += thermoModeLabel_(cfg->mode);
+            out += "</b>";
             out += " питание: ";
             out += "<b>";
-            out += st->power_on ? "вкл" : "выкл";
+            out += st->power_on ? F("🟢") : F("⚪");
             out += "</b>";
             out += " статус: ";
             out += "<b>";
             if (st->heat_on)
-                out += F("🟡");
+                out += F("🔥");
             else if (st->cool_on)
-                out += F("🔵");
+                out += F("❄️");
             else
-                out += F("⚪");
+                out += F("⏸️");
             out += "</b>";
         }
         if (!any)
@@ -2023,15 +2207,114 @@ private:
         out += "\n  статус: ";
         out += "<b>";
         if (st->heat_on)
-            out += F("🟡");
+            out += F("🔥");
         else if (st->cool_on)
-            out += F("🔵");
+            out += F("❄️");
         else
-            out += F("⚪");
+            out += F("⏸️");
         out += "</b>";
         out += "\n  питание: ";
         out += "<b>";
-        out += st->power_on ? "вкл" : "выкл";
+        out += st->power_on ? F("🟢") : F("⚪");
+        out += "</b>";
+        return out;
+    }
+
+    static const char *tankLevelLabel_(const TankController::TankState &st)
+    {
+        if (st.level_full)
+            return "полный";
+        if (st.level_mid)
+            return "средний";
+        if (st.level_low)
+            return "низкий";
+        return "пусто";
+    }
+
+    String tankListTextHtml_() const
+    {
+        String out = F("<b>Баки:</b>");
+        out.reserve(768);
+        if (!_tanks)
+        {
+            out += F("\n  недоступны");
+            return out;
+        }
+        bool any = false;
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = _tanks->configByIndex(i);
+            const auto *st = _tanks->stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            any = true;
+            out += "\n  ";
+            out += String((unsigned)cfg->id);
+            out += ": ";
+            if (cfg->name.length())
+            {
+                out += "<b>";
+                out += escapeHtml_(cfg->name);
+                out += "</b>";
+            }
+            else
+            {
+                out += "<b>-</b>";
+            }
+            out += " уровень: ";
+            out += "<b>";
+            out += tankLevelLabel_(*st);
+            out += "</b>";
+            out += " питание: ";
+            out += "<b>";
+            out += cfg->power_on ? F("??") : F("?");
+            out += "</b>";
+        }
+        if (!any)
+            out += F("\n  пусто");
+        return out;
+    }
+
+    String tankDeviceTextHtml_(uint8_t id) const
+    {
+        if (!_tanks)
+            return F("Баки недоступны");
+        const auto *cfg = _tanks->config(id);
+        const auto *st = _tanks->state(id);
+        if (!cfg || !st)
+            return F("Неверный бак");
+        String out = F("<b>Бак:</b>");
+        out.reserve(512);
+        out += "\n  имя: ";
+        if (cfg->name.length())
+        {
+            out += "<b>";
+            out += escapeHtml_(cfg->name);
+            out += "</b>";
+        }
+        else
+        {
+            out += "<b>-</b>";
+        }
+        out += "\n  уровень: ";
+        out += "<b>";
+        out += tankLevelLabel_(*st);
+        out += "</b>";
+        out += "\n  насос: ";
+        out += "<b>";
+        out += st->pump_on ? "вкл" : "выкл";
+        out += "</b>";
+        out += "\n  клапан: ";
+        out += "<b>";
+        out += st->valve_on ? "вкл" : "выкл";
+        out += "</b>";
+        out += "\n  сигнал: ";
+        out += "<b>";
+        out += st->alarm_on ? "вкл" : "выкл";
+        out += "</b>";
+        out += "\n  питание: ";
+        out += "<b>";
+        out += cfg->power_on ? F("🟢") : F("⚪");
         out += "</b>";
         return out;
     }
@@ -2268,15 +2551,22 @@ private:
             self->buildThermoLabels_(labels);
             return buildKeyboardMarkup_(labels);
         }
+        if (strcmp(menu.id, "tanks") == 0)
+        {
+            std::vector<String> labels;
+            self->buildTankLabels_(labels);
+            return buildKeyboardMarkup_(labels);
+        }
         if (strcmp(menu.id, "device") == 0)
         {
             std::vector<String> labels;
-            labels.reserve(5);
+            labels.reserve(6);
             if (self->isAdminChat_(chat_id))
                 labels.push_back(F("Админка"));
             labels.push_back(F("Розетки"));
             labels.push_back(F("Метео"));
             labels.push_back(F("Термо"));
+            labels.push_back(F("Баки"));
             labels.push_back(F("Назад"));
             return buildKeyboardMarkup_(labels);
         }
@@ -2358,6 +2648,29 @@ private:
         _bot->sendText(chat_id, list, markup, "HTML");
     }
 
+    void sendTanksMenu_(int64_t chat_id)
+    {
+        if (!_bot)
+            return;
+        if (!isLocalSelected_(chat_id))
+        {
+            _bot->sendText(chat_id, F("Список доступен только для локального устройства"));
+            return;
+        }
+        ChatAuth *st = ensureAuth_(chat_id);
+        if (st)
+        {
+            st->awaiting_tank = false;
+            st->selected_tank_id = 0;
+        }
+        std::vector<String> labels;
+        buildTankLabels_(labels);
+        const String markup = buildKeyboardMarkup_(labels);
+        const String list = tankListTextHtml_();
+        _bot->setMenu(chat_id, "tanks");
+        _bot->sendText(chat_id, list, markup, "HTML");
+    }
+
     void sendThermoDevice_(int64_t chat_id, uint8_t id)
     {
         if (!_bot)
@@ -2383,6 +2696,31 @@ private:
         _bot->sendText(chat_id, text, markup, "HTML");
     }
 
+    void sendTankDevice_(int64_t chat_id, uint8_t id)
+    {
+        if (!_bot)
+            return;
+        if (!_tanks)
+        {
+            _bot->sendText(chat_id, F("Баки недоступны"));
+            return;
+        }
+        if (!isLocalSelected_(chat_id))
+        {
+            _bot->sendText(chat_id, F("Доступно только для локального устройства"));
+            return;
+        }
+        ChatAuth *st = ensureAuth_(chat_id);
+        if (st)
+        {
+            st->awaiting_tank = true;
+            st->selected_tank_id = id;
+        }
+        const String text = tankDeviceTextHtml_(id);
+        const String markup = tankControlMarkup_();
+        _bot->sendText(chat_id, text, markup, "HTML");
+    }
+
     static String thermoControlMarkup_()
     {
         std::vector<String> labels;
@@ -2394,6 +2732,16 @@ private:
         labels.push_back(F("Режим Авто"));
         labels.push_back(F("Режим Нагрев"));
         labels.push_back(F("Режим Охлаждение"));
+        labels.push_back(F("Назад"));
+        return buildKeyboardMarkup_(labels);
+    }
+
+    static String tankControlMarkup_()
+    {
+        std::vector<String> labels;
+        labels.reserve(3);
+        labels.push_back(F("Питание Вкл"));
+        labels.push_back(F("Питание Выкл"));
         labels.push_back(F("Назад"));
         return buildKeyboardMarkup_(labels);
     }
@@ -2564,6 +2912,58 @@ private:
         return true;
     }
 
+    bool handleTankAction_(const TelegramClient::Update &u)
+    {
+        ChatAuth *st = findAuth_(u.chat_id);
+        if (!st || !st->awaiting_tank)
+            return false;
+        if (u.text.startsWith("/"))
+            return false;
+        if (u.text == F("Назад"))
+        {
+            st->awaiting_tank = false;
+            st->selected_tank_id = 0;
+            sendTanksMenu_(u.chat_id);
+            return true;
+        }
+        if (!_tanks)
+        {
+            _bot->sendText(u.chat_id, F("Баки недоступны"));
+            return true;
+        }
+        if (!isLocalSelected_(u.chat_id))
+        {
+            _bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
+            return true;
+        }
+        const uint8_t id = st->selected_tank_id;
+        if (id == 0)
+        {
+            _bot->sendText(u.chat_id, F("Бак не выбран"));
+            return true;
+        }
+        bool handled = true;
+        if (u.text == F("Питание Вкл"))
+        {
+            _tanks->setPower(id, true);
+        }
+        else if (u.text == F("Питание Выкл"))
+        {
+            _tanks->setPower(id, false);
+        }
+        else
+        {
+            handled = false;
+        }
+        if (!handled)
+        {
+            _bot->sendText(u.chat_id, F("Неизвестная команда"));
+            return true;
+        }
+        sendTankDevice_(u.chat_id, id);
+        return true;
+    }
+
     bool handleThermoSelection_(const TelegramClient::Update &u)
     {
         if (!_bot)
@@ -2598,6 +2998,40 @@ private:
         return true;
     }
 
+    bool handleTankSelection_(const TelegramClient::Update &u)
+    {
+        if (!_bot)
+            return false;
+        const char *menu_id = _bot->currentMenuId(u.chat_id);
+        if (!menu_id || strcmp(menu_id, "tanks") != 0)
+            return false;
+        if (u.text.startsWith("/"))
+            return false;
+        if (u.text == F("Назад"))
+        {
+            _bot->enterMenu(u.chat_id, "device", adminPrefix_(u.chat_id));
+            return true;
+        }
+        uint8_t id = 0;
+        if (!parseTankLabel_(u.text, id))
+        {
+            _bot->sendText(u.chat_id, F("Неизвестный бак"));
+            return true;
+        }
+        if (!_tanks)
+        {
+            _bot->sendText(u.chat_id, F("Баки недоступны"));
+            return true;
+        }
+        if (!isLocalSelected_(u.chat_id))
+        {
+            _bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
+            return true;
+        }
+        sendTankDevice_(u.chat_id, id);
+        return true;
+    }
+
     bool selectDevice_(int64_t chat_id, const String &label)
     {
         ChatAuth *st = ensureAuth_(chat_id);
@@ -2616,3 +3050,4 @@ private:
         return false;
     }
 };
+

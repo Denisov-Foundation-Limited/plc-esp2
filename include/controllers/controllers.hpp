@@ -15,16 +15,27 @@
 
 #include "controllers/meteo_controller.hpp"
 #include "controllers/socket_controller.hpp"
+#include "controllers/tank_controller.hpp"
 #include "controllers/thermo_controller.hpp"
 #include "core/eeprom_storage.hpp"
+#include "core/network/telegram/telegram_bot.hpp"
+#include "core/network/telegram/telegram_menu.hpp"
 #include "hal/gpio/gpio.hpp"
 #include "utils/logger.hpp"
 
 class Controllers
 {
 public:
-    explicit Controllers(Gpio &gpio, OneWireManager &ow, EepromStorage &storage, Logger &logs)
-        : _sockets(gpio, &logs), _meteo(ow), _thermo(gpio, _meteo, &logs), _storage(storage), _logs(logs) {}
+    Controllers(Gpio &gpio, OneWireManager &ow, EepromStorage &storage, Logger &logs,
+                TelegramBot &tgbot, TelegramMenu &tgmenu)
+        : _sockets(gpio, logs),
+          _meteo(ow),
+          _thermo(gpio, _meteo, logs),
+          _tanks(gpio, logs, tgbot, tgmenu),
+          _storage(storage),
+          _logs(logs)
+    {
+    }
 
     bool begin()
     {
@@ -46,6 +57,12 @@ public:
             _logs.error(F("CTRL"), F("Thermo init failed"));
             return false;
         }
+        _logs.info(F("CTRL"), F("Tanks init"));
+        if (!_tanks.begin())
+        {
+            _logs.error(F("CTRL"), F("Tanks init failed"));
+            return false;
+        }
         loadFromStorage_();
         return true;
     }
@@ -55,6 +72,7 @@ public:
         _sockets.task();
         _meteo.task();
         _thermo.task();
+        _tanks.task();
         saveIfNeeded_();
     }
 
@@ -66,12 +84,16 @@ public:
             _meteo.setControllerEnabled(cfg["meteo_enabled"].as<bool>());
         if (cfg["thermo_enabled"].is<bool>())
             _thermo.setControllerEnabled(cfg["thermo_enabled"].as<bool>());
+        if (cfg["tanks_enabled"].is<bool>())
+            _tanks.setControllerEnabled(cfg["tanks_enabled"].as<bool>());
         if (cfg["sockets"].is<JsonArrayConst>())
             _sockets.applyConfig(cfg["sockets"].as<JsonArrayConst>());
         if (cfg["meteo"].is<JsonArrayConst>())
             _meteo.applyConfig(cfg["meteo"].as<JsonArrayConst>());
         if (cfg["thermo"].is<JsonArrayConst>())
             _thermo.applyConfig(cfg["thermo"].as<JsonArrayConst>());
+        if (cfg["tanks"].is<JsonArrayConst>())
+            _tanks.applyConfig(cfg["tanks"].as<JsonArrayConst>());
     }
 
     void serialize(JsonObject out) const
@@ -85,6 +107,9 @@ public:
         out["thermo_enabled"] = _thermo.controllerEnabled();
         JsonArray tarr = out["thermo"].to<JsonArray>();
         _thermo.serialize(tarr);
+        out["tanks_enabled"] = _tanks.controllerEnabled();
+        JsonArray tks = out["tanks"].to<JsonArray>();
+        _tanks.serialize(tks);
     }
 
     SocketController &sockets() { return _sockets; }
@@ -93,12 +118,15 @@ public:
     const MeteoController &meteo() const { return _meteo; }
     ThermoController &thermo() { return _thermo; }
     const ThermoController &thermo() const { return _thermo; }
+    TankController &tanks() { return _tanks; }
+    const TankController &tanks() const { return _tanks; }
     void setSaveIntervalMs(uint32_t ms) { _save_interval_ms = ms; }
 
 private:
     SocketController _sockets;
     MeteoController _meteo;
     ThermoController _thermo;
+    TankController _tanks;
     EepromStorage &_storage;
     Logger &_logs;
     uint32_t _last_save_ms = 0;
@@ -117,6 +145,9 @@ private:
             _thermo.applySnapshot(tsnap.power_mask, EepromStorage::kThermoMaskBytes);
             _thermo.applyTargetSnapshot(tsnap.target_t10, EepromStorage::kThermoCount);
         }
+        EepromStorage::TankSnapshot tanksnap;
+        if (_storage.loadTanks(tanksnap))
+            _tanks.applySnapshot(tanksnap.power_mask, EepromStorage::kTankMaskBytes);
     }
 
     void saveIfNeeded_()
@@ -140,6 +171,13 @@ private:
             _thermo.buildSnapshot(tsnap.power_mask, EepromStorage::kThermoMaskBytes);
             _thermo.buildTargetSnapshot(tsnap.target_t10, EepromStorage::kThermoCount);
             if (_storage.saveThermo(tsnap))
+                saved = true;
+        }
+        if (_tanks.takeDirty())
+        {
+            EepromStorage::TankSnapshot tanksnap;
+            _tanks.buildSnapshot(tanksnap.power_mask, EepromStorage::kTankMaskBytes);
+            if (_storage.saveTanks(tanksnap))
                 saved = true;
         }
         if (saved)

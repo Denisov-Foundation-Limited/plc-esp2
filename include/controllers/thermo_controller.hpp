@@ -60,7 +60,7 @@ public:
         bool power_on = true;
     };
 
-    ThermoController(Gpio &gpio, MeteoController &meteo, Logger *logs = nullptr)
+    ThermoController(Gpio &gpio, MeteoController &meteo, Logger &logs)
         : _gpio(gpio), _meteo(meteo), _logs(logs)
     {
         reset_();
@@ -328,16 +328,14 @@ public:
             writeOff_(cfg, st);
             st = DeviceState{};
             _dirty = true;
-            if (_logs)
-                _logs->info(F("THERMO"), F("id=%u enabled=0"), (unsigned)cfg.id);
+            _logs.info(F("THERMO"), F("id: %u enabled: 0"), (unsigned)cfg.id);
             return true;
         }
         st = DeviceState{};
         st.has_button = setupButton_(cfg, st);
         setupRelay_(cfg, st);
         _dirty = true;
-        if (_logs)
-            _logs->info(F("THERMO"), F("id=%u enabled=1"), (unsigned)cfg.id);
+        _logs.info(F("THERMO"), F("id: %u enabled: 1"), (unsigned)cfg.id);
         return true;
     }
 
@@ -410,15 +408,12 @@ public:
         else
             updateControl_(cfg, st);
         _dirty = true;
-        if (_logs)
-        {
-            if (src && src[0] != '\0')
-                _logs->info(F("THERMO"), F("id=%u power=%s src=%s"),
-                            (unsigned)cfg.id, st.power_on ? "on" : "off", src);
-            else
-                _logs->info(F("THERMO"), F("id=%u power=%s"),
-                            (unsigned)cfg.id, st.power_on ? "on" : "off");
-        }
+        if (src && src[0] != '\0')
+            _logs.info(F("THERMO"), F("id: %u power: %s src: %s"),
+                       (unsigned)cfg.id, st.power_on ? "on" : "off", src);
+        else
+            _logs.info(F("THERMO"), F("id: %u power: %s"),
+                       (unsigned)cfg.id, st.power_on ? "on" : "off");
         return true;
     }
 
@@ -478,7 +473,7 @@ public:
 private:
     Gpio &_gpio;
     MeteoController &_meteo;
-    Logger *_logs = nullptr;
+    Logger &_logs;
     DeviceConfig _cfg[kDeviceCount];
     DeviceState _state[kDeviceCount];
     bool _controller_enabled = false;
@@ -628,9 +623,8 @@ private:
             if (!st.power_on)
                 writeOff_(cfg, st);
             _dirty = true;
-            if (_logs)
-                _logs->info(F("THERMO"), F("id=%u power=%s src=button"),
-                            (unsigned)cfg.id, st.power_on ? "on" : "off");
+            _logs.info(F("THERMO"), F("id: %u power: %s src: button"),
+                       (unsigned)cfg.id, st.power_on ? "on" : "off");
         }
         st.last_button = pressed;
     }
@@ -640,27 +634,27 @@ private:
         if (!st.power_on || cfg.mode == Mode::Off)
         {
             const bool changed = writeOff_(cfg, st);
-            if (changed && _logs)
-                _logs->info(F("THERMO"), F("id=%u power=%s heat=%s cool=%s"),
-                            (unsigned)cfg.id, st.power_on ? "on" : "off",
-                            st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
+            if (changed)
+                _logs.info(F("THERMO"), F("id: %u power: %s heat: %s cool: %s"),
+                           (unsigned)cfg.id, st.power_on ? "on" : "off",
+                           st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
             return;
         }
         if (cfg.sensor_id == kInvalidSensor)
         {
             const bool changed = writeOff_(cfg, st);
-            if (changed && _logs)
-                _logs->info(F("THERMO"), F("id=%u sensor=none heat=%s cool=%s"),
-                            (unsigned)cfg.id, st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
+            if (changed)
+                _logs.info(F("THERMO"), F("id: %u sensor: none heat: %s cool: %s"),
+                           (unsigned)cfg.id, st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
             return;
         }
         const auto *sensor = _meteo.state(cfg.sensor_id);
         if (!sensor || !sensor->has_temp)
         {
             const bool changed = writeOff_(cfg, st);
-            if (changed && _logs)
-                _logs->info(F("THERMO"), F("id=%u temp=na heat=%s cool=%s"),
-                            (unsigned)cfg.id, st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
+            if (changed)
+                _logs.info(F("THERMO"), F("id: %u temp: na heat: %s cool: %s"),
+                           (unsigned)cfg.id, st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
             return;
         }
         const float t = sensor->temp_c;
@@ -706,10 +700,10 @@ private:
         }
 
         const bool changed = writeOutputs_(cfg, st, heat, cool);
-        if (changed && _logs)
-            _logs->info(F("THERMO"), F("id=%u mode=%s temp=%.2f heat=%s cool=%s"),
-                        (unsigned)cfg.id, modeName_(cfg.mode), t,
-                        st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
+        if (changed)
+            _logs.info(F("THERMO"), F("id: %u mode: %s temp: %.2f heat: %s cool: %s"),
+                       (unsigned)cfg.id, modeName_(cfg.mode), t,
+                       st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
     }
 
     bool writeOff_(const DeviceConfig &cfg, DeviceState &st)

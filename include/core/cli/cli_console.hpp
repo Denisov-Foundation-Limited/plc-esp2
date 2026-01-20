@@ -35,6 +35,7 @@
 #include "core/cli/modules/cli_socket.hpp"
 #include "core/cli/modules/cli_meteo.hpp"
 #include "core/cli/modules/cli_thermo.hpp"
+#include "core/cli/modules/cli_tank.hpp"
 #include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
@@ -61,6 +62,7 @@ public:
     using CLISocket = CLISocketT<CliConsole>;
     using CLIMeteo = CLIMeteoT<CliConsole>;
     using CLIThermo = CLIThermoT<CliConsole>;
+    using CLITank = CLITankT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
@@ -83,8 +85,9 @@ public:
           _socket_cli(*this, controllers.sockets()),
           _meteo_cli(*this, controllers.meteo()),
           _thermo_cli(*this, controllers.thermo(), controllers.meteo()),
+          _tank_cli(*this, controllers.tanks()),
           _enable(*this, _wifi_cli),
-          _config(*this, _wifi_cli, _tgbot_cli, _socket_cli, _meteo_cli, _thermo_cli)
+          _config(*this, _wifi_cli, _tgbot_cli, _socket_cli, _meteo_cli, _thermo_cli, _tank_cli)
     {
         _stack_cli.bind(stack_master);
     }
@@ -98,6 +101,8 @@ public:
         _user_input = "";
         printPrompt_();
     }
+
+    void setStackMaster(StackMaster *master) { _stack_cli.bind(master); }
 
     void loop()
     {
@@ -197,6 +202,7 @@ public:
     void enterConfigSocket() { _mode = Mode::ConfigSocket; printPrompt_(); }
     void enterConfigMeteo() { _mode = Mode::ConfigMeteo; printPrompt_(); }
     void enterConfigThermo() { _mode = Mode::ConfigThermo; printPrompt_(); }
+    void enterConfigTank() { _mode = Mode::ConfigTank; printPrompt_(); }
     void logout()
     {
         _state = State::NeedUser;
@@ -684,7 +690,8 @@ private:
         ConfigTime,
         ConfigSocket,
         ConfigMeteo,
-        ConfigThermo
+        ConfigThermo,
+        ConfigTank
     };
 
     enum class State : uint8_t
@@ -713,18 +720,22 @@ private:
             _io->println(F("  show config     - configuration file contents"));
             _io->println(F("  show port <id>  - port details"));
             _io->println(F("  show ports      - list ports"));
-        _io->println(F("  show sockets    - list sockets"));
-        _io->print(F("  show socket <id>"));
-        printSocketIdRangeInline_();
-        _io->println(F(" - socket details"));
-        _io->println(F("  show meteo      - list meteo sensors"));
-        _io->print(F("  show meteo <id>"));
-        _meteo_cli.printIdRangeInline();
-        _io->println(F(" - sensor details"));
-        _io->println(F("  show thermo     - list thermo devices"));
-        _io->print(F("  show thermo <id>"));
-        _thermo_cli.printIdRangeInline();
-        _io->println(F(" - device details"));
+            _io->println(F("  show sockets    - list sockets"));
+            _io->print(F("  show socket <id>"));
+            printSocketIdRangeInline_();
+            _io->println(F(" - socket details"));
+            _io->println(F("  show meteo      - list meteo sensors"));
+            _io->print(F("  show meteo <id>"));
+            _meteo_cli.printIdRangeInline();
+            _io->println(F(" - sensor details"));
+            _io->println(F("  show thermo     - list thermo devices"));
+            _io->print(F("  show thermo <id>"));
+            _thermo_cli.printIdRangeInline();
+            _io->println(F(" - device details"));
+            _io->println(F("  show tanks      - list tanks"));
+            _io->print(F("  show tank <id>"));
+            _tank_cli.printIdRangeInline();
+            _io->println(F(" - tank details"));
             return;
         }
         if (t == "wifi")
@@ -757,6 +768,11 @@ private:
         if (t == "thermo")
         {
             _thermo_cli.printHelpContextLines();
+            return;
+        }
+        if (t == "tank")
+        {
+            _tank_cli.printHelpContextLines();
             return;
         }
         if (t == "system")
@@ -795,6 +811,8 @@ private:
             "show meteo <id>",
             "show thermo",
             "show thermo <id>",
+            "show tanks",
+            "show tank <id>",
             "socket toggle <id>",
             "socket on <id>",
             "socket off <id>",
@@ -824,7 +842,8 @@ private:
             "help tgbot",
             "help socket",
             "help meteo",
-            "help thermo"};
+            "help thermo",
+            "help tank"};
         static const size_t kEnableCmdsCount = sizeof(kEnableCmds) / sizeof(kEnableCmds[0]);
 
         static const char *const kConfigCmds[] = {
@@ -838,6 +857,7 @@ private:
             "socket",
             "meteo",
             "thermo",
+            "tank",
             "exit",
             "end",
             "help",
@@ -848,7 +868,8 @@ private:
             "help tgbot",
             "help socket",
             "help meteo",
-            "help thermo"};
+            "help thermo",
+            "help tank"};
         static const size_t kConfigCmdsCount = sizeof(kConfigCmds) / sizeof(kConfigCmds[0]);
 
         static const char *const kConfigWifiCmds[] = {
@@ -944,6 +965,24 @@ private:
             "help"};
         static const size_t kConfigThermoCmdsCount = sizeof(kConfigThermoCmds) / sizeof(kConfigThermoCmds[0]);
 
+        static const char *const kConfigTankCmds[] = {
+            "show",
+            "show <id>",
+            "enable <id>",
+            "disable <id>",
+            "power <id> <0|1>",
+            "name <id> <value>",
+            "low <id> <port|none>",
+            "mid <id> <port|none>",
+            "full <id> <port|none>",
+            "valve <id> <port|none>",
+            "pump <id> <port|none>",
+            "alarm <id> <port|none>",
+            "exit",
+            "end",
+            "help"};
+        static const size_t kConfigTankCmdsCount = sizeof(kConfigTankCmds) / sizeof(kConfigTankCmds[0]);
+
         const char *const *cmds = nullptr;
         size_t count = 0;
         switch (_mode)
@@ -979,6 +1018,10 @@ private:
         case Mode::ConfigThermo:
             cmds = kConfigThermoCmds;
             count = kConfigThermoCmdsCount;
+            break;
+        case Mode::ConfigTank:
+            cmds = kConfigTankCmds;
+            count = kConfigTankCmdsCount;
             break;
         case Mode::User:
             cmds = kEnableCmds;
@@ -1253,6 +1296,22 @@ private:
             else
                 _thermo_cli.showDevice(id);
         }
+        else if (eq_(what, "tanks"))
+            _tank_cli.showTanks();
+        else if (startsWith_(what, "tank "))
+        {
+            String tail = what.substring(5);
+            tail.trim();
+            uint16_t id = 0;
+            if (!parseUint_(tail, id))
+            {
+                _io->print(F("Usage: show tank <id>"));
+                _tank_cli.printIdRangeInline();
+                _io->println();
+            }
+            else
+                _tank_cli.showTank(id);
+        }
         else
             _io->println(F("Unknown show"));
         printPrompt_();
@@ -1328,6 +1387,9 @@ private:
             break;
         case Mode::ConfigThermo:
             _config.handleThermoContext(line);
+            break;
+        case Mode::ConfigTank:
+            _config.handleTankContext(line);
             break;
         case Mode::User:
             _enable.handle(line);
@@ -1433,6 +1495,9 @@ private:
             break;
         case Mode::ConfigThermo:
             _io->print(F("plc(config-thermo)# "));
+            break;
+        case Mode::ConfigTank:
+            _io->print(F("plc(config-tank)# "));
             break;
         }
     }
@@ -1738,6 +1803,7 @@ private:
     CLISocket _socket_cli;
     CLIMeteo _meteo_cli;
     CLIThermo _thermo_cli;
+    CLITank _tank_cli;
     CLIEnable _enable;
     CLIConfig _config;
     uint32_t _tgbot_last_update_id = 0;
@@ -2231,6 +2297,8 @@ private:
     friend class CLIMeteoT;
     template <typename>
     friend class CLIThermoT;
+    template <typename>
+    friend class CLITankT;
 
 public:
     void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }

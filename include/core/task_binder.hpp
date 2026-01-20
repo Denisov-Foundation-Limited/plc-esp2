@@ -16,13 +16,20 @@
 #include "core/network/telegram/telegram.hpp"
 #include "hal/gpio/extender.hpp"
 #include "controllers/controllers.hpp"
+#include "utils/meteo_history.hpp"
 
 template <size_t N>
 class TaskBinder
 {
 public:
-    TaskBinder(TaskManager<N> &tm, WifiManager &wifi, TelegramClient &tgbot, Extender &ext, Controllers &controllers)
-        : _tm(tm), _wifi(wifi), _tgbot(tgbot), _ext(ext), _controllers(controllers)
+    TaskBinder(TaskManager<N> &tm, WifiManager &wifi, TelegramClient &tgbot, Extender &ext,
+               Controllers &controllers, MeteoHistory &meteo_history)
+        : _tm(tm),
+          _wifi(wifi),
+          _tgbot(tgbot),
+          _ext(ext),
+          _controllers(controllers),
+          _meteo_history(meteo_history)
     {
     }
 
@@ -32,6 +39,7 @@ public:
         bindTgbot();
         bindExtender();
         bindControllers();
+        bindMeteoHistory_();
     }
 
     template <typename FtestT>
@@ -81,11 +89,20 @@ private:
         return _ext_task;
     }
 
+    typename TaskManager<N>::Handle bindMeteoHistory_()
+    {
+        typename TaskManager<N>::Options opt;
+        opt.interval_ms = 60000;
+        opt.priority = TaskManager<N>::Priority::Low;
+        return _tm.template add<&MeteoHistory::task>(_meteo_history, opt);
+    }
+
     TaskManager<N> &_tm;
     WifiManager &_wifi;
     TelegramClient &_tgbot;
     Extender &_ext;
     Controllers &_controllers;
+    MeteoHistory &_meteo_history;
     typename TaskManager<N>::Handle _ftest_task{};
     typename TaskManager<N>::Handle _ext_task{};
 
