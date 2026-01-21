@@ -35,6 +35,8 @@
 #include "core/network/web/pages/web_interface_stack.hpp"
 #include "core/network/web/pages/web_interface_wifi.hpp"
 #include "core/network/web/pages/web_interface_controllers.hpp"
+#include "core/network/web/pages/web_interface_security.hpp"
+#include "core/network/web/pages/web_interface_septic.hpp"
 #include "core/network/web/pages/web_interface_meteo.hpp"
 #include "core/network/web/pages/web_interface_thermo.hpp"
 #include "core/network/web/pages/web_interface_tanks.hpp"
@@ -55,6 +57,7 @@
 #include "hal/gpio/extender.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
+#include "hal/ibutton.hpp"
 #include "controllers/controllers.hpp"
 
 class WebInterface
@@ -122,6 +125,10 @@ public:
         _server.on("/thermo", HTTP_POST, [this](AsyncWebServerRequest *request) { handleThermoSave_(request); });
         _server.on("/tanks", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTanks_(request); });
         _server.on("/tanks", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTanksSave_(request); });
+        _server.on("/security", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSecurity_(request); });
+        _server.on("/security", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSecuritySave_(request); });
+        _server.on("/septic", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSeptic_(request); });
+        _server.on("/septic", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSepticSave_(request); });
         _server.on("/telegram", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTelegram_(request); });
         _server.on("/telegram", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTelegramSave_(request); });
         _server.on(
@@ -387,6 +394,12 @@ private:
             const bool tanks_enabled = _controllers->tanks().controllerEnabled();
             page.replace("%TANKS_ENABLED_CHECKED%", tanks_enabled ? "checked" : "");
             page.replace("%TANKS_ENABLED_LABEL%", tanks_enabled ? "включены" : "выключены");
+            const bool septic_enabled = _controllers->septic().controllerEnabled();
+            page.replace("%SEPTIC_ENABLED_CHECKED%", septic_enabled ? "checked" : "");
+            page.replace("%SEPTIC_ENABLED_LABEL%", septic_enabled ? "включены" : "выключены");
+            const bool security_enabled = _controllers->security().controllerEnabled();
+            page.replace("%SECURITY_ENABLED_CHECKED%", security_enabled ? "checked" : "");
+            page.replace("%SECURITY_ENABLED_LABEL%", security_enabled ? "включена" : "выключена");
         }
         else
         {
@@ -398,11 +411,17 @@ private:
             page.replace("%THERMO_ENABLED_LABEL%", "недоступно");
             page.replace("%TANKS_ENABLED_CHECKED%", "");
             page.replace("%TANKS_ENABLED_LABEL%", "недоступно");
+            page.replace("%SEPTIC_ENABLED_CHECKED%", "");
+            page.replace("%SEPTIC_ENABLED_LABEL%", "недоступно");
+            page.replace("%SECURITY_ENABLED_CHECKED%", "");
+            page.replace("%SECURITY_ENABLED_LABEL%", "недоступно");
         }
         page.replace("%CONTROLLERS_STATUS%", _controllers_status);
         page.replace("%METEO_STATUS%", _meteo_status);
         page.replace("%THERMO_STATUS%", _thermo_status);
         page.replace("%TANKS_STATUS%", _tanks_status);
+        page.replace("%SEPTIC_STATUS%", _septic_status);
+        page.replace("%SECURITY_STATUS%", _security_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         sendHtml_(request, page, set_cookie);
     }
@@ -457,6 +476,24 @@ private:
                 changed = true;
             }
         }
+        if (ctrl.length() == 0 || ctrl == "septic")
+        {
+            const bool septic_enabled = request->hasParam("septic_enabled", true);
+            if (_controllers->septic().controllerEnabled() != septic_enabled)
+            {
+                _controllers->septic().setControllerEnabled(septic_enabled);
+                changed = true;
+            }
+        }
+        if (ctrl.length() == 0 || ctrl == "security")
+        {
+            const bool security_enabled = request->hasParam("security_enabled", true);
+            if (_controllers->security().controllerEnabled() != security_enabled)
+            {
+                _controllers->security().setControllerEnabled(security_enabled);
+                changed = true;
+            }
+        }
         bool ok = true;
         if (changed)
         {
@@ -476,6 +513,8 @@ private:
         _meteo_status = _controllers_status;
         _thermo_status = _controllers_status;
         _tanks_status = _controllers_status;
+        _septic_status = _controllers_status;
+        _security_status = _controllers_status;
         sendRedirect_(request, "/controllers", set_cookie);
     }
 
@@ -1116,6 +1155,408 @@ private:
         sendRedirect_(request, "/tanks", set_cookie);
     }
 
+    void handleSeptic_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        String page = FPSTR(kWebInterfaceSepticHtml);
+        page.reserve(page.length() + 4096);
+        page.replace("%NAV%", navHtml_());
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        page.replace("%SEPTIC_STATUS%", _septic_status);
+        if (!_controllers)
+        {
+            page.replace("%SEPTIC_ITEMS%", "");
+            page.replace("%SEPTIC_DINPUT_JSON%", "[]");
+            page.replace("%SEPTIC_RELAY_JSON%", "[]");
+            page.replace("%SEPTIC_DINPUT_USED_JSON%", "[]");
+            page.replace("%SEPTIC_RELAY_USED_JSON%", "[]");
+            page.replace("%SEPTIC_WARN_CLASS%", "status-off");
+            page.replace("%SEPTIC_ALARM_CLASS%", "status-off");
+            page.replace("%SEPTIC_WARN_LABEL%", "off");
+            page.replace("%SEPTIC_ALARM_LABEL%", "off");
+            page.replace("%SEPTIC_RELAY_WARN_LABEL%", "off");
+            page.replace("%SEPTIC_RELAY_ALARM_LABEL%", "off");
+            page.replace("%SEPTIC_WATER_CLASS%", "water-low");
+            page.replace("%SEPTIC_WATER_LEVEL%", "20%");
+            page.replace("%SEPTIC_WATER_LABEL%", "Уровень: 20%");
+            sendHtml_(request, page, set_cookie);
+            return;
+        }
+        page.replace("%SEPTIC_ITEMS%", listSepticHtml_());
+        page.replace("%SEPTIC_DINPUT_JSON%", septicPortOptionsJson_(PortIO::PinType::DInput));
+        page.replace("%SEPTIC_RELAY_JSON%", septicPortOptionsJson_(PortIO::PinType::Relay));
+        page.replace("%SEPTIC_DINPUT_USED_JSON%", septicUsedPortsJson_(PortIO::PinType::DInput));
+        page.replace("%SEPTIC_RELAY_USED_JSON%", septicUsedPortsJson_(PortIO::PinType::Relay));
+        {
+            SepticController &septic = _controllers->septic();
+            const auto *cfg = septic.configByIndex(0);
+            const auto *st = septic.stateByIndex(0);
+            const bool warn = st ? st->warning : false;
+            const bool alarm = st ? st->alarm : false;
+            const bool relay_warn = st ? st->relay_warning : false;
+            const bool relay_alarm = st ? st->relay_alarm : false;
+            const char *water_class = "water-low";
+            const char *water_level = "20%";
+            const char *water_label = "Уровень: 20%";
+            if (alarm)
+            {
+                water_class = "water-alarm";
+                water_level = "100%";
+                water_label = "Уровень: 100%";
+            }
+            else if (warn)
+            {
+                water_class = "water-warn";
+                water_level = "80%";
+                water_label = "Уровень: 80%";
+            }
+            page.replace("%SEPTIC_WARN_CLASS%", warn ? "status-on" : "status-off");
+            page.replace("%SEPTIC_ALARM_CLASS%", alarm ? "status-on" : "status-off");
+            page.replace("%SEPTIC_WARN_LABEL%", warn ? "on" : "off");
+            page.replace("%SEPTIC_ALARM_LABEL%", alarm ? "on" : "off");
+            page.replace("%SEPTIC_RELAY_WARN_LABEL%", relay_warn ? "on" : "off");
+            page.replace("%SEPTIC_RELAY_ALARM_LABEL%", relay_alarm ? "on" : "off");
+            page.replace("%SEPTIC_WATER_CLASS%", water_class);
+            page.replace("%SEPTIC_WATER_LEVEL%", water_level);
+            page.replace("%SEPTIC_WATER_LABEL%", water_label);
+            if (!cfg || !cfg->enabled)
+                page.replace("%SEPTIC_STATUS%", "Септик выключен");
+        }
+        sendHtml_(request, page, set_cookie);
+    }
+
+    void handleSecurity_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        String page = FPSTR(kWebInterfaceSecurityHtml);
+        page.reserve(page.length() + 12288);
+        page.replace("%NAV%", navHtml_());
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        if (!_controllers)
+        {
+            page.replace("%SECURITY_ENABLED_CHECKED%", "");
+            page.replace("%SECURITY_ENABLED_LABEL%", "недоступно");
+            page.replace("%SECURITY_ARMED_LABEL%", "недоступно");
+            page.replace("%SECURITY_ALARM_LABEL%", "недоступно");
+            page.replace("%SECURITY_SIREN%", "");
+            page.replace("%SECURITY_KEYS_ROWS%", "");
+            page.replace("%SECURITY_SENSORS_ROWS%", "");
+            page.replace("%SECURITY_SENSOR_JSON%", "[]");
+            page.replace("%SECURITY_SENSOR_USED_JSON%", "[]");
+            page.replace("%SECURITY_SIREN_JSON%", "[]");
+            page.replace("%SECURITY_SIREN_USED_JSON%", "[]");
+            page.replace("%SECURITY_STATUS%", _security_status);
+            sendHtml_(request, page, set_cookie);
+            return;
+        }
+
+        SecurityController &sec = _controllers->security();
+        page.replace("%SECURITY_ENABLED_CHECKED%", sec.controllerEnabled() ? "checked" : "");
+        page.replace("%SECURITY_ENABLED_LABEL%", sec.controllerEnabled() ? "включено" : "выключено");
+        page.replace("%SECURITY_ARMED_LABEL%", sec.armed() ? "под охраной" : "снято");
+        page.replace("%SECURITY_ALARM_LABEL%", sec.alarmOn() ? "on" : "off");
+        if (sec.sirenPort() != SecurityController::kInvalidPort)
+            page.replace("%SECURITY_SIREN%", String((unsigned)sec.sirenPort()));
+        else
+            page.replace("%SECURITY_SIREN%", "");
+        page.replace("%SECURITY_KEYS_ROWS%", listSecurityKeysHtml_());
+        page.replace("%SECURITY_SENSORS_ROWS%", listSecuritySensorsHtml_());
+        page.replace("%SECURITY_SENSOR_JSON%", securityPortOptionsJson_());
+        page.replace("%SECURITY_SENSOR_USED_JSON%", securityUsedPinsJson_());
+        page.replace("%SECURITY_SIREN_JSON%", socketPortOptionsJson_(PortIO::PinType::Relay));
+        page.replace("%SECURITY_SIREN_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::Relay));
+        page.replace("%SECURITY_STATUS%", _security_status);
+        sendHtml_(request, page, set_cookie);
+    }
+
+    void handleSepticSave_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!_controllers)
+        {
+            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            return;
+        }
+        SepticController &septic = _controllers->septic();
+        bool ok = true;
+        bool changed = false;
+        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        {
+            const auto *cfg = septic.configByIndex(i);
+            if (!cfg)
+                continue;
+            const String idx = String((unsigned)cfg->id);
+            const String prefix = String("sep") + idx + "_";
+            const String en_key = prefix + "en";
+            const String name_key = prefix + "name";
+            const String warn_key = prefix + "warn";
+            const String alarm_key = prefix + "alarm";
+            const String relay_warn_key = prefix + "relay_warn";
+            const String relay_alarm_key = prefix + "relay_alarm";
+            const String monitor_key = prefix + "mon";
+            const bool has_any = request->hasParam(en_key, true) ||
+                                 request->hasParam(name_key, true) ||
+                                 request->hasParam(warn_key, true) ||
+                                 request->hasParam(alarm_key, true) ||
+                                 request->hasParam(relay_warn_key, true) ||
+                                 request->hasParam(relay_alarm_key, true) ||
+                                 request->hasParam(monitor_key, true);
+            if (!has_any)
+                continue;
+            const bool enabled = request->hasParam(en_key, true);
+            const bool monitoring = request->hasParam(monitor_key, true);
+            String name = paramValue_(request, name_key);
+            String warn = paramValue_(request, warn_key);
+            String alarm = paramValue_(request, alarm_key);
+            String relay_warn = paramValue_(request, relay_warn_key);
+            String relay_alarm = paramValue_(request, relay_alarm_key);
+            name.trim();
+            uint8_t warn_port = SepticController::kInvalidPort;
+            uint8_t alarm_port = SepticController::kInvalidPort;
+            uint8_t relay_warn_port = SepticController::kInvalidPort;
+            uint8_t relay_alarm_port = SepticController::kInvalidPort;
+            if (!parseSocketPort_(warn, warn_port) ||
+                !parseSocketPort_(alarm, alarm_port) ||
+                !parseSocketPort_(relay_warn, relay_warn_port) ||
+                !parseSocketPort_(relay_alarm, relay_alarm_port))
+            {
+                ok = false;
+                _septic_status = String("Invalid port for septic ") + idx;
+                break;
+            }
+            if (cfg->name != name)
+                septic.setName(cfg->id, name);
+            if (cfg->warning_port != warn_port)
+                septic.setWarningPort(cfg->id, warn_port);
+            if (cfg->alarm_port != alarm_port)
+                septic.setAlarmPort(cfg->id, alarm_port);
+            if (cfg->relay_warning != relay_warn_port)
+                septic.setWarningRelay(cfg->id, relay_warn_port);
+            if (cfg->relay_alarm != relay_alarm_port)
+                septic.setAlarmRelay(cfg->id, relay_alarm_port);
+            if (cfg->enabled != enabled)
+                septic.setEnabled(cfg->id, enabled);
+            if (cfg->monitoring_on != monitoring)
+                septic.setMonitoring(cfg->id, monitoring);
+            changed = true;
+        }
+        if (ok)
+        {
+            if (!_configs_manager)
+            {
+                ok = false;
+                _septic_status = "Config manager missing";
+            }
+            else if (changed && !_configs_manager->save())
+            {
+                ok = false;
+                _septic_status = "Save failed";
+            }
+        }
+        if (ok)
+            _septic_status = changed ? "Updated" : "Saved";
+        sendRedirect_(request, "/septic", set_cookie);
+    }
+
+    void handleSecuritySave_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!_controllers)
+        {
+            _security_status = "Security unavailable";
+            sendRedirect_(request, "/security", set_cookie);
+            return;
+        }
+        SecurityController &sec = _controllers->security();
+        const String action = paramValue_(request, "action");
+        if (action == "arm")
+        {
+            if (sec.arm())
+                _security_status = "Armed";
+            else
+                _security_status = "Security disabled";
+            sendRedirect_(request, "/security", set_cookie);
+            return;
+        }
+        if (action == "disarm")
+        {
+            sec.disarm();
+            _security_status = "Disarmed";
+            sendRedirect_(request, "/security", set_cookie);
+            return;
+        }
+        if (action == "clear")
+        {
+            sec.clearDetect();
+            _security_status = "Detections cleared";
+            sendRedirect_(request, "/security", set_cookie);
+            return;
+        }
+
+        bool changed = false;
+        const bool enabled = request->hasParam("security_enabled", true);
+        if (sec.controllerEnabled() != enabled)
+        {
+            sec.setControllerEnabled(enabled);
+            changed = true;
+        }
+
+        String siren_str = paramValue_(request, "security_siren");
+        siren_str.trim();
+        uint8_t siren_port = SecurityController::kInvalidPort;
+        if (siren_str.length() > 0 && siren_str != "none")
+        {
+            const int v = siren_str.toInt();
+            if (v >= 0 && v <= 255)
+                siren_port = (uint8_t)v;
+        }
+        if (sec.sirenPort() != siren_port)
+        {
+            sec.setSirenPort(siren_port);
+            changed = true;
+        }
+
+        uint8_t new_keys[SecurityController::kKeyCount][8] = {};
+        bool new_set[SecurityController::kKeyCount] = {};
+        for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
+        {
+            const String idx = String((unsigned)(i + 1));
+            const String en_key = String("k") + idx + "_en";
+            const String serial_key = String("k") + idx + "_serial";
+            const bool enabled = request->hasParam(en_key, true);
+            String serial = paramValue_(request, serial_key);
+            serial.trim();
+            if (!enabled)
+                continue;
+            if (!parseSecurityKeyHex_(serial, new_keys[i]))
+            {
+                _security_status = String("Invalid key ") + idx;
+                sendRedirect_(request, "/security", set_cookie);
+                return;
+            }
+            new_set[i] = true;
+        }
+
+        bool keys_changed = false;
+        for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
+        {
+            uint8_t old_addr[8] = {};
+            bool old_enabled = false;
+            sec.keySlot(i, old_addr, old_enabled);
+            if (old_enabled != new_set[i])
+            {
+                keys_changed = true;
+                break;
+            }
+            if (old_enabled && memcmp(old_addr, new_keys[i], 8) != 0)
+            {
+                keys_changed = true;
+                break;
+            }
+        }
+        if (keys_changed)
+        {
+            sec.clearKeys();
+            for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
+            {
+                if (!new_set[i])
+                    continue;
+                sec.addKey(new_keys[i]);
+            }
+            changed = true;
+        }
+
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+            const auto *cfg = sec.configByIndex(i);
+            if (!cfg)
+                continue;
+            const String idx = String((unsigned)cfg->id);
+            const String prefix = String("sec") + idx + "_";
+            const String en_key = prefix + "en";
+            const String name_key = prefix + "name";
+            const String type_key = prefix + "type";
+            const String port_key = prefix + "port";
+            const String silent_key = prefix + "silent";
+            const bool has_any = request->hasParam(en_key, true) ||
+                                 request->hasParam(name_key, true) ||
+                                 request->hasParam(type_key, true) ||
+                                 request->hasParam(port_key, true) ||
+                                 request->hasParam(silent_key, true);
+            if (!has_any)
+                continue;
+            const bool enabled = request->hasParam(en_key, true);
+            const bool silent = request->hasParam(silent_key, true);
+            String name = paramValue_(request, name_key);
+            name.trim();
+            SecurityController::SensorType type = SecurityController::SensorType::Pir;
+            if (!parseSecurityType_(paramValue_(request, type_key), type))
+            {
+                _security_status = String("Invalid type for sensor ") + idx;
+                sendRedirect_(request, "/security", set_cookie);
+                return;
+            }
+            uint8_t port = SecurityController::kInvalidPort;
+            if (!parseSocketPort_(paramValue_(request, port_key), port))
+            {
+                _security_status = String("Invalid port for sensor ") + idx;
+                sendRedirect_(request, "/security", set_cookie);
+                return;
+            }
+            if (cfg->enabled != enabled)
+            {
+                sec.setEnabled(cfg->id, enabled);
+                changed = true;
+            }
+            if (cfg->name != name)
+            {
+                sec.setName(cfg->id, name);
+                changed = true;
+            }
+            if (cfg->type != type)
+            {
+                sec.setType(cfg->id, type);
+                changed = true;
+            }
+            if (cfg->port != port)
+            {
+                sec.setPort(cfg->id, port);
+                changed = true;
+            }
+            if (cfg->silent != silent)
+            {
+                sec.setSilent(cfg->id, silent);
+                changed = true;
+            }
+        }
+
+        bool ok = true;
+        if (changed)
+        {
+            if (!_configs_manager)
+            {
+                ok = false;
+                _security_status = "Config manager missing";
+            }
+            else if (!_configs_manager->save())
+            {
+                ok = false;
+                _security_status = "Save failed";
+            }
+        }
+        if (ok)
+            _security_status = changed ? "Updated" : "No changes";
+        sendRedirect_(request, "/security", set_cookie);
+    }
+
     void handleTelegramSave_(AsyncWebServerRequest *request)
     {
         bool set_cookie = false;
@@ -1470,6 +1911,130 @@ private:
         return items;
     }
 
+    String listSecurityKeysHtml_()
+    {
+        if (!_controllers)
+            return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
+        String items;
+        items.reserve(1024);
+        SecurityController &sec = _controllers->security();
+        auto appendRow = [&](size_t idx, bool enabled, const char *hex) {
+            items += "<tr><td class=\"right\"><strong>";
+            items += String((unsigned)(idx + 1));
+            items += "</strong></td><td><input type=\"checkbox\" name=\"k";
+            items += String((unsigned)(idx + 1));
+            items += "_en\"";
+            if (enabled)
+                items += " checked";
+            items += "></td><td><input class=\"field serial\" type=\"text\" name=\"k";
+            items += String((unsigned)(idx + 1));
+            items += "_serial\" value=\"";
+            if (enabled && hex)
+                appendHtmlEscaped_(items, hex);
+            items += "\"></td></tr>";
+        };
+
+        int first_disabled = -1;
+        for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
+        {
+            bool enabled = false;
+            uint8_t addr[8] = {};
+            sec.keySlot(i, addr, enabled);
+            if (enabled)
+            {
+                char hex[17] = {};
+                IButton::toHex(addr, hex);
+                appendRow(i, true, hex);
+            }
+            else if (first_disabled < 0)
+            {
+                first_disabled = (int)i;
+            }
+        }
+        if (first_disabled >= 0)
+            appendRow((size_t)first_disabled, false, nullptr);
+        if (items.length() == 0)
+            items = "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>Ключи отсутствуют</strong></td></tr>";
+        return items;
+    }
+
+    String listSecuritySensorsHtml_()
+    {
+        if (!_controllers)
+            return "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
+        String items;
+        items.reserve(4096);
+        SecurityController &sec = _controllers->security();
+
+        auto appendTypeOption = [&](const char *value, const char *label, bool selected) {
+            items += "<option value=\"";
+            items += value;
+            items += "\"";
+            if (selected)
+                items += " selected";
+            items += ">";
+            items += label;
+            items += "</option>";
+        };
+
+        auto appendRow = [&](const SecurityController::SensorConfig &cfg, const SecurityController::SensorState &st,
+                             bool enabled) {
+            items += "<tr><td class=\"right\"><strong>";
+            items += String((unsigned)cfg.id);
+            items += "</strong></td><td><input type=\"checkbox\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_en\"";
+            if (enabled)
+                items += " checked";
+            items += "></td><td><input class=\"field name\" type=\"text\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_name\" value=\"";
+            appendHtmlEscaped_(items, cfg.name.c_str());
+            items += "\"></td><td><select class=\"field mini\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_type\">";
+            appendTypeOption("pir", "pir", cfg.type == SecurityController::SensorType::Pir);
+            appendTypeOption("reed", "reed", cfg.type == SecurityController::SensorType::Reed);
+            items += "</select></td><td><select class=\"field mini security-port\" data-type=\"sensor\" data-selected=\"";
+            if (cfg.port != SecurityController::kInvalidPort)
+                items += String((unsigned)cfg.port);
+            items += "\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_port\"></select></td><td><input type=\"checkbox\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_silent\"";
+            if (cfg.silent)
+                items += " checked";
+            items += "></td><td class=\"center\"><span class=\"status-dot ";
+            items += st.is_detect ? "status-on" : "status-off";
+            items += "\"></span></td></tr>";
+        };
+
+        const SecurityController::SensorConfig *first_disabled = nullptr;
+        const SecurityController::SensorState *first_disabled_state = nullptr;
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+            const auto *cfg = sec.configByIndex(i);
+            const auto *st = sec.stateByIndex(i);
+            if (!cfg || !st)
+                continue;
+            if (cfg->enabled)
+            {
+                appendRow(*cfg, *st, true);
+            }
+            else if (!first_disabled)
+            {
+                first_disabled = cfg;
+                first_disabled_state = st;
+            }
+        }
+        if (first_disabled && first_disabled_state)
+            appendRow(*first_disabled, *first_disabled_state, false);
+        if (items.length() == 0)
+            items = "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Датчики отсутствуют</strong></td></tr>";
+        return items;
+    }
+
 
     String listMeteoHtml_()
     {
@@ -1814,6 +2379,73 @@ private:
         return items;
     }
 
+    String listSepticHtml_()
+    {
+        if (!_controllers)
+            return "<tr><td colspan=\"10\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
+        String items;
+        items.reserve(1024);
+        SepticController &septic = _controllers->septic();
+        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        {
+            const auto *cfg = septic.configByIndex(i);
+            const auto *st = septic.stateByIndex(i);
+            if (!cfg || !st)
+                continue;
+            items += "<tr><td class=\"right\"><strong>";
+            items += String((unsigned)cfg->id);
+            items += "</strong></td><td><input type=\"checkbox\" name=\"sep";
+            items += String((unsigned)cfg->id);
+            items += "_en\"";
+            if (cfg->enabled)
+                items += " checked";
+            items += "></td><td><input class=\"field name\" type=\"text\" name=\"sep";
+            items += String((unsigned)cfg->id);
+            items += "_name\" value=\"";
+            appendHtmlEscaped_(items, cfg->name.c_str());
+            items += "\"></td><td class=\"right\"><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
+            if (cfg->warning_port != SepticController::kInvalidPort)
+                items += String((unsigned)cfg->warning_port);
+            items += "\" name=\"sep";
+            items += String((unsigned)cfg->id);
+            items += "_warn\"></select></td><td class=\"right\"><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
+            if (cfg->alarm_port != SepticController::kInvalidPort)
+                items += String((unsigned)cfg->alarm_port);
+            items += "\" name=\"sep";
+            items += String((unsigned)cfg->id);
+            items += "_alarm\"></select></td><td class=\"right\"><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
+            if (cfg->relay_warning != SepticController::kInvalidPort)
+                items += String((unsigned)cfg->relay_warning);
+            items += "\" name=\"sep";
+            items += String((unsigned)cfg->id);
+            items += "_relay_warn\"></select></td><td class=\"right\"><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
+            if (cfg->relay_alarm != SepticController::kInvalidPort)
+                items += String((unsigned)cfg->relay_alarm);
+            items += "\" name=\"sep";
+            items += String((unsigned)cfg->id);
+            items += "_relay_alarm\"></select></td><td class=\"center\"><span class=\"status-dot ";
+            items += st->warning ? "status-on" : "status-off";
+            items += "\"></span></td><td class=\"center\"><label class=\"switch\"><input type=\"checkbox\" class=\"septic-monitor\" data-action=\"sep";
+            items += String((unsigned)cfg->id);
+            items += "_mon\"";
+            if (cfg->monitoring_on)
+                items += " checked";
+            if (!cfg->enabled)
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "<input type=\"hidden\" name=\"sep";
+            items += String((unsigned)cfg->id);
+            items += "_mon\" value=\"";
+            items += cfg->monitoring_on ? "on" : "off";
+            items += "\"></td><td class=\"center\"><span class=\"status-dot ";
+            items += st->alarm ? "status-on" : "status-off";
+            items += "\"></span></td></tr>";
+        }
+        if (items.length() == 0)
+            items = "<tr><td colspan=\"10\" style=\"color:#94a3b8\"><strong>Септик отсутствует</strong></td></tr>";
+        return items;
+    }
+
     String listI2cHtml_()
     {
         if (!_i2c)
@@ -2014,6 +2646,47 @@ private:
         return out;
     }
 
+    String securityPortOptionsJson_() const
+    {
+        return socketPortOptionsJson_(PortIO::PinType::Sensor);
+    }
+
+    String securityUsedPinsJson_() const
+    {
+        String out;
+        out.reserve(128);
+        out += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            SecurityController &sec = _controllers->security();
+            bool used[PortIO::PORT_COUNT] = {};
+            for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+            {
+                const auto *cfg = sec.configByIndex(i);
+                if (!cfg || !cfg->enabled)
+                    continue;
+                const uint8_t pin = cfg->port;
+                if (pin != SecurityController::kInvalidPort && pin < PortIO::PORT_COUNT)
+                    used[pin] = true;
+            }
+            for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+            {
+                if (!used[i])
+                    continue;
+                const auto &p = ActiveBoardProfile::PORTS[i];
+                if (p.caps == Cap::None || p.type != PortIO::PinType::Sensor)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += String((unsigned)i);
+                first = false;
+            }
+        }
+        out += "]";
+        return out;
+    }
+
     String thermoPortOptionsJson_(PortIO::PinType type) const
     {
         return socketPortOptionsJson_(type);
@@ -2104,6 +2777,104 @@ private:
                         used[pump] = true;
                     if (alarm != TankController::kInvalidPort && alarm < PortIO::PORT_COUNT)
                         used[alarm] = true;
+                }
+            }
+            for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+            {
+                if (!used[i])
+                    continue;
+                const auto &p = ActiveBoardProfile::PORTS[i];
+                if (p.caps == Cap::None || p.type != type)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += String((unsigned)i);
+                first = false;
+            }
+        }
+        out += "]";
+        return out;
+    }
+
+    String septicPortOptionsJson_(PortIO::PinType type) const
+    {
+        return socketPortOptionsJson_(type);
+    }
+
+    String septicUsedPortsJson_(PortIO::PinType type) const
+    {
+        String out;
+        out.reserve(128);
+        out += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            auto mark_used = [](bool used[], uint8_t port)
+            {
+                if (port < PortIO::PORT_COUNT)
+                    used[port] = true;
+            };
+            SepticController &septic = _controllers->septic();
+            bool used[PortIO::PORT_COUNT] = {};
+            SocketController &sockets = _controllers->sockets();
+            ThermoController &thermo = _controllers->thermo();
+            TankController &tanks = _controllers->tanks();
+            SecurityController &security = _controllers->security();
+
+            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+            {
+                const auto *cfg = sockets.configByIndex(i);
+                if (!cfg)
+                    continue;
+                mark_used(used, cfg->button_port);
+                mark_used(used, cfg->relay_port);
+            }
+            for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+            {
+                const auto *cfg = thermo.configByIndex(i);
+                if (!cfg)
+                    continue;
+                mark_used(used, cfg->heat_port);
+                mark_used(used, cfg->cool_port);
+                mark_used(used, cfg->button_port);
+            }
+            for (size_t i = 0; i < TankController::kTankCount; ++i)
+            {
+                const auto *cfg = tanks.configByIndex(i);
+                if (!cfg)
+                    continue;
+                mark_used(used, cfg->level_low);
+                mark_used(used, cfg->level_mid);
+                mark_used(used, cfg->level_full);
+                mark_used(used, cfg->relay_valve);
+                mark_used(used, cfg->relay_pump);
+                mark_used(used, cfg->relay_alarm);
+            }
+            if (security.sirenPort() != SecurityController::kInvalidPort)
+                mark_used(used, security.sirenPort());
+
+            for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+            {
+                const auto *cfg = septic.configByIndex(i);
+                if (!cfg)
+                    continue;
+                if (type == PortIO::PinType::DInput)
+                {
+                    const uint8_t w = cfg->warning_port;
+                    const uint8_t a = cfg->alarm_port;
+                    if (w != SepticController::kInvalidPort)
+                        mark_used(used, w);
+                    if (a != SepticController::kInvalidPort)
+                        mark_used(used, a);
+                }
+                else if (type == PortIO::PinType::Relay)
+                {
+                    const uint8_t rw = cfg->relay_warning;
+                    const uint8_t ra = cfg->relay_alarm;
+                    if (rw != SepticController::kInvalidPort)
+                        mark_used(used, rw);
+                    if (ra != SepticController::kInvalidPort)
+                        mark_used(used, ra);
                 }
             }
             for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
@@ -2662,7 +3433,7 @@ sendRedirect_(request, "/", set_cookie);
         String nav = F("<div class=\"nav\">");
         nav += F("<a href=\"/\">FCPLC</a> | <a href=\"/wifi\">Wi-Fi</a> | <a href=\"/manage\">Прошивка и файлы</a> | ");
         nav += F("<a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a> | <a href=\"/stack\">Стек</a> | ");
-        nav += F("<a href=\"/controllers\">Контроллеры</a> | <a href=\"/telegram\">Telegram</a> | <a href=\"/admin\">Админка</a> | <a href=\"/logs\">Logs</a>");
+        nav += F("<a href=\"/controllers\">Контроллеры</a> | <a href=\"/security\">Охрана</a> | <a href=\"/telegram\">Telegram</a> | <a href=\"/admin\">Админка</a> | <a href=\"/logs\">Logs</a>");
         nav += F("</div>");
         return nav;
     }
@@ -2768,6 +3539,24 @@ sendRedirect_(request, "/", set_cookie);
         return false;
     }
 
+    static bool parseSecurityType_(const String &input, SecurityController::SensorType &out)
+    {
+        String t = input;
+        t.trim();
+        t.toLowerCase();
+        if (t.length() == 0 || t == "pir")
+        {
+            out = SecurityController::SensorType::Pir;
+            return true;
+        }
+        if (t == "reed")
+        {
+            out = SecurityController::SensorType::Reed;
+            return true;
+        }
+        return false;
+    }
+
     static bool parseMeteoPin_(const String &input, uint8_t &out)
     {
         String t = input;
@@ -2800,6 +3589,32 @@ sendRedirect_(request, "/", set_cookie);
         }
         set = MeteoController::parseHexAddr(t.c_str(), out);
         return set;
+    }
+
+    static bool parseSecurityKeyHex_(const String &s, uint8_t out[8])
+    {
+        if (s.length() != 16)
+            return false;
+        for (uint8_t i = 0; i < 8; ++i)
+        {
+            const char hi_c = s[i * 2];
+            const char lo_c = s[i * 2 + 1];
+            auto nibble = [](char c) -> int {
+                if (c >= '0' && c <= '9')
+                    return c - '0';
+                if (c >= 'a' && c <= 'f')
+                    return 10 + (c - 'a');
+                if (c >= 'A' && c <= 'F')
+                    return 10 + (c - 'A');
+                return -1;
+            };
+            const int hi = nibble(hi_c);
+            const int lo = nibble(lo_c);
+            if (hi < 0 || lo < 0)
+                return false;
+            out[i] = (uint8_t)((hi << 4) | lo);
+        }
+        return true;
     }
 
     static bool parseThermoSensor_(const String &input, uint8_t &out)
@@ -3393,6 +4208,8 @@ sendRedirect_(request, "/", set_cookie);
     String _meteo_status;
     String _thermo_status;
     String _tanks_status;
+    String _septic_status;
+    String _security_status;
     bool _auth_enabled = false;
     String _auth_user;
     String _auth_pass;

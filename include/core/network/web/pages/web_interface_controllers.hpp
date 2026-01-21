@@ -178,6 +178,36 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Баки: <strong>%TANKS_ENABLED_LABEL%</strong></span>
           <span class="status">%TANKS_STATUS%</span>
         </div>
+        <div class="tile">
+          <form method="POST" action="/controllers" id="septic-form">
+            <input type="hidden" name="ctrl" value="septic">
+            <div class="tile-head">
+              <a href="/septic">Септик</a>
+              <label class="switch">
+                <input type="checkbox" id="septic-enabled" name="septic_enabled" %SEPTIC_ENABLED_CHECKED%>
+                <span class="track"><span class="knob"></span></span>
+              </label>
+            </div>
+          </form>
+          <span>Уровень и индикация</span>
+          <span class="status">Септик: <strong>%SEPTIC_ENABLED_LABEL%</strong></span>
+          <span class="status">%SEPTIC_STATUS%</span>
+        </div>
+        <div class="tile">
+          <form method="POST" action="/controllers" id="security-form">
+            <input type="hidden" name="ctrl" value="security">
+            <div class="tile-head">
+              <a href="/security">Охрана</a>
+              <label class="switch">
+                <input type="checkbox" id="security-enabled" name="security_enabled" %SECURITY_ENABLED_CHECKED%>
+                <span class="track"><span class="knob"></span></span>
+              </label>
+            </div>
+          </form>
+          <span>Датчики и тревога</span>
+          <span class="status">Охрана: <strong>%SECURITY_ENABLED_LABEL%</strong></span>
+          <span class="status">%SECURITY_STATUS%</span>
+        </div>
       </div>
     </div>
   </div>
@@ -201,6 +231,16 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
     const tanksForm = document.getElementById('tanks-form');
     if (tanksToggle && tanksForm) {
       tanksToggle.addEventListener('change', () => tanksForm.submit());
+    }
+    const septicToggle = document.getElementById('septic-enabled');
+    const septicForm = document.getElementById('septic-form');
+    if (septicToggle && septicForm) {
+      septicToggle.addEventListener('change', () => septicForm.submit());
+    }
+    const securityToggle = document.getElementById('security-enabled');
+    const securityForm = document.getElementById('security-form');
+    if (securityToggle && securityForm) {
+      securityToggle.addEventListener('change', () => securityForm.submit());
     }
   </script>
 </body>

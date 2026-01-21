@@ -67,6 +67,14 @@ public:
             _c._io->print(F("    show tank <id>"));
             printTankIdRangeInline_();
             _c._io->println(F(" - tank details"));
+            _c._io->println(F("    show septic     - list septic"));
+            _c._io->print(F("    show septic <id>"));
+            _c._septic_cli.printIdRangeInline();
+            _c._io->println(F(" - septic details"));
+            _c._io->println(F("    show security   - list security sensors"));
+            _c._io->print(F("    show security <id>"));
+            _c._security_cli.printIdRangeInline();
+            _c._io->println(F(" - sensor details"));
             _c._io->print(F("    socket toggle <id>"));
             printSocketIdRangeInline_();
             _c._io->println(F(" - toggle socket relay"));
@@ -88,6 +96,11 @@ public:
             _c._io->print(F("    stack thermo <unit> <on|off|toggle> <id>"));
             printThermoIdRangeInline_();
             _c._io->println(F(" - control thermo device"));
+            _c._io->println(F("    stack septic <unit> <status|get> - control septic"));
+            _c._io->println(F("    stack security <unit> <arm|disarm|status|clear> - control security"));
+            _c._io->println(F("    security status - show security status"));
+            _c._io->println(F("    security arm    - arm security"));
+            _c._io->println(F("    security disarm - disarm security"));
             _wifi.printHelpEnable();
             _c._io->println(F("    reload          - restart controller"));
             _c._io->println(F("    reset           - restart controller"));
@@ -179,6 +192,10 @@ public:
             return;
         }
         if (_wifi.handleEnable(cmd))
+        {
+            return;
+        }
+        if (_c._security_cli.handleEnable(cmd))
         {
             return;
         }

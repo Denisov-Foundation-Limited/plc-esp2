@@ -30,5 +30,7 @@ enum class StackFeature : uint8_t
     Extenders = 0x0D,
     Sockets = 0x0E,
     Meteo = 0x0F,
-    Thermo = 0x10
+    Thermo = 0x10,
+    Security = 0x11,
+    Septic = 0x12
 };

@@ -31,6 +31,8 @@
 #include "plc/plc_control.hpp"
 #include "core/network/telegram/telegram.hpp"
 #include "controllers/meteo_controller.hpp"
+#include "controllers/septic_controller.hpp"
+#include "controllers/security_controller.hpp"
 #include "controllers/socket_controller.hpp"
 #include "controllers/thermo_controller.hpp"
 #include "utils/logger.hpp"
@@ -41,7 +43,7 @@ public:
     StackSlaveHandler(IoStack &io, Ds18b20 &ds18b20, OneWireManager &ow, I2CManager &i2c,
                       PlcControl &plc, RTC &rtc, TelegramClient &telegram, Logger &logs,
                       Extender &ext, SocketController &sockets, MeteoController &meteo,
-                      ThermoController &thermo)
+                      ThermoController &thermo, SepticController &septic, SecurityController &security)
         : _io(io),
           _ds18b20(ds18b20),
           _ow(ow),
@@ -53,7 +55,9 @@ public:
           _ext(ext),
           _sockets(sockets),
           _meteo(meteo),
-          _thermo(thermo)
+          _thermo(thermo),
+          _septic(septic),
+          _security(security)
     {
     }
 
@@ -88,6 +92,8 @@ private:
     SocketController &_sockets;
     MeteoController &_meteo;
     ThermoController &_thermo;
+    SepticController &_septic;
+    SecurityController &_security;
     StackNode *_node = nullptr;
     static constexpr uint8_t MAX_I2C_ADDRS = 127;
     static constexpr uint8_t MAX_OW_ADDRS = 64;
@@ -184,6 +190,12 @@ private:
             break;
         case StackFeature::Thermo:
             handleThermo_(cmd_id, action, params);
+            break;
+        case StackFeature::Septic:
+            handleSeptic_(cmd_id, action, params);
+            break;
+        case StackFeature::Security:
+            handleSecurity_(cmd_id, action, params);
             break;
         default:
             sendErr_(cmd_id, "unknown feature");
@@ -796,6 +808,154 @@ private:
                 }
             }
             sendAck_(cmd_id);
+            return;
+        }
+        sendErr_(cmd_id, "unsupported");
+    }
+
+    void handleSecurity_(uint16_t cmd_id, const String &action, JsonVariantConst params)
+    {
+        if (action == "status")
+        {
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            doc["enabled"] = _security.controllerEnabled();
+            doc["armed"] = _security.armed();
+            doc["alarm"] = _security.alarmOn();
+            if (_security.sirenPort() != SecurityController::kInvalidPort)
+                doc["siren"] = (unsigned)_security.sirenPort();
+            sendAck_(cmd_id, doc);
+            return;
+        }
+        if (action == "get")
+        {
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            JsonArray arr = doc["items"].to<JsonArray>();
+            for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+            {
+                const auto *cfg = _security.configByIndex(i);
+                const auto *st = _security.stateByIndex(i);
+                if (!cfg || !st || !cfg->enabled)
+                    continue;
+                JsonObject o = arr.add<JsonObject>();
+                o["id"] = (unsigned)cfg->id;
+                o["enabled"] = cfg->enabled;
+                o["type"] = (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
+                if (cfg->port != SecurityController::kInvalidPort)
+                    o["port"] = cfg->port;
+                o["detect"] = st->is_detect;
+            }
+            sendAck_(cmd_id, doc);
+            return;
+        }
+        if (action == "set")
+        {
+            if (!params.is<JsonObjectConst>())
+            {
+                sendErr_(cmd_id, "missing params");
+                return;
+            }
+            JsonObjectConst obj = params.as<JsonObjectConst>();
+            if (obj["armed"].is<bool>())
+            {
+                const bool on = obj["armed"].as<bool>();
+                if (on)
+                    _security.arm();
+                else
+                    _security.disarm();
+            }
+            if (obj["clear"].is<bool>() && obj["clear"].as<bool>())
+                _security.clearDetect();
+            sendAck_(cmd_id);
+            return;
+        }
+        sendErr_(cmd_id, "unsupported");
+    }
+
+    void handleSeptic_(uint16_t cmd_id, const String &action, JsonVariantConst params)
+    {
+        if (action == "status")
+        {
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            doc["enabled"] = _septic.controllerEnabled();
+            const auto *cfg = _septic.configByIndex(0);
+            const auto *st = _septic.stateByIndex(0);
+            if (cfg && st)
+            {
+                doc["monitor"] = cfg->monitoring_on;
+                doc["warning"] = st->warning;
+                doc["alarm"] = st->alarm;
+                if (cfg->warning_port != SepticController::kInvalidPort)
+                    doc["warning_port"] = cfg->warning_port;
+                if (cfg->alarm_port != SepticController::kInvalidPort)
+                    doc["alarm_port"] = cfg->alarm_port;
+                if (cfg->relay_warning != SepticController::kInvalidPort)
+                    doc["relay_warning"] = cfg->relay_warning;
+                if (cfg->relay_alarm != SepticController::kInvalidPort)
+                    doc["relay_alarm"] = cfg->relay_alarm;
+            }
+            sendAck_(cmd_id, doc);
+            return;
+        }
+        if (action == "get")
+        {
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            JsonArray arr = doc["items"].to<JsonArray>();
+            for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+            {
+                const auto *cfg = _septic.configByIndex(i);
+                const auto *st = _septic.stateByIndex(i);
+                if (!cfg || !st || !cfg->enabled)
+                    continue;
+                JsonObject o = arr.add<JsonObject>();
+                o["id"] = (unsigned)cfg->id;
+                o["enabled"] = cfg->enabled;
+                o["monitor"] = cfg->monitoring_on;
+                if (cfg->warning_port != SepticController::kInvalidPort)
+                    o["warning_port"] = cfg->warning_port;
+                if (cfg->alarm_port != SepticController::kInvalidPort)
+                    o["alarm_port"] = cfg->alarm_port;
+                if (cfg->relay_warning != SepticController::kInvalidPort)
+                    o["relay_warning"] = cfg->relay_warning;
+                if (cfg->relay_alarm != SepticController::kInvalidPort)
+                    o["relay_alarm"] = cfg->relay_alarm;
+                o["warning"] = st->warning;
+                o["alarm"] = st->alarm;
+            }
+            sendAck_(cmd_id, doc);
+            return;
+        }
+        if (action == "set")
+        {
+            if (!params.is<JsonObjectConst>())
+            {
+                sendErr_(cmd_id, "missing params");
+                return;
+            }
+            JsonObjectConst obj = params.as<JsonObjectConst>();
+            uint8_t id = 1;
+            if (obj["id"].is<unsigned>())
+            {
+                const unsigned raw = obj["id"].as<unsigned>();
+                if (raw > 0 && raw <= 0xFFu)
+                    id = (uint8_t)raw;
+            }
+            if (obj["monitor"].is<bool>() || obj["monitor"].is<int>())
+            {
+                const bool on = obj["monitor"].is<bool>() ? obj["monitor"].as<bool>()
+                                                          : (obj["monitor"].as<int>() != 0);
+                if (!_septic.setMonitoring(id, on))
+                {
+                    sendErr_(cmd_id, "invalid id");
+                    return;
+                }
+                sendAck_(cmd_id);
+                return;
+            }
+            sendErr_(cmd_id, "missing monitor");
             return;
         }
         sendErr_(cmd_id, "unsupported");

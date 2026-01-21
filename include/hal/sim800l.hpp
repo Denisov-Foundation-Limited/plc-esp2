@@ -17,388 +17,433 @@
 class Sim800l
 {
 public:
+    using CommandCallback = void (*)(void *ctx, bool ok, const String &response);
+    using LineCallback = void (*)(void *ctx, const String &line);
+    using SmsIndexCallback = void (*)(void *ctx, uint16_t index);
+    using CallCallback = void (*)(void *ctx, const String &number);
+    using UssdCallback = void (*)(void *ctx, const String &text);
+    using HttpActionCallback = void (*)(void *ctx, int status, int len);
+
     bool begin(Stream &ser)
     {
         _ser = &ser;
-        return sync_();
-    }
-
-    bool sync(uint32_t timeout_ms = 1000) { return sendCommand_("AT", "OK", timeout_ms); }
-    bool setEcho(bool on) { return sendCommand_(on ? "ATE1" : "ATE0"); }
-    bool setSmsTextMode() { return sendCommand_("AT+CMGF=1"); }
-    bool setCallerId(bool on) { return sendCommand_(on ? "AT+CLIP=1" : "AT+CLIP=0"); }
-
-    bool getImei(String &out)
-    {
-        if (!sendCommand_("AT+GSN"))
-            return false;
-        return parseFirstNumberLine_(_last, out);
-    }
-
-    bool getImsi(String &out)
-    {
-        if (!sendCommand_("AT+CIMI"))
-            return false;
-        return parseFirstNumberLine_(_last, out);
-    }
-
-    bool getOperator(String &out)
-    {
-        if (!sendCommand_("AT+COPS?"))
-            return false;
-        String line;
-        if (!extractLine_(_last, "+COPS:", line))
-            return false;
-        int q1 = line.indexOf('\"');
-        int q2 = line.indexOf('\"', q1 + 1);
-        if (q1 < 0 || q2 < 0)
-            return false;
-        out = line.substring(q1 + 1, q2);
         return true;
     }
 
-    bool getSignalRssi(int &rssi)
+    void tick()
     {
-        if (!sendCommand_("AT+CSQ"))
-            return false;
-        String line;
-        if (!extractLine_(_last, "+CSQ:", line))
-            return false;
-        int comma = line.indexOf(',');
-        if (comma < 0)
-            return false;
-        rssi = line.substring(line.indexOf(':') + 1, comma).toInt();
-        return true;
-    }
-
-    bool getRegStatus(int &stat)
-    {
-        if (!sendCommand_("AT+CREG?"))
-            return false;
-        String line;
-        if (!extractLine_(_last, "+CREG:", line))
-            return false;
-        int comma = line.indexOf(',');
-        if (comma < 0)
-            return false;
-        stat = line.substring(comma + 1).toInt();
-        return true;
-    }
-
-    bool sendUssd(const String &code, String &response)
-    {
-        if (!sendCommand_(String("AT+CUSD=1,\"") + code + "\",15", "+CUSD:", 10000))
-            return false;
-        String line;
-        if (!extractLine_(_last, "+CUSD:", line))
-            return false;
-        int q1 = line.indexOf('\"');
-        int q2 = line.indexOf('\"', q1 + 1);
-        if (q1 < 0 || q2 < 0)
-            return false;
-        response = line.substring(q1 + 1, q2);
-        return true;
-    }
-
-    bool sendSMS(const String &number, const String &text)
-    {
-        if (!sendCommand_(String("AT+CMGS=\"") + number + "\"", ">", 2000))
-            return false;
-        _ser->print(text);
-        _ser->write((uint8_t)0x1A);
-        return waitFor_("OK", 10000);
-    }
-
-    bool dial(const String &number) { return sendCommand_(String("ATD") + number + ";"); }
-    bool answer() { return sendCommand_("ATA"); }
-    bool hangup() { return sendCommand_("ATH"); }
-
-    bool listSms(String &out)
-    {
-        if (!sendCommand_("AT+CMGL=\"ALL\"", "OK", 10000))
-            return false;
-        out = _last;
-        return true;
-    }
-
-    bool readSms(uint16_t index, String &out)
-    {
-        if (!sendCommand_(String("AT+CMGR=") + index, "OK", 5000))
-            return false;
-        out = _last;
-        return true;
-    }
-
-    bool deleteSms(uint16_t index) { return sendCommand_(String("AT+CMGD=") + index); }
-
-    bool setApn(const String &apn, const String &user = "", const String &pass = "")
-    {
-        if (!sendCommand_("AT+SAPBR=3,1,\"CONTYPE\",\"GPRS\""))
-            return false;
-        if (!sendCommand_(String("AT+SAPBR=3,1,\"APN\",\"") + apn + "\""))
-            return false;
-        if (user.length())
-        {
-            if (!sendCommand_(String("AT+SAPBR=3,1,\"USER\",\"") + user + "\""))
-                return false;
-        }
-        if (pass.length())
-        {
-            if (!sendCommand_(String("AT+SAPBR=3,1,\"PWD\",\"") + pass + "\""))
-                return false;
-        }
-        return true;
-    }
-
-    bool openBearer() { return sendCommand_("AT+SAPBR=1,1", "OK", 10000); }
-    bool closeBearer() { return sendCommand_("AT+SAPBR=0,1", "OK", 10000); }
-
-    bool getBearerIp(String &out)
-    {
-        if (!sendCommand_("AT+SAPBR=2,1"))
-            return false;
-        String line;
-        if (!extractLine_(_last, "+SAPBR:", line))
-            return false;
-        int q1 = line.indexOf('\"');
-        int q2 = line.indexOf('\"', q1 + 1);
-        if (q1 < 0 || q2 < 0)
-            return false;
-        out = line.substring(q1 + 1, q2);
-        return true;
-    }
-
-    bool httpInit() { return sendCommand_("AT+HTTPINIT"); }
-    bool httpTerm() { return sendCommand_("AT+HTTPTERM"); }
-    bool httpSetCid(uint8_t cid = 1) { return sendCommand_(String("AT+HTTPPARA=\"CID\",") + cid); }
-    bool httpSetUrl(const String &url) { return sendCommand_(String("AT+HTTPPARA=\"URL\",\"") + url + "\""); }
-    bool httpSetContentType(const String &type) { return sendCommand_(String("AT+HTTPPARA=\"CONTENT\",\"") + type + "\""); }
-
-    bool httpGet(int &status, int &len)
-    {
-        if (!sendCommand_("AT+HTTPACTION=0", "+HTTPACTION:", 10000))
-            return false;
-        String line = readLine_(2000);
-        int s = -1, l = -1;
-        if (!parseHttpAction_(line, s, l))
-            return false;
-        status = s;
-        len = l;
-        return true;
-    }
-
-    bool httpRead(String &out)
-    {
-        if (!sendCommand_("AT+HTTPREAD", "+HTTPREAD:", 2000))
-            return false;
-        String header = readLine_(2000);
-        int len = parseHttpReadLen_(header);
-        if (len <= 0)
-            return false;
-        out = readBytes_(len, 2000);
-        waitFor_("OK", 2000);
-        return true;
-    }
-
-    bool httpPost(const String &url, const String &content_type, const String &data, int &status, int &len)
-    {
-        if (!httpInit())
-            return false;
-        if (!httpSetCid())
-            return false;
-        if (!httpSetUrl(url))
-            return false;
-        if (!httpSetContentType(content_type))
-            return false;
-        if (!sendCommand_(String("AT+HTTPDATA=") + data.length() + ",5000", "DOWNLOAD", 5000))
-            return false;
-        _ser->print(data);
-        if (!waitFor_("OK", 5000))
-            return false;
-        if (!sendCommand_("AT+HTTPACTION=1", "+HTTPACTION:", 10000))
-            return false;
-        String line;
-        if (!extractLine_(_last, "+HTTPACTION:", line))
-            return false;
-        if (!parseHttpAction_(line, status, len))
-            return false;
-        return true;
-    }
-
-    bool powerDown() { return sendCommand_("AT+CPOWD=1", "POWER DOWN", 5000); }
-
-    bool readUrc(String &out)
-    {
-        out = "";
-        if (!_ser || !_ser->available())
-            return false;
-        String line = readLine_(100);
-        if (!line.length())
-            return false;
-        if (line.startsWith("RING") ||
-            line.startsWith("+CLIP:") ||
-            line.startsWith("+CMTI:") ||
-            line.startsWith("+SAPBR:") ||
-            line.startsWith("+HTTPACTION:"))
-        {
-            out = line;
-            return true;
-        }
-        return false;
-    }
-
-    bool pollSmsIndex(uint16_t &out_index)
-    {
-        out_index = 0;
-        if (!_ser || !_ser->available())
-            return false;
-        String line = readLine_(100);
-        if (!line.startsWith("+CMTI:"))
-            return false;
-        int comma = line.indexOf(',');
-        if (comma < 0)
-            return false;
-        out_index = (uint16_t)line.substring(comma + 1).toInt();
-        return out_index > 0;
-    }
-
-    bool pollIncomingCall(String &out_number)
-    {
-        out_number = "";
-        if (!_ser || !_ser->available())
-            return false;
-        String line = readLine_(100);
-        if (line.startsWith("+CLIP:"))
-        {
-            int q1 = line.indexOf('\"');
-            int q2 = line.indexOf('\"', q1 + 1);
-            if (q1 < 0 || q2 < 0)
-                return false;
-            out_number = line.substring(q1 + 1, q2);
-            return true;
-        }
-        return false;
-    }
-
-    bool pollIncomingCallRing(String &out_number, uint32_t wait_ms = 500)
-    {
-        out_number = "";
         if (!_ser)
-            return false;
-        String line = readLine_(100);
-        if (!line.startsWith("RING"))
-            return false;
-
-        const uint32_t start = millis();
-        while ((millis() - start) < wait_ms)
-        {
-            String l = readLine_(100);
-            if (l.startsWith("+CLIP:"))
-            {
-                int q1 = l.indexOf('\"');
-                int q2 = l.indexOf('\"', q1 + 1);
-                if (q1 < 0 || q2 < 0)
-                    return false;
-                out_number = l.substring(q1 + 1, q2);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    const String &lastResponse() const { return _last; }
-
-    bool readCallerId(String &out_number)
-    {
-        out_number = "";
-        if (!_ser)
-            return false;
-
+            return;
         while (_ser->available())
         {
-            String line = readLine_(50);
-            if (line.startsWith("+CLIP:"))
-            {
-                int q1 = line.indexOf('\"');
-                if (q1 < 0)
-                    continue;
-                int q2 = line.indexOf('\"', q1 + 1);
-                if (q2 < 0)
-                    continue;
-                out_number = line.substring(q1 + 1, q2);
-                return true;
-            }
+            char c = (char)_ser->read();
+            consumeChar_(c);
         }
-        return false;
+
+        const uint32_t now = millis();
+        if (_waiting && timePassed_(now, _deadline_ms))
+            finishCommand_(false);
+
+        if (!_waiting && _q_count > 0)
+            startNext_();
+    }
+
+    bool enqueueCommand(const String &cmd,
+                        const char *expect = "OK",
+                        uint32_t timeout_ms = 1000,
+                        CommandCallback cb = nullptr,
+                        void *ctx = nullptr)
+    {
+        if (_q_count >= kQueueSize)
+            return false;
+        PendingCmd &dst = _queue[_q_tail];
+        dst.cmd = cmd;
+        dst.expect = expect ? String(expect) : String("");
+        dst.timeout_ms = timeout_ms;
+        dst.cb = cb;
+        dst.ctx = ctx;
+        _q_tail = (uint8_t)((_q_tail + 1) % kQueueSize);
+        ++_q_count;
+        return true;
+    }
+
+    void setUrcHandler(LineCallback cb, void *ctx = nullptr)
+    {
+        _urc_cb = cb;
+        _urc_ctx = ctx;
+    }
+
+    void setSmsHandler(SmsIndexCallback cb, void *ctx = nullptr)
+    {
+        _sms_cb = cb;
+        _sms_ctx = ctx;
+    }
+
+    void setCallHandler(CallCallback cb, void *ctx = nullptr)
+    {
+        _call_cb = cb;
+        _call_ctx = ctx;
+    }
+
+    void setUssdHandler(UssdCallback cb, void *ctx = nullptr)
+    {
+        _ussd_cb = cb;
+        _ussd_ctx = ctx;
+    }
+
+    void setHttpActionHandler(HttpActionCallback cb, void *ctx = nullptr)
+    {
+        _http_cb = cb;
+        _http_ctx = ctx;
+    }
+
+    const String &lastResponse() const { return _last_response; }
+
+    bool sync(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT", "OK", 1000, cb, ctx);
+    }
+
+    bool setEcho(bool on, CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand(on ? "ATE1" : "ATE0", "OK", 1000, cb, ctx);
+    }
+
+    bool setSmsTextMode(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+CMGF=1", "OK", 1000, cb, ctx);
+    }
+
+    bool setCallerId(bool on, CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand(on ? "AT+CLIP=1" : "AT+CLIP=0", "OK", 1000, cb, ctx);
+    }
+
+    bool requestImei(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+GSN", "OK", 1000, cb, ctx);
+    }
+
+    bool requestImsi(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+CIMI", "OK", 1000, cb, ctx);
+    }
+
+    bool requestOperator(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+COPS?", "OK", 1000, cb, ctx);
+    }
+
+    bool requestSignal(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+CSQ", "OK", 1000, cb, ctx);
+    }
+
+    bool requestRegStatus(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+CREG?", "OK", 1000, cb, ctx);
+    }
+
+    bool sendUssd(const String &code, CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        const String cmd = String("AT+CUSD=1,\"") + code + "\",15";
+        return enqueueCommand(cmd, "+CUSD:", 10000, cb, ctx);
+    }
+
+    bool dial(const String &number, CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand(String("ATD") + number + ";", "OK", 5000, cb, ctx);
+    }
+
+    bool answer(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("ATA", "OK", 5000, cb, ctx);
+    }
+
+    bool hangup(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("ATH", "OK", 5000, cb, ctx);
+    }
+
+    bool listSms(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+CMGL=\"ALL\"", "OK", 10000, cb, ctx);
+    }
+
+    bool readSms(uint16_t index, CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand(String("AT+CMGR=") + index, "OK", 5000, cb, ctx);
+    }
+
+    bool deleteSms(uint16_t index, CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand(String("AT+CMGD=") + index, "OK", 5000, cb, ctx);
+    }
+
+    bool setApn(const String &apn,
+                const String &user = "",
+                const String &pass = "",
+                CommandCallback cb = nullptr,
+                void *ctx = nullptr)
+    {
+        bool ok = enqueueCommand("AT+SAPBR=3,1,\"CONTYPE\",\"GPRS\"", "OK", 1000, cb, ctx);
+        ok = ok && enqueueCommand(String("AT+SAPBR=3,1,\"APN\",\"") + apn + "\"", "OK", 1000, cb, ctx);
+        if (user.length())
+            ok = ok && enqueueCommand(String("AT+SAPBR=3,1,\"USER\",\"") + user + "\"", "OK", 1000, cb, ctx);
+        if (pass.length())
+            ok = ok && enqueueCommand(String("AT+SAPBR=3,1,\"PWD\",\"") + pass + "\"", "OK", 1000, cb, ctx);
+        return ok;
+    }
+
+    bool openBearer(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+SAPBR=1,1", "OK", 10000, cb, ctx);
+    }
+
+    bool closeBearer(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+SAPBR=0,1", "OK", 10000, cb, ctx);
+    }
+
+    bool getBearerIp(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+SAPBR=2,1", "+SAPBR:", 3000, cb, ctx);
+    }
+
+    bool httpInit(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+HTTPINIT", "OK", 1000, cb, ctx);
+    }
+
+    bool httpTerm(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+HTTPTERM", "OK", 1000, cb, ctx);
+    }
+
+    bool httpSetCid(uint8_t cid = 1, CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand(String("AT+HTTPPARA=\"CID\",") + cid, "OK", 1000, cb, ctx);
+    }
+
+    bool httpSetUrl(const String &url, CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand(String("AT+HTTPPARA=\"URL\",\"") + url + "\"", "OK", 1000, cb, ctx);
+    }
+
+    bool httpSetContentType(const String &type, CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand(String("AT+HTTPPARA=\"CONTENT\",\"") + type + "\"", "OK", 1000, cb, ctx);
+    }
+
+    bool httpGet(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+HTTPACTION=0", "+HTTPACTION:", 10000, cb, ctx);
+    }
+
+    bool httpRead(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+HTTPREAD", "+HTTPREAD:", 2000, cb, ctx);
+    }
+
+    bool powerDown(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+CPOWD=1", "POWER DOWN", 5000, cb, ctx);
     }
 
 private:
-    bool sync_() { return sendCommand_("AT"); }
+    static constexpr size_t kQueueSize = 8;
+    static constexpr size_t kMaxLineLen = 256;
 
-    bool sendCommand_(const String &cmd, const char *expect = "OK", uint32_t timeout_ms = 1000)
+    struct PendingCmd
     {
-        if (!_ser)
-            return false;
-        flush_();
-        _ser->print(cmd);
-        _ser->print("\r");
-        return waitFor_(expect, timeout_ms);
+        String cmd;
+        String expect;
+        uint32_t timeout_ms = 0;
+        CommandCallback cb = nullptr;
+        void *ctx = nullptr;
+    };
+
+    Stream *_ser = nullptr;
+    PendingCmd _queue[kQueueSize] = {};
+    uint8_t _q_head = 0;
+    uint8_t _q_tail = 0;
+    uint8_t _q_count = 0;
+    bool _waiting = false;
+    uint32_t _deadline_ms = 0;
+    PendingCmd _current;
+    String _current_resp;
+    String _last_response;
+    String _line_buf;
+
+    LineCallback _urc_cb = nullptr;
+    void *_urc_ctx = nullptr;
+    SmsIndexCallback _sms_cb = nullptr;
+    void *_sms_ctx = nullptr;
+    CallCallback _call_cb = nullptr;
+    void *_call_ctx = nullptr;
+    UssdCallback _ussd_cb = nullptr;
+    void *_ussd_ctx = nullptr;
+    HttpActionCallback _http_cb = nullptr;
+    void *_http_ctx = nullptr;
+
+    static bool timePassed_(uint32_t now, uint32_t deadline)
+    {
+        return (int32_t)(now - deadline) >= 0;
     }
 
-    bool waitFor_(const char *token, uint32_t timeout_ms)
+    void startNext_()
     {
-        _last = "";
-        const uint32_t start = millis();
-        while ((millis() - start) < timeout_ms)
+        if (_q_count == 0 || !_ser)
+            return;
+        _current = _queue[_q_head];
+        _current_resp = "";
+        _waiting = true;
+        _deadline_ms = millis() + _current.timeout_ms;
+        _ser->print(_current.cmd);
+        _ser->print("\r");
+    }
+
+    void finishCommand_(bool ok)
+    {
+        _last_response = _current_resp;
+        if (_current.cb)
+            _current.cb(_current.ctx, ok, _last_response);
+
+        _waiting = false;
+        _current = PendingCmd{};
+        _current_resp = "";
+
+        if (_q_count > 0)
         {
-            while (_ser && _ser->available())
-            {
-                char c = (char)_ser->read();
-                _last += c;
-                if (_last.endsWith(token))
-                    return true;
-            }
+            _q_head = (uint8_t)((_q_head + 1) % kQueueSize);
+            --_q_count;
+        }
+    }
+
+    void consumeChar_(char c)
+    {
+        if (_waiting && _current.expect == ">" && c == '>')
+        {
+            handleLine_(">");
+            return;
+        }
+        if (c == '\n')
+        {
+            String line = _line_buf;
+            _line_buf = "";
+            line.trim();
+            if (line.length())
+                handleLine_(line);
+            return;
+        }
+        if (c == '\r')
+            return;
+        if (_line_buf.length() < kMaxLineLen)
+            _line_buf += c;
+        else
+            _line_buf = "";
+    }
+
+    void handleLine_(const String &line)
+    {
+        if (handleUrc_(line))
+            return;
+
+        if (!_waiting)
+            return;
+
+        _current_resp += line;
+        _current_resp += "\n";
+
+        if (isErrorLine_(line))
+        {
+            finishCommand_(false);
+            return;
+        }
+
+        if (_current.expect.length() && line.indexOf(_current.expect) >= 0)
+        {
+            finishCommand_(true);
+            return;
+        }
+    }
+
+    bool handleUrc_(const String &line)
+    {
+        if (line.startsWith("RING"))
+        {
+            if (_urc_cb)
+                _urc_cb(_urc_ctx, line);
+            return true;
+        }
+        if (line.startsWith("+CLIP:"))
+        {
+            String num;
+            if (parseQuoted_(line, num) && _call_cb)
+                _call_cb(_call_ctx, num);
+            if (_urc_cb)
+                _urc_cb(_urc_ctx, line);
+            return true;
+        }
+        if (line.startsWith("+CMTI:"))
+        {
+            uint16_t idx = 0;
+            if (parseIndexAfterComma_(line, idx) && _sms_cb)
+                _sms_cb(_sms_ctx, idx);
+            if (_urc_cb)
+                _urc_cb(_urc_ctx, line);
+            return true;
+        }
+        if (line.startsWith("+CUSD:"))
+        {
+            String text;
+            if (parseQuoted_(line, text) && _ussd_cb)
+                _ussd_cb(_ussd_ctx, text);
+            if (_urc_cb)
+                _urc_cb(_urc_ctx, line);
+            return true;
+        }
+        if (line.startsWith("+HTTPACTION:"))
+        {
+            int status = -1;
+            int len = -1;
+            if (parseHttpAction_(line, status, len) && _http_cb)
+                _http_cb(_http_ctx, status, len);
+            if (_urc_cb)
+                _urc_cb(_urc_ctx, line);
+            return true;
         }
         return false;
     }
 
-    String readLine_(uint32_t timeout_ms)
+    static bool isErrorLine_(const String &line)
     {
-        String line;
-        const uint32_t start = millis();
-        while ((millis() - start) < timeout_ms)
-        {
-            while (_ser && _ser->available())
-            {
-                char c = (char)_ser->read();
-                if (c == '\n')
-                    return line;
-                if (c != '\r')
-                    line += c;
-            }
-        }
-        return line;
+        if (line == "ERROR")
+            return true;
+        if (line.startsWith("+CME ERROR"))
+            return true;
+        if (line.startsWith("+CMS ERROR"))
+            return true;
+        return false;
     }
 
-    String readBytes_(size_t len, uint32_t timeout_ms)
+    static bool parseIndexAfterComma_(const String &line, uint16_t &out)
     {
-        String out;
-        out.reserve(len);
-        const uint32_t start = millis();
-        while ((millis() - start) < timeout_ms && out.length() < len)
-        {
-            while (_ser && _ser->available() && out.length() < len)
-            {
-                out += (char)_ser->read();
-            }
-        }
-        return out;
+        int comma = line.indexOf(',');
+        if (comma < 0)
+            return false;
+        out = (uint16_t)line.substring(comma + 1).toInt();
+        return out > 0;
     }
 
-    void flush_()
+    static bool parseQuoted_(const String &line, String &out)
     {
-        while (_ser && _ser->available())
-            (void)_ser->read();
+        int q1 = line.indexOf('\"');
+        int q2 = line.indexOf('\"', q1 + 1);
+        if (q1 < 0 || q2 < 0)
+            return false;
+        out = line.substring(q1 + 1, q2);
+        return true;
     }
 
     static bool parseHttpAction_(const String &line, int &status, int &len)
@@ -411,48 +456,4 @@ private:
         len = line.substring(i2 + 1).toInt();
         return true;
     }
-
-    static int parseHttpReadLen_(const String &line)
-    {
-        int i = line.indexOf(':');
-        if (i < 0)
-            return -1;
-        return line.substring(i + 1).toInt();
-    }
-
-    static bool extractLine_(const String &src, const char *prefix, String &out)
-    {
-        int start = src.indexOf(prefix);
-        if (start < 0)
-            return false;
-        int end = src.indexOf('\n', start);
-        if (end < 0)
-            end = src.length();
-        out = src.substring(start, end);
-        out.trim();
-        return true;
-    }
-
-    static bool parseFirstNumberLine_(const String &src, String &out)
-    {
-        int start = 0;
-        while (start < (int)src.length())
-        {
-            int end = src.indexOf('\n', start);
-            if (end < 0)
-                end = src.length();
-            String line = src.substring(start, end);
-            line.trim();
-            if (line.length() >= 10 && isDigit(line[0]))
-            {
-                out = line;
-                return true;
-            }
-            start = end + 1;
-        }
-        return false;
-    }
-
-    Stream *_ser = nullptr;
-    String _last;
 };

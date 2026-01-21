@@ -146,7 +146,8 @@ struct AppServices
           fw_upgrade(web, console, wifi, configs, plc, rtc, telegram, telegram_menu, logs, ext, i2c, ow, controllers),
           network(logs, wifi, telegram, telegram_bot, telegram_menu, fw_upgrade, web, telegram_wifi_client),
           stack_slave(io, ds18b20, ow, i2c, plc, rtc, telegram, logs, ext,
-                      controllers.sockets(), controllers.meteo(), controllers.thermo()),
+                      controllers.sockets(), controllers.meteo(), controllers.thermo(), controllers.septic(),
+                      controllers.security()),
           configs_manager(configs, wifi, telegram, network, console, telegram_menu, plc, controllers),
           plc_scan(io, plc)
     {
@@ -159,6 +160,8 @@ struct AppServices
         telegram_menu.setMeteo(controllers.meteo());
         telegram_menu.setThermo(controllers.thermo());
         telegram_menu.setTanks(controllers.tanks());
+        telegram_menu.setSeptic(controllers.septic());
+        telegram_menu.setSecurity(controllers.security());
         fw_upgrade.setConfigsManager(configs_manager);
         fw_upgrade.setStackMaster(*network.stackMaster());
         network.setStackConfig(configs_manager);

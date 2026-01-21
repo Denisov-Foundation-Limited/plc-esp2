@@ -19,6 +19,8 @@
 #include "core/cli/modules/cli_meteo.hpp"
 #include "core/cli/modules/cli_thermo.hpp"
 #include "core/cli/modules/cli_tank.hpp"
+#include "core/cli/modules/cli_septic.hpp"
+#include "core/cli/modules/cli_security.hpp"
 #include "utils/configs_manager_iface.hpp"
 
 template <typename ConsoleT>
@@ -27,14 +29,16 @@ class CLIConfigT
 public:
     CLIConfigT(ConsoleT &console, CLIWifiT<ConsoleT> &wifi, CLITgbotT<ConsoleT> &tgbot,
                CLISocketT<ConsoleT> &socket, CLIMeteoT<ConsoleT> &meteo, CLIThermoT<ConsoleT> &thermo,
-               CLITankT<ConsoleT> &tank)
+               CLITankT<ConsoleT> &tank, CLISepticT<ConsoleT> &septic, CLISecurityT<ConsoleT> &security)
         : _c(console),
           _wifi(wifi),
           _tgbot(tgbot),
           _socket(socket),
           _meteo(meteo),
           _thermo(thermo),
-          _tank(tank)
+          _tank(tank),
+          _septic(septic),
+          _security(security)
     {
     }
 
@@ -72,6 +76,8 @@ public:
             _meteo.printHelpConfigLines();
             _thermo.printHelpConfigLines();
             _tank.printHelpConfigLines();
+            _septic.printHelpConfigLines();
+            _security.printHelpConfigLines();
             _c._io->println(F("  Session:"));
             _c._io->println(F("    exit                     - return to enable"));
             _c._io->println(F("    end                      - return to enable"));
@@ -116,6 +122,16 @@ public:
         if (lower == "tank")
         {
             _c.enterConfigTank();
+            return;
+        }
+        if (lower == "septic")
+        {
+            _c.enterConfigSeptic();
+            return;
+        }
+        if (lower == "security")
+        {
+            _c.enterConfigSecurity();
             return;
         }
         if (lower.startsWith("stack "))
@@ -545,6 +561,90 @@ public:
         _c.printPrompt_();
     }
 
+    void handleSepticContext(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String lower = cmd;
+        lower.toLowerCase();
+
+        if (lower.startsWith("help "))
+        {
+            String topic = cmd.substring(5);
+            topic.trim();
+            _c.showHelpTopic_(topic);
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "help" || lower == "?")
+        {
+            _c._io->println(F("Commands (config-septic):"));
+            _septic.printHelpContextLines();
+            _c._io->println(F("  Session:"));
+            _c._io->println(F("    exit                - return to config"));
+            _c._io->println(F("    end                 - return to enable"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "exit")
+        {
+            _c.enterConfig();
+            return;
+        }
+        if (lower == "end")
+        {
+            _c.enterEnable();
+            return;
+        }
+        if (_septic.handleContext(cmd))
+            return;
+
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
+    }
+
+    void handleSecurityContext(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String lower = cmd;
+        lower.toLowerCase();
+
+        if (lower.startsWith("help "))
+        {
+            String topic = cmd.substring(5);
+            topic.trim();
+            _c.showHelpTopic_(topic);
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "help" || lower == "?")
+        {
+            _c._io->println(F("Commands (config-security):"));
+            _security.printHelpContextLines();
+            _c._io->println(F("  Session:"));
+            _c._io->println(F("    exit                - return to config"));
+            _c._io->println(F("    end                 - return to enable"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "exit")
+        {
+            _c.enterConfig();
+            return;
+        }
+        if (lower == "end")
+        {
+            _c.enterEnable();
+            return;
+        }
+        if (_security.handleContext(cmd))
+            return;
+
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
+    }
+
 private:
     bool handleAdminPassword_(const String &cmd, const String &lower)
     {
@@ -689,4 +789,6 @@ private:
     CLIMeteoT<ConsoleT> &_meteo;
     CLIThermoT<ConsoleT> &_thermo;
     CLITankT<ConsoleT> &_tank;
+    CLISepticT<ConsoleT> &_septic;
+    CLISecurityT<ConsoleT> &_security;
 };

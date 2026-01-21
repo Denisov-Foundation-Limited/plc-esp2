@@ -26,6 +26,8 @@
 #include "controllers/meteo_controller.hpp"
 #include "controllers/thermo_controller.hpp"
 #include "controllers/tank_controller.hpp"
+#include "controllers/septic_controller.hpp"
+#include "controllers/security_controller.hpp"
 #include "utils/meteo_history.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
@@ -60,6 +62,8 @@ public:
     void setMeteo(MeteoController &meteo) { _meteo = &meteo; }
     void setThermo(ThermoController &thermo) { _thermo = &thermo; }
     void setTanks(TankController &tanks) { _tanks = &tanks; }
+    void setSeptic(SepticController &septic) { _septic = &septic; }
+    void setSecurity(SecurityController &security) { _security = &security; }
 
     using AllowedUser = TelegramAllowedUser;
 
@@ -367,6 +371,276 @@ private:
             return true;
         }
         _self->sendTanksMenu_(u.chat_id);
+        return true;
+    }
+
+    static bool cmdSeptic_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        (void)reply;
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_septic)
+        {
+            reply = "Септик недоступен";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        _self->sendSepticMenu_(u.chat_id);
+        return true;
+    }
+
+    static bool cmdSecurity_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        (void)reply;
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_security)
+        {
+            reply = "Охрана недоступна";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Доступно только для локального устройства";
+            return true;
+        }
+        _self->sendSecurityMenu_(u.chat_id);
+        return true;
+    }
+
+    static bool cmdSepticStatus_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_septic)
+        {
+            reply = "Септик недоступен";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Доступно только для локального устройства";
+            return true;
+        }
+        reply = _self->septicStatusText_();
+        return true;
+    }
+
+    static bool cmdSepticList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_septic)
+        {
+            reply = "Септик недоступен";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        const String text = _self->septicListTextHtml_();
+        bot.sendText(u.chat_id, text, "", "HTML");
+        return true;
+    }
+
+    static bool cmdSepticMonitor_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        (void)bot;
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_septic)
+        {
+            reply = "Септик недоступен";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Доступно только для локального устройства";
+            return true;
+        }
+        const char *cmd = "/septic_monitor";
+        String tail = u.text.substring(strlen(cmd));
+        tail.trim();
+        int space = tail.indexOf(' ');
+        if (space <= 0)
+        {
+            reply = "Использование: /septic_monitor <id> <on|off>";
+            return true;
+        }
+        String id_str = tail.substring(0, space);
+        String val_str = tail.substring(space + 1);
+        id_str.trim();
+        val_str.trim();
+        uint8_t id = 0;
+        if (!parseSepticId_(id_str, id))
+        {
+            reply = "Неверный ID септика";
+            return true;
+        }
+        bool on = false;
+        if (!parseOnOff_(val_str, on))
+        {
+            reply = "Неверное значение (on/off)";
+            return true;
+        }
+        if (!_self->_septic->setMonitoring(id, on))
+        {
+            reply = "Не удалось";
+            return true;
+        }
+        reply = on ? "Мониторинг включен" : "Мониторинг выключен";
+        return true;
+    }
+
+    static bool cmdSecurityStatus_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_security)
+        {
+            reply = "Охрана недоступна";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Доступно только для локального устройства";
+            return true;
+        }
+        reply = _self->securityStatusText_();
+        return true;
+    }
+
+    static bool cmdSecurityList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_security)
+        {
+            reply = "Охрана недоступна";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Доступно только для локального устройства";
+            return true;
+        }
+        const String text = _self->securityListTextHtml_();
+        bot.sendText(u.chat_id, text, "", "HTML");
+        return true;
+    }
+
+    static bool cmdSecurityArm_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_security)
+        {
+            reply = "Охрана недоступна";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Доступно только для локального устройства";
+            return true;
+        }
+        if (_self->_security->arm())
+            reply = "Охрана включена";
+        else
+            reply = "Контроллер охраны выключен";
+        return true;
+    }
+
+    static bool cmdSecurityDisarm_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_security)
+        {
+            reply = "Охрана недоступна";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Доступно только для локального устройства";
+            return true;
+        }
+        _self->_security->disarm();
+        reply = "Охрана выключена";
+        return true;
+    }
+
+    static bool cmdSecuritySilent_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        (void)bot;
+        if (!_self)
+            return false;
+        if (!requireAdmin_(*_self, bot, u, reply))
+            return true;
+        if (!_self->_security)
+        {
+            reply = "Охрана недоступна";
+            return true;
+        }
+        if (!_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Доступно только для локального устройства";
+            return true;
+        }
+        const char *cmd = "/security_silent";
+        String tail = u.text.substring(strlen(cmd));
+        tail.trim();
+        int space = tail.indexOf(' ');
+        if (space <= 0)
+        {
+            reply = "Использование: /security_silent <id> <on|off>";
+            return true;
+        }
+        String id_str = tail.substring(0, space);
+        String val_str = tail.substring(space + 1);
+        id_str.trim();
+        val_str.trim();
+        uint8_t id = 0;
+        if (!parseSecurityId_(id_str, id))
+        {
+            reply = "Неверный ID датчика";
+            return true;
+        }
+        bool silent = false;
+        if (!parseOnOff_(val_str, silent))
+        {
+            reply = "Неверное значение (on/off)";
+            return true;
+        }
+        if (!_self->_security->setSilent(id, silent))
+        {
+            reply = "Не удалось";
+            return true;
+        }
+        reply = silent ? "Silent включен" : "Silent выключен";
         return true;
     }
 
@@ -951,6 +1225,10 @@ private:
             return true;
         if (self->handleTankSelection_(u))
             return true;
+        if (self->handleSepticSelection_(u))
+            return true;
+        if (self->handleSecuritySelection_(u))
+            return true;
         if (self->handleRootDeviceSelection_(u))
             return true;
         if (st && st->awaiting_device)
@@ -1110,6 +1388,8 @@ private:
     MeteoController *_meteo = nullptr;
     ThermoController *_thermo = nullptr;
     TankController *_tanks = nullptr;
+    SepticController *_septic = nullptr;
+    SecurityController *_security = nullptr;
 
         static inline const TelegramBot::MenuItem kRootItems[] = {};
 
@@ -1119,6 +1399,8 @@ private:
         { "Метео", "/meteo", nullptr, nullptr },
         { "Термо", "/thermo", nullptr, nullptr },
         { "Баки", "/tanks", nullptr, nullptr },
+        { "Септик", "/septic", nullptr, nullptr },
+        { "Охрана", "/security", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
     };
 
@@ -1126,6 +1408,8 @@ private:
     static inline const TelegramBot::MenuItem kMeteoItems[] = {};
     static inline const TelegramBot::MenuItem kThermoItems[] = {};
     static inline const TelegramBot::MenuItem kTanksItems[] = {};
+    static inline const TelegramBot::MenuItem kSepticItems[] = {};
+    static inline const TelegramBot::MenuItem kSecurityItems[] = {};
 
     static inline const TelegramBot::MenuItem kAdminItems[] = {
         { "ПЛК", nullptr, "plc", nullptr },
@@ -1162,11 +1446,13 @@ private:
 
     static inline const TelegramBot::Menu kMenus[] = {
         { "root", "Выбор устройства", kRootItems, 0, nullptr },
-        { "device", "Меню устройства", kDeviceItems, 6, "root" },
+        { "device", "Меню устройства", kDeviceItems, 7, "root" },
         { "sockets", "Розетки", kSocketsItems, 0, "device" },
         { "meteo", "Метео", kMeteoItems, 0, "device" },
         { "thermo", "Термо", kThermoItems, 0, "device" },
         { "tanks", "Баки", kTanksItems, 0, "device" },
+        { "septic", "Септик", kSepticItems, 0, "device" },
+        { "security", "Охрана", kSecurityItems, 0, "device" },
         { "admin", "Админка", kAdminItems, 6, "device" },
         { "plc", "ПЛК", kPlcItems, 2, "admin" },
         { "rtc", "Часы", kRtcItems, 2, "admin" },
@@ -1207,6 +1493,16 @@ private:
         { "/tanks", &TelegramMenu::cmdTanks_ },
         { "/tanks_list", &TelegramMenu::cmdTanksList_ },
         { "/tanks_show", &TelegramMenu::cmdTanksShow_ },
+        { "/septic", &TelegramMenu::cmdSeptic_ },
+        { "/septic_status", &TelegramMenu::cmdSepticStatus_ },
+        { "/septic_list", &TelegramMenu::cmdSepticList_ },
+        { "/septic_monitor", &TelegramMenu::cmdSepticMonitor_ },
+        { "/security", &TelegramMenu::cmdSecurity_ },
+        { "/security_status", &TelegramMenu::cmdSecurityStatus_ },
+        { "/security_list", &TelegramMenu::cmdSecurityList_ },
+        { "/security_arm", &TelegramMenu::cmdSecurityArm_ },
+        { "/security_disarm", &TelegramMenu::cmdSecurityDisarm_ },
+        { "/security_silent", &TelegramMenu::cmdSecuritySilent_ },
     };
 
     static inline const size_t kCommandCount = sizeof(kCommands) / sizeof(kCommands[0]);
@@ -1592,6 +1888,44 @@ private:
         return parseThermoIdFromText_(t, out);
     }
 
+    static bool parseSecurityId_(const String &text, uint8_t &out)
+    {
+        String t = text;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        for (size_t i = 0; i < t.length(); ++i)
+        {
+            const char c = t[i];
+            if (c < '0' || c > '9')
+                return false;
+        }
+        const int v = t.toInt();
+        if (v <= 0 || v > (int)SecurityController::kSensorCount)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
+    static bool parseSepticId_(const String &text, uint8_t &out)
+    {
+        String t = text;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        for (size_t i = 0; i < t.length(); ++i)
+        {
+            const char c = t[i];
+            if (c < '0' || c > '9')
+                return false;
+        }
+        const int v = t.toInt();
+        if (v <= 0 || v > (int)SepticController::kSepticCount)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
     static bool parseTankIdFromText_(const String &text, uint8_t &out)
     {
         const size_t len = text.length();
@@ -1660,6 +1994,24 @@ private:
             return parseTankIdFromText_(tail, out);
         }
         return parseTankIdFromText_(t, out);
+    }
+
+    static bool parseOnOff_(const String &text, bool &out)
+    {
+        String t = text;
+        t.trim();
+        t.toLowerCase();
+        if (t == "1" || t == "on" || t == "yes" || t == "true")
+        {
+            out = true;
+            return true;
+        }
+        if (t == "0" || t == "off" || t == "no" || t == "false")
+        {
+            out = false;
+            return true;
+        }
+        return false;
     }
 
     static bool startSocketAction_(TelegramBot &bot, const TelegramClient::Update &u, String &reply, uint8_t action)
@@ -1843,6 +2195,127 @@ private:
         }
         if (!any)
             out += F("\n  пусто");
+        return out;
+    }
+
+    String securityStatusText_() const
+    {
+        if (!_security)
+            return "Охрана недоступна";
+        String out = F("Охрана:\n");
+        out += F("  Контроллер: ");
+        out += _security->controllerEnabled() ? "включен" : "выключен";
+        out += F("\n  Статус: ");
+        out += _security->armed() ? "под охраной" : "снято";
+        out += F("\n  Тревога: ");
+        out += _security->alarmOn() ? "on" : "off";
+        out += F("\n  Сирена: ");
+        if (_security->sirenPort() != SecurityController::kInvalidPort)
+            out += String((unsigned)_security->sirenPort());
+        else
+            out += "none";
+        return out;
+    }
+
+    String septicStatusText_() const
+    {
+        if (!_septic)
+            return "Септик недоступен";
+        String out = F("Септик:\n");
+        out += F("  Контроллер: ");
+        out += _septic->controllerEnabled() ? "включен" : "выключен";
+        const auto *cfg = _septic->configByIndex(0);
+        const auto *st = _septic->stateByIndex(0);
+        if (cfg && st)
+        {
+            out += F("\n  Мониторинг: ");
+            out += cfg->monitoring_on ? "вкл" : "выкл";
+            out += F("\n  Warning: ");
+            out += st->warning ? "on" : "off";
+            out += F("\n  Alarm: ");
+            out += st->alarm ? "on" : "off";
+            out += F("\n  W port: ");
+            if (cfg->warning_port != SepticController::kInvalidPort)
+                out += String((unsigned)cfg->warning_port);
+            else
+                out += "none";
+            out += F("\n  A port: ");
+            if (cfg->alarm_port != SepticController::kInvalidPort)
+                out += String((unsigned)cfg->alarm_port);
+            else
+                out += "none";
+        }
+        return out;
+    }
+
+    String securityListTextHtml_() const
+    {
+        if (!_security)
+            return "Охрана недоступна";
+        String out = F("<b>Охрана:</b>\n");
+        out += F("ID  Type  Port  Silent  Detect  Name\n");
+        out += F("-----------------------------------\n");
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+            const auto *cfg = _security->configByIndex(i);
+            const auto *st = _security->stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            out += String((unsigned)cfg->id);
+            out += F("  ");
+            out += (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
+            out += F("  ");
+            if (cfg->port != SecurityController::kInvalidPort)
+                out += String((unsigned)cfg->port);
+            else
+                out += F("--");
+            out += F("  ");
+            out += cfg->silent ? "yes" : "no";
+            out += F("  ");
+            out += st->is_detect ? "yes" : "no";
+            out += F("  ");
+            if (cfg->name.length())
+                out += escapeHtml_(cfg->name);
+            out += F("\n");
+        }
+        return out;
+    }
+
+    String septicListTextHtml_() const
+    {
+        if (!_septic)
+            return "Септик недоступен";
+        String out = F("<b>Септик:</b>\n");
+        out += F("ID  Mon  Warn  Alarm  W.Port  A.Port  Name\n");
+        out += F("-----------------------------------------\n");
+        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        {
+            const auto *cfg = _septic->configByIndex(i);
+            const auto *st = _septic->stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            out += String((unsigned)cfg->id);
+            out += F("  ");
+            out += cfg->monitoring_on ? "on" : "off";
+            out += F("  ");
+            out += st->warning ? "on" : "off";
+            out += F("  ");
+            out += st->alarm ? "on" : "off";
+            out += F("  ");
+            if (cfg->warning_port != SepticController::kInvalidPort)
+                out += String((unsigned)cfg->warning_port);
+            else
+                out += F("--");
+            out += F("  ");
+            if (cfg->alarm_port != SepticController::kInvalidPort)
+                out += String((unsigned)cfg->alarm_port);
+            else
+                out += F("--");
+            out += F("  ");
+            if (cfg->name.length())
+                out += escapeHtml_(cfg->name);
+            out += F("\n");
+        }
         return out;
     }
 
@@ -2557,16 +3030,30 @@ private:
             self->buildTankLabels_(labels);
             return buildKeyboardMarkup_(labels);
         }
+        if (strcmp(menu.id, "septic") == 0)
+            return self->septicControlMarkup_();
+        if (strcmp(menu.id, "security") == 0)
+        {
+            return securityControlMarkup_();
+        }
         if (strcmp(menu.id, "device") == 0)
         {
             std::vector<String> labels;
-            labels.reserve(6);
+            labels.reserve(7);
             if (self->isAdminChat_(chat_id))
                 labels.push_back(F("Админка"));
-            labels.push_back(F("Розетки"));
-            labels.push_back(F("Метео"));
-            labels.push_back(F("Термо"));
-            labels.push_back(F("Баки"));
+            if (self->_sockets && self->_sockets->controllerEnabled())
+                labels.push_back(F("Розетки"));
+            if (self->_meteo && self->_meteo->controllerEnabled())
+                labels.push_back(F("Метео"));
+            if (self->_thermo && self->_thermo->controllerEnabled())
+                labels.push_back(F("Термо"));
+            if (self->_tanks && self->_tanks->controllerEnabled())
+                labels.push_back(F("Баки"));
+            if (self->_septic && self->_septic->controllerEnabled())
+                labels.push_back(F("Септик"));
+            if (self->_security && self->_security->controllerEnabled())
+                labels.push_back(F("Охрана"));
             labels.push_back(F("Назад"));
             return buildKeyboardMarkup_(labels);
         }
@@ -2671,6 +3158,46 @@ private:
         _bot->sendText(chat_id, list, markup, "HTML");
     }
 
+    void sendSepticMenu_(int64_t chat_id)
+    {
+        if (!_bot)
+            return;
+        if (!isLocalSelected_(chat_id))
+        {
+            _bot->sendText(chat_id, F("Список доступен только для локального устройства"));
+            return;
+        }
+        if (!_septic)
+        {
+            _bot->sendText(chat_id, F("Септик недоступен"));
+            return;
+        }
+        const String markup = septicControlMarkup_();
+        const String text = septicStatusText_();
+        _bot->setMenu(chat_id, "septic");
+        _bot->sendText(chat_id, text, markup);
+    }
+
+    void sendSecurityMenu_(int64_t chat_id)
+    {
+        if (!_bot)
+            return;
+        if (!isLocalSelected_(chat_id))
+        {
+            _bot->sendText(chat_id, F("Доступно только для локального устройства"));
+            return;
+        }
+        if (!_security)
+        {
+            _bot->sendText(chat_id, F("Охрана недоступна"));
+            return;
+        }
+        const String markup = securityControlMarkup_();
+        const String text = securityStatusText_();
+        _bot->setMenu(chat_id, "security");
+        _bot->sendText(chat_id, text, markup);
+    }
+
     void sendThermoDevice_(int64_t chat_id, uint8_t id)
     {
         if (!_bot)
@@ -2742,6 +3269,37 @@ private:
         labels.reserve(3);
         labels.push_back(F("Питание Вкл"));
         labels.push_back(F("Питание Выкл"));
+        labels.push_back(F("Назад"));
+        return buildKeyboardMarkup_(labels);
+    }
+
+    String septicControlMarkup_() const
+    {
+        std::vector<String> labels;
+        labels.reserve(4);
+        bool monitoring_on = true;
+        if (_septic)
+        {
+            const auto *cfg = _septic->configByIndex(0);
+            if (cfg)
+                monitoring_on = cfg->monitoring_on;
+        }
+        labels.push_back(F("Статус"));
+        labels.push_back(F("Список"));
+        labels.push_back(monitoring_on ? F("Мониторинг Выкл") : F("Мониторинг Вкл"));
+        labels.push_back(F("Назад"));
+        return buildKeyboardMarkup_(labels);
+    }
+
+    static String securityControlMarkup_()
+    {
+        std::vector<String> labels;
+        labels.reserve(6);
+        labels.push_back(F("Статус"));
+        labels.push_back(F("Взять под охрану"));
+        labels.push_back(F("Снять с охраны"));
+        labels.push_back(F("Список датчиков"));
+        labels.push_back(F("Сбросить детекты"));
         labels.push_back(F("Назад"));
         return buildKeyboardMarkup_(labels);
     }
@@ -3030,6 +3588,113 @@ private:
         }
         sendTankDevice_(u.chat_id, id);
         return true;
+    }
+
+    bool handleSepticSelection_(const TelegramClient::Update &u)
+    {
+        if (!_bot)
+            return false;
+        const char *menu_id = _bot->currentMenuId(u.chat_id);
+        if (!menu_id || strcmp(menu_id, "septic") != 0)
+            return false;
+        if (u.text.startsWith("/"))
+            return false;
+        if (u.text == F("Назад"))
+        {
+            _bot->enterMenu(u.chat_id, "device", adminPrefix_(u.chat_id));
+            return true;
+        }
+        if (!_septic)
+        {
+            _bot->sendText(u.chat_id, F("Септик недоступен"));
+            return true;
+        }
+        if (!isLocalSelected_(u.chat_id))
+        {
+            _bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
+            return true;
+        }
+        if (u.text == F("Статус"))
+        {
+            sendSepticMenu_(u.chat_id);
+            return true;
+        }
+        if (u.text == F("Список"))
+        {
+            const String text = septicListTextHtml_();
+            _bot->sendText(u.chat_id, text, "", "HTML");
+            return true;
+        }
+        if (u.text == F("Мониторинг Вкл") || u.text == F("Мониторинг Выкл"))
+        {
+            const auto *cfg = _septic->configByIndex(0);
+            if (!cfg)
+            {
+                _bot->sendText(u.chat_id, F("Септик не настроен"));
+                return true;
+            }
+            const bool on = (u.text == F("Мониторинг Вкл"));
+            _septic->setMonitoring(cfg->id, on);
+            sendSepticMenu_(u.chat_id);
+            return true;
+        }
+        return false;
+    }
+
+    bool handleSecuritySelection_(const TelegramClient::Update &u)
+    {
+        if (!_bot)
+            return false;
+        const char *menu_id = _bot->currentMenuId(u.chat_id);
+        if (!menu_id || strcmp(menu_id, "security") != 0)
+            return false;
+        if (u.text.startsWith("/"))
+            return false;
+        if (u.text == F("Назад"))
+        {
+            _bot->enterMenu(u.chat_id, "device", adminPrefix_(u.chat_id));
+            return true;
+        }
+        if (!_security)
+        {
+            _bot->sendText(u.chat_id, F("Охрана недоступна"));
+            return true;
+        }
+        if (!isLocalSelected_(u.chat_id))
+        {
+            _bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
+            return true;
+        }
+        if (u.text == F("Статус"))
+        {
+            sendSecurityMenu_(u.chat_id);
+            return true;
+        }
+        if (u.text == F("Взять под охрану"))
+        {
+            _security->arm();
+            sendSecurityMenu_(u.chat_id);
+            return true;
+        }
+        if (u.text == F("Снять с охраны"))
+        {
+            _security->disarm();
+            sendSecurityMenu_(u.chat_id);
+            return true;
+        }
+        if (u.text == F("Список датчиков"))
+        {
+            const String text = securityListTextHtml_();
+            _bot->sendText(u.chat_id, text, "", "HTML");
+            return true;
+        }
+        if (u.text == F("Сбросить детекты"))
+        {
+            _security->clearDetect();
+            sendSecurityMenu_(u.chat_id);
+            return true;
+        }
+        return false;
     }
 
     bool selectDevice_(int64_t chat_id, const String &label)

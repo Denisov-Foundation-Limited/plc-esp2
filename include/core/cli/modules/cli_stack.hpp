@@ -21,6 +21,7 @@
 #include "core/network/stack/stack_features.hpp"
 #include "core/network/stack/stack_protocol.hpp"
 #include "controllers/meteo_controller.hpp"
+#include "controllers/septic_controller.hpp"
 #include "controllers/socket_controller.hpp"
 #include "controllers/thermo_controller.hpp"
 #include "utils/configs_manager_iface.hpp"
@@ -74,6 +75,16 @@ public:
             handleThermoCmd_(cmd);
             return;
         }
+        if (cmd.startsWith("stack septic "))
+        {
+            handleSepticCmd_(cmd);
+            return;
+        }
+        if (cmd.startsWith("stack security "))
+        {
+            handleSecurityCmd_(cmd);
+            return;
+        }
         if (!cmd.startsWith("stack send "))
         {
             _c._io->println(F("Usage: stack nodes"));
@@ -84,6 +95,8 @@ public:
             _c._io->print(F("       stack thermo <unit> <on|off|toggle> <id>"));
             printThermoIdRangeInline_();
             _c._io->println();
+            _c._io->println(F("       stack security <unit> <arm|disarm|status|clear>"));
+            _c._io->println(F("       stack septic <unit> <status|get|monitor>"));
             return;
         }
         if (!_stack_master)
@@ -765,6 +778,207 @@ private:
             item["power"] = (action == "on");
 
         char payload[128] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+        {
+            _c._io->println(F("Serialize failed"));
+            return;
+        }
+        const bool ok = _stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                              (const uint8_t *)payload, len);
+        _c._io->println(ok ? F("OK") : F("Send failed"));
+    }
+
+    void handleSecurityCmd_(const String &cmd)
+    {
+        if (!_stack_master)
+        {
+            _c._io->println(F("Stack master unavailable"));
+            return;
+        }
+        if (_c._configs_manager &&
+            _c._configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
+        {
+            _c._io->println(F("Stack role is slave"));
+            return;
+        }
+        String rest = cmd.substring(strlen("stack security "));
+        rest.trim();
+        const int sp1 = rest.indexOf(' ');
+        if (sp1 <= 0)
+        {
+            _c._io->println(F("Usage: stack security <unit> <arm|disarm|status|clear>"));
+            return;
+        }
+        String unit_str = rest.substring(0, sp1);
+        String action = rest.substring(sp1 + 1);
+        action.trim();
+        action.toLowerCase();
+        if (action.length() == 0)
+        {
+            _c._io->println(F("Usage: stack security <unit> <arm|disarm|status|clear>"));
+            return;
+        }
+        uint32_t node_id = resolveUnitToNodeId_(unit_str);
+        if (node_id == 0)
+        {
+            _c._io->println(F("Unknown unit"));
+            return;
+        }
+        if (action != "arm" && action != "disarm" && action != "status" && action != "clear")
+        {
+            _c._io->println(F("Invalid action"));
+            return;
+        }
+
+        StaticJsonDocument<128> doc;
+        doc["cmd_id"] = nextStackCmdId_();
+        doc["feature"] = (uint8_t)StackFeature::Security;
+        if (action == "status")
+        {
+            doc["action"] = "status";
+        }
+        else
+        {
+            doc["action"] = "set";
+            JsonObject params = doc["params"].to<JsonObject>();
+            if (action == "arm")
+                params["armed"] = true;
+            else if (action == "disarm")
+                params["armed"] = false;
+            if (action == "clear")
+                params["clear"] = true;
+        }
+
+        char payload[128] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+        {
+            _c._io->println(F("Serialize failed"));
+            return;
+        }
+        const uint8_t type = (action == "status") ? (uint8_t)StackMsgType::CmdGet : (uint8_t)StackMsgType::CmdSet;
+        const bool ok = _stack_master->sendTo(node_id, type, (const uint8_t *)payload, len);
+        _c._io->println(ok ? F("OK") : F("Send failed"));
+    }
+
+    void handleSepticCmd_(const String &cmd)
+    {
+        if (!_stack_master)
+        {
+            _c._io->println(F("Stack master unavailable"));
+            return;
+        }
+        if (_c._configs_manager &&
+            _c._configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
+        {
+            _c._io->println(F("Stack role is slave"));
+            return;
+        }
+        String rest = cmd.substring(strlen("stack septic "));
+        rest.trim();
+        const int sp1 = rest.indexOf(' ');
+        if (sp1 <= 0)
+        {
+            _c._io->println(F("Usage: stack septic <unit> <status|get|monitor>"));
+            return;
+        }
+        String unit_str = rest.substring(0, sp1);
+        String tail = rest.substring(sp1 + 1);
+        tail.trim();
+        if (tail.length() == 0)
+        {
+            _c._io->println(F("Usage: stack septic <unit> <status|get|monitor>"));
+            return;
+        }
+        String action;
+        String args;
+        const int sp2 = tail.indexOf(' ');
+        if (sp2 < 0)
+            action = tail;
+        else
+        {
+            action = tail.substring(0, sp2);
+            args = tail.substring(sp2 + 1);
+            args.trim();
+        }
+        action.trim();
+        action.toLowerCase();
+        uint32_t node_id = resolveUnitToNodeId_(unit_str);
+        if (node_id == 0)
+        {
+            _c._io->println(F("Unknown unit"));
+            return;
+        }
+        if (action == "status" || action == "get")
+        {
+            StaticJsonDocument<96> doc;
+            doc["cmd_id"] = nextStackCmdId_();
+            doc["feature"] = (uint8_t)StackFeature::Septic;
+            doc["action"] = action;
+
+            char payload[96] = {};
+            const size_t len = serializeJson(doc, payload, sizeof(payload));
+            if (len == 0)
+            {
+                _c._io->println(F("Serialize failed"));
+                return;
+            }
+            const bool ok = _stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
+                                                  (const uint8_t *)payload, len);
+            _c._io->println(ok ? F("OK") : F("Send failed"));
+            return;
+        }
+        if (action != "monitor")
+        {
+            _c._io->println(F("Invalid action"));
+            return;
+        }
+        if (args.length() == 0)
+        {
+            _c._io->println(F("Usage: stack septic <unit> monitor <id> <on|off>"));
+            return;
+        }
+        const int sp3 = args.indexOf(' ');
+        if (sp3 <= 0)
+        {
+            _c._io->println(F("Usage: stack septic <unit> monitor <id> <on|off>"));
+            return;
+        }
+        String id_str = args.substring(0, sp3);
+        String val_str = args.substring(sp3 + 1);
+        id_str.trim();
+        val_str.trim();
+        const uint16_t id = (uint16_t)strtoul(id_str.c_str(), nullptr, 10);
+        if (id < 1 || id > SepticController::kSepticCount)
+        {
+            _c._io->print(F("Invalid septic id (1.."));
+            _c._io->print(SepticController::kSepticCount);
+            _c._io->println(F(")"));
+            return;
+        }
+        bool on = false;
+        String val = val_str;
+        val.toLowerCase();
+        if (val == "on" || val == "1" || val == "true" || val == "yes")
+            on = true;
+        else if (val == "off" || val == "0" || val == "false" || val == "no")
+            on = false;
+        else
+        {
+            _c._io->println(F("Invalid value"));
+            return;
+        }
+
+        StaticJsonDocument<96> doc;
+        doc["cmd_id"] = nextStackCmdId_();
+        doc["feature"] = (uint8_t)StackFeature::Septic;
+        doc["action"] = "set";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["id"] = id;
+        params["monitor"] = on;
+
+        char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
         {

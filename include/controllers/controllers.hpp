@@ -14,6 +14,8 @@
 #include <ArduinoJson.h>
 
 #include "controllers/meteo_controller.hpp"
+#include "controllers/septic_controller.hpp"
+#include "controllers/security_controller.hpp"
 #include "controllers/socket_controller.hpp"
 #include "controllers/tank_controller.hpp"
 #include "controllers/thermo_controller.hpp"
@@ -32,6 +34,8 @@ public:
           _meteo(ow),
           _thermo(gpio, _meteo, logs),
           _tanks(gpio, logs, tgbot, tgmenu),
+          _septic(gpio, logs, tgbot, tgmenu),
+          _security(gpio, ow, logs, tgbot, tgmenu),
           _storage(storage),
           _logs(logs)
     {
@@ -63,6 +67,18 @@ public:
             _logs.error(F("CTRL"), F("Tanks init failed"));
             return false;
         }
+        _logs.info(F("CTRL"), F("Septic init"));
+        if (!_septic.begin())
+        {
+            _logs.error(F("CTRL"), F("Septic init failed"));
+            return false;
+        }
+        _logs.info(F("CTRL"), F("Security init"));
+        if (!_security.begin())
+        {
+            _logs.error(F("CTRL"), F("Security init failed"));
+            return false;
+        }
         loadFromStorage_();
         return true;
     }
@@ -73,6 +89,8 @@ public:
         _meteo.task();
         _thermo.task();
         _tanks.task();
+        _septic.task();
+        _security.task();
         saveIfNeeded_();
     }
 
@@ -86,6 +104,10 @@ public:
             _thermo.setControllerEnabled(cfg["thermo_enabled"].as<bool>());
         if (cfg["tanks_enabled"].is<bool>())
             _tanks.setControllerEnabled(cfg["tanks_enabled"].as<bool>());
+        if (cfg["septic_enabled"].is<bool>())
+            _septic.setControllerEnabled(cfg["septic_enabled"].as<bool>());
+        if (cfg["security_enabled"].is<bool>())
+            _security.setControllerEnabled(cfg["security_enabled"].as<bool>());
         if (cfg["sockets"].is<JsonArrayConst>())
             _sockets.applyConfig(cfg["sockets"].as<JsonArrayConst>());
         if (cfg["meteo"].is<JsonArrayConst>())
@@ -94,6 +116,18 @@ public:
             _thermo.applyConfig(cfg["thermo"].as<JsonArrayConst>());
         if (cfg["tanks"].is<JsonArrayConst>())
             _tanks.applyConfig(cfg["tanks"].as<JsonArrayConst>());
+        if (cfg["septic"].is<JsonArrayConst>())
+            _septic.applyConfig(cfg["septic"].as<JsonArrayConst>());
+        if (cfg["security"].is<JsonArrayConst>())
+            _security.applyConfig(cfg["security"].as<JsonArrayConst>());
+        if (cfg["security_keys"].is<JsonArrayConst>())
+            _security.applyKeys(cfg["security_keys"].as<JsonArrayConst>());
+        if (cfg["security_siren"].is<unsigned>())
+        {
+            const unsigned raw = cfg["security_siren"].as<unsigned>();
+            if (raw <= 0xFFu)
+                _security.setSirenPort((uint8_t)raw);
+        }
     }
 
     void serialize(JsonObject out) const
@@ -110,6 +144,16 @@ public:
         out["tanks_enabled"] = _tanks.controllerEnabled();
         JsonArray tks = out["tanks"].to<JsonArray>();
         _tanks.serialize(tks);
+        out["septic_enabled"] = _septic.controllerEnabled();
+        JsonArray sep = out["septic"].to<JsonArray>();
+        _septic.serialize(sep);
+        out["security_enabled"] = _security.controllerEnabled();
+        JsonArray sec = out["security"].to<JsonArray>();
+        _security.serialize(sec);
+        JsonArray keys = out["security_keys"].to<JsonArray>();
+        _security.serializeKeys(keys);
+        if (_security.sirenPort() != SecurityController::kInvalidPort)
+            out["security_siren"] = (unsigned)_security.sirenPort();
     }
 
     SocketController &sockets() { return _sockets; }
@@ -120,6 +164,10 @@ public:
     const ThermoController &thermo() const { return _thermo; }
     TankController &tanks() { return _tanks; }
     const TankController &tanks() const { return _tanks; }
+    SepticController &septic() { return _septic; }
+    const SepticController &septic() const { return _septic; }
+    SecurityController &security() { return _security; }
+    const SecurityController &security() const { return _security; }
     void setSaveIntervalMs(uint32_t ms) { _save_interval_ms = ms; }
 
 private:
@@ -127,6 +175,8 @@ private:
     MeteoController _meteo;
     ThermoController _thermo;
     TankController _tanks;
+    SepticController _septic;
+    SecurityController _security;
     EepromStorage &_storage;
     Logger &_logs;
     uint32_t _last_save_ms = 0;
@@ -148,6 +198,9 @@ private:
         EepromStorage::TankSnapshot tanksnap;
         if (_storage.loadTanks(tanksnap))
             _tanks.applySnapshot(tanksnap.power_mask, EepromStorage::kTankMaskBytes);
+        EepromStorage::SecuritySnapshot ssnap;
+        if (_storage.loadSecurity(ssnap))
+            _security.applySnapshot(ssnap.armed);
     }
 
     void saveIfNeeded_()
@@ -180,7 +233,15 @@ private:
             if (_storage.saveTanks(tanksnap))
                 saved = true;
         }
+        if (_security.takeDirty())
+        {
+            EepromStorage::SecuritySnapshot ssnap;
+            _security.buildSnapshot(ssnap.armed);
+            if (_storage.saveSecurity(ssnap))
+                saved = true;
+        }
         if (saved)
             _last_save_ms = now;
     }
+
 };

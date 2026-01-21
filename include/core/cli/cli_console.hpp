@@ -36,6 +36,8 @@
 #include "core/cli/modules/cli_meteo.hpp"
 #include "core/cli/modules/cli_thermo.hpp"
 #include "core/cli/modules/cli_tank.hpp"
+#include "core/cli/modules/cli_security.hpp"
+#include "core/cli/modules/cli_septic.hpp"
 #include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
@@ -63,6 +65,8 @@ public:
     using CLIMeteo = CLIMeteoT<CliConsole>;
     using CLIThermo = CLIThermoT<CliConsole>;
     using CLITank = CLITankT<CliConsole>;
+    using CLISeptic = CLISepticT<CliConsole>;
+    using CLISecurity = CLISecurityT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
@@ -86,8 +90,11 @@ public:
           _meteo_cli(*this, controllers.meteo()),
           _thermo_cli(*this, controllers.thermo(), controllers.meteo()),
           _tank_cli(*this, controllers.tanks()),
+          _septic_cli(*this, controllers.septic()),
+          _security_cli(*this, controllers.security()),
           _enable(*this, _wifi_cli),
-          _config(*this, _wifi_cli, _tgbot_cli, _socket_cli, _meteo_cli, _thermo_cli, _tank_cli)
+          _config(*this, _wifi_cli, _tgbot_cli, _socket_cli, _meteo_cli, _thermo_cli, _tank_cli, _septic_cli,
+                  _security_cli)
     {
         _stack_cli.bind(stack_master);
     }
@@ -203,6 +210,8 @@ public:
     void enterConfigMeteo() { _mode = Mode::ConfigMeteo; printPrompt_(); }
     void enterConfigThermo() { _mode = Mode::ConfigThermo; printPrompt_(); }
     void enterConfigTank() { _mode = Mode::ConfigTank; printPrompt_(); }
+    void enterConfigSeptic() { _mode = Mode::ConfigSeptic; printPrompt_(); }
+    void enterConfigSecurity() { _mode = Mode::ConfigSecurity; printPrompt_(); }
     void logout()
     {
         _state = State::NeedUser;
@@ -691,7 +700,9 @@ private:
         ConfigSocket,
         ConfigMeteo,
         ConfigThermo,
-        ConfigTank
+        ConfigTank,
+        ConfigSeptic,
+        ConfigSecurity
     };
 
     enum class State : uint8_t
@@ -736,6 +747,14 @@ private:
             _io->print(F("  show tank <id>"));
             _tank_cli.printIdRangeInline();
             _io->println(F(" - tank details"));
+            _io->println(F("  show septic     - list septic"));
+            _io->print(F("  show septic <id>"));
+            _septic_cli.printIdRangeInline();
+            _io->println(F(" - septic details"));
+            _io->println(F("  show security   - list security sensors"));
+            _io->print(F("  show security <id>"));
+            _security_cli.printIdRangeInline();
+            _io->println(F(" - sensor details"));
             return;
         }
         if (t == "wifi")
@@ -773,6 +792,16 @@ private:
         if (t == "tank")
         {
             _tank_cli.printHelpContextLines();
+            return;
+        }
+        if (t == "septic")
+        {
+            _septic_cli.printHelpContextLines();
+            return;
+        }
+        if (t == "security")
+        {
+            _security_cli.printHelpContextLines();
             return;
         }
         if (t == "system")
@@ -813,9 +842,16 @@ private:
             "show thermo <id>",
             "show tanks",
             "show tank <id>",
+            "show septic",
+            "show septic <id>",
+            "show security",
+            "show security <id>",
             "socket toggle <id>",
             "socket on <id>",
             "socket off <id>",
+            "security status",
+            "security arm",
+            "security disarm",
             "ftest",
             "copy tftp://<ip>/firmware.bin firmware",
             "copy http://<ip>/firmware.bin firmware",
@@ -823,6 +859,8 @@ private:
             "stack send <id> <get|set> <json>",
             "stack socket <unit> <on|off|toggle> <id>",
             "stack thermo <unit> <on|off|toggle> <id>",
+            "stack septic <unit> <status|get>",
+            "stack security <unit> <arm|disarm|status|clear>",
             "wifi restart",
             "reload",
             "reset",
@@ -843,7 +881,9 @@ private:
             "help socket",
             "help meteo",
             "help thermo",
-            "help tank"};
+            "help tank",
+            "help septic",
+            "help security"};
         static const size_t kEnableCmdsCount = sizeof(kEnableCmds) / sizeof(kEnableCmds[0]);
 
         static const char *const kConfigCmds[] = {
@@ -858,6 +898,8 @@ private:
             "meteo",
             "thermo",
             "tank",
+            "septic",
+            "security",
             "exit",
             "end",
             "help",
@@ -869,7 +911,9 @@ private:
             "help socket",
             "help meteo",
             "help thermo",
-            "help tank"};
+            "help tank",
+            "help septic",
+            "help security"};
         static const size_t kConfigCmdsCount = sizeof(kConfigCmds) / sizeof(kConfigCmds[0]);
 
         static const char *const kConfigWifiCmds[] = {
@@ -887,7 +931,8 @@ private:
             "help show",
             "help wifi",
             "help user",
-            "help system"};
+            "help system",
+            "help security"};
         static const size_t kConfigWifiCmdsCount = sizeof(kConfigWifiCmds) / sizeof(kConfigWifiCmds[0]);
 
         static const char *const kConfigTgbotCmds[] = {
@@ -909,7 +954,8 @@ private:
             "help wifi",
             "help user",
             "help system",
-            "help tgbot"};
+            "help tgbot",
+            "help security"};
         static const size_t kConfigTgbotCmdsCount = sizeof(kConfigTgbotCmds) / sizeof(kConfigTgbotCmds[0]);
 
         static const char *const kConfigTimeCmds[] = {
@@ -919,7 +965,8 @@ private:
             "show",
             "exit",
             "end",
-            "help"};
+            "help",
+            "help security"};
         static const size_t kConfigTimeCmdsCount = sizeof(kConfigTimeCmds) / sizeof(kConfigTimeCmds[0]);
 
         static const char *const kConfigSocketCmds[] = {
@@ -932,7 +979,8 @@ private:
             "relay <id> <port|none>",
             "exit",
             "end",
-            "help"};
+            "help",
+            "help security"};
         static const size_t kConfigSocketCmdsCount = sizeof(kConfigSocketCmds) / sizeof(kConfigSocketCmds[0]);
 
         static const char *const kConfigMeteoCmds[] = {
@@ -945,7 +993,8 @@ private:
             "pin <id> <pin|none>",
             "exit",
             "end",
-            "help"};
+            "help",
+            "help security"};
         static const size_t kConfigMeteoCmdsCount = sizeof(kConfigMeteoCmds) / sizeof(kConfigMeteoCmds[0]);
 
         static const char *const kConfigThermoCmds[] = {
@@ -962,7 +1011,8 @@ private:
             "button <id> <port|none>",
             "exit",
             "end",
-            "help"};
+            "help",
+            "help security"};
         static const size_t kConfigThermoCmdsCount = sizeof(kConfigThermoCmds) / sizeof(kConfigThermoCmds[0]);
 
         static const char *const kConfigTankCmds[] = {
@@ -980,8 +1030,42 @@ private:
             "alarm <id> <port|none>",
             "exit",
             "end",
-            "help"};
+            "help",
+            "help security"};
         static const size_t kConfigTankCmdsCount = sizeof(kConfigTankCmds) / sizeof(kConfigTankCmds[0]);
+
+        static const char *const kConfigSepticCmds[] = {
+            "show",
+            "show <id>",
+            "enable <id>",
+            "disable <id>",
+            "name <id> <value>",
+            "warning <id> <port|none>",
+            "alarm <id> <port|none>",
+            "relay_warn <id> <port|none>",
+            "relay_alarm <id> <port|none>",
+            "exit",
+            "end",
+            "help"};
+        static const size_t kConfigSepticCmdsCount = sizeof(kConfigSepticCmds) / sizeof(kConfigSepticCmds[0]);
+
+        static const char *const kConfigSecurityCmds[] = {
+            "show",
+            "show <id>",
+            "enable <id>",
+            "disable <id>",
+            "type <id> <pir|reed>",
+            "port <id> <port|none>",
+            "name <id> <text>",
+            "siren <port|none>",
+            "keys list",
+            "key add <hex16>",
+            "key del <hex16>",
+            "key clear",
+            "exit",
+            "end",
+            "help"};
+        static const size_t kConfigSecurityCmdsCount = sizeof(kConfigSecurityCmds) / sizeof(kConfigSecurityCmds[0]);
 
         const char *const *cmds = nullptr;
         size_t count = 0;
@@ -1022,6 +1106,14 @@ private:
         case Mode::ConfigTank:
             cmds = kConfigTankCmds;
             count = kConfigTankCmdsCount;
+            break;
+        case Mode::ConfigSeptic:
+            cmds = kConfigSepticCmds;
+            count = kConfigSepticCmdsCount;
+            break;
+        case Mode::ConfigSecurity:
+            cmds = kConfigSecurityCmds;
+            count = kConfigSecurityCmdsCount;
             break;
         case Mode::User:
             cmds = kEnableCmds;
@@ -1312,6 +1404,38 @@ private:
             else
                 _tank_cli.showTank(id);
         }
+        else if (eq_(what, "septic"))
+            _septic_cli.showSeptic();
+        else if (startsWith_(what, "septic "))
+        {
+            String tail = what.substring(7);
+            tail.trim();
+            uint16_t id = 0;
+            if (!parseUint_(tail, id))
+            {
+                _io->print(F("Usage: show septic <id>"));
+                _septic_cli.printIdRangeInline();
+                _io->println();
+            }
+            else
+                _septic_cli.showSeptic(id);
+        }
+        else if (eq_(what, "security"))
+            _security_cli.showSensors();
+        else if (startsWith_(what, "security "))
+        {
+            String tail = what.substring(9);
+            tail.trim();
+            uint16_t id = 0;
+            if (!parseUint_(tail, id))
+            {
+                _io->print(F("Usage: show security <id>"));
+                _security_cli.printIdRangeInline();
+                _io->println();
+            }
+            else
+                _security_cli.showSensor(id);
+        }
         else
             _io->println(F("Unknown show"));
         printPrompt_();
@@ -1390,6 +1514,12 @@ private:
             break;
         case Mode::ConfigTank:
             _config.handleTankContext(line);
+            break;
+        case Mode::ConfigSeptic:
+            _config.handleSepticContext(line);
+            break;
+        case Mode::ConfigSecurity:
+            _config.handleSecurityContext(line);
             break;
         case Mode::User:
             _enable.handle(line);
@@ -1498,6 +1628,12 @@ private:
             break;
         case Mode::ConfigTank:
             _io->print(F("plc(config-tank)# "));
+            break;
+        case Mode::ConfigSeptic:
+            _io->print(F("plc(config-septic)# "));
+            break;
+        case Mode::ConfigSecurity:
+            _io->print(F("plc(config-security)# "));
             break;
         }
     }
@@ -1804,6 +1940,8 @@ private:
     CLIMeteo _meteo_cli;
     CLIThermo _thermo_cli;
     CLITank _tank_cli;
+    CLISeptic _septic_cli;
+    CLISecurity _security_cli;
     CLIEnable _enable;
     CLIConfig _config;
     uint32_t _tgbot_last_update_id = 0;
@@ -2299,6 +2437,10 @@ private:
     friend class CLIThermoT;
     template <typename>
     friend class CLITankT;
+    template <typename>
+    friend class CLISepticT;
+    template <typename>
+    friend class CLISecurityT;
 
 public:
     void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }

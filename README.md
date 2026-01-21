@@ -1,4 +1,4 @@
-# plc-esp2
+﻿# plc-esp2
 Programmable Logic Controller for ESP microcontrollers
 <br>
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg1.png" width=300 />
@@ -67,200 +67,226 @@ plc#
 
 ## CLI Commands
 
-Команды сгруппированы по режимам/контекстам. Используйте `help` или `?` для текущего режима, либо `help <topic>` для конкретной темы.
+Подсказка: используйте `help` или `?` для списка команд, `help <topic>` для справки по теме.
 
-### Режим enable (`plc#`)
+### Enable (`plc#`)
 
 - `show plc` - состояние вентилятора и температура платы
 - `show board` - имя профиля платы
 - `show wifi` - конфигурация Wi-Fi
 - `show time` - дата/время RTC
-- `show i2c` - список устройств I2C
-- `show ow` - список устройств OneWire
-- `show stack` - настройки роли stack
+- `show i2c` - список I2C устройств
+- `show ow` - список OneWire устройств
+- `show stack` - настройки stack роли
 - `show telegram` - настройки Telegram
 - `show config` - содержимое конфигурационного файла
-- `show port <id>` - параметры порта
+- `show port <id>` - детали порта
 - `show ports` - список портов
 - `show sockets` - список розеток
-- `show socket <id>` - параметры розетки
+- `show socket <id>` - детали розетки
 - `show meteo` - список датчиков meteo
-- `show meteo <id>` - параметры датчика
-- `show thermo` - список устройств thermo
-- `show thermo <id>` - параметры устройства
+- `show meteo <id>` - детали датчика
+- `show thermo` - список термоустройств
+- `show thermo <id>` - детали устройства
 - `show tanks` - список баков
-- `show tank <id>` - параметры бака
-- `show ext` - список расширителей
+- `show tank <id>` - детали бака
+- `show septic` - список септика
+- `show septic <id>` - детали септика
+- `show security` - список датчиков охраны
+- `show security <id>` - детали датчика
 - `socket toggle <id>` - переключить реле розетки
 - `socket on <id>` - включить реле
 - `socket off <id>` - выключить реле
-- `ftest` - запуск функционального теста
+- `security status` - статус охраны
+- `security arm` - постановка под охрану
+- `security disarm` - снятие с охраны
+- `ftest` - функциональный тест
 - `copy tftp://<ip>/firmware.bin firmware` - обновление прошивки
 - `copy http://<ip>/firmware.bin firmware` - обновление прошивки
-- `stack nodes` - список узлов stack
-- `stack send <id> <get|set> <json>` - отправка команды stack
-- `stack socket <unit> <on|off|toggle> <id>` - управление розеткой
-- `stack thermo <unit> <on|off|toggle> <id>` - управление устройством thermo
+- `stack nodes` - список узлов стека
+- `stack send <id> <get|set> <json>` - отправить команду в стек
+- `stack socket <unit> <on|off|toggle> <id>` - управление розетками стека
+- `stack thermo <unit> <on|off|toggle> <id>` - управление термо в стеке
+- `stack septic <unit> <status|get>` - статус/список септика в стеке
+- `stack septic <unit> monitor <id> <on|off>` - мониторинг септика в стеке
+- `stack security <unit> <arm|disarm|status|clear>` - управление охраной в стеке
 - `wifi restart` - перезапуск Wi-Fi
 - `reload` - перезапуск контроллера
 - `reset` - перезапуск контроллера
 - `write` - сохранить конфигурацию
 - `erase` - удалить конфигурацию
 - `ext scan` - пересканировать расширители
+- `show ext` - список расширителей
 - `configure terminal` - вход в режим config
 - `conf t` - вход в режим config
 - `disable` - завершить сессию
 - `logout` - завершить сессию
 - `exit` - завершить сессию
-- `help` - помощь для текущего режима
-- `?` - помощь для текущего режима
-- `help show` - помощь по командам "show"
-- `help wifi` - помощь по командам Wi-Fi
-- `help user` - помощь по административным командам
-- `help system` - помощь по системным командам
-- `help tgbot` - помощь по командам Telegram
-- `help socket` - помощь по командам socket
-- `help meteo` - помощь по командам meteo
-- `help thermo` - помощь по командам thermo
-- `help tank` - помощь по командам tank
+- `help` / `?` - список команд
+- `help <topic>` - справка (show, wifi, user, system, tgbot, socket, meteo, thermo, tank, septic, security)
 
-### Режим config (`plc(config)#`)
+### Config (`plc(config)#`)
 
-- `password <pass>` - задать пароль администратора
-- `admin password <pass>` - задать пароль администратора
-- `stack role <master|slave>` - установить роль устройства
-- `stack master <host>` - установить хост/IP мастера
+- `password <pass>` - установить пароль администратора
+- `admin password <pass>` - установить пароль администратора
+- `stack role <master|slave>` - роль устройства в стеке
+- `stack master <host>` - адрес мастера стека
 - `wifi` - вход в контекст Wi-Fi
-- `wifi ssid <value>` - задать SSID для STA
-- `wifi password <value>` - задать пароль для STA
-- `wifi ap on|off` - включить/выключить AP
-- `wifi ap_ssid <value>` - задать SSID для AP
-- `wifi ap_password <value>` - задать пароль для AP
-- `wifi restart` - перезапуск Wi-Fi
 - `tgbot` - вход в контекст Telegram
 - `time` - вход в контекст времени
 - `socket` - вход в контекст розеток
 - `meteo` - вход в контекст meteo
-- `thermo` - вход в контекст thermo
+- `thermo` - вход в контекст термо
 - `tank` - вход в контекст баков
-- `exit` - возврат в enable
-- `end` - возврат в enable
-- `help` - помощь для текущего режима
-- `?` - помощь для текущего режима
-- `help <topic>` - помощь по теме (`show`, `wifi`, `user`, `system`, `tgbot`, `socket`, `meteo`, `thermo`, `tank`)
+- `septic` - вход в контекст септика
+- `security` - вход в контекст охраны
+- `exit` - выход в enable
+- `end` - выход в enable
+- `help` / `?` - список команд
+- `help <topic>` - справка по теме
 
-### Контекст Wi-Fi (`plc(config-wifi)#`)
+### Wi-Fi (`plc(config-wifi)#`)
 
-- `ssid <value>` - задать SSID для STA
-- `password <value>` - задать пароль для STA
+- `ssid <value>` - установить STA SSID
+- `password <value>` - установить STA пароль
 - `ap on|off` - включить/выключить AP
-- `ap_ssid <value>` - задать SSID для AP
-- `ap_password <value>` - задать пароль для AP
+- `ap_ssid <value>` - установить AP SSID
+- `ap_password <value>` - установить AP пароль
 - `restart` - перезапуск Wi-Fi
-- `show` - показать конфигурацию Wi-Fi
-- `exit` - возврат в config
-- `end` - возврат в enable
-- `help` - помощь для текущего режима
-- `?` - помощь для текущего режима
-- `help <topic>` - помощь по теме
+- `show` - показать настройки Wi-Fi
+- `exit` - выход в config
+- `end` - выход в enable
+- `help` / `?` - список команд
+- `help <topic>` - справка по теме
 
-### Контекст Telegram (`plc(config-tgbot)#`)
+### Telegram (`plc(config-tgbot)#`)
 
-- `token <value>` - задать токен бота
-- `chat <id>` - задать chat id
+- `token <value>` - токен бота
+- `chat <id>` - chat id
 - `insecure on|off` - проверка TLS
-- `allow list` - показать список разрешенных пользователей
+- `allow list` - список разрешенных пользователей
 - `allow add <username> [chat_id] [admin] [notify] [off]` - добавить пользователя
 - `allow del <username>` - удалить пользователя
 - `allow clear` - очистить список
 - `send <text>` - отправить сообщение
 - `poll` - опрос команд
 - `show` - показать настройки
-- `exit` - возврат в config
-- `end` - возврат в enable
-- `help` - помощь для текущего режима
-- `?` - помощь для текущего режима
-- `help <topic>` - помощь по теме
+- `exit` - выход в config
+- `end` - выход в enable
+- `help` / `?` - список команд
+- `help <topic>` - справка по теме
 
-### Контекст времени (`plc(config-time)#`)
+### Time (`plc(config-time)#`)
 
-- `date <YYYY-MM-DD>` - задать дату
-- `time <HH:MM:SS>` - задать время
-- `set <YYYY-MM-DD> <HH:MM:SS>` - задать дату/время
+- `date <YYYY-MM-DD>` - установить дату
+- `time <HH:MM:SS>` - установить время
+- `set <YYYY-MM-DD> <HH:MM:SS>` - установить дату и время
 - `show` - показать время RTC
-- `exit` - возврат в config
-- `end` - возврат в enable
-- `help` - помощь для текущего режима
-- `?` - помощь для текущего режима
-- `help <topic>` - помощь по теме
+- `exit` - выход в config
+- `end` - выход в enable
+- `help` / `?` - список команд
+- `help <topic>` - справка по теме
 
-### Контекст socket (`plc(config-socket)#`)
+### Socket (`plc(config-socket)#`)
 
 - `show` - список розеток
-- `show <id>` - параметры розетки
+- `show <id>` - детали розетки
 - `enable <id>` - включить розетку
-- `disable <id>` - отключить розетку
-- `name <id> <value>` - задать имя розетки
-- `button <id> <port|none>` - задать порт кнопки
-- `relay <id> <port|none>` - задать порт реле
-- `exit` - возврат в config
-- `end` - возврат в enable
-- `help` - помощь для текущего режима
-- `?` - помощь для текущего режима
-- `help <topic>` - помощь по теме
+- `disable <id>` - выключить розетку
+- `name <id> <value>` - имя розетки
+- `button <id> <port|none>` - порт кнопки
+- `relay <id> <port|none>` - порт реле
+- `exit` - выход в config
+- `end` - выход в enable
+- `help` / `?` - список команд
+- `help <topic>` - справка по теме
 
-### Контекст meteo (`plc(config-meteo)#`)
+### Meteo (`plc(config-meteo)#`)
 
-- `show` - список датчиков meteo
-- `show <id>` - параметры датчика
-- `name <id> <text>` - задать имя датчика
+- `show` - список датчиков
+- `show <id>` - детали датчика
+- `name <id> <text>` - имя датчика
 - `enable <id>` - включить датчик
-- `disable <id>` - отключить датчик
-- `type <id> <none|ds18b20|dht22>` - задать тип датчика
-- `addr <id> <hex|none>` - задать адрес DS18B20
-- `pin <id> <pin|none>` - задать пин DHT22
-- `exit` - возврат в config
-- `end` - возврат в enable
-- `help` - помощь для текущего режима
-- `?` - помощь для текущего режима
-- `help <topic>` - помощь по теме
+- `disable <id>` - выключить датчик
+- `type <id> <none|ds18b20|dht22>` - тип датчика
+- `addr <id> <hex|none>` - адрес DS18B20
+- `pin <id> <pin|none>` - пин DHT22
+- `exit` - выход в config
+- `end` - выход в enable
+- `help` / `?` - список команд
+- `help <topic>` - справка по теме
 
-### Контекст thermo (`plc(config-thermo)#`)
+### Thermo (`plc(config-thermo)#`)
 
-- `show` - список устройств thermo
-- `show <id>` - параметры устройства
-- `name <id> <text>` - задать имя устройства
+- `show` - список устройств
+- `show <id>` - детали устройства
+- `name <id> <text>` - имя устройства
 - `enable <id>` - включить устройство
-- `disable <id>` - отключить устройство
-- `mode <id> <off|heat|cool|auto>` - задать режим
-- `sensor <id> <sensor|none>` - задать датчик meteo
-- `target <id> <temp>` - задать целевую температуру
-- `hyst <id> <temp>` - задать гистерезис
-- `heat <id> <port|none>` - задать порт реле нагрева
-- `cool <id> <port|none>` - задать порт реле охлаждения
-- `button <id> <port|none>` - задать порт кнопки
-- `exit` - возврат в config
-- `end` - возврат в enable
-- `help` - помощь для текущего режима
-- `?` - помощь для текущего режима
-- `help <topic>` - помощь по теме
+- `disable <id>` - выключить устройство
+- `mode <id> <off|heat|cool|auto>` - режим
+- `sensor <id> <sensor|none>` - датчик meteo
+- `target <id> <temp>` - целевая температура
+- `hyst <id> <temp>` - гистерезис
+- `heat <id> <port|none>` - порт нагрева
+- `cool <id> <port|none>` - порт охлаждения
+- `button <id> <port|none>` - порт кнопки
+- `exit` - выход в config
+- `end` - выход в enable
+- `help` / `?` - список команд
+- `help <topic>` - справка по теме
 
-### Контекст tank (`plc(config-tank)#`)
+### Tank (`plc(config-tank)#`)
 
 - `show` - список баков
-- `show <id>` - параметры бака
-- `name <id> <text>` - задать имя бака
+- `show <id>` - детали бака
+- `name <id> <text>` - имя бака
 - `enable <id>` - включить бак
-- `disable <id>` - отключить бак
-- `power <id> <0|1>` - включение питания
-- `low <id> <port|none>` - задать вход низкого уровня
-- `mid <id> <port|none>` - задать вход среднего уровня
-- `full <id> <port|none>` - задать вход высокого уровня
-- `valve <id> <port|none>` - задать реле клапана
-- `pump <id> <port|none>` - задать реле насоса
-- `alarm <id> <port|none>` - задать реле тревоги
-- `exit` - возврат в config
-- `end` - возврат в enable
-- `help` - помощь для текущего режима
-- `?` - помощь для текущего режима
-- `help <topic>` - помощь по теме
+- `disable <id>` - выключить бак
+- `power <id> <0|1>` - питание
+- `low <id> <port|none>` - нижний уровень
+- `mid <id> <port|none>` - средний уровень
+- `full <id> <port|none>` - полный уровень
+- `valve <id> <port|none>` - реле клапана
+- `pump <id> <port|none>` - реле насоса
+- `alarm <id> <port|none>` - реле аварии
+- `exit` - выход в config
+- `end` - выход в enable
+- `help` / `?` - список команд
+- `help <topic>` - справка по теме
+
+### Septic (`plc(config-septic)#`)
+
+- `show` - список септиков
+- `show <id>` - детали
+- `name <id> <text>` - имя
+- `enable <id>` - включить
+- `disable <id>` - выключить
+- `warning <id> <port|none>` - вход предупреждения
+- `alarm <id> <port|none>` - вход тревоги
+- `relay_warn <id> <port|none>` - реле предупреждения
+- `relay_alarm <id> <port|none>` - реле тревоги
+- `monitor <id> <on|off>` - мониторинг
+- `exit` - выход в config
+- `end` - выход в enable
+- `help` / `?` - список команд
+- `help <topic>` - справка по теме
+
+### Security (`plc(config-security)#`)
+
+- `show` - список датчиков
+- `show <id>` - детали датчика
+- `enable <id>` - включить датчик
+- `disable <id>` - выключить датчик
+- `type <id> <pir|reed>` - тип датчика
+- `port <id> <port|none>` - порт датчика
+- `name <id> <text>` - имя датчика
+- `silent <id> <on|off>` - тихий режим
+- `siren <port|none>` - порт сирены
+- `keys list` - список ключей iButton
+- `key add <hex16>` - добавить ключ iButton
+- `key del <hex16>` - удалить ключ iButton
+- `key clear` - очистить список ключей
+- `exit` - выход в config
+- `end` - выход в enable
+- `help` / `?` - список команд
+- `help <topic>` - справка по теме
