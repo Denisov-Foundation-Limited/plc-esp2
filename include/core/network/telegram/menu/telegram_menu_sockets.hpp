@@ -1,0 +1,276 @@
+/**********************************************************************/
+/*                                                                    */
+/* Programmable Logic Controller for ESP microcontrollers             */
+/*                                                                    */
+/* Copyright (C) 2026 Denisov Foundation Limited                      */
+/* License: GPLv3                                                     */
+/* Written by Sergey Denisov aka LittleBuster                         */
+/* Email: DenisovFoundationLtd@gmail.com                              */
+/*                                                                    */
+/**********************************************************************/
+
+#pragma once
+
+class TelegramMenuSockets
+{
+public:
+    static bool cmdSockets_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        (void)reply;
+        if (!TelegramMenu::_self)
+            return false;
+        if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
+            return true;
+        TelegramMenuSockets::sendSocketMenu_(*TelegramMenu::_self, u.chat_id);
+        return true;
+    }
+
+    static bool cmdSocketList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        if (!TelegramMenu::_self)
+            return false;
+        if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
+            return true;
+        if (!TelegramMenu::_self->_sockets)
+        {
+            reply = "Розетки недоступны";
+            return true;
+        }
+        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
+        {
+            reply = "Список доступен только для локального устройства";
+            return true;
+        }
+        const String text = TelegramMenuSockets::socketListTextHtml_(*TelegramMenu::_self);
+        bot.sendText(u.chat_id, text, "", "HTML");
+        return true;
+    }
+
+    static bool cmdSocketOn_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        return TelegramMenuSockets::startSocketAction_(*TelegramMenu::_self, bot, u, reply, 1);
+    }
+
+    static bool cmdSocketOff_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        return TelegramMenuSockets::startSocketAction_(*TelegramMenu::_self, bot, u, reply, 2);
+    }
+
+    static bool cmdSocketToggle_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        return TelegramMenuSockets::startSocketAction_(*TelegramMenu::_self, bot, u, reply, 3);
+    }
+
+    static bool startSocketAction_(TelegramMenu &self, TelegramBot &bot, const TelegramClient::Update &u, String &reply, uint8_t action)
+    {
+        if (!TelegramMenu::_self)
+            return false;
+        if (!TelegramMenu::requireAdmin_(self, bot, u, reply))
+            return true;
+        TelegramMenu::ChatAuth *st = self.ensureAuth_(u.chat_id);
+        if (!st)
+            return false;
+        st->awaiting_socket = true;
+        st->socket_action = action;
+        String msg = String("Введите ID розетки (1..") + String(SocketController::kSocketCount) + "):";
+        bot.sendText(u.chat_id, msg);
+        return true;
+    }
+
+    static void buildSocketLabels_(TelegramMenu &self, std::vector<String> &out)
+    {
+        out.clear();
+        if (!self._sockets)
+            out.reserve(1);
+        else
+            out.reserve(SocketController::kSocketCount + 1);
+        if (self._sockets)
+        {
+            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+            {
+                const auto *cfg = self._sockets->configByIndex(i);
+                if (!cfg || !cfg->enabled)
+                    continue;
+                String label;
+                if (cfg->name.length())
+                {
+                    label += String((unsigned)cfg->id);
+                    label += ": ";
+                    label += cfg->name;
+                }
+                else
+                {
+                    label += F("Socket ");
+                    label += String((unsigned)cfg->id);
+                }
+                out.push_back(label);
+            }
+        }
+        out.push_back(F("Назад"));
+    }
+
+    static String socketListTextHtml_(TelegramMenu &self)
+    {
+        String out = F("<b>Розетки:</b>");
+        out.reserve(512);
+        if (!self._sockets)
+        {
+            out += F("\n  недоступны");
+            return out;
+        }
+        bool any = false;
+        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+        {
+            const auto *cfg = self._sockets->configByIndex(i);
+            const auto *st = self._sockets->stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            any = true;
+            out += "\n  ";
+            out += st->relay_on ? F("?? ") : F("? ");
+            out += String((unsigned)cfg->id);
+            out += ": ";
+            if (cfg->name.length())
+            {
+                out += "<b>";
+                out += self.escapeHtml_(cfg->name);
+                out += "</b>";
+            }
+            else
+                out += "-";
+        }
+        if (!any)
+            out += F("\n  пусто");
+        return out;
+    }
+
+    static void sendSocketMenu_(TelegramMenu &self, int64_t chat_id)
+    {
+        if (!self._bot)
+            return;
+        if (!self.isLocalSelected_(chat_id))
+        {
+            self._bot->sendText(chat_id, F("Список доступен только для локального устройства"));
+            return;
+        }
+        TelegramMenu::ChatAuth *st = self.ensureAuth_(chat_id);
+        if (st)
+        {
+            st->awaiting_socket = false;
+            st->socket_action = 0;
+        }
+        std::vector<String> labels;
+        TelegramMenuSockets::buildSocketLabels_(self, labels);
+        const String markup = TelegramMenu::buildKeyboardMarkup_(labels);
+        const String list = TelegramMenuSockets::socketListTextHtml_(self);
+        self._bot->setMenu(chat_id, "sockets");
+        self._bot->sendText(chat_id, list, markup, "HTML");
+    }
+
+    static bool handleSocketToggleSelection_(TelegramMenu &self, const TelegramClient::Update &u)
+    {
+        if (!self._bot)
+            return false;
+        const char *menu_id = self._bot->currentMenuId(u.chat_id);
+        if (!menu_id || strcmp(menu_id, "sockets") != 0)
+            return false;
+        if (u.text == F("Назад"))
+        {
+            self._bot->enterMenu(u.chat_id, "device", self.adminPrefix_(u.chat_id));
+            return true;
+        }
+        uint8_t id = 0;
+        if (!TelegramMenuSockets::parseSocketLabel_(u.text, id))
+        {
+            self._bot->sendText(u.chat_id, F("Неизвестная розетка"));
+            return true;
+        }
+        if (!self._sockets)
+        {
+            self._bot->sendText(u.chat_id, F("Розетки недоступны"));
+            return true;
+        }
+        if (!self.isLocalSelected_(u.chat_id))
+        {
+            self._bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
+            return true;
+        }
+        if (!self._sockets->toggleRelayById(id))
+        {
+            self._bot->sendText(u.chat_id, F("Не удалось"));
+            return true;
+        }
+        TelegramMenuSockets::sendSocketMenu_(self, u.chat_id);
+        return true;
+    }
+
+    static bool parseSocketIdFromText_(const String &text, uint8_t &out)
+    {
+        const size_t len = text.length();
+        if (len == 0)
+            return false;
+        int start = -1;
+        int end = -1;
+        for (size_t i = 0; i < len; ++i)
+        {
+            const char c = text.charAt(i);
+            if (c >= '0' && c <= '9')
+            {
+                if (start < 0)
+                    start = (int)i;
+                end = (int)i + 1;
+            }
+            else if (start >= 0)
+            {
+                break;
+            }
+        }
+        if (start < 0 || end <= start)
+            return false;
+        String num = text.substring(start, end);
+        return TelegramMenuSockets::parseSocketId_(num, out);
+    }
+
+    static bool parseSocketId_(const String &text, uint8_t &out)
+    {
+        String t = text;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        for (size_t i = 0; i < t.length(); ++i)
+        {
+            const char c = t[i];
+            if (c < '0' || c > '9')
+                return false;
+        }
+        const int v = t.toInt();
+        if (v <= 0 || v > (int)SocketController::kSocketCount)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
+    static bool parseSocketLabel_(const String &text, uint8_t &out)
+    {
+        String t = text;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        int colon = t.indexOf(':');
+        if (colon > 0)
+        {
+            String head = t.substring(0, colon);
+            head.trim();
+            return TelegramMenuSockets::parseSocketIdFromText_(head, out);
+        }
+        String low = t;
+        low.toLowerCase();
+        if (low.startsWith("socket"))
+        {
+            String tail = t.substring(6);
+            tail.trim();
+            return TelegramMenuSockets::parseSocketIdFromText_(tail, out);
+        }
+        return TelegramMenuSockets::parseSocketIdFromText_(t, out);
+    }
+};

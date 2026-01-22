@@ -1174,6 +1174,8 @@ private:
             page.replace("%SEPTIC_RELAY_USED_JSON%", "[]");
             page.replace("%SEPTIC_WARN_CLASS%", "status-off");
             page.replace("%SEPTIC_ALARM_CLASS%", "status-off");
+            page.replace("%SEPTIC_RELAY_WARN_CLASS%", "status-off");
+            page.replace("%SEPTIC_RELAY_ALARM_CLASS%", "status-off");
             page.replace("%SEPTIC_WARN_LABEL%", "off");
             page.replace("%SEPTIC_ALARM_LABEL%", "off");
             page.replace("%SEPTIC_RELAY_WARN_LABEL%", "off");
@@ -1214,6 +1216,8 @@ private:
             }
             page.replace("%SEPTIC_WARN_CLASS%", warn ? "status-on" : "status-off");
             page.replace("%SEPTIC_ALARM_CLASS%", alarm ? "status-on" : "status-off");
+            page.replace("%SEPTIC_RELAY_WARN_CLASS%", relay_warn ? "status-on" : "status-off");
+            page.replace("%SEPTIC_RELAY_ALARM_CLASS%", relay_alarm ? "status-on" : "status-off");
             page.replace("%SEPTIC_WARN_LABEL%", warn ? "on" : "off");
             page.replace("%SEPTIC_ALARM_LABEL%", alarm ? "on" : "off");
             page.replace("%SEPTIC_RELAY_WARN_LABEL%", relay_warn ? "on" : "off");
@@ -2425,6 +2429,8 @@ private:
             items += String((unsigned)cfg->id);
             items += "_relay_alarm\"></select></td><td class=\"center\"><span class=\"status-dot ";
             items += st->warning ? "status-on" : "status-off";
+            items += "\"></span></td><td class=\"center\"><span class=\"status-dot ";
+            items += st->alarm ? "status-on" : "status-off";
             items += "\"></span></td><td class=\"center\"><label class=\"switch\"><input type=\"checkbox\" class=\"septic-monitor\" data-action=\"sep";
             items += String((unsigned)cfg->id);
             items += "_mon\"";
@@ -2437,9 +2443,7 @@ private:
             items += String((unsigned)cfg->id);
             items += "_mon\" value=\"";
             items += cfg->monitoring_on ? "on" : "off";
-            items += "\"></td><td class=\"center\"><span class=\"status-dot ";
-            items += st->alarm ? "status-on" : "status-off";
-            items += "\"></span></td></tr>";
+            items += "\"></td></tr>";
         }
         if (items.length() == 0)
             items = "<tr><td colspan=\"10\" style=\"color:#94a3b8\"><strong>Септик отсутствует</strong></td></tr>";
@@ -3433,7 +3437,7 @@ sendRedirect_(request, "/", set_cookie);
         String nav = F("<div class=\"nav\">");
         nav += F("<a href=\"/\">FCPLC</a> | <a href=\"/wifi\">Wi-Fi</a> | <a href=\"/manage\">Прошивка и файлы</a> | ");
         nav += F("<a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a> | <a href=\"/stack\">Стек</a> | ");
-        nav += F("<a href=\"/controllers\">Контроллеры</a> | <a href=\"/security\">Охрана</a> | <a href=\"/telegram\">Telegram</a> | <a href=\"/admin\">Админка</a> | <a href=\"/logs\">Logs</a>");
+        nav += F("<a href=\"/controllers\">Контроллеры</a> | <a href=\"/telegram\">Telegram</a> | <a href=\"/admin\">Админка</a> | <a href=\"/logs\">Logs</a>");
         nav += F("</div>");
         return nav;
     }

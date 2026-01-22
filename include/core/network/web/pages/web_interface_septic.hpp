@@ -150,6 +150,7 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       height: 20%;
       background: linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%);
       opacity: 0.7;
+      z-index: 1;
       transition: height .3s ease, background .3s ease;
     }
     .liquid::before {
@@ -180,6 +181,7 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       color: #e5e7eb;
       font-size: 12px;
       letter-spacing: 0.2px;
+      z-index: 2;
     }
     .probe {
       position: absolute;
@@ -260,22 +262,24 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
               <span class="status-dot %SEPTIC_WARN_CLASS%"></span>
               <span>Датчик предупреждения</span>
             </div>
-            <span class="badge">%SEPTIC_WARN_LABEL%</span>
           </div>
           <div class="row">
             <div class="label">
               <span class="status-dot %SEPTIC_ALARM_CLASS%"></span>
               <span>Датчик тревоги</span>
             </div>
-            <span class="badge">%SEPTIC_ALARM_LABEL%</span>
           </div>
           <div class="row">
-            <div class="label">Реле предупреждения</div>
-            <span class="badge">%SEPTIC_RELAY_WARN_LABEL%</span>
+            <div class="label">
+              <span class="status-dot %SEPTIC_RELAY_WARN_CLASS%"></span>
+              <span>Реле предупреждения</span>
+            </div>
           </div>
           <div class="row">
-            <div class="label">Реле тревоги</div>
-            <span class="badge">%SEPTIC_RELAY_ALARM_LABEL%</span>
+            <div class="label">
+              <span class="status-dot %SEPTIC_RELAY_ALARM_CLASS%"></span>
+              <span>Реле тревоги</span>
+            </div>
           </div>
         </div>
       </div>
@@ -291,9 +295,9 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
                 <th class="right">Тревога</th>
                 <th class="right">Реле пред.</th>
                 <th class="right">Реле трев.</th>
+                <th class="center">Предупреждение</th>
+                <th class="center">Тревога</th>
                 <th class="center">Мониторинг</th>
-                <th class="center">Пред.</th>
-                <th class="center">Трев.</th>
               </tr>
             </thead>
             <tbody>
