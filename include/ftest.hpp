@@ -261,17 +261,17 @@ private:
             _ds18b20.begin(*temp_bus);
             _ds18b20_ok = true;
         }
-        std::vector<String> serials;
-        _ds18b20.listSerials(serials);
-        if (serials.empty())
+        static constexpr size_t kMaxSerials = 50;
+        char serials[kMaxSerials][17] = {};
+        size_t count = 0;
+        _ds18b20.listSerials(serials, kMaxSerials, count);
+        if (count == 0)
         {
             _logs.info(F("FTEST"), F("DS18B20: none"));
             return;
         }
-        for (size_t i = 0; i < serials.size(); ++i)
-        {
-            _logs.info(F("FTEST"), F("DS18B20[%u]: %s"), (unsigned)i, serials[i].c_str());
-        }
+        for (size_t i = 0; i < count; ++i)
+            _logs.info(F("FTEST"), F("DS18B20[%u]: %s"), (unsigned)i, serials[i]);
     }
 
     void logIbutton_()

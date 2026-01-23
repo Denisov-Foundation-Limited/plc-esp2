@@ -51,6 +51,8 @@ public:
         const auto role = _c._configs_manager->stackRole();
         _c.printKeyValueTab_(F("role"), stackRoleName_(role), key_w);
         _c.printKeyValueTab_(F("master_host"), _c._configs_manager->stackMasterHost(), key_w);
+        const String api_key = _c._configs_manager->stackApiKey();
+        _c.printKeyValueTab_(F("api_key"), api_key.length() ? F("set") : F("none"), key_w);
 
         if (role == ConfigsManagerIface::StackRole::Master)
             listStackNodes_();
@@ -172,10 +174,11 @@ public:
         _pending_ext_left = (uint8_t)min<size_t>(count, 255);
         _pending_ext_scan = true;
 
-        StaticJsonDocument<96> doc;
+        StaticJsonDocument<192> doc;
         doc["cmd_id"] = _pending_ext_cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Extenders;
         doc["action"] = "get_list";
+        appendApiKey_(doc);
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -205,10 +208,11 @@ public:
         _pending_i2c_left = (uint8_t)min<size_t>(count, 255);
         _pending_i2c_scan = true;
 
-        StaticJsonDocument<96> doc;
+        StaticJsonDocument<192> doc;
         doc["cmd_id"] = _pending_i2c_cmd_id;
         doc["feature"] = (uint8_t)StackFeature::I2cScan;
         doc["action"] = "run";
+        appendApiKey_(doc);
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -238,10 +242,11 @@ public:
         _pending_ports_left = (uint8_t)min<size_t>(count, 255);
         _pending_ports_scan = true;
 
-        StaticJsonDocument<96> doc;
+        StaticJsonDocument<192> doc;
         doc["cmd_id"] = _pending_ports_cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Ports;
         doc["action"] = "get_state";
+        appendApiKey_(doc);
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -271,10 +276,11 @@ public:
         _pending_sockets_left = (uint8_t)min<size_t>(count, 255);
         _pending_sockets_scan = true;
 
-        StaticJsonDocument<96> doc;
+        StaticJsonDocument<192> doc;
         doc["cmd_id"] = _pending_sockets_cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Sockets;
         doc["action"] = "get";
+        appendApiKey_(doc);
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -305,10 +311,11 @@ public:
         _pending_meteo_left = (uint8_t)min<size_t>(count, 255);
         _pending_meteo_scan = true;
 
-        StaticJsonDocument<96> doc;
+        StaticJsonDocument<192> doc;
         doc["cmd_id"] = _pending_meteo_cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Meteo;
         doc["action"] = "get";
+        appendApiKey_(doc);
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -339,10 +346,11 @@ public:
         _pending_thermo_left = (uint8_t)min<size_t>(count, 255);
         _pending_thermo_scan = true;
 
-        StaticJsonDocument<96> doc;
+        StaticJsonDocument<192> doc;
         doc["cmd_id"] = _pending_thermo_cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Thermo;
         doc["action"] = "get";
+        appendApiKey_(doc);
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -371,19 +379,21 @@ public:
 
         initStackPlcPending_(count);
 
-        StaticJsonDocument<96> doc_plc;
+        StaticJsonDocument<192> doc_plc;
         doc_plc["cmd_id"] = _pending_plc_cmd_id;
         doc_plc["feature"] = (uint8_t)StackFeature::PlcStatus;
         doc_plc["action"] = "get";
+        appendApiKey_(doc_plc);
         char payload_plc[96] = {};
         const size_t len_plc = serializeJson(doc_plc, payload_plc, sizeof(payload_plc));
         if (len_plc == 0)
             return;
 
-        StaticJsonDocument<96> doc_rtc;
+        StaticJsonDocument<192> doc_rtc;
         doc_rtc["cmd_id"] = _pending_plc_rtc_cmd_id;
         doc_rtc["feature"] = (uint8_t)StackFeature::Rtc;
         doc_rtc["action"] = "get_time";
+        appendApiKey_(doc_rtc);
         char payload_rtc[96] = {};
         const size_t len_rtc = serializeJson(doc_rtc, payload_rtc, sizeof(payload_rtc));
         if (len_rtc == 0)
@@ -415,10 +425,11 @@ public:
         _pending_rtc_left = (uint8_t)min<size_t>(count, 255);
         _pending_rtc_scan = true;
 
-        StaticJsonDocument<96> doc;
+        StaticJsonDocument<192> doc;
         doc["cmd_id"] = _pending_rtc_cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Rtc;
         doc["action"] = "get_time";
+        appendApiKey_(doc);
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -448,10 +459,11 @@ public:
         _pending_ow_left = (uint8_t)min<size_t>(count, 255);
         _pending_ow_scan = true;
 
-        StaticJsonDocument<96> doc;
+        StaticJsonDocument<192> doc;
         doc["cmd_id"] = _pending_ow_cmd_id;
         doc["feature"] = (uint8_t)StackFeature::OwScan;
         doc["action"] = "run";
+        appendApiKey_(doc);
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -554,6 +566,15 @@ private:
     uint8_t _pending_plc_total = 0;
     uint8_t _pending_plc_done = 0;
     bool _pending_plc_scan = false;
+
+    void appendApiKey_(JsonDocument &doc)
+    {
+        if (!_c._configs_manager)
+            return;
+        const String key = _c._configs_manager->stackApiKey();
+        if (key.length())
+            doc["api_key"] = key;
+    }
 
     static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame)
     {
@@ -684,7 +705,7 @@ private:
             return;
         }
 
-        StaticJsonDocument<128> doc;
+        StaticJsonDocument<256> doc;
         doc["cmd_id"] = nextStackCmdId_();
         doc["feature"] = (uint8_t)StackFeature::Sockets;
         doc["action"] = "set";
@@ -695,6 +716,7 @@ private:
             item["toggle"] = true;
         else
             item["state"] = (action == "on");
+        appendApiKey_(doc);
 
         char payload[128] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
@@ -765,7 +787,7 @@ private:
             return;
         }
 
-        StaticJsonDocument<128> doc;
+        StaticJsonDocument<256> doc;
         doc["cmd_id"] = nextStackCmdId_();
         doc["feature"] = (uint8_t)StackFeature::Thermo;
         doc["action"] = "set";
@@ -776,6 +798,7 @@ private:
             item["toggle"] = true;
         else
             item["power"] = (action == "on");
+        appendApiKey_(doc);
 
         char payload[128] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
@@ -831,7 +854,7 @@ private:
             return;
         }
 
-        StaticJsonDocument<128> doc;
+        StaticJsonDocument<256> doc;
         doc["cmd_id"] = nextStackCmdId_();
         doc["feature"] = (uint8_t)StackFeature::Security;
         if (action == "status")
@@ -848,7 +871,9 @@ private:
                 params["armed"] = false;
             if (action == "clear")
                 params["clear"] = true;
+            params["user"] = "admin";
         }
+        appendApiKey_(doc);
 
         char payload[128] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
@@ -912,10 +937,11 @@ private:
         }
         if (action == "status" || action == "get")
         {
-            StaticJsonDocument<96> doc;
+            StaticJsonDocument<192> doc;
             doc["cmd_id"] = nextStackCmdId_();
             doc["feature"] = (uint8_t)StackFeature::Septic;
             doc["action"] = action;
+            appendApiKey_(doc);
 
             char payload[96] = {};
             const size_t len = serializeJson(doc, payload, sizeof(payload));
@@ -970,13 +996,14 @@ private:
             return;
         }
 
-        StaticJsonDocument<96> doc;
+        StaticJsonDocument<192> doc;
         doc["cmd_id"] = nextStackCmdId_();
         doc["feature"] = (uint8_t)StackFeature::Septic;
         doc["action"] = "set";
         JsonObject params = doc["params"].to<JsonObject>();
         params["id"] = id;
         params["monitor"] = on;
+        appendApiKey_(doc);
 
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));

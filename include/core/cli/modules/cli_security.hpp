@@ -68,9 +68,17 @@ public:
         _c._io->println(F(" <on|off>     - set silent flag"));
         _c._io->println(F("    siren <port|none>      - set siren port"));
         _c._io->println(F("    keys list              - list iButton keys"));
-        _c._io->println(F("    key add <hex16>        - add iButton key"));
+        _c._io->println(F("    key add <hex16> [name] - add iButton key"));
+        _c._io->println(F("    key name <hex16> <text> - set key name"));
         _c._io->println(F("    key del <hex16>        - remove iButton key"));
         _c._io->println(F("    key clear              - clear iButton keys"));
+        _c._io->println(F("    phones list            - list GSM phones"));
+        _c._io->println(F("    phone set <id> <num|none> [name] - set phone"));
+        _c._io->println(F("    phone name <id> <text> - set phone name"));
+        _c._io->println(F("    phone notify <id> <on|off> - set phone notify"));
+        _c._io->println(F("    phone call <id> <on|off> - set phone call"));
+        _c._io->println(F("    phone enable <id> <on|off> - enable phone"));
+        _c._io->println(F("    phone clear            - clear GSM phones"));
     }
 
     void showSensors()
@@ -132,7 +140,7 @@ public:
         }
         if (cmd == "security arm")
         {
-            if (_security.arm())
+            if (_security.armFrom("cli", "admin"))
                 _c._io->println(F("OK"));
             else
                 _c._io->println(F("Security disabled"));
@@ -141,7 +149,7 @@ public:
         }
         if (cmd == "security disarm")
         {
-            if (_security.disarm())
+            if (_security.disarmFrom("cli", "admin"))
                 _c._io->println(F("OK"));
             else
                 _c._io->println(F("Security disabled"));
@@ -359,8 +367,17 @@ public:
         }
         if (lower.startsWith("key add "))
         {
-            String hex = cmd.substring(8);
-            hex.trim();
+            String rest = cmd.substring(8);
+            rest.trim();
+            String hex = rest;
+            String name;
+            const int sp = rest.indexOf(' ');
+            if (sp > 0)
+            {
+                hex = rest.substring(0, sp);
+                name = rest.substring(sp + 1);
+                name.trim();
+            }
             uint8_t addr[8] = {};
             if (!parseHex_(hex, addr))
             {
@@ -368,10 +385,39 @@ public:
                 _c.printPrompt_();
                 return true;
             }
-            if (_security.addKey(addr))
+            if (_security.addKey(addr, name))
                 _c._io->println(F("OK"));
             else
                 _c._io->println(F("Key list full"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("key name "))
+        {
+            String rest = cmd.substring(9);
+            rest.trim();
+            const int sp = rest.indexOf(' ');
+            if (sp <= 0)
+            {
+                _c._io->println(F("Usage: key name <hex16> <text>"));
+                _c.printPrompt_();
+                return true;
+            }
+            String hex = rest.substring(0, sp);
+            String name = rest.substring(sp + 1);
+            hex.trim();
+            name.trim();
+            uint8_t addr[8] = {};
+            if (!parseHex_(hex, addr))
+            {
+                _c._io->println(F("Invalid key"));
+                _c.printPrompt_();
+                return true;
+            }
+            if (_security.setKeyNameByAddr(addr, name))
+                _c._io->println(F("OK"));
+            else
+                _c._io->println(F("Not found"));
             _c.printPrompt_();
             return true;
         }
@@ -400,6 +446,198 @@ public:
             _c.printPrompt_();
             return true;
         }
+        if (lower == "phones list")
+        {
+            printPhoneList_();
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("phone set "))
+        {
+            String rest = cmd.substring(10);
+            rest.trim();
+            const int space = rest.indexOf(' ');
+            if (space <= 0)
+            {
+                _c._io->println(F("Usage: phone set <id> <num|none> [name]"));
+                _c.printPrompt_();
+                return true;
+            }
+            String id_str = rest.substring(0, space);
+            String num_and_name = rest.substring(space + 1);
+            id_str.trim();
+            num_and_name.trim();
+            String num_str = num_and_name;
+            String name;
+            const int sp = num_and_name.indexOf(' ');
+            if (sp > 0)
+            {
+                num_str = num_and_name.substring(0, sp);
+                name = num_and_name.substring(sp + 1);
+                name.trim();
+            }
+            uint16_t id = 0;
+            if (!parsePhoneId_(id_str, id))
+            {
+                printInvalidPhoneId_();
+                _c.printPrompt_();
+                return true;
+            }
+            const size_t idx = (size_t)(id - 1);
+            if (num_str == "none" || num_str == "-")
+            {
+                _security.setPhone(idx, "");
+                _security.setPhoneEnabled(idx, false);
+                _security.setPhoneName(idx, "");
+                _security.setPhoneNotify(idx, false);
+                _security.setPhoneCall(idx, false);
+            }
+            else
+            {
+                _security.setPhone(idx, num_str);
+                _security.setPhoneEnabled(idx, true);
+                _security.setPhoneName(idx, name);
+            }
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("phone name "))
+        {
+            String rest = cmd.substring(11);
+            rest.trim();
+            const int space = rest.indexOf(' ');
+            if (space <= 0)
+            {
+                _c._io->println(F("Usage: phone name <id> <text>"));
+                _c.printPrompt_();
+                return true;
+            }
+            String id_str = rest.substring(0, space);
+            String name = rest.substring(space + 1);
+            id_str.trim();
+            name.trim();
+            uint16_t id = 0;
+            if (!parsePhoneId_(id_str, id))
+            {
+                printInvalidPhoneId_();
+                _c.printPrompt_();
+                return true;
+            }
+            _security.setPhoneName((size_t)(id - 1), name);
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("phone enable "))
+        {
+            String rest = cmd.substring(13);
+            rest.trim();
+            const int space = rest.indexOf(' ');
+            if (space <= 0)
+            {
+                _c._io->println(F("Usage: phone enable <id> <on|off>"));
+                _c.printPrompt_();
+                return true;
+            }
+            String id_str = rest.substring(0, space);
+            String val_str = rest.substring(space + 1);
+            id_str.trim();
+            val_str.trim();
+            uint16_t id = 0;
+            if (!parsePhoneId_(id_str, id))
+            {
+                printInvalidPhoneId_();
+                _c.printPrompt_();
+                return true;
+            }
+            bool enabled = false;
+            if (!parseBool_(val_str, enabled))
+            {
+                _c._io->println(F("Invalid value"));
+                _c.printPrompt_();
+                return true;
+            }
+            _security.setPhoneEnabled((size_t)(id - 1), enabled);
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("phone notify "))
+        {
+            String rest = cmd.substring(13);
+            rest.trim();
+            const int space = rest.indexOf(' ');
+            if (space <= 0)
+            {
+                _c._io->println(F("Usage: phone notify <id> <on|off>"));
+                _c.printPrompt_();
+                return true;
+            }
+            String id_str = rest.substring(0, space);
+            String val_str = rest.substring(space + 1);
+            id_str.trim();
+            val_str.trim();
+            uint16_t id = 0;
+            if (!parsePhoneId_(id_str, id))
+            {
+                printInvalidPhoneId_();
+                _c.printPrompt_();
+                return true;
+            }
+            bool notify = false;
+            if (!parseBool_(val_str, notify))
+            {
+                _c._io->println(F("Invalid value"));
+                _c.printPrompt_();
+                return true;
+            }
+            _security.setPhoneNotify((size_t)(id - 1), notify);
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("phone call "))
+        {
+            String rest = cmd.substring(11);
+            rest.trim();
+            const int space = rest.indexOf(' ');
+            if (space <= 0)
+            {
+                _c._io->println(F("Usage: phone call <id> <on|off>"));
+                _c.printPrompt_();
+                return true;
+            }
+            String id_str = rest.substring(0, space);
+            String val_str = rest.substring(space + 1);
+            id_str.trim();
+            val_str.trim();
+            uint16_t id = 0;
+            if (!parsePhoneId_(id_str, id))
+            {
+                printInvalidPhoneId_();
+                _c.printPrompt_();
+                return true;
+            }
+            bool call = false;
+            if (!parseBool_(val_str, call))
+            {
+                _c._io->println(F("Invalid value"));
+                _c.printPrompt_();
+                return true;
+            }
+            _security.setPhoneCall((size_t)(id - 1), call);
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower == "phone clear")
+        {
+            _security.clearPhones();
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
 
         return false;
     }
@@ -422,6 +660,19 @@ private:
                 return false;
         const int v = s.toInt();
         if (v < 1 || v > (int)SecurityController::kSensorCount)
+            return false;
+        out = (uint16_t)v;
+        return true;
+    }
+    static bool parsePhoneId_(const String &s, uint16_t &out)
+    {
+        if (s.length() == 0)
+            return false;
+        for (size_t i = 0; i < s.length(); ++i)
+            if (s[i] < '0' || s[i] > '9')
+                return false;
+        const int v = s.toInt();
+        if (v < 1 || v > (int)SecurityController::kPhoneCount)
             return false;
         out = (uint16_t)v;
         return true;
@@ -517,6 +768,8 @@ private:
             _c._io->println(F("  none"));
             return;
         }
+        _c._io->println(F("  Serial            Name"));
+        _c._io->println(F("  ----------------  ----------------"));
         for (size_t i = 0; i < count; ++i)
         {
             uint8_t addr[8] = {};
@@ -525,7 +778,10 @@ private:
             char hex[17] = {};
             IButton::toHex(addr, hex);
             _c._io->print(F("  "));
-            _c._io->println(hex);
+            _c.printPadStr_(hex, 16);
+            _c._io->print(F("  "));
+            const String &name = _security.keyNameByIndex(i);
+            _c._io->println(name.length() ? name : "-");
         }
     }
 
@@ -541,6 +797,44 @@ private:
         _c._io->print(F("Invalid sensor id (1.."));
         _c._io->print(SecurityController::kSensorCount);
         _c._io->println(F(")"));
+    }
+    void printInvalidPhoneId_() const
+    {
+        _c._io->print(F("Invalid phone id (1.."));
+        _c._io->print(SecurityController::kPhoneCount);
+        _c._io->println(F(")"));
+    }
+    void printPhoneList_()
+    {
+        _c._io->println(F("GSM phones:"));
+        _c._io->println(F("  ID  En  Nfy Call Number           Name"));
+        _c._io->println(F("  --  --  --- ---- ---------------- ----------------"));
+        bool any = false;
+        for (size_t i = 0; i < SecurityController::kPhoneCount; ++i)
+        {
+            String number;
+            bool enabled = false;
+            if (!_security.phoneSlot(i, number, enabled))
+                continue;
+            if (number.length() == 0 && !enabled)
+                continue;
+            any = true;
+            _c._io->print(F("  "));
+            _c.printPad_((uint8_t)(i + 1), 2);
+            _c._io->print(F("  "));
+            _c.printPadStr_(enabled ? F("on") : F("off"), 2);
+            _c._io->print(F("  "));
+            _c.printPadStr_(_security.phoneNotifyByIndex(i) ? F("on") : F("off"), 3);
+            _c._io->print(F(" "));
+            _c.printPadStr_(_security.phoneCallByIndex(i) ? F("on") : F("off"), 4);
+            _c._io->print(F(" "));
+            _c.printPadStr_(number.length() ? number.c_str() : "-", 16);
+            _c._io->print(F(" "));
+            const String &name = _security.phoneNameByIndex(i);
+            _c._io->println(name.length() ? name : "-");
+        }
+        if (!any)
+            _c._io->println(F("  none"));
     }
 
     void printSensorRow_(const SecurityController::SensorConfig &cfg,

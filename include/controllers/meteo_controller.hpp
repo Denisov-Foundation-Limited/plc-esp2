@@ -18,6 +18,7 @@
 #include "hal/bus/onewire.hpp"
 #include "hal/dht22.hpp"
 #include "hal/ds18b20.hpp"
+#include "utils/logger.hpp"
 
 class MeteoController
 {
@@ -54,13 +55,21 @@ public:
         uint32_t last_read_ms = 0;
     };
 
-    explicit MeteoController(OneWireManager &ow) : _ow(ow) { reset_(); }
+    MeteoController(OneWireManager &ow, Logger &logs) : _ow(ow), _logs(logs) { reset_(); }
 
     bool begin()
     {
+        _logs.info(F("METEO"), F("Init"));
         _ds_bus = _ow.busPtrById(OneWireManager::OwBusType::Temp);
         if (_ds_bus)
+        {
             _ds18b20.begin(*_ds_bus);
+            _logs.info(F("METEO"), F("DS18B20 bus ready"));
+        }
+        else
+        {
+            _logs.warn(F("METEO"), F("DS18B20 bus missing"));
+        }
         return true;
     }
 
@@ -330,6 +339,7 @@ private:
     static constexpr uint32_t kDs18b20IntervalMs = 1000;
 
     OneWireManager &_ow;
+    Logger &_logs;
     OneWireBus *_ds_bus = nullptr;
     Ds18b20 _ds18b20;
     DHT22 _dht22;

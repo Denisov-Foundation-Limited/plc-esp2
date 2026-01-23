@@ -24,6 +24,7 @@
 #include "core/task_binder.hpp"
 #include "core/task_manager.hpp"
 #include "core/network/wifi_manager.hpp"
+#include "core/network/gsm_modem.hpp"
 #include "core/rtc.hpp"
 #include "core/display.hpp"
 #include "core/network/telegram/telegram.hpp"
@@ -83,6 +84,7 @@ struct AppServices
     Display display;
     Lm75ad lm75ad;
     Sim800l sim800l;
+    GsmModem gsm;
     WiFiClientSecure telegram_wifi_client;
     TelegramClient telegram;
 
@@ -125,6 +127,7 @@ struct AppServices
           display(i2c, lcd_hal),
           lm75ad(),
           sim800l(),
+          gsm(uart, sim800l, logs),
           telegram_wifi_client(),
           telegram(logs),
           ext(i2c, ActiveBoardProfile::EXT_DEVS, &logs),
@@ -136,7 +139,7 @@ struct AppServices
           configs(),
           telegram_bot(telegram),
           telegram_menu(plc, wifi, rtc, telegram_bot, configs, logs),
-          controllers(gpio, ow, eeprom_storage, logs, telegram_bot, telegram_menu),
+          controllers(gpio, ow, eeprom_storage, logs, telegram_bot, telegram_menu, gsm),
           meteo_history(rtc, controllers.meteo()),
           tm(),
           task_binder(tm, wifi, telegram, ext, controllers, meteo_history),
@@ -144,11 +147,11 @@ struct AppServices
           console(plc, wifi, rtc, ftest, i2c, ow, telegram, telegram_menu, configs, ext, controllers, nullptr),
           web(ActiveBoardProfile::WEB_PORT),
           fw_upgrade(web, console, wifi, configs, plc, rtc, telegram, telegram_menu, logs, ext, i2c, ow, controllers),
-          network(logs, wifi, telegram, telegram_bot, telegram_menu, fw_upgrade, web, telegram_wifi_client),
+          network(logs, wifi, gsm, telegram, telegram_bot, telegram_menu, fw_upgrade, web, telegram_wifi_client),
           stack_slave(io, ds18b20, ow, i2c, plc, rtc, telegram, logs, ext,
                       controllers.sockets(), controllers.meteo(), controllers.thermo(), controllers.septic(),
                       controllers.security()),
-          configs_manager(configs, wifi, telegram, network, console, telegram_menu, plc, controllers),
+          configs_manager(configs, wifi, telegram, network, console, telegram_menu, plc, controllers, gsm),
           plc_scan(io, plc)
     {
         logs.setRtc(rtc);
@@ -164,7 +167,9 @@ struct AppServices
         telegram_menu.setSecurity(controllers.security());
         fw_upgrade.setConfigsManager(configs_manager);
         fw_upgrade.setStackMaster(*network.stackMaster());
+        fw_upgrade.setGsmModem(gsm);
         network.setStackConfig(configs_manager);
+        stack_slave.setConfigsManager(configs_manager);
 #if defined(ESP32)
         if (auto *node = network.stackNode())
             stack_slave.attach(*node);
@@ -393,6 +398,7 @@ struct AppServices
     {
         plc_scan.tick();
         console.loop();
+        gsm.loop();
         const uint32_t budget_us = plc_scan.timeToNextUs();
         tm.loop(budget_us);
         if (budget_us > 200)

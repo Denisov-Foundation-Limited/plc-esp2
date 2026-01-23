@@ -13,6 +13,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <array>
 #include <stdint.h>
 #include <string.h>
 
@@ -199,6 +200,7 @@ public:
     }
 
     bool adminPasswordSet() const { return _admin_set; }
+    const String &currentUser() const { return _user_input; }
 
     void enterUser() { _mode = Mode::Enable; printPrompt_(); }
     void enterEnable() { _mode = Mode::Enable; printPrompt_(); }
@@ -656,6 +658,14 @@ public:
         return true;
     }
 
+    bool setStackApiKey_(const String &key)
+    {
+        if (!_configs_manager)
+            return false;
+        _configs_manager->setStackApiKey(key);
+        return true;
+    }
+
     void cmdEraseConfig_()
     {
         if (_configs.erase())
@@ -821,7 +831,7 @@ private:
     {
         if (!_io || _state != State::LoggedIn)
             return;
-        static const char *const kEnableCmds[] = {
+        static const std::array<const char *, 62> kEnableCmds = {{
             "show plc",
             "show board",
             "show wifi",
@@ -883,14 +893,16 @@ private:
             "help thermo",
             "help tank",
             "help septic",
-            "help security"};
-        static const size_t kEnableCmdsCount = sizeof(kEnableCmds) / sizeof(kEnableCmds[0]);
+            "help security"}};
 
-        static const char *const kConfigCmds[] = {
+        static const std::array<const char *, 30> kConfigCmds = {{
             "password <pass>",
             "admin password <pass>",
             "stack role <master|slave>",
             "stack master <host>",
+            "stack api_key <value>",
+            "stack api_key clear",
+            "stack api_key gen",
             "wifi",
             "tgbot",
             "time",
@@ -913,10 +925,9 @@ private:
             "help thermo",
             "help tank",
             "help septic",
-            "help security"};
-        static const size_t kConfigCmdsCount = sizeof(kConfigCmds) / sizeof(kConfigCmds[0]);
+            "help security"}};
 
-        static const char *const kConfigWifiCmds[] = {
+        static const std::array<const char *, 16> kConfigWifiCmds = {{
             "ssid <value>",
             "password <value>",
             "ap on",
@@ -932,10 +943,9 @@ private:
             "help wifi",
             "help user",
             "help system",
-            "help security"};
-        static const size_t kConfigWifiCmdsCount = sizeof(kConfigWifiCmds) / sizeof(kConfigWifiCmds[0]);
+            "help security"}};
 
-        static const char *const kConfigTgbotCmds[] = {
+        static const std::array<const char *, 20> kConfigTgbotCmds = {{
             "token <value>",
             "chat <id>",
             "insecure on",
@@ -955,10 +965,9 @@ private:
             "help user",
             "help system",
             "help tgbot",
-            "help security"};
-        static const size_t kConfigTgbotCmdsCount = sizeof(kConfigTgbotCmds) / sizeof(kConfigTgbotCmds[0]);
+            "help security"}};
 
-        static const char *const kConfigTimeCmds[] = {
+        static const std::array<const char *, 8> kConfigTimeCmds = {{
             "date <YYYY-MM-DD>",
             "time <HH:MM:SS>",
             "set <YYYY-MM-DD> <HH:MM:SS>",
@@ -966,10 +975,9 @@ private:
             "exit",
             "end",
             "help",
-            "help security"};
-        static const size_t kConfigTimeCmdsCount = sizeof(kConfigTimeCmds) / sizeof(kConfigTimeCmds[0]);
+            "help security"}};
 
-        static const char *const kConfigSocketCmds[] = {
+        static const std::array<const char *, 11> kConfigSocketCmds = {{
             "show",
             "show <id>",
             "enable <id>",
@@ -980,10 +988,9 @@ private:
             "exit",
             "end",
             "help",
-            "help security"};
-        static const size_t kConfigSocketCmdsCount = sizeof(kConfigSocketCmds) / sizeof(kConfigSocketCmds[0]);
+            "help security"}};
 
-        static const char *const kConfigMeteoCmds[] = {
+        static const std::array<const char *, 11> kConfigMeteoCmds = {{
             "show",
             "show <id>",
             "enable <id>",
@@ -994,10 +1001,9 @@ private:
             "exit",
             "end",
             "help",
-            "help security"};
-        static const size_t kConfigMeteoCmdsCount = sizeof(kConfigMeteoCmds) / sizeof(kConfigMeteoCmds[0]);
+            "help security"}};
 
-        static const char *const kConfigThermoCmds[] = {
+        static const std::array<const char *, 15> kConfigThermoCmds = {{
             "show",
             "show <id>",
             "enable <id>",
@@ -1012,10 +1018,9 @@ private:
             "exit",
             "end",
             "help",
-            "help security"};
-        static const size_t kConfigThermoCmdsCount = sizeof(kConfigThermoCmds) / sizeof(kConfigThermoCmds[0]);
+            "help security"}};
 
-        static const char *const kConfigTankCmds[] = {
+        static const std::array<const char *, 16> kConfigTankCmds = {{
             "show",
             "show <id>",
             "enable <id>",
@@ -1031,10 +1036,9 @@ private:
             "exit",
             "end",
             "help",
-            "help security"};
-        static const size_t kConfigTankCmdsCount = sizeof(kConfigTankCmds) / sizeof(kConfigTankCmds[0]);
+            "help security"}};
 
-        static const char *const kConfigSepticCmds[] = {
+        static const std::array<const char *, 12> kConfigSepticCmds = {{
             "show",
             "show <id>",
             "enable <id>",
@@ -1046,10 +1050,9 @@ private:
             "relay_alarm <id> <port|none>",
             "exit",
             "end",
-            "help"};
-        static const size_t kConfigSepticCmdsCount = sizeof(kConfigSepticCmds) / sizeof(kConfigSepticCmds[0]);
+            "help"}};
 
-        static const char *const kConfigSecurityCmds[] = {
+        static const std::array<const char *, 23> kConfigSecurityCmds = {{
             "show",
             "show <id>",
             "enable <id>",
@@ -1059,65 +1062,72 @@ private:
             "name <id> <text>",
             "siren <port|none>",
             "keys list",
-            "key add <hex16>",
+            "key add <hex16> [name]",
+            "key name <hex16> <text>",
             "key del <hex16>",
             "key clear",
+            "phones list",
+            "phone set <id> <num|none> [name]",
+            "phone name <id> <text>",
+            "phone notify <id> <on|off>",
+            "phone call <id> <on|off>",
+            "phone enable <id> <on|off>",
+            "phone clear",
             "exit",
             "end",
-            "help"};
-        static const size_t kConfigSecurityCmdsCount = sizeof(kConfigSecurityCmds) / sizeof(kConfigSecurityCmds[0]);
+            "help"}};
 
         const char *const *cmds = nullptr;
         size_t count = 0;
         switch (_mode)
         {
         case Mode::Enable:
-            cmds = kEnableCmds;
-            count = kEnableCmdsCount;
+            cmds = kEnableCmds.data();
+            count = kEnableCmds.size();
             break;
         case Mode::Config:
-            cmds = kConfigCmds;
-            count = kConfigCmdsCount;
+            cmds = kConfigCmds.data();
+            count = kConfigCmds.size();
             break;
         case Mode::ConfigWifi:
-            cmds = kConfigWifiCmds;
-            count = kConfigWifiCmdsCount;
+            cmds = kConfigWifiCmds.data();
+            count = kConfigWifiCmds.size();
             break;
         case Mode::ConfigTgbot:
-            cmds = kConfigTgbotCmds;
-            count = kConfigTgbotCmdsCount;
+            cmds = kConfigTgbotCmds.data();
+            count = kConfigTgbotCmds.size();
             break;
         case Mode::ConfigTime:
-            cmds = kConfigTimeCmds;
-            count = kConfigTimeCmdsCount;
+            cmds = kConfigTimeCmds.data();
+            count = kConfigTimeCmds.size();
             break;
         case Mode::ConfigSocket:
-            cmds = kConfigSocketCmds;
-            count = kConfigSocketCmdsCount;
+            cmds = kConfigSocketCmds.data();
+            count = kConfigSocketCmds.size();
             break;
         case Mode::ConfigMeteo:
-            cmds = kConfigMeteoCmds;
-            count = kConfigMeteoCmdsCount;
+            cmds = kConfigMeteoCmds.data();
+            count = kConfigMeteoCmds.size();
             break;
         case Mode::ConfigThermo:
-            cmds = kConfigThermoCmds;
-            count = kConfigThermoCmdsCount;
+            cmds = kConfigThermoCmds.data();
+            count = kConfigThermoCmds.size();
             break;
         case Mode::ConfigTank:
-            cmds = kConfigTankCmds;
-            count = kConfigTankCmdsCount;
+            cmds = kConfigTankCmds.data();
+            count = kConfigTankCmds.size();
             break;
         case Mode::ConfigSeptic:
-            cmds = kConfigSepticCmds;
-            count = kConfigSepticCmdsCount;
+            cmds = kConfigSepticCmds.data();
+            count = kConfigSepticCmds.size();
             break;
         case Mode::ConfigSecurity:
-            cmds = kConfigSecurityCmds;
-            count = kConfigSecurityCmdsCount;
+            cmds = kConfigSecurityCmds.data();
+            count = kConfigSecurityCmds.size();
             break;
         case Mode::User:
-            cmds = kEnableCmds;
-            count = kEnableCmdsCount;
+            cmds = kEnableCmds.data();
+            count = kEnableCmds.size();
             break;
         }
 

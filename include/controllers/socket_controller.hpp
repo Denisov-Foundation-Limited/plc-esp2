@@ -91,7 +91,11 @@ public:
     bool begin()
     {
         if (!_controller_enabled)
+        {
+            _logs.info(F("SOCKET"), F("Controller disabled"));
             return true;
+        }
+        _logs.info(F("SOCKET"), F("Init"));
         for (size_t i = 0; i < kSocketCount; ++i)
         {
             SocketConfig &cfg = _cfg[i];
@@ -102,6 +106,7 @@ public:
             st.has_button = setupButton_(cfg, st);
             setupRelay_(cfg, st);
         }
+        _logs.info(F("SOCKET"), F("Init done"));
         return true;
     }
 

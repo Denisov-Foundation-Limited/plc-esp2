@@ -74,14 +74,14 @@ public:
         }
         if (lower == "allow list")
         {
-            const auto &users = _c._tgbot_menu.allowedUsers();
+            const auto users = _c._tgbot_menu.allowedUsers();
             if (users.empty())
                 _c._io->println(F("Allowed list empty"));
             else
             {
                 _c._io->println(F("ID  Username           ChatID       Admin Notify Enabled"));
                 _c._io->println(F("--  -----------------  -----------  ----- ------ -------"));
-                for (size_t i = 0; i < users.size(); ++i)
+                for (size_t i = 0; i < users.size; ++i)
                 {
                     const auto &u = users[i];
                     _c._io->print(String((unsigned)(i + 1)));

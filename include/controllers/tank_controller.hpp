@@ -46,6 +46,9 @@ public:
         bool level_low = false;
         bool level_mid = false;
         bool level_full = false;
+        bool levels_ok = false;
+        bool levels_ok_prev = true;
+        uint32_t last_level_err_ms = 0;
         bool valve_on = false;
         bool pump_on = false;
         bool alarm_on = false;
@@ -61,7 +64,11 @@ public:
     bool begin()
     {
         if (!_controller_enabled)
+        {
+            _logs.info(F("TANK"), F("Controller disabled"));
             return true;
+        }
+        _logs.info(F("TANK"), F("Init"));
         for (size_t i = 0; i < kTankCount; ++i)
         {
             TankConfig &cfg = _cfg[i];
@@ -71,9 +78,14 @@ public:
             setupInputs_(cfg);
             setupOutputs_(cfg, st);
             readLevels_(cfg, st);
-            updateControl_(cfg, st);
-            st.last_empty = isEmpty_(st);
+            if (st.levels_ok)
+                updateControl_(cfg, st);
+            else
+                writeAllOff_(cfg, st);
+            if (st.levels_ok)
+                st.last_empty = isEmpty_(st);
         }
+        _logs.info(F("TANK"), F("Init done"));
         return true;
     }
 
@@ -96,6 +108,13 @@ public:
             }
             const TankState prev = st;
             readLevels_(cfg, st);
+            if (!st.levels_ok)
+            {
+                const TankState prev_relays = st;
+                writeAllOff_(cfg, st);
+                logRelayChange_(cfg, prev_relays, st);
+                continue;
+            }
             updateControl_(cfg, st);
             logLevelChange_(cfg, prev, st);
             logRelayChange_(cfg, prev, st);
@@ -235,6 +254,13 @@ public:
             }
             const TankState prev = st;
             readLevels_(cfg, st);
+            if (!st.levels_ok)
+            {
+                const TankState prev_relays = st;
+                writeAllOff_(cfg, st);
+                logRelayChange_(cfg, prev_relays, st);
+                continue;
+            }
             updateControl_(cfg, st);
             st.last_empty = isEmpty_(st);
             logLevelChange_(cfg, prev, st);
@@ -279,9 +305,12 @@ public:
             setupInputs_(cfg);
             setupOutputs_(cfg, st);
             readLevels_(cfg, st);
-            if (cfg.power_on)
+            if (cfg.power_on && st.levels_ok)
                 updateControl_(cfg, st);
-            st.last_empty = isEmpty_(st);
+            else if (!st.levels_ok)
+                writeAllOff_(cfg, st);
+            if (st.levels_ok)
+                st.last_empty = isEmpty_(st);
         }
     }
 
@@ -308,9 +337,12 @@ public:
         setupInputs_(cfg);
         setupOutputs_(cfg, st);
         readLevels_(cfg, st);
-        if (cfg.power_on)
+        if (cfg.power_on && st.levels_ok)
             updateControl_(cfg, st);
-        st.last_empty = isEmpty_(st);
+        else if (!st.levels_ok)
+            writeAllOff_(cfg, st);
+        if (st.levels_ok)
+            st.last_empty = isEmpty_(st);
         _logs.info(F("TANK"), F("id: %u enabled: 1"), (unsigned)cfg.id);
         return true;
     }
@@ -337,6 +369,13 @@ public:
             return true;
         }
         readLevels_(cfg, st);
+        if (!st.levels_ok)
+        {
+            const TankState prev = st;
+            writeAllOff_(cfg, st);
+            logRelayChange_(cfg, prev, st);
+            return true;
+        }
         updateControl_(cfg, st);
         st.last_empty = isEmpty_(st);
         return true;
@@ -485,7 +524,10 @@ private:
         {
             setupInputs_(cfg);
             readLevels_(cfg, st);
-            updateControl_(cfg, st);
+            if (st.levels_ok)
+                updateControl_(cfg, st);
+            else
+                writeAllOff_(cfg, st);
         }
         return true;
     }
@@ -501,7 +543,10 @@ private:
         if (_controller_enabled && cfg.enabled)
         {
             setupOutputs_(cfg, st);
-            updateControl_(cfg, st);
+            if (st.levels_ok)
+                updateControl_(cfg, st);
+            else
+                writeAllOff_(cfg, st);
         }
         return true;
     }
@@ -525,19 +570,49 @@ private:
 
     void readLevels_(const TankConfig &cfg, TankState &st)
     {
-        st.level_low = readInput_(cfg.level_low);
-        st.level_mid = readInput_(cfg.level_mid);
-        st.level_full = readInput_(cfg.level_full);
+        bool low = false;
+        bool mid = false;
+        bool full = false;
+        const bool ok_low = readInput_(cfg.level_low, low);
+        const bool ok_mid = readInput_(cfg.level_mid, mid);
+        const bool ok_full = readInput_(cfg.level_full, full);
+        if (ok_low)
+            st.level_low = low;
+        if (ok_mid)
+            st.level_mid = mid;
+        if (ok_full)
+            st.level_full = full;
+        st.levels_ok = ok_low && ok_mid && ok_full;
+        const uint32_t now = millis();
+        if (!st.levels_ok)
+        {
+            if (st.levels_ok_prev || (uint32_t)(now - st.last_level_err_ms) >= kLevelErrLogMs)
+            {
+                _logs.warn(F("TANK"),
+                           F("id: %u level read failed (low:%u mid:%u full:%u)"),
+                           (unsigned)cfg.id,
+                           ok_low ? 1u : 0u,
+                           ok_mid ? 1u : 0u,
+                           ok_full ? 1u : 0u);
+                st.last_level_err_ms = now;
+            }
+        }
+        else if (!st.levels_ok_prev)
+        {
+            _logs.info(F("TANK"), F("id: %u level read ok"), (unsigned)cfg.id);
+        }
+        st.levels_ok_prev = st.levels_ok;
     }
 
-    bool readInput_(uint8_t port)
+    bool readInput_(uint8_t port, bool &out)
     {
         if (port == kInvalidPort)
             return false;
         bool raw = false;
         if (!_gpio.readDyn(port, raw))
             return false;
-        return raw;
+        out = raw;
+        return true;
     }
 
     void updateControl_(const TankConfig &cfg, TankState &st)
@@ -599,7 +674,7 @@ private:
 
     void notifyEmpty_(const TankConfig &cfg)
     {
-        const auto &users = _tgusers.allowedUsers();
+        const auto users = _tgusers.allowedUsers();
         if (users.empty())
             return;
         String msg = F("Бак пустой: ");
@@ -610,8 +685,9 @@ private:
             msg += cfg.name;
             msg += F(")");
         }
-        for (const auto &user : users)
+        for (size_t i = 0; i < users.size; ++i)
         {
+            const auto &user = users[i];
             if (!user.enabled || !user.is_notify || user.chat_id == 0)
                 continue;
             _tgbot.sendText(user.chat_id, msg);
@@ -619,4 +695,5 @@ private:
     }
 
     static constexpr bool kLevelPullup = true;
+    static constexpr uint32_t kLevelErrLogMs = 5000;
 };

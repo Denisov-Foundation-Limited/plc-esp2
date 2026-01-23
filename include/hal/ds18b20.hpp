@@ -54,6 +54,14 @@ public:
         return readTempC(addr, out_c);
     }
 
+    bool readTempC(const char *hex_serial, float &out_c)
+    {
+        uint8_t addr[8] = {};
+        if (!parseHexSerial_(hex_serial, addr))
+            return false;
+        return readTempC(addr, out_c);
+    }
+
     bool startConversion()
     {
         OneWireBus *bus = bus_();
@@ -100,6 +108,14 @@ public:
         return readTempCNoWait(addr, out_c);
     }
 
+    bool readTempCNoWait(const char *hex_serial, float &out_c)
+    {
+        uint8_t addr[8] = {};
+        if (!parseHexSerial_(hex_serial, addr))
+            return false;
+        return readTempCNoWait(addr, out_c);
+    }
+
     void listSerials(std::vector<String> &out)
     {
         OneWireBus *bus = bus_();
@@ -115,6 +131,29 @@ public:
             if (OneWireBus::crc8(addr, 7) != addr[7])
                 continue;
             out.push_back(toString_(addr));
+        }
+        return;
+    }
+
+    void listSerials(char out[][17], size_t max, size_t &count)
+    {
+        count = 0;
+        OneWireBus *bus = bus_();
+        if (!bus || !out || max == 0)
+            return;
+
+        uint8_t addr[8] = {};
+        bus->reset_search();
+        while (bus->search(addr))
+        {
+            if (addr[0] != kFamily)
+                continue;
+            if (OneWireBus::crc8(addr, 7) != addr[7])
+                continue;
+            if (count >= max)
+                return;
+            toHex_(addr, out[count]);
+            ++count;
         }
         return;
     }
@@ -195,6 +234,21 @@ private:
     static bool parseHexSerial_(const String &hex, uint8_t out[8])
     {
         if (hex.length() != 16)
+            return false;
+        for (uint8_t i = 0; i < 8; ++i)
+        {
+            int hi = hexNibble_(hex[i * 2]);
+            int lo = hexNibble_(hex[i * 2 + 1]);
+            if (hi < 0 || lo < 0)
+                return false;
+            out[i] = (uint8_t)((hi << 4) | lo);
+        }
+        return true;
+    }
+
+    static bool parseHexSerial_(const char *hex, uint8_t out[8])
+    {
+        if (!hex || strlen(hex) != 16)
             return false;
         for (uint8_t i = 0; i < 8; ++i)
         {

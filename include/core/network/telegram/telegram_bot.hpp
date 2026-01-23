@@ -419,25 +419,126 @@ private:
     static String buildMessagePayload_(int64_t chat_id, const String &text, const String &reply_markup,
                                        const String &parse_mode = "")
     {
+        const String clean_text = sanitizeUtf8_(text);
+        const String clean_markup = sanitizeUtf8_(reply_markup);
+        const String clean_mode = sanitizeUtf8_(parse_mode);
         String payload = F("{\"chat_id\":");
-        payload.reserve(text.length() + reply_markup.length() + parse_mode.length() + 64);
+        payload.reserve(clean_text.length() + clean_markup.length() + clean_mode.length() + 64);
         payload += String((long long)chat_id);
         payload += F(",\"text\":\"");
-        payload += escapeJson_(text);
+        payload += escapeJson_(clean_text);
         payload += F("\"");
-        if (reply_markup.length())
+        if (clean_markup.length())
         {
             payload += F(",\"reply_markup\":");
-            payload += reply_markup;
+            payload += clean_markup;
         }
-        if (parse_mode.length())
+        if (clean_mode.length())
         {
             payload += F(",\"parse_mode\":\"");
-            payload += escapeJson_(parse_mode);
+            payload += escapeJson_(clean_mode);
             payload += F("\"");
         }
         payload += F("}");
         return payload;
+    }
+
+    static String sanitizeUtf8_(const String &in)
+    {
+        if (isValidUtf8_(in))
+            return in;
+        return cp1251ToUtf8_(in);
+    }
+
+    static bool isValidUtf8_(const String &in)
+    {
+        size_t i = 0;
+        while (i < (size_t)in.length())
+        {
+            const uint8_t c = (uint8_t)in[i];
+            if (c < 0x80)
+            {
+                ++i;
+                continue;
+            }
+            size_t need = 0;
+            if ((c & 0xE0) == 0xC0)
+            {
+                if (c < 0xC2)
+                    return false;
+                need = 1;
+            }
+            else if ((c & 0xF0) == 0xE0)
+            {
+                need = 2;
+            }
+            else if ((c & 0xF8) == 0xF0)
+            {
+                if (c > 0xF4)
+                    return false;
+                need = 3;
+            }
+            else
+            {
+                return false;
+            }
+
+            if (i + need >= (size_t)in.length())
+                return false;
+
+            for (size_t j = 1; j <= need; ++j)
+            {
+                const uint8_t cc = (uint8_t)in[i + j];
+                if ((cc & 0xC0) != 0x80)
+                    return false;
+            }
+            i += need + 1;
+        }
+        return true;
+    }
+
+    static void appendUtf8_(String &out, uint16_t code)
+    {
+        if (code < 0x80)
+        {
+            out += (char)code;
+            return;
+        }
+        if (code < 0x800)
+        {
+            out += (char)(0xC0 | (code >> 6));
+            out += (char)(0x80 | (code & 0x3F));
+            return;
+        }
+        out += (char)(0xE0 | (code >> 12));
+        out += (char)(0x80 | ((code >> 6) & 0x3F));
+        out += (char)(0x80 | (code & 0x3F));
+    }
+
+    static String cp1251ToUtf8_(const String &in)
+    {
+        String out;
+        out.reserve(in.length() * 2);
+        for (size_t i = 0; i < (size_t)in.length(); ++i)
+        {
+            const uint8_t c = (uint8_t)in[i];
+            if (c < 0x80)
+            {
+                out += (char)c;
+                continue;
+            }
+            uint16_t code = '?';
+            if (c == 0xA8)
+                code = 0x0401;
+            else if (c == 0xB8)
+                code = 0x0451;
+            else if (c >= 0xC0 && c <= 0xFF)
+                code = (uint16_t)(0x0410 + (c - 0xC0));
+            else
+                code = '?';
+            appendUtf8_(out, code);
+        }
+        return out;
     }
 
     static String buildMenuMarkup_(const Menu &menu)

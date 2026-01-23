@@ -20,6 +20,7 @@
 #include "controllers/tank_controller.hpp"
 #include "controllers/thermo_controller.hpp"
 #include "core/eeprom_storage.hpp"
+#include "core/network/gsm_modem.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
 #include "core/network/telegram/telegram_menu.hpp"
 #include "hal/gpio/gpio.hpp"
@@ -29,9 +30,9 @@ class Controllers
 {
 public:
     Controllers(Gpio &gpio, OneWireManager &ow, EepromStorage &storage, Logger &logs,
-                TelegramBot &tgbot, TelegramMenu &tgmenu)
+                TelegramBot &tgbot, TelegramMenu &tgmenu, GsmModem &gsm)
         : _sockets(gpio, logs),
-          _meteo(ow),
+          _meteo(ow, logs),
           _thermo(gpio, _meteo, logs),
           _tanks(gpio, logs, tgbot, tgmenu),
           _septic(gpio, logs, tgbot, tgmenu),
@@ -39,10 +40,12 @@ public:
           _storage(storage),
           _logs(logs)
     {
+        _security.setGsmModem(gsm);
     }
 
     bool begin()
     {
+        _logs.info(F("CTRL"), F("Init begin"));
         _logs.info(F("CTRL"), F("Sockets init"));
         if (!_sockets.begin())
         {
@@ -80,6 +83,7 @@ public:
             return false;
         }
         loadFromStorage_();
+        _logs.info(F("CTRL"), F("Init done"));
         return true;
     }
 
@@ -122,6 +126,8 @@ public:
             _security.applyConfig(cfg["security"].as<JsonArrayConst>());
         if (cfg["security_keys"].is<JsonArrayConst>())
             _security.applyKeys(cfg["security_keys"].as<JsonArrayConst>());
+        if (cfg["security_phones"].is<JsonArrayConst>())
+            _security.applyPhones(cfg["security_phones"].as<JsonArrayConst>());
         if (cfg["security_siren"].is<unsigned>())
         {
             const unsigned raw = cfg["security_siren"].as<unsigned>();
@@ -152,6 +158,8 @@ public:
         _security.serialize(sec);
         JsonArray keys = out["security_keys"].to<JsonArray>();
         _security.serializeKeys(keys);
+        JsonArray phones = out["security_phones"].to<JsonArray>();
+        _security.serializePhones(phones);
         if (_security.sirenPort() != SecurityController::kInvalidPort)
             out["security_siren"] = (unsigned)_security.sirenPort();
     }

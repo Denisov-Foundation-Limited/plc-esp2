@@ -52,7 +52,7 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
     .row { display: flex; gap: 10px; align-items: center; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--muted); }
-    input[type=text], select {
+    input[type=text], input[type=password], select {
       width: 100%;
       background: #0b1220;
       border: 1px solid #334155;
@@ -68,6 +68,10 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
       border-radius: 8px;
       font-weight: 700;
       cursor: pointer;
+    }
+    button.mini {
+      padding: 8px 12px;
+      font-size: 12px;
     }
     .status { color: var(--muted); font-size: 12px; }
     a { color: #7dd3fc; text-decoration: none; }
@@ -99,6 +103,13 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
               <label>Master host/IP</label>
               <input type="text" name="master_host" value="%STACK_MASTER_HOST%" placeholder="192.168.1.10">
             </div>
+            <div>
+              <label>API key</label>
+              <div class="row">
+                <input type="password" name="api_key" value="%STACK_API_KEY%" placeholder="optional">
+                <button class="mini" type="button" id="gen-api-key">Сгенерировать</button>
+              </div>
+            </div>
           </div>
           <div class="row" style="margin-top:10px;">
             <button type="submit">Сохранить</button>
@@ -112,13 +123,24 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
   <script>
     const roleSelect = document.querySelector('select[name="role"]');
     const masterHost = document.getElementById('master-host-field');
+    const apiKeyInput = document.querySelector('input[name="api_key"]');
+    const apiKeyBtn = document.getElementById('gen-api-key');
     function updateMasterHost() {
       if (!roleSelect || !masterHost) return;
       masterHost.style.display = roleSelect.value === 'slave' ? '' : 'none';
+      if (apiKeyBtn) apiKeyBtn.style.display = roleSelect.value === 'master' ? '' : 'none';
     }
     if (roleSelect) {
       roleSelect.addEventListener('change', updateMasterHost);
       updateMasterHost();
+    }
+    if (apiKeyBtn && apiKeyInput) {
+      apiKeyBtn.addEventListener('click', () => {
+        fetch('/stack/gen_key', { method: 'POST' })
+          .then((resp) => resp.ok ? resp.text() : Promise.reject(resp.status))
+          .then((key) => { apiKeyInput.value = key.trim(); })
+          .catch(() => {});
+      });
     }
   </script>
 </body>

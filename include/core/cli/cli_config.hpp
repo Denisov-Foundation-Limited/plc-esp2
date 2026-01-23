@@ -66,6 +66,9 @@ public:
             _c._io->println(F("  Stack:"));
             _c._io->println(F("    stack role <master|slave> - set device role"));
             _c._io->println(F("    stack master <host>       - set master host/IP"));
+            _c._io->println(F("    stack api_key <value>     - set stack api_key"));
+            _c._io->println(F("    stack api_key clear       - clear stack api_key"));
+            _c._io->println(F("    stack api_key gen         - generate stack api_key"));
             _c._io->println(F("  Wi-Fi:"));
             _c._io->println(F("    wifi                     - enter Wi-Fi context"));
             _c._io->println(F("  Time:"));
@@ -707,6 +710,30 @@ private:
             _c.printPrompt_();
             return;
         }
+        if (lower.startsWith("stack api_key "))
+        {
+            String key = cmd.substring(14);
+            key.trim();
+            if (key == "clear")
+                key = "";
+            if (key == "gen")
+            {
+                key = genApiKey_();
+            }
+            if (!_c.setStackApiKey_(key))
+                _c._io->println(F("Config manager missing"));
+            else
+            {
+                if (key.length() > 0)
+                {
+                    _c._io->print(F("API key: "));
+                    _c._io->println(key);
+                }
+                _c._io->println(F("OK"));
+            }
+            _c.printPrompt_();
+            return;
+        }
         _c._io->println(F("Unknown command"));
         _c.printPrompt_();
     }
@@ -780,6 +807,20 @@ private:
             y -= 1;
         const uint8_t dow = (uint8_t)((y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7);
         return (uint8_t)(dow + 1);
+    }
+
+    static String genApiKey_()
+    {
+        char buf[33] = {};
+        static const char kHex[] = "0123456789abcdef";
+        for (size_t i = 0; i < 16; ++i)
+        {
+            const uint8_t v = (uint8_t)random(0, 256);
+            buf[i * 2] = kHex[(v >> 4) & 0x0F];
+            buf[i * 2 + 1] = kHex[v & 0x0F];
+        }
+        buf[32] = '\0';
+        return String(buf);
     }
 
     ConsoleT &_c;

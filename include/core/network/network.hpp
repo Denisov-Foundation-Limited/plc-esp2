@@ -22,6 +22,7 @@
 #include "core/network/telegram/telegram_menu.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/network/web/web_interface.hpp"
+#include "core/network/gsm_modem.hpp"
 #include "core/network/stack/stack_master.hpp"
 #include "core/network/stack/stack_node.hpp"
 #include "utils/configs_manager_iface.hpp"
@@ -38,17 +39,22 @@ public:
         WebInterfaceFs
     };
 
-    Network(Logger &logs, WifiManager &wifi, TelegramClient &tgbot, TelegramBot &bot,
+    Network(Logger &logs, WifiManager &wifi, GsmModem &gsm, TelegramClient &tgbot, TelegramBot &bot,
             TelegramMenu &menu, WebInterface &fw, AsyncWebServer &web, WiFiClientSecure &wifi_client)
-        : _logs(logs), _wifi(wifi), _tgbot(tgbot), _bot(bot), _menu(menu),
+        : _logs(logs), _wifi(wifi), _gsm(gsm), _tgbot(tgbot), _bot(bot), _menu(menu),
           _fw_upgrade(fw), _web(web),
           _wifi_client(wifi_client),
           _stack_server(kStackPort),
-          _stack_master(_stack_server)
+          _stack_master(_stack_server, _logs),
+          _stack_node(_logs)
     {
     }
 
-    void setStackConfig(ConfigsManagerIface &cfg) { _stack_cfg = &cfg; }
+    void setStackConfig(ConfigsManagerIface &cfg)
+    {
+        _stack_cfg = &cfg;
+        _stack_master.setConfigsManager(cfg);
+    }
     void setStackDeviceName(const String &name) { _stack_device_name = name; }
 
     void setTelegramClient(Client &client) { _tgbot_ext_client = &client; }
@@ -79,35 +85,62 @@ public:
     bool begin()
     {
         _last_error = Error::None;
+        if (ActiveBoardProfile::GSM.enabled && _gsm.enabled())
+        {
+            _logs.info(F("NET"), F("Init GSM modem"));
+            if (!_gsm.begin(ActiveBoardProfile::GSM.uart_index))
+                _logs.warn(F("GSM"), F("Modem init failed, continue without GSM"));
+        }
+        else
+        {
+            _logs.info(F("NET"), F("GSM modem disabled"));
+        }
+        _logs.info(F("NET"), F("Init Wi-Fi"));
         if (!_wifi.begin())
         {
             _last_error = Error::Wifi;
+            _logs.warn(F("NET"), F("Wi-Fi init failed"));
             return false;
         }
+        _logs.info(F("NET"), F("Init Web interface FS"));
         if (!_fw_upgrade.begin())
         {
             _last_error = Error::WebInterfaceFs;
+            _logs.warn(F("NET"), F("Web interface FS init failed"));
             return false;
         }
+        _logs.info(F("NET"), F("Bind Telegram bot"));
         _bot.bind(_tgbot);
+        _logs.info(F("NET"), F("Init Telegram menu"));
         _menu.begin();
+        _logs.info(F("NET"), F("Register Web routes"));
         _fw_upgrade.registerRoutes();
+        _logs.info(F("NET"), F("Start Web server"));
         _web.begin();
+        _logs.info(F("NET"), F("Configure Telegram network"));
         if (!configureTelegram_(ActiveBoardProfile::TELEGRAM_NET))
             return false;
+        _logs.info(F("NET"), F("Enable Telegram auto poll"));
         _tgbot.setAutoPollIntervalMs(10000);
         _tgbot.enableAutoPoll(true, 0);
+        _logs.info(F("NET"), F("Init Stack"));
         beginStack_();
+        _logs.info(F("NET"), F("Init done"));
         return true;
     }
 
     Error lastError() const { return _last_error; }
 
-    void loop() { _stack_node.loop(); }
+    void loop()
+    {
+        _gsm.loop();
+        _stack_node.loop();
+    }
 
 private:
     Logger &_logs;
     WifiManager &_wifi;
+    GsmModem &_gsm;
     TelegramClient &_tgbot;
     TelegramBot &_bot;
     TelegramMenu &_menu;

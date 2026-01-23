@@ -18,6 +18,7 @@ class Sim800l
 {
 public:
     using CommandCallback = void (*)(void *ctx, bool ok, const String &response);
+    using CommandDoneCallback = void (*)(void *ctx, bool ok, const String &response, const String &cmd);
     using LineCallback = void (*)(void *ctx, const String &line);
     using SmsIndexCallback = void (*)(void *ctx, uint16_t index);
     using CallCallback = void (*)(void *ctx, const String &number);
@@ -66,11 +67,17 @@ public:
         ++_q_count;
         return true;
     }
-
     void setUrcHandler(LineCallback cb, void *ctx = nullptr)
     {
         _urc_cb = cb;
         _urc_ctx = ctx;
+    }
+
+
+    void setCommandDoneHandler(CommandDoneCallback cb, void *ctx = nullptr)
+    {
+        _cmd_done_cb = cb;
+        _cmd_done_ctx = ctx;
     }
 
     void setSmsHandler(SmsIndexCallback cb, void *ctx = nullptr)
@@ -148,6 +155,18 @@ public:
     {
         const String cmd = String("AT+CUSD=1,\"") + code + "\",15";
         return enqueueCommand(cmd, "+CUSD:", 10000, cb, ctx);
+    }
+
+    bool sendSms(const String &number, const String &text, CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        if (number.length() == 0)
+            return false;
+        _payload = text;
+        _payload += "\x1A";
+        _payload_pending = true;
+        _payload_timeout_ms = 15000;
+        const String cmd = String("AT+CMGS=\"") + number + "\"";
+        return enqueueCommand(cmd, ">", 3000, cb, ctx);
     }
 
     bool dial(const String &number, CommandCallback cb = nullptr, void *ctx = nullptr)
@@ -251,7 +270,7 @@ public:
     }
 
 private:
-    static constexpr size_t kQueueSize = 8;
+    static constexpr size_t kQueueSize = 16;
     static constexpr size_t kMaxLineLen = 256;
 
     struct PendingCmd
@@ -274,9 +293,14 @@ private:
     String _current_resp;
     String _last_response;
     String _line_buf;
+    bool _payload_pending = false;
+    uint32_t _payload_timeout_ms = 0;
+    String _payload;
 
     LineCallback _urc_cb = nullptr;
     void *_urc_ctx = nullptr;
+    CommandDoneCallback _cmd_done_cb = nullptr;
+    void *_cmd_done_ctx = nullptr;
     SmsIndexCallback _sms_cb = nullptr;
     void *_sms_ctx = nullptr;
     CallCallback _call_cb = nullptr;
@@ -306,12 +330,17 @@ private:
     void finishCommand_(bool ok)
     {
         _last_response = _current_resp;
+        if (_cmd_done_cb)
+            _cmd_done_cb(_cmd_done_ctx, ok, _last_response, _current.cmd);
         if (_current.cb)
             _current.cb(_current.ctx, ok, _last_response);
 
         _waiting = false;
         _current = PendingCmd{};
         _current_resp = "";
+        _payload_pending = false;
+        _payload = "";
+        _payload_timeout_ms = 0;
 
         if (_q_count > 0)
         {
@@ -351,6 +380,21 @@ private:
 
         if (!_waiting)
             return;
+
+        if (_current.expect == ">" && line == ">")
+        {
+            if (_ser && _payload_pending)
+            {
+                _ser->print(_payload);
+                _payload_pending = false;
+                _payload = "";
+                _current.expect = "OK";
+                _deadline_ms = millis() + _payload_timeout_ms;
+                return;
+            }
+            finishCommand_(true);
+            return;
+        }
 
         _current_resp += line;
         _current_resp += "\n";

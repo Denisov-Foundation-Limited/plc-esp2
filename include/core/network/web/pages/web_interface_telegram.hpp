@@ -126,16 +126,16 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
           </div>
         </div>
         <div class="section">
-          <h2>Allowed users</h2>
+          <h2>Разрешенные пользователи</h2>
           <table class="table">
             <thead>
               <tr>
                 <th>ID</th>
-                <th>Username</th>
+                <th>Имя пользователя</th>
                 <th>Chat ID</th>
-                <th>Admin</th>
-                <th>Notify</th>
-                <th>Enabled</th>
+                <th>Админ</th>
+                <th>Уведомл.</th>
+                <th>Включен</th>
               </tr>
             </thead>
             <tbody>

@@ -18,6 +18,7 @@
 #include "boards/board_profile.hpp"
 #include "core/network/telegram/telegram_allowed_users.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
+#include "core/network/gsm_modem.hpp"
 #include "hal/bus/onewire.hpp"
 #include "hal/gpio/gpio.hpp"
 #include "hal/gpio/portio.hpp"
@@ -29,6 +30,7 @@ class SecurityController
 public:
     static constexpr size_t kSensorCount = 72;
     static constexpr size_t kKeyCount = 10;
+    static constexpr size_t kPhoneCount = 10;
     static constexpr uint8_t kInvalidPort = 0xFF;
 
     enum class SensorType : uint8_t
@@ -63,7 +65,11 @@ public:
     bool begin()
     {
         if (!_controller_enabled)
+        {
+            _logs.info(F("SEC"), F("Controller disabled"));
             return true;
+        }
+        _logs.info(F("SEC"), F("Init"));
         setupOutputs_();
         initIButton_();
         for (size_t i = 0; i < kSensorCount; ++i)
@@ -76,11 +82,13 @@ public:
             st.raw = readRaw_(cfg);
             st.is_detect = false;
         }
+        _logs.info(F("SEC"), F("Init done"));
         return true;
     }
 
     void task()
     {
+        handleGsm_();
         if (!_controller_enabled)
             return;
         handleIButton_();
@@ -184,6 +192,90 @@ public:
                 if (parseHexAddr_(v.as<const char *>(), _keys[idx]))
                     _key_set[idx] = true;
             }
+            else if (v.is<JsonObjectConst>())
+            {
+                JsonObjectConst obj = v.as<JsonObjectConst>();
+                uint16_t id = (uint16_t)(idx + 1);
+                bool enabled = true;
+                String name;
+                const char *serial = nullptr;
+                if (obj["id"].is<unsigned>())
+                    id = (uint16_t)obj["id"].as<unsigned>();
+                if (obj["enabled"].is<bool>())
+                    enabled = obj["enabled"].as<bool>();
+                if (obj["name"].is<const char *>())
+                    name = obj["name"].as<const char *>();
+                if (obj["serial"].is<const char *>())
+                    serial = obj["serial"].as<const char *>();
+                else if (obj["addr"].is<const char *>())
+                    serial = obj["addr"].as<const char *>();
+                if (id < 1 || id > kKeyCount)
+                {
+                    ++idx;
+                    continue;
+                }
+                const size_t dst = (size_t)(id - 1);
+                if (serial && enabled && parseHexAddr_(serial, _keys[dst]))
+                {
+                    _key_set[dst] = true;
+                    _key_names[dst] = name;
+                }
+                else if (serial && !enabled)
+                {
+                    _key_set[dst] = false;
+                    _key_names[dst] = name;
+                }
+            }
+            ++idx;
+        }
+    }
+
+    void applyPhones(JsonArrayConst phones)
+    {
+        clearPhones_();
+        size_t idx = 0;
+        for (JsonVariantConst v : phones)
+        {
+            if (idx >= kPhoneCount)
+                break;
+            bool enabled = true;
+            bool notify = false;
+            bool call = false;
+            uint16_t id = (uint16_t)(idx + 1);
+            String number;
+            String name;
+            if (v.is<const char *>())
+            {
+                number = v.as<const char *>();
+            }
+            if (v.is<JsonObjectConst>())
+            {
+                JsonObjectConst obj = v.as<JsonObjectConst>();
+                if (obj["id"].is<unsigned>())
+                    id = (uint16_t)obj["id"].as<unsigned>();
+                if (obj["enabled"].is<bool>())
+                    enabled = obj["enabled"].as<bool>();
+                if (obj["notify"].is<bool>())
+                    notify = obj["notify"].as<bool>();
+                if (obj["call"].is<bool>())
+                    call = obj["call"].as<bool>();
+                if (obj["number"].is<const char *>())
+                    number = obj["number"].as<const char *>();
+                if (obj["name"].is<const char *>())
+                    name = obj["name"].as<const char *>();
+            }
+            if (id < 1 || id > kPhoneCount)
+            {
+                ++idx;
+                continue;
+            }
+            const size_t dst = (size_t)(id - 1);
+            _phones[dst] = normalizePhone_(number);
+            _phone_enabled[dst] = enabled;
+            if (name.length())
+                _phone_names[dst] = name;
+            _phone_notify[dst] = notify;
+            _phone_call[dst] = call;
             ++idx;
         }
     }
@@ -222,7 +314,28 @@ public:
                 continue;
             char hex[17] = {};
             IButton::toHex(_keys[i], hex);
-            out.add(hex);
+            JsonObject obj = out.add<JsonObject>();
+            obj["id"] = (unsigned)(i + 1);
+            obj["enabled"] = true;
+            obj["serial"] = hex;
+            if (_key_names[i].length())
+                obj["name"] = _key_names[i];
+        }
+    }
+
+    void serializePhones(JsonArray out) const
+    {
+        for (size_t i = 0; i < kPhoneCount; ++i)
+        {
+            JsonObject obj = out.add<JsonObject>();
+            obj["id"] = (unsigned)(i + 1);
+            obj["enabled"] = _phone_enabled[i];
+            obj["notify"] = _phone_notify[i];
+            obj["call"] = _phone_call[i];
+            if (_phones[i].length())
+                obj["number"] = _phones[i];
+            if (_phone_names[i].length())
+                obj["name"] = _phone_names[i];
         }
     }
 
@@ -275,6 +388,7 @@ public:
     bool armed() const { return _armed; }
     bool alarmOn() const { return _alarm_on; }
     uint8_t sirenPort() const { return _siren_port; }
+    void setGsmModem(GsmModem &modem) { _gsm = &modem; }
     bool arm()
     {
         if (_armed)
@@ -290,6 +404,29 @@ public:
             return true;
         disarm_(false);
         return true;
+    }
+    bool armFrom(const char *src, const String &user)
+    {
+        if (_armed)
+            return true;
+        if (!_controller_enabled)
+            return false;
+        arm_(src, user);
+        return true;
+    }
+    bool disarmFrom(const char *src, const String &user, bool silent = false)
+    {
+        if (!_armed)
+            return true;
+        disarm_(silent, src, user);
+        return true;
+    }
+    void toggleFrom(const char *src, const String &user)
+    {
+        if (_armed)
+            disarm_(false, src, user);
+        else
+            arm_(src, user);
     }
     void clearDetect()
     {
@@ -361,6 +498,10 @@ public:
     }
     bool addKey(const uint8_t addr[8])
     {
+        return addKey(addr, "");
+    }
+    bool addKey(const uint8_t addr[8], const String &name)
+    {
         if (!addr)
             return false;
         for (size_t i = 0; i < kKeyCount; ++i)
@@ -374,6 +515,7 @@ public:
                 continue;
             memcpy(_keys[i], addr, 8);
             _key_set[i] = true;
+            _key_names[i] = name;
             return true;
         }
         return false;
@@ -390,6 +532,7 @@ public:
                 continue;
             memset(_keys[i], 0, sizeof(_keys[i]));
             _key_set[i] = false;
+            _key_names[i] = "";
             return true;
         }
         return false;
@@ -397,6 +540,79 @@ public:
     void clearKeys()
     {
         clearKeys_();
+    }
+    void clearPhones()
+    {
+        clearPhones_();
+    }
+    bool setPhone(size_t idx, const String &number)
+    {
+        if (idx >= kPhoneCount)
+            return false;
+        _phones[idx] = normalizePhone_(number);
+        return true;
+    }
+    bool setPhoneName(size_t idx, const String &name)
+    {
+        if (idx >= kPhoneCount)
+            return false;
+        _phone_names[idx] = name;
+        return true;
+    }
+    bool setPhoneNotify(size_t idx, bool notify)
+    {
+        if (idx >= kPhoneCount)
+            return false;
+        _phone_notify[idx] = notify;
+        return true;
+    }
+    bool setPhoneCall(size_t idx, bool call)
+    {
+        if (idx >= kPhoneCount)
+            return false;
+        _phone_call[idx] = call;
+        return true;
+    }
+    bool setPhoneEnabled(size_t idx, bool enabled)
+    {
+        if (idx >= kPhoneCount)
+            return false;
+        _phone_enabled[idx] = enabled;
+        return true;
+    }
+    bool phoneSlot(size_t idx, String &number, bool &enabled) const
+    {
+        if (idx >= kPhoneCount)
+            return false;
+        number = _phones[idx];
+        enabled = _phone_enabled[idx];
+        return true;
+    }
+    const String &phoneByIndex(size_t idx) const
+    {
+        static const String empty;
+        if (idx >= kPhoneCount)
+            return empty;
+        return _phones[idx];
+    }
+    const String &phoneNameByIndex(size_t idx) const
+    {
+        static const String empty;
+        if (idx >= kPhoneCount)
+            return empty;
+        return _phone_names[idx];
+    }
+    bool phoneNotifyByIndex(size_t idx) const
+    {
+        if (idx >= kPhoneCount)
+            return false;
+        return _phone_notify[idx];
+    }
+    bool phoneCallByIndex(size_t idx) const
+    {
+        if (idx >= kPhoneCount)
+            return false;
+        return _phone_call[idx];
     }
     size_t keyCount() const
     {
@@ -426,6 +642,28 @@ public:
         }
         return false;
     }
+    const String &keyNameByIndex(size_t idx) const
+    {
+        static const String empty;
+        if (idx >= kKeyCount)
+            return empty;
+        return _key_names[idx];
+    }
+    bool setKeyNameByAddr(const uint8_t addr[8], const String &name)
+    {
+        if (!addr)
+            return false;
+        for (size_t i = 0; i < kKeyCount; ++i)
+        {
+            if (!_key_set[i])
+                continue;
+            if (memcmp(_keys[i], addr, 8) != 0)
+                continue;
+            _key_names[i] = name;
+            return true;
+        }
+        return false;
+    }
     bool keySlot(size_t idx, uint8_t out[8], bool &enabled) const
     {
         if (idx >= kKeyCount)
@@ -438,6 +676,23 @@ public:
             else
                 memset(out, 0, 8);
         }
+        return true;
+    }
+    bool setKeySlot(size_t idx, const uint8_t addr[8], bool enabled, const String &name)
+    {
+        if (idx >= kKeyCount)
+            return false;
+        if (enabled)
+        {
+            memcpy(_keys[idx], addr, 8);
+            _key_set[idx] = true;
+        }
+        else
+        {
+            memset(_keys[idx], 0, sizeof(_keys[idx]));
+            _key_set[idx] = false;
+        }
+        _key_names[idx] = name;
         return true;
     }
     const SensorConfig *config(size_t id) const
@@ -473,6 +728,7 @@ private:
     Logger &_logs;
     TelegramBot &_tgbot;
     TelegramAllowedUsersProvider &_tgusers;
+    GsmModem *_gsm = nullptr;
     IButton _ibutton;
     bool _ibutton_ready = false;
 
@@ -482,6 +738,12 @@ private:
     bool _key_set[kKeyCount]{};
     uint8_t _last_key[8]{};
     uint32_t _last_key_ms = 0;
+    String _phones[kPhoneCount]{};
+    bool _phone_enabled[kPhoneCount]{};
+    String _phone_names[kPhoneCount]{};
+    bool _phone_notify[kPhoneCount]{};
+    bool _phone_call[kPhoneCount]{};
+    String _key_names[kKeyCount]{};
 
     bool _controller_enabled = false;
     bool _armed = false;
@@ -508,6 +770,7 @@ private:
             _state[i] = SensorState{};
         }
         clearKeys_();
+        clearPhones_();
         _siren_port = kInvalidPort;
         _armed = false;
         _alarm_on = false;
@@ -520,6 +783,19 @@ private:
         memset(_key_set, 0, sizeof(_key_set));
         memset(_last_key, 0, sizeof(_last_key));
         _last_key_ms = 0;
+        for (size_t i = 0; i < kKeyCount; ++i)
+            _key_names[i] = "";
+    }
+
+    void clearPhones_()
+    {
+        for (size_t i = 0; i < kPhoneCount; ++i)
+            _phones[i] = "";
+        memset(_phone_enabled, 0, sizeof(_phone_enabled));
+        for (size_t i = 0; i < kPhoneCount; ++i)
+            _phone_names[i] = "";
+        memset(_phone_notify, 0, sizeof(_phone_notify));
+        memset(_phone_call, 0, sizeof(_phone_call));
     }
 
     static bool indexById_(uint8_t id, size_t &out)
@@ -648,11 +924,12 @@ private:
         uint8_t addr[8] = {};
         if (!_ibutton.readSerial(addr))
             return;
-        if (!isAllowedKey_(addr))
+        String user;
+        if (!matchKey_(addr, user))
             return;
         if (isKeyRepeat_(addr))
             return;
-        toggleArm_();
+        toggleArm_("ibutton", user);
     }
 
     bool isAllowedKey_(const uint8_t addr[8]) const
@@ -688,6 +965,35 @@ private:
             arm_();
     }
 
+    void toggleArm_(const char *src, const String &user)
+    {
+        if (_armed)
+            disarm_(false, src, user);
+        else
+            arm_(src, user);
+    }
+
+    void handleGsm_()
+    {
+        if (!_gsm)
+            return;
+        String number;
+        if (!_gsm->takeLastCall(number))
+            return;
+        _gsm->driver().hangup();
+        String user;
+        if (!matchPhone_(number, user))
+            return;
+        if (_armed)
+        {
+            disarm_(false, "gsm", user);
+        }
+        else
+        {
+            arm_("gsm", user);
+        }
+    }
+
     void arm_()
     {
         _armed = true;
@@ -698,7 +1004,7 @@ private:
         updateSiren_();
         startBeep_(2, kBeepShortMs, kBeepGapMs);
         _dirty = true;
-        _logs.info(F("SEC"), F("armed"));
+        logArmAction_(true, nullptr, String());
     }
 
     void disarm_(bool silent)
@@ -712,7 +1018,34 @@ private:
         if (!silent)
             startBeep_(1, kBeepLongMs, 0);
         _dirty = true;
-        _logs.info(F("SEC"), F("disarmed"));
+        logArmAction_(false, nullptr, String());
+    }
+
+    void arm_(const char *src, const String &user)
+    {
+        _armed = true;
+        _alarm_on = false;
+        clearDetect_();
+        resetAlarmBuzzer_();
+        updateAlarmLed_();
+        updateSiren_();
+        startBeep_(2, kBeepShortMs, kBeepGapMs);
+        _dirty = true;
+        logArmAction_(true, src, user);
+    }
+
+    void disarm_(bool silent, const char *src, const String &user)
+    {
+        _armed = false;
+        _alarm_on = false;
+        clearDetect_();
+        resetAlarmBuzzer_();
+        updateAlarmLed_();
+        updateSiren_();
+        if (!silent)
+            startBeep_(1, kBeepLongMs, 0);
+        _dirty = true;
+        logArmAction_(false, src, user);
     }
 
     void applySnapshot_(bool armed)
@@ -820,9 +1153,7 @@ private:
 
     void notifyDetect_(const SensorConfig &cfg)
     {
-        const auto &users = _tgusers.allowedUsers();
-        if (users.empty())
-            return;
+        const auto users = _tgusers.allowedUsers();
         String msg = F("Тревога: датчик ");
         msg += String((unsigned)cfg.id);
         if (cfg.name.length())
@@ -831,12 +1162,120 @@ private:
             msg += cfg.name;
             msg += F(")");
         }
-        for (const auto &user : users)
+        for (size_t i = 0; i < users.size; ++i)
         {
+            const auto &user = users[i];
             if (!user.enabled || !user.is_notify || user.chat_id == 0)
                 continue;
             _tgbot.sendText(user.chat_id, msg);
         }
+        sendSmsNotify_(cfg);
+    }
+
+    bool isAllowedPhone_(const String &number) const
+    {
+        const String norm = normalizePhone_(number);
+        if (norm.length() == 0)
+            return false;
+        for (size_t i = 0; i < kPhoneCount; ++i)
+        {
+            if (!_phone_enabled[i])
+                continue;
+            if (_phones[i].length() == 0)
+                continue;
+            if (_phones[i] == norm)
+                return true;
+        }
+        return false;
+    }
+
+    bool matchPhone_(const String &number, String &user) const
+    {
+        const String norm = normalizePhone_(number);
+        if (norm.length() == 0)
+            return false;
+        for (size_t i = 0; i < kPhoneCount; ++i)
+        {
+            if (!_phone_enabled[i])
+                continue;
+            if (_phones[i].length() == 0)
+                continue;
+            if (_phones[i] == norm)
+            {
+                user = _phone_names[i];
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static String normalizePhone_(const String &number)
+    {
+        String out;
+        out.reserve(number.length());
+        for (size_t i = 0; i < number.length(); ++i)
+        {
+            const char c = number.charAt(i);
+            if (c >= '0' && c <= '9')
+                out += c;
+        }
+        return out;
+    }
+
+    void sendSmsNotify_(const SensorConfig &cfg)
+    {
+        if (!_gsm)
+            return;
+        String msg = F("ALARM sensor ");
+        msg += String((unsigned)cfg.id);
+        if (cfg.name.length())
+        {
+            msg += F(" (");
+            msg += cfg.name;
+            msg += F(")");
+        }
+        for (size_t i = 0; i < kPhoneCount; ++i)
+        {
+            if (!_phone_enabled[i] || !_phone_notify[i])
+                continue;
+            if (_phones[i].length() == 0)
+                continue;
+            _gsm->sendSms(_phones[i], msg);
+        }
+        for (size_t i = 0; i < kPhoneCount; ++i)
+        {
+            if (!_phone_enabled[i] || !_phone_call[i])
+                continue;
+            if (_phones[i].length() == 0)
+                continue;
+            _gsm->driver().dial(_phones[i]);
+        }
+    }
+
+    bool matchKey_(const uint8_t addr[8], String &user) const
+    {
+        for (size_t i = 0; i < kKeyCount; ++i)
+        {
+            if (!_key_set[i])
+                continue;
+            if (memcmp(_keys[i], addr, 8) != 0)
+                continue;
+            user = _key_names[i];
+            return true;
+        }
+        return false;
+    }
+
+    void logArmAction_(bool armed, const char *src, const String &user)
+    {
+        if (!src && user.length() == 0)
+        {
+            _logs.info(F("SEC"), F("%s"), armed ? "armed" : "disarmed");
+            return;
+        }
+        const char *who = user.length() ? user.c_str() : "unknown";
+        const char *from = src ? src : "unknown";
+        _logs.info(F("SEC"), F("%s by %s (%s)"), armed ? "armed" : "disarmed", who, from);
     }
 
     static int hexNibble_(char c)

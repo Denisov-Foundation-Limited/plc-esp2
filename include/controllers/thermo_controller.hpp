@@ -69,7 +69,11 @@ public:
     bool begin()
     {
         if (!_controller_enabled)
+        {
+            _logs.info(F("THERMO"), F("Controller disabled"));
             return true;
+        }
+        _logs.info(F("THERMO"), F("Init"));
         for (size_t i = 0; i < kDeviceCount; ++i)
         {
             DeviceConfig &cfg = _cfg[i];
@@ -79,6 +83,7 @@ public:
             st.has_button = setupButton_(cfg, st);
             setupRelay_(cfg, st);
         }
+        _logs.info(F("THERMO"), F("Init done"));
         return true;
     }
 

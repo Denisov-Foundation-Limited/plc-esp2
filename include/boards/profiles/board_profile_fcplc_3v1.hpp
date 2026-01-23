@@ -47,6 +47,10 @@ struct BoardProfileFCPLC_3v1 : BoardProfileCommon
         .proxy_port = 0,
         .proxy_path = ""
     };
+    static inline constexpr GsmCfg GSM = {
+        .enabled = true,
+        .uart_index = 0
+    };
 
     // ---- Control pins ----
     static inline constexpr uint8_t BUZZER_PIN = 6;

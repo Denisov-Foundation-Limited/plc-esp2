@@ -35,6 +35,7 @@
 #include "controllers/security_controller.hpp"
 #include "controllers/socket_controller.hpp"
 #include "controllers/thermo_controller.hpp"
+#include "utils/configs_manager_iface.hpp"
 #include "utils/logger.hpp"
 
 class StackSlaveHandler
@@ -67,6 +68,7 @@ public:
         node.setFrameHandler(&StackSlaveHandler::onFrame_, this);
         node.setStatusProvider(&StackSlaveHandler::onStatus_, this);
     }
+    void setConfigsManager(ConfigsManagerIface &cfg) { _configs = &cfg; }
 
 private:
     struct I2cEntry
@@ -95,6 +97,7 @@ private:
     SepticController &_septic;
     SecurityController &_security;
     StackNode *_node = nullptr;
+    ConfigsManagerIface *_configs = nullptr;
     static constexpr uint8_t MAX_I2C_ADDRS = 127;
     static constexpr uint8_t MAX_OW_ADDRS = 64;
     static constexpr size_t kDocCapacity = 4096;
@@ -136,6 +139,11 @@ private:
         }
 
         const uint16_t cmd_id = _rx_doc["cmd_id"] | 0;
+        if (!authOk_())
+        {
+            sendErr_(cmd_id, "auth");
+            return;
+        }
         const uint8_t feature = (uint8_t)(_rx_doc["feature"] | 0);
         String action = _rx_doc["action"] | "";
         action.toLowerCase();
@@ -287,15 +295,17 @@ private:
 
     void handleTempSensors_(uint16_t cmd_id, const String &action, JsonVariantConst)
     {
-        std::vector<String> serials;
-        _ds18b20.listSerials(serials);
+        static constexpr size_t kMaxSerials = 50;
+        char serials[kMaxSerials][17] = {};
+        size_t serial_count = 0;
+        _ds18b20.listSerials(serials, kMaxSerials, serial_count);
         if (action == "list")
         {
             _tx_doc.clear();
             JsonDocument &doc = _tx_doc;
             JsonArray arr = doc["serials"].to<JsonArray>();
-            for (const auto &s : serials)
-                arr.add(s);
+            for (size_t i = 0; i < serial_count; ++i)
+                arr.add(serials[i]);
             sendAck_(cmd_id, doc);
             return;
         }
@@ -304,8 +314,9 @@ private:
             _tx_doc.clear();
             JsonDocument &doc = _tx_doc;
             JsonArray arr = doc["items"].to<JsonArray>();
-            for (const auto &s : serials)
+            for (size_t i = 0; i < serial_count; ++i)
             {
+                const char *s = serials[i];
                 float t = 0.0f;
                 const bool ok = _ds18b20.readTempC(s, t);
                 JsonObject o = arr.add<JsonObject>();
@@ -857,13 +868,14 @@ private:
                 return;
             }
             JsonObjectConst obj = params.as<JsonObjectConst>();
+            String user = obj["user"] | "";
             if (obj["armed"].is<bool>())
             {
                 const bool on = obj["armed"].as<bool>();
                 if (on)
-                    _security.arm();
+                    _security.armFrom("stack", user);
                 else
-                    _security.disarm();
+                    _security.disarmFrom("stack", user);
             }
             if (obj["clear"].is<bool>() && obj["clear"].as<bool>())
                 _security.clearDetect();
@@ -1223,6 +1235,17 @@ private:
         default:
             return "Unknown";
         }
+    }
+
+    bool authOk_() const
+    {
+        if (!_configs)
+            return true;
+        const String key = _configs->stackApiKey();
+        if (key.length() == 0)
+            return true;
+        const String provided = _rx_doc["api_key"] | "";
+        return provided == key;
     }
 
     void sendAck_(uint16_t cmd_id)

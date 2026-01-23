@@ -12,7 +12,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include <vector>
+#include <stddef.h>
 
 struct TelegramAllowedUser
 {
@@ -23,10 +23,19 @@ struct TelegramAllowedUser
     bool enabled = true;
 };
 
+struct TelegramAllowedUsersView
+{
+    const TelegramAllowedUser *data = nullptr;
+    size_t size = 0;
+
+    bool empty() const { return size == 0; }
+    const TelegramAllowedUser &operator[](size_t index) const { return data[index]; }
+};
+
 class TelegramAllowedUsersProvider
 {
 public:
-    virtual const std::vector<TelegramAllowedUser> &allowedUsers() const = 0;
+    virtual TelegramAllowedUsersView allowedUsers() const = 0;
 protected:
     ~TelegramAllowedUsersProvider() = default;
 };

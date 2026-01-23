@@ -58,7 +58,11 @@ public:
     bool begin()
     {
         if (!_controller_enabled)
+        {
+            _logs.info(F("SEPTIC"), F("Controller disabled"));
             return true;
+        }
+        _logs.info(F("SEPTIC"), F("Init"));
         for (size_t i = 0; i < kSepticCount; ++i)
         {
             SepticConfig &cfg = _cfg[i];
@@ -72,6 +76,7 @@ public:
             st.last_warning = st.warning;
             st.last_alarm = st.alarm;
         }
+        _logs.info(F("SEPTIC"), F("Init done"));
         return true;
     }
 
@@ -437,7 +442,7 @@ private:
 
     void notifyLevel_(const SepticConfig &cfg, const char *level)
     {
-        const auto &users = _tgusers.allowedUsers();
+        const auto users = _tgusers.allowedUsers();
         if (users.empty())
             return;
         String msg = F("Септик: уровень ");
@@ -448,8 +453,9 @@ private:
             msg += cfg.name;
             msg += F(")");
         }
-        for (const auto &user : users)
+        for (size_t i = 0; i < users.size; ++i)
         {
+            const auto &user = users[i];
             if (!user.enabled || !user.is_notify || user.chat_id == 0)
                 continue;
             _tgbot.sendText(user.chat_id, msg);

@@ -17,7 +17,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Wi-Fi</title>
+  <title>Сеть</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -80,7 +80,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Wi-Fi</h1>
+      <h1>Сеть</h1>
       <table class="status-table">
         <tbody>
           <tr><td>Режим</td><td><strong>%WIFI_MODE%</strong></td></tr>
@@ -115,9 +115,35 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
             <input type="password" name="ap_password" placeholder="Введите пароль для AP">
           </div>
         </div>
+        <div class="section">
+          <h2>GSM</h2>
+          <div class="row" style="margin-bottom:10px;">
+            <label style="margin-right:8px;">Включен</label>
+            <input type="checkbox" name="gsm_enabled" %GSM_ENABLED_CHECKED%>
+            <span class="status">%GSM_ENABLED_LABEL%</span>
+          </div>
+          <table class="status-table">
+            <tbody>
+              <tr><td>Состояние</td><td><strong>%GSM_STARTED_LABEL%</strong></td></tr>
+              <tr><td>IMEI</td><td><strong>%GSM_IMEI%</strong></td></tr>
+              <tr><td>IMSI</td><td><strong>%GSM_IMSI%</strong></td></tr>
+              <tr><td>Оператор</td><td><strong>%GSM_OPERATOR%</strong></td></tr>
+              <tr><td>Сигнал</td><td><strong>%GSM_SIGNAL%</strong></td></tr>
+              <tr><td>Регистрация</td><td><strong>%GSM_REG_STATUS%</strong></td></tr>
+              <tr><td>Ошибка</td><td><strong>%GSM_LAST_ERROR%</strong></td></tr>
+              <tr><td>Последний URC</td><td><strong>%GSM_LAST_URC%</strong></td></tr>
+              <tr><td>Последний SMS</td><td><strong>%GSM_LAST_SMS%</strong></td></tr>
+              <tr><td>Последний звонок</td><td><strong>%GSM_LAST_CALL%</strong></td></tr>
+              <tr><td>Последний USSD</td><td><strong>%GSM_LAST_USSD%</strong></td></tr>
+              <tr><td>HTTP status</td><td><strong>%GSM_HTTP_STATUS%</strong></td></tr>
+              <tr><td>HTTP len</td><td><strong>%GSM_HTTP_LEN%</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
         <div class="row" style="margin-top:10px;">
-          <button type="submit">Сохранить Wi-Fi</button>
+          <button type="submit">Сохранить</button>
           <span class="status">%WIFI_STATUS%</span>
+          <span class="status">%GSM_STATUS%</span>
         </div>
       </form>
     </div>

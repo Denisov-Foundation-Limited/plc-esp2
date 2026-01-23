@@ -54,6 +54,7 @@
 #include "utils/fs_config.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "core/network/stack/stack_master.hpp"
+#include "core/network/gsm_modem.hpp"
 #include "hal/gpio/extender.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
@@ -104,6 +105,7 @@ public:
         _allowed_exts.toLowerCase();
     }
 
+    void setGsmModem(GsmModem &modem) { _gsm = &modem; }
     void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }
     void setStackMaster(StackMaster &master) { _stack_master = &master; }
 
@@ -117,6 +119,7 @@ public:
         _server.on("/ports", HTTP_GET, [this](AsyncWebServerRequest *request) { handlePorts_(request); });
         _server.on("/buses", HTTP_GET, [this](AsyncWebServerRequest *request) { handleBuses_(request); });
         _server.on("/stack", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStack_(request); });
+        _server.on("/stack/gen_key", HTTP_POST, [this](AsyncWebServerRequest *request) { handleStackGenKey_(request); });
         _server.on("/sockets", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSockets_(request); });
         _server.on("/sockets", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsSave_(request); });
         _server.on("/meteo", HTTP_GET, [this](AsyncWebServerRequest *request) { handleMeteo_(request); });
@@ -178,6 +181,7 @@ private:
         page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
         page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
         page.replace("%STACK_MASTER_HOST%", stackMasterHost_());
+        page.replace("%STACK_API_KEY%", stackApiKey_());
         page.replace("%STACK_STATUS%", _stack_status);
         page.replace("%BOARD_TEMP%", formatTemp_(boardTemp_()));
         page.replace("%CPU_TEMP%", formatTemp_(cpuTemp_()));
@@ -216,6 +220,45 @@ private:
         page.replace("%WIFI_SSID%", _wifi.ssid());
         page.replace("%WIFI_AP_SSID%", _wifi.apSsid());
         page.replace("%WIFI_STATUS%", _wifi_status);
+        page.replace("%GSM_STATUS%", _gsm_status);
+        if (!_gsm)
+        {
+            page.replace("%GSM_ENABLED_CHECKED%", "");
+            page.replace("%GSM_ENABLED_LABEL%", "недоступно");
+            page.replace("%GSM_STARTED_LABEL%", "недоступно");
+            page.replace("%GSM_IMEI%", "n/a");
+            page.replace("%GSM_IMSI%", "n/a");
+            page.replace("%GSM_OPERATOR%", "n/a");
+            page.replace("%GSM_SIGNAL%", "n/a");
+            page.replace("%GSM_REG_STATUS%", "n/a");
+            page.replace("%GSM_LAST_ERROR%", "n/a");
+            page.replace("%GSM_LAST_URC%", "n/a");
+            page.replace("%GSM_LAST_SMS%", "n/a");
+            page.replace("%GSM_LAST_CALL%", "n/a");
+            page.replace("%GSM_LAST_USSD%", "n/a");
+            page.replace("%GSM_HTTP_STATUS%", "n/a");
+            page.replace("%GSM_HTTP_LEN%", "n/a");
+        }
+        else
+        {
+            const bool available = ActiveBoardProfile::GSM.enabled;
+            const bool enabled = available && _gsm->enabled();
+            page.replace("%GSM_ENABLED_CHECKED%", enabled ? "checked" : "");
+            page.replace("%GSM_ENABLED_LABEL%", available ? (enabled ? "включен" : "выключен") : "недоступен");
+            page.replace("%GSM_STARTED_LABEL%", _gsm->started() ? "инициализирован" : "не инициализирован");
+            page.replace("%GSM_IMEI%", safeHtmlValue_(_gsm->imei(), "n/a"));
+            page.replace("%GSM_IMSI%", safeHtmlValue_(_gsm->imsi(), "n/a"));
+            page.replace("%GSM_OPERATOR%", safeHtmlValue_(_gsm->operatorName(), "n/a"));
+            page.replace("%GSM_SIGNAL%", safeHtmlValue_(_gsm->signalQuality(), "n/a"));
+            page.replace("%GSM_REG_STATUS%", safeHtmlValue_(_gsm->regStatus(), "n/a"));
+            page.replace("%GSM_LAST_ERROR%", safeHtmlValue_(_gsm->lastError(), "n/a"));
+            page.replace("%GSM_LAST_URC%", safeHtmlValue_(_gsm->lastUrc(), "n/a"));
+            page.replace("%GSM_LAST_SMS%", _gsm->lastSmsIndex() ? String(_gsm->lastSmsIndex()) : String("n/a"));
+            page.replace("%GSM_LAST_CALL%", safeHtmlValue_(_gsm->lastCallNumber(), "n/a"));
+            page.replace("%GSM_LAST_USSD%", safeHtmlValue_(_gsm->lastUssd(), "n/a"));
+            page.replace("%GSM_HTTP_STATUS%", (_gsm->lastHttpStatus() >= 0) ? String(_gsm->lastHttpStatus()) : String("n/a"));
+            page.replace("%GSM_HTTP_LEN%", (_gsm->lastHttpLen() >= 0) ? String(_gsm->lastHttpLen()) : String("n/a"));
+        }
         sendHtml_(request, page, set_cookie);
     }
 
@@ -355,6 +398,7 @@ private:
         page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
         page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
         page.replace("%STACK_MASTER_HOST%", stackMasterHost_());
+        page.replace("%STACK_API_KEY%", stackApiKey_());
         page.replace("%STACK_STATUS%", _stack_status);
         if (role == ConfigsManagerIface::StackRole::Master)
         {
@@ -1246,8 +1290,10 @@ private:
             page.replace("%SECURITY_ENABLED_LABEL%", "недоступно");
             page.replace("%SECURITY_ARMED_LABEL%", "недоступно");
             page.replace("%SECURITY_ALARM_LABEL%", "недоступно");
+            page.replace("%SECURITY_GSM_LABEL%", gsmStatusLabel_());
             page.replace("%SECURITY_SIREN%", "");
             page.replace("%SECURITY_KEYS_ROWS%", "");
+            page.replace("%SECURITY_PHONES_ROWS%", "");
             page.replace("%SECURITY_SENSORS_ROWS%", "");
             page.replace("%SECURITY_SENSOR_JSON%", "[]");
             page.replace("%SECURITY_SENSOR_USED_JSON%", "[]");
@@ -1263,11 +1309,13 @@ private:
         page.replace("%SECURITY_ENABLED_LABEL%", sec.controllerEnabled() ? "включено" : "выключено");
         page.replace("%SECURITY_ARMED_LABEL%", sec.armed() ? "под охраной" : "снято");
         page.replace("%SECURITY_ALARM_LABEL%", sec.alarmOn() ? "on" : "off");
+        page.replace("%SECURITY_GSM_LABEL%", gsmStatusLabel_());
         if (sec.sirenPort() != SecurityController::kInvalidPort)
             page.replace("%SECURITY_SIREN%", String((unsigned)sec.sirenPort()));
         else
             page.replace("%SECURITY_SIREN%", "");
         page.replace("%SECURITY_KEYS_ROWS%", listSecurityKeysHtml_());
+        page.replace("%SECURITY_PHONES_ROWS%", listSecurityPhonesHtml_());
         page.replace("%SECURITY_SENSORS_ROWS%", listSecuritySensorsHtml_());
         page.replace("%SECURITY_SENSOR_JSON%", securityPortOptionsJson_());
         page.replace("%SECURITY_SENSOR_USED_JSON%", securityUsedPinsJson_());
@@ -1383,7 +1431,7 @@ private:
         const String action = paramValue_(request, "action");
         if (action == "arm")
         {
-            if (sec.arm())
+            if (sec.armFrom("web", "admin"))
                 _security_status = "Armed";
             else
                 _security_status = "Security disabled";
@@ -1392,7 +1440,7 @@ private:
         }
         if (action == "disarm")
         {
-            sec.disarm();
+            sec.disarmFrom("web", "admin");
             _security_status = "Disarmed";
             sendRedirect_(request, "/security", set_cookie);
             return;
@@ -1430,16 +1478,23 @@ private:
 
         uint8_t new_keys[SecurityController::kKeyCount][8] = {};
         bool new_set[SecurityController::kKeyCount] = {};
+        String new_key_names[SecurityController::kKeyCount];
         for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
         {
             const String idx = String((unsigned)(i + 1));
             const String en_key = String("k") + idx + "_en";
             const String serial_key = String("k") + idx + "_serial";
+            const String name_key = String("k") + idx + "_name";
             const bool enabled = request->hasParam(en_key, true);
             String serial = paramValue_(request, serial_key);
             serial.trim();
+            String name = paramValue_(request, name_key);
+            name.trim();
             if (!enabled)
+            {
+                new_key_names[i] = name;
                 continue;
+            }
             if (!parseSecurityKeyHex_(serial, new_keys[i]))
             {
                 _security_status = String("Invalid key ") + idx;
@@ -1447,6 +1502,7 @@ private:
                 return;
             }
             new_set[i] = true;
+            new_key_names[i] = name;
         }
 
         bool keys_changed = false;
@@ -1465,17 +1521,66 @@ private:
                 keys_changed = true;
                 break;
             }
+            if (sec.keyNameByIndex(i) != new_key_names[i])
+            {
+                keys_changed = true;
+                break;
+            }
         }
         if (keys_changed)
         {
-            sec.clearKeys();
             for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
-            {
-                if (!new_set[i])
-                    continue;
-                sec.addKey(new_keys[i]);
-            }
+                sec.setKeySlot(i, new_keys[i], new_set[i], new_key_names[i]);
             changed = true;
+        }
+
+        auto normalizePhone = [](const String &number) -> String {
+            String out;
+            out.reserve(number.length());
+            for (size_t i = 0; i < number.length(); ++i)
+            {
+                const char c = number.charAt(i);
+                if (c >= '0' && c <= '9')
+                    out += c;
+            }
+            return out;
+        };
+        for (size_t i = 0; i < SecurityController::kPhoneCount; ++i)
+        {
+            const String idx = String((unsigned)(i + 1));
+            const String en_key = String("p") + idx + "_en";
+            const String num_key = String("p") + idx + "_num";
+            const String name_key = String("p") + idx + "_name";
+            const String notify_key = String("p") + idx + "_notify";
+            const String call_key = String("p") + idx + "_call";
+            const bool enabled = request->hasParam(en_key, true);
+            const bool notify = request->hasParam(notify_key, true);
+            const bool call = request->hasParam(call_key, true);
+            String number = paramValue_(request, num_key);
+            number.trim();
+            String name = paramValue_(request, name_key);
+            name.trim();
+            String norm = enabled ? normalizePhone(number) : String();
+            if (enabled && norm.length() == 0)
+            {
+                _security_status = String("Invalid phone ") + idx;
+                sendRedirect_(request, "/security", set_cookie);
+                return;
+            }
+            String old_number;
+            bool old_enabled = false;
+            sec.phoneSlot(i, old_number, old_enabled);
+            if (old_enabled != enabled || old_number != norm ||
+                sec.phoneNameByIndex(i) != name || sec.phoneNotifyByIndex(i) != notify ||
+                sec.phoneCallByIndex(i) != call)
+            {
+                sec.setPhone(i, norm);
+                sec.setPhoneEnabled(i, enabled);
+                sec.setPhoneName(i, name);
+                sec.setPhoneNotify(i, notify);
+                sec.setPhoneCall(i, call);
+                changed = true;
+            }
         }
 
         for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
@@ -1918,11 +2023,11 @@ private:
     String listSecurityKeysHtml_()
     {
         if (!_controllers)
-            return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
+            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
         String items;
-        items.reserve(1024);
+        items.reserve(1400);
         SecurityController &sec = _controllers->security();
-        auto appendRow = [&](size_t idx, bool enabled, const char *hex) {
+        auto appendRow = [&](size_t idx, bool enabled, const char *hex, const String &name) {
             items += "<tr><td class=\"right\"><strong>";
             items += String((unsigned)(idx + 1));
             items += "</strong></td><td><input type=\"checkbox\" name=\"k";
@@ -1935,6 +2040,11 @@ private:
             items += "_serial\" value=\"";
             if (enabled && hex)
                 appendHtmlEscaped_(items, hex);
+            items += "\"></td><td><input class=\"field name\" type=\"text\" name=\"k";
+            items += String((unsigned)(idx + 1));
+            items += "_name\" value=\"";
+            if (name.length())
+                appendHtmlEscaped_(items, name.c_str());
             items += "\"></td></tr>";
         };
 
@@ -1948,7 +2058,7 @@ private:
             {
                 char hex[17] = {};
                 IButton::toHex(addr, hex);
-                appendRow(i, true, hex);
+                appendRow(i, true, hex, sec.keyNameByIndex(i));
             }
             else if (first_disabled < 0)
             {
@@ -1956,9 +2066,84 @@ private:
             }
         }
         if (first_disabled >= 0)
-            appendRow((size_t)first_disabled, false, nullptr);
+            appendRow((size_t)first_disabled, false, nullptr, "");
         if (items.length() == 0)
-            items = "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>Ключи отсутствуют</strong></td></tr>";
+            items = "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Ключи отсутствуют</strong></td></tr>";
+        return items;
+    }
+
+    String listSecurityPhonesHtml_()
+    {
+        if (!_controllers)
+            return "<tr><td colspan=\"6\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
+        String items;
+        items.reserve(1400);
+        SecurityController &sec = _controllers->security();
+        int first_empty = -1;
+        for (size_t i = 0; i < SecurityController::kPhoneCount; ++i)
+        {
+            String number;
+            bool enabled = false;
+            if (!sec.phoneSlot(i, number, enabled))
+                continue;
+            const bool notify = sec.phoneNotifyByIndex(i);
+            const bool call = sec.phoneCallByIndex(i);
+            const String &name = sec.phoneNameByIndex(i);
+            const bool has_data = enabled || notify || call || number.length() || name.length();
+            if (!has_data)
+            {
+                if (first_empty < 0)
+                    first_empty = (int)i;
+                continue;
+            }
+            items += "<tr><td class=\"right\"><strong>";
+            items += String((unsigned)(i + 1));
+            items += "</strong></td><td><input type=\"checkbox\" name=\"p";
+            items += String((unsigned)(i + 1));
+            items += "_en\"";
+            if (enabled)
+                items += " checked";
+            items += "></td><td><input class=\"field name\" type=\"text\" name=\"p";
+            items += String((unsigned)(i + 1));
+            items += "_name\" value=\"";
+            if (name.length())
+                appendHtmlEscaped_(items, name.c_str());
+            items += "\"></td><td><input class=\"field serial\" type=\"text\" name=\"p";
+            items += String((unsigned)(i + 1));
+            items += "_num\" value=\"";
+            if (number.length())
+                appendHtmlEscaped_(items, number.c_str());
+            items += "\"></td><td><input type=\"checkbox\" name=\"p";
+            items += String((unsigned)(i + 1));
+            items += "_notify\"";
+            if (notify)
+                items += " checked";
+            items += "></td><td><input type=\"checkbox\" name=\"p";
+            items += String((unsigned)(i + 1));
+            items += "_call\"";
+            if (call)
+                items += " checked";
+            items += "></td></tr>";
+        }
+        if (first_empty >= 0)
+        {
+            const size_t i = (size_t)first_empty;
+            items += "<tr><td class=\"right\"><strong>";
+            items += String((unsigned)(i + 1));
+            items += "</strong></td><td><input type=\"checkbox\" name=\"p";
+            items += String((unsigned)(i + 1));
+            items += "_en\"></td><td><input class=\"field name\" type=\"text\" name=\"p";
+            items += String((unsigned)(i + 1));
+            items += "_name\" value=\"\"></td><td><input class=\"field serial\" type=\"text\" name=\"p";
+            items += String((unsigned)(i + 1));
+            items += "_num\" value=\"\"></td><td><input type=\"checkbox\" name=\"p";
+            items += String((unsigned)(i + 1));
+            items += "_notify\"></td><td><input type=\"checkbox\" name=\"p";
+            items += String((unsigned)(i + 1));
+            items += "_call\"></td></tr>";
+        }
+        if (items.length() == 0)
+            items = "<tr><td colspan=\"6\" style=\"color:#94a3b8\"><strong>Телефоны отсутствуют</strong></td></tr>";
         return items;
     }
 
@@ -3121,13 +3306,28 @@ sendRedirect_(request, "/status", _ota_set_cookie);
             }
         }
 
+        bool gsm_changed = false;
+        bool gsm_ok = true;
+        if (_gsm && ActiveBoardProfile::GSM.enabled)
+        {
+            const bool gsm_enabled = request->hasParam("gsm_enabled", true);
+            gsm_changed = (gsm_enabled != _gsm->enabled());
+            _gsm->setEnabled(gsm_enabled);
+        }
+        else if (_gsm)
+        {
+            _gsm->setEnabled(false);
+        }
+
         bool wifi_ok = true;
         bool save_ok = true;
         if (changed)
-        {
             wifi_ok = _wifi.begin();
+        if (changed || gsm_changed)
             save_ok = saveWifiConfig_();
-        }
+
+        if (_gsm && _gsm->enabled() && !_gsm->started())
+            gsm_ok = _gsm->begin(ActiveBoardProfile::GSM.uart_index);
 
         if (!changed)
             _wifi_status = "No changes";
@@ -3139,8 +3339,24 @@ sendRedirect_(request, "/status", _ota_set_cookie);
             _wifi_status = "Wi-Fi applied, but save failed";
         else
             _wifi_status = "Wi-Fi updated";
+
+        if (!_gsm)
+            _gsm_status = "GSM unavailable";
+        else if (!ActiveBoardProfile::GSM.enabled)
+            _gsm_status = "GSM disabled by board profile";
+        else if (!gsm_changed)
+            _gsm_status = "No changes";
+        else if (!gsm_ok && !save_ok)
+            _gsm_status = "GSM apply and save failed";
+        else if (!gsm_ok)
+            _gsm_status = "GSM apply failed";
+        else if (!save_ok)
+            _gsm_status = "GSM applied, but save failed";
+        else
+            _gsm_status = "GSM updated";
 sendRedirect_(request, "/", set_cookie);
     }
+
 
     void handleStackSave_(AsyncWebServerRequest *request)
     {
@@ -3179,6 +3395,16 @@ sendRedirect_(request, "/", set_cookie);
             changed = true;
         }
 
+        String api_key = request->hasParam("api_key", true)
+                             ? request->getParam("api_key", true)->value()
+                             : String("");
+        api_key.trim();
+        if (api_key != _configs_manager->stackApiKey())
+        {
+            _configs_manager->setStackApiKey(api_key);
+            changed = true;
+        }
+
         bool save_ok = true;
         if (changed)
             save_ok = saveWifiConfig_();
@@ -3191,6 +3417,32 @@ sendRedirect_(request, "/", set_cookie);
             _stack_status = "Saved";
 
         sendRedirect_(request, "/stack", set_cookie);
+    }
+
+    void handleStackGenKey_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!_configs_manager)
+        {
+            sendText_(request, 500, "text/plain", "Config manager missing", set_cookie);
+            return;
+        }
+        if (_configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
+        {
+            sendText_(request, 403, "text/plain", "Stack role is slave", set_cookie);
+            return;
+        }
+        const String key = genApiKey_();
+        _configs_manager->setStackApiKey(key);
+        if (!_configs_manager->save())
+        {
+            sendText_(request, 500, "text/plain", "Save failed", set_cookie);
+            return;
+        }
+        _stack_status = "Saved";
+        sendText_(request, 200, "text/plain", key, set_cookie);
     }
 
     void handleDeviceSave_(AsyncWebServerRequest *request)
@@ -3212,6 +3464,7 @@ sendRedirect_(request, "/", set_cookie);
         }
         String name = request->getParam("device_name", true)->value();
         name.trim();
+        name = sanitizeUtf8_(name);
         bool changed = (name != _plc->deviceName());
         if (changed)
             _plc->setDeviceName(name);
@@ -3435,8 +3688,8 @@ sendRedirect_(request, "/", set_cookie);
     String navHtml_() const
     {
         String nav = F("<div class=\"nav\">");
-        nav += F("<a href=\"/\">FCPLC</a> | <a href=\"/wifi\">Wi-Fi</a> | <a href=\"/manage\">Прошивка и файлы</a> | ");
-        nav += F("<a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a> | <a href=\"/stack\">Стек</a> | ");
+        nav += F("<a href=\"/\">FCPLC</a> | <a href=\"/wifi\">Сеть</a> | ");
+        nav += F("<a href=\"/manage\">Прошивка и файлы</a> | <a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a> | ");
         nav += F("<a href=\"/controllers\">Контроллеры</a> | <a href=\"/telegram\">Telegram</a> | <a href=\"/admin\">Админка</a> | <a href=\"/logs\">Logs</a>");
         nav += F("</div>");
         return nav;
@@ -3460,6 +3713,13 @@ sendRedirect_(request, "/", set_cookie);
     {
         if (_configs_manager)
             return _configs_manager->stackMasterHost();
+        return "";
+    }
+
+    String stackApiKey_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->stackApiKey();
         return "";
     }
 
@@ -3759,6 +4019,114 @@ sendRedirect_(request, "/", set_cookie);
         }
     }
 
+    static String safeHtmlValue_(const String &value, const char *fallback)
+    {
+        if (value.length() == 0)
+            return String(fallback);
+        String out;
+        out.reserve(value.length() + 8);
+        appendHtmlEscaped_(out, value.c_str());
+        return out;
+    }
+
+    static String sanitizeUtf8_(const String &in)
+    {
+        if (isValidUtf8_(in))
+            return in;
+        return cp1251ToUtf8_(in);
+    }
+
+    static bool isValidUtf8_(const String &in)
+    {
+        size_t i = 0;
+        while (i < (size_t)in.length())
+        {
+            const uint8_t c = (uint8_t)in[i];
+            if (c < 0x80)
+            {
+                ++i;
+                continue;
+            }
+            size_t need = 0;
+            if ((c & 0xE0) == 0xC0)
+            {
+                if (c < 0xC2)
+                    return false;
+                need = 1;
+            }
+            else if ((c & 0xF0) == 0xE0)
+            {
+                need = 2;
+            }
+            else if ((c & 0xF8) == 0xF0)
+            {
+                if (c > 0xF4)
+                    return false;
+                need = 3;
+            }
+            else
+            {
+                return false;
+            }
+
+            if (i + need >= (size_t)in.length())
+                return false;
+
+            for (size_t j = 1; j <= need; ++j)
+            {
+                const uint8_t cc = (uint8_t)in[i + j];
+                if ((cc & 0xC0) != 0x80)
+                    return false;
+            }
+            i += need + 1;
+        }
+        return true;
+    }
+
+    static void appendUtf8_(String &out, uint16_t code)
+    {
+        if (code < 0x80)
+        {
+            out += (char)code;
+            return;
+        }
+        if (code < 0x800)
+        {
+            out += (char)(0xC0 | (code >> 6));
+            out += (char)(0x80 | (code & 0x3F));
+            return;
+        }
+        out += (char)(0xE0 | (code >> 12));
+        out += (char)(0x80 | ((code >> 6) & 0x3F));
+        out += (char)(0x80 | (code & 0x3F));
+    }
+
+    static String cp1251ToUtf8_(const String &in)
+    {
+        String out;
+        out.reserve(in.length() * 2);
+        for (size_t i = 0; i < (size_t)in.length(); ++i)
+        {
+            const uint8_t c = (uint8_t)in[i];
+            if (c < 0x80)
+            {
+                out += (char)c;
+                continue;
+            }
+            uint16_t code = '?';
+            if (c == 0xA8)
+                code = 0x0401;
+            else if (c == 0xB8)
+                code = 0x0451;
+            else if (c >= 0xC0 && c <= 0xFF)
+                code = (uint16_t)(0x0410 + (c - 0xC0));
+            else
+                code = '?';
+            appendUtf8_(out, code);
+        }
+        return out;
+    }
+
     static bool parseBasicAuth_(AsyncWebServerRequest *request, String &user, String &pass)
     {
         if (!request || !request->hasHeader("Authorization"))
@@ -3932,7 +4300,7 @@ sendRedirect_(request, "/", set_cookie);
         if (!_tgbot_menu)
             return "";
         String out;
-        const auto &users = _tgbot_menu->allowedUsers();
+        const auto users = _tgbot_menu->allowedUsers();
         const size_t max = TelegramMenu::kMaxAllowedUsers;
         auto appendRow = [&](size_t row, const TelegramMenu::AllowedUser &u, bool enabled) {
             out += "<tr><td>";
@@ -3966,7 +4334,7 @@ sendRedirect_(request, "/", set_cookie);
 
         size_t row = 0;
         bool added_disabled = false;
-        for (size_t i = 0; i < users.size() && row < max; ++i)
+        for (size_t i = 0; i < users.size && row < max; ++i)
         {
             const auto &u = users[i];
             if (u.enabled)
@@ -4108,6 +4476,20 @@ sendRedirect_(request, "/", set_cookie);
         return out;
     }
 
+    static String genApiKey_()
+    {
+        char buf[33] = {};
+        static const char kHex[] = "0123456789abcdef";
+        for (size_t i = 0; i < 16; ++i)
+        {
+            const uint8_t v = (uint8_t)random(0, 256);
+            buf[i * 2] = kHex[(v >> 4) & 0x0F];
+            buf[i * 2 + 1] = kHex[v & 0x0F];
+        }
+        buf[32] = '\0';
+        return String(buf);
+    }
+
     static uint32_t rand32_()
     {
 #if defined(ESP32)
@@ -4180,6 +4562,16 @@ sendRedirect_(request, "/", set_cookie);
         return out.length() > 0;
     }
 
+    String gsmStatusLabel_() const
+    {
+        if (!_gsm)
+            return "недоступно";
+        const String &err = _gsm->lastError();
+        if (err.length())
+            return err;
+        return "ok";
+    }
+
     AsyncWebServer &_server;
     WifiManager &_wifi;
     Configs &_configs;
@@ -4189,6 +4581,7 @@ sendRedirect_(request, "/", set_cookie);
     TelegramClient *_tgbot = nullptr;
     TelegramMenu *_tgbot_menu = nullptr;
     Controllers *_controllers = nullptr;
+    GsmModem *_gsm = nullptr;
     I2CManager *_i2c = nullptr;
     OneWireManager *_ow = nullptr;
     File _upload;
@@ -4201,6 +4594,7 @@ sendRedirect_(request, "/", set_cookie);
     String _allowed_exts;
     String _last_status;
     String _wifi_status;
+    String _gsm_status;
     String _upload_error;
     String _upload_name;
     String _ota_name;

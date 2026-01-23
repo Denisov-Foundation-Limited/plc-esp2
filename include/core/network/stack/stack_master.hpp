@@ -12,6 +12,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <stdint.h>
 #include <array>
 
@@ -19,6 +20,8 @@
 
 #include "core/network/stack/stack_protocol.hpp"
 #include "core/network/stack/stack_types.hpp"
+#include "utils/configs_manager_iface.hpp"
+#include "utils/logger.hpp"
 
 class StackMaster
 {
@@ -27,7 +30,7 @@ public:
     using FrameHandler = void (*)(void *ctx, uint32_t node_id, const StackFrame &frame);
     using EventHandler = void (*)(void *ctx, uint32_t node_id, bool online);
 
-    explicit StackMaster(AsyncServer &server) : _server(&server) {}
+    StackMaster(AsyncServer &server, Logger &log) : _server(&server), _log(&log) {}
 
     void setFrameHandler(FrameHandler cb, void *ctx)
     {
@@ -41,10 +44,18 @@ public:
         _event_ctx = ctx;
     }
 
+    void setConfigsManager(ConfigsManagerIface &cfg) { _configs = &cfg; }
+
     void begin()
     {
         if (!_server)
+        {
+            if (_log)
+                _log->warn(F("STACK"), F("Master server missing"));
             return;
+        }
+        if (_log)
+            _log->info(F("STACK"), F("Master server begin"));
         _server->onClient([this](void *s, AsyncClient *c) { onClient_(s, c); }, this);
         _server->begin();
     }
@@ -107,8 +118,31 @@ public:
         Session *s = findByNode_(node_id);
         if (!s || !s->client || !s->client->connected())
             return false;
+        const uint8_t *payload_ptr = payload;
+        size_t payload_len = len;
+        uint8_t payload_buf[StackCodec::kMaxPayload] = {};
+        if (_configs && (type == (uint8_t)StackMsgType::CmdGet || type == (uint8_t)StackMsgType::CmdSet))
+        {
+            const String key = _configs->stackApiKey();
+            if (key.length() > 0 && payload && len > 0)
+            {
+                DynamicJsonDocument doc(2048);
+                DeserializationError err = deserializeJson(doc, payload, len);
+                if (!err)
+                {
+                    if (!doc.containsKey("api_key"))
+                        doc["api_key"] = key;
+                    const size_t new_len = serializeJson(doc, payload_buf, sizeof(payload_buf));
+                    if (new_len > 0 && new_len <= sizeof(payload_buf))
+                    {
+                        payload_ptr = payload_buf;
+                        payload_len = new_len;
+                    }
+                }
+            }
+        }
         uint8_t buf[StackCodec::kMaxFrame] = {};
-        const size_t frame_len = StackCodec::encode(type, payload, len, buf, sizeof(buf));
+        const size_t frame_len = StackCodec::encode(type, payload_ptr, payload_len, buf, sizeof(buf));
         if (frame_len == 0)
             return false;
         s->client->write((const char *)buf, frame_len);
@@ -149,6 +183,8 @@ private:
     void *_frame_ctx = nullptr;
     EventHandler _event_cb = nullptr;
     void *_event_ctx = nullptr;
+    Logger *_log = nullptr;
+    ConfigsManagerIface *_configs = nullptr;
 
     void onClient_(void *ctx, AsyncClient *client)
     {

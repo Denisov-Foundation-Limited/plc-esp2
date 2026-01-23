@@ -13,6 +13,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <array>
 #include <string.h>
 #include <vector>
 #include <LittleFS.h>
@@ -53,9 +54,15 @@ public:
     {
         _self = this;
         if (!_bot)
+        {
+            if (_logs)
+                _logs->warn(F("TGBOT"), F("Menu init skipped, bot missing"));
             return;
-        _bot->setMenus(kMenus, kMenuCount, "root");
-        _bot->setCommands(kCommands, kCommandCount);
+        }
+        if (_logs)
+            _logs->info(F("TGBOT"), F("Menu init"));
+        _bot->setMenus(kMenus.data(), kMenus.size(), "root");
+        _bot->setCommands(kCommands.data(), kCommands.size());
         _bot->setTextHandler(&TelegramMenu::onText_, this);
         _bot->setMenuPrefixProvider(&TelegramMenu::menuPrefix_, this);
         _bot->setMenuMarkupProvider(&TelegramMenu::menuMarkup_, this);
@@ -84,10 +91,10 @@ public:
 
     void setAllowedUsers(const std::vector<AllowedUser> &users)
     {
-        _allowed_users.clear();
+        _allowed_users_count = 0;
         for (size_t i = 0; i < users.size(); ++i)
         {
-            if (_allowed_users.size() >= kMaxAllowedUsers)
+            if (_allowed_users_count >= kMaxAllowedUsers)
                 break;
             AllowedUser u = users[i];
             u.username = normalizeUsername_(u.username);
@@ -96,7 +103,7 @@ public:
             if ((u.username.length() && hasAllowedUsername_(u.username)) ||
                 (u.chat_id != 0 && hasAllowedUserChatId_(u.chat_id)))
                 continue;
-            _allowed_users.push_back(u);
+            _allowed_users[_allowed_users_count++] = u;
         }
     }
 
@@ -117,9 +124,9 @@ public:
         if ((u.username.length() && hasAllowedUsername_(u.username)) ||
             (u.chat_id != 0 && hasAllowedUserChatId_(u.chat_id)))
             return AllowResult::Exists;
-        if (_allowed_users.size() >= kMaxAllowedUsers)
+        if (_allowed_users_count >= kMaxAllowedUsers)
             return AllowResult::Full;
-        _allowed_users.push_back(u);
+        _allowed_users[_allowed_users_count++] = u;
         return AllowResult::Ok;
     }
 
@@ -128,20 +135,25 @@ public:
         String u = normalizeUsername_(user);
         if (u.length() == 0)
             return false;
-        for (size_t i = 0; i < _allowed_users.size(); ++i)
+        for (size_t i = 0; i < _allowed_users_count; ++i)
         {
             if (_allowed_users[i].username == u)
             {
-                _allowed_users.erase(_allowed_users.begin() + (int)i);
+                for (size_t j = i + 1; j < _allowed_users_count; ++j)
+                    _allowed_users[j - 1] = _allowed_users[j];
+                --_allowed_users_count;
                 return true;
             }
         }
         return false;
     }
 
-    void clearAllowedUsers() { _allowed_users.clear(); }
+    void clearAllowedUsers() { _allowed_users_count = 0; }
 
-    const std::vector<AllowedUser> &allowedUsers() const override { return _allowed_users; }
+    TelegramAllowedUsersView allowedUsers() const override
+    {
+        return TelegramAllowedUsersView{_allowed_users.data(), _allowed_users_count};
+    }
 
     static constexpr size_t kMaxAllowedUsers = 10;
 
@@ -160,7 +172,8 @@ private:
     String _admin_password;
     Configs &_configs;
     ConfigsManagerIface *_configs_manager = nullptr;
-    std::vector<AllowedUser> _allowed_users;
+    std::array<AllowedUser, kMaxAllowedUsers> _allowed_users{};
+    size_t _allowed_users_count = 0;
 
     struct ChatAuth
     {
@@ -182,7 +195,9 @@ private:
         uint8_t selected_tank_id = 0;
     };
 
-    std::vector<ChatAuth> _auth;
+    static constexpr size_t kMaxAuth = 16;
+    std::array<ChatAuth, kMaxAuth> _auth{};
+    size_t _auth_count = 0;
     static constexpr size_t kMaxConfigBytes = 8192;
     static constexpr size_t kConfigDocCapacity = 12288;
     DynamicJsonDocument _cfg_doc{kConfigDocCapacity};
@@ -470,13 +485,13 @@ private:
             return false;
         if (!requireAdmin_(*_self, bot, u, reply))
             return true;
-        if (_self->_allowed_users.empty())
+        if (_self->_allowed_users_count == 0)
         {
             reply = "Список разрешенных пользователей пуст.";
             return true;
         }
         reply = "Разрешенные пользователи:";
-        for (size_t i = 0; i < _self->_allowed_users.size(); ++i)
+        for (size_t i = 0; i < _self->_allowed_users_count; ++i)
         {
             const auto &user = _self->_allowed_users[i];
             reply += "\n  ";
@@ -830,7 +845,7 @@ private:
 
     ChatAuth *findAuth_(int64_t chat_id)
     {
-        for (size_t i = 0; i < _auth.size(); ++i)
+        for (size_t i = 0; i < _auth_count; ++i)
         {
             if (_auth[i].chat_id == chat_id)
                 return &_auth[i];
@@ -843,10 +858,12 @@ private:
         ChatAuth *st = findAuth_(chat_id);
         if (st)
             return st;
+        if (_auth_count >= kMaxAuth)
+            return nullptr;
         ChatAuth ns;
         ns.chat_id = chat_id;
-        _auth.push_back(ns);
-        return &_auth.back();
+        _auth[_auth_count++] = ns;
+        return &_auth[_auth_count - 1];
     }
 
     void resetAuth_(int64_t chat_id)
@@ -895,9 +912,9 @@ private:
     SepticController *_septic = nullptr;
     SecurityController *_security = nullptr;
 
-        static inline const TelegramBot::MenuItem kRootItems[] = {};
+    static inline const std::array<TelegramBot::MenuItem, 0> kRootItems = {};
 
-    static inline const TelegramBot::MenuItem kDeviceItems[] = {
+    static inline const std::array<TelegramBot::MenuItem, 8> kDeviceItems = {{
         { "Админка", "Админка", nullptr, nullptr },
         { "Розетки", "/sockets", nullptr, nullptr },
         { "Метео", "/meteo", nullptr, nullptr },
@@ -906,67 +923,65 @@ private:
         { "Септик", "/septic", nullptr, nullptr },
         { "Охрана", "/security", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
-    };
+    }};
 
-    static inline const TelegramBot::MenuItem kSocketsItems[] = {};
-    static inline const TelegramBot::MenuItem kMeteoItems[] = {};
-    static inline const TelegramBot::MenuItem kThermoItems[] = {};
-    static inline const TelegramBot::MenuItem kTanksItems[] = {};
-    static inline const TelegramBot::MenuItem kSepticItems[] = {};
-    static inline const TelegramBot::MenuItem kSecurityItems[] = {};
+    static inline const std::array<TelegramBot::MenuItem, 0> kSocketsItems = {};
+    static inline const std::array<TelegramBot::MenuItem, 0> kMeteoItems = {};
+    static inline const std::array<TelegramBot::MenuItem, 0> kThermoItems = {};
+    static inline const std::array<TelegramBot::MenuItem, 0> kTanksItems = {};
+    static inline const std::array<TelegramBot::MenuItem, 0> kSepticItems = {};
+    static inline const std::array<TelegramBot::MenuItem, 0> kSecurityItems = {};
 
-    static inline const TelegramBot::MenuItem kAdminItems[] = {
+    static inline const std::array<TelegramBot::MenuItem, 6> kAdminItems = {{
         { "ПЛК", nullptr, "plc", nullptr },
         { "Часы", nullptr, "rtc", nullptr },
         { "Wi-Fi", nullptr, "wifi", nullptr },
         { "Настройки", nullptr, "settings", nullptr },
         { "Логи", "/logs", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
-    };
+    }};
 
-        static inline const TelegramBot::MenuItem kPlcItems[] = {
+    static inline const std::array<TelegramBot::MenuItem, 2> kPlcItems = {{
         { "Статус", "/status", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
-    };
+    }};
 
-        static inline const TelegramBot::MenuItem kRtcItems[] = {
+    static inline const std::array<TelegramBot::MenuItem, 2> kRtcItems = {{
         { "Время", "/time", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
-    };
+    }};
 
-        static inline const TelegramBot::MenuItem kWifiItems[] = {
+    static inline const std::array<TelegramBot::MenuItem, 2> kWifiItems = {{
         { "Состояние", "/wifi", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
-    };
+    }};
 
-        static inline const TelegramBot::MenuItem kSettingsItems[] = {
+    static inline const std::array<TelegramBot::MenuItem, 6> kSettingsItems = {{
         { "Перезапуск Wi-Fi", "/wifi_restart", nullptr, nullptr },
         { "Перезапуск ПЛК", "/plc_restart", nullptr, nullptr },
         { "Wi-Fi AP Вкл", "/wifi_ap_on", nullptr, nullptr },
         { "Wi-Fi AP Выкл", "/wifi_ap_off", nullptr, nullptr },
         { "Startup-config", "/config_set", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
-    };
+    }};
 
-    static inline const TelegramBot::Menu kMenus[] = {
-        { "root", "Выбор устройства", kRootItems, 0, nullptr },
-        { "device", "Меню устройства", kDeviceItems, 7, "root" },
-        { "sockets", "Розетки", kSocketsItems, 0, "device" },
-        { "meteo", "Метео", kMeteoItems, 0, "device" },
-        { "thermo", "Термо", kThermoItems, 0, "device" },
-        { "tanks", "Баки", kTanksItems, 0, "device" },
-        { "septic", "Септик", kSepticItems, 0, "device" },
-        { "security", "Охрана", kSecurityItems, 0, "device" },
-        { "admin", "Админка", kAdminItems, 6, "device" },
-        { "plc", "ПЛК", kPlcItems, 2, "admin" },
-        { "rtc", "Часы", kRtcItems, 2, "admin" },
-        { "wifi", "Wi-Fi", kWifiItems, 2, "admin" },
-        { "settings", "Настройки", kSettingsItems, 6, "admin" },
-    };
+    static inline const std::array<TelegramBot::Menu, 13> kMenus = {{
+        { "root", "Выбор устройства", kRootItems.data(), kRootItems.size(), nullptr },
+        { "device", "Меню устройства", kDeviceItems.data(), kDeviceItems.size(), "root" },
+        { "sockets", "Розетки", kSocketsItems.data(), kSocketsItems.size(), "device" },
+        { "meteo", "Метео", kMeteoItems.data(), kMeteoItems.size(), "device" },
+        { "thermo", "Термо", kThermoItems.data(), kThermoItems.size(), "device" },
+        { "tanks", "Баки", kTanksItems.data(), kTanksItems.size(), "device" },
+        { "septic", "Септик", kSepticItems.data(), kSepticItems.size(), "device" },
+        { "security", "Охрана", kSecurityItems.data(), kSecurityItems.size(), "device" },
+        { "admin", "Админка", kAdminItems.data(), kAdminItems.size(), "device" },
+        { "plc", "ПЛК", kPlcItems.data(), kPlcItems.size(), "admin" },
+        { "rtc", "Часы", kRtcItems.data(), kRtcItems.size(), "admin" },
+        { "wifi", "Wi-Fi", kWifiItems.data(), kWifiItems.size(), "admin" },
+        { "settings", "Настройки", kSettingsItems.data(), kSettingsItems.size(), "admin" },
+    }};
 
-    static inline const size_t kMenuCount = sizeof(kMenus) / sizeof(kMenus[0]);
-
-    static inline const TelegramBot::Command kCommands[] = {
+    static inline const std::array<TelegramBot::Command, 40> kCommands = {{
         { "Админка", &TelegramMenu::cmdAdmin_ },
         { "/status", &TelegramMenu::cmdStatus_ },
         { "/wifi", &TelegramMenu::cmdWifi_ },
@@ -1007,9 +1022,7 @@ private:
         { "/security_arm", &TelegramMenu::cmdSecurityArm_ },
         { "/security_disarm", &TelegramMenu::cmdSecurityDisarm_ },
         { "/security_silent", &TelegramMenu::cmdSecuritySilent_ },
-    };
-
-    static inline const size_t kCommandCount = sizeof(kCommands) / sizeof(kCommands[0]);
+    }};
 
     static constexpr uint8_t kMaxFails = 3;
     static constexpr uint32_t kLockMs = 30000;
@@ -1049,7 +1062,7 @@ private:
 
     bool hasAllowedUsername_(const String &user) const
     {
-        for (size_t i = 0; i < _allowed_users.size(); ++i)
+        for (size_t i = 0; i < _allowed_users_count; ++i)
         {
             if (_allowed_users[i].username == user)
                 return true;
@@ -1059,7 +1072,7 @@ private:
 
     bool hasAllowedUserChatId_(int64_t chat_id) const
     {
-        for (size_t i = 0; i < _allowed_users.size(); ++i)
+        for (size_t i = 0; i < _allowed_users_count; ++i)
         {
             if (_allowed_users[i].chat_id != 0 && _allowed_users[i].chat_id == chat_id)
                 return true;
@@ -1069,7 +1082,7 @@ private:
 
     bool isAllowedUser_(const TelegramClient::Update &u) const
     {
-        if (_allowed_users.empty())
+        if (_allowed_users_count == 0)
             return true;
         size_t idx = 0;
         if (u.chat_id != 0 && findAllowedUserByChatId_(u.chat_id, idx))
@@ -1084,7 +1097,7 @@ private:
 
     bool isAdminChat_(int64_t chat_id) const
     {
-        if (_allowed_users.empty())
+        if (_allowed_users_count == 0)
             return false;
         size_t idx = 0;
         if (chat_id != 0 && findAllowedUserByChatId_(chat_id, idx))
@@ -1097,7 +1110,7 @@ private:
 
     bool findAllowedUserByName_(const String &name, size_t &out) const
     {
-        for (size_t i = 0; i < _allowed_users.size(); ++i)
+        for (size_t i = 0; i < _allowed_users_count; ++i)
         {
             if (_allowed_users[i].username == name)
             {
@@ -1110,7 +1123,7 @@ private:
 
     bool findAllowedUserByChatId_(int64_t chat_id, size_t &out) const
     {
-        for (size_t i = 0; i < _allowed_users.size(); ++i)
+        for (size_t i = 0; i < _allowed_users_count; ++i)
         {
             if (_allowed_users[i].chat_id != 0 && _allowed_users[i].chat_id == chat_id)
             {

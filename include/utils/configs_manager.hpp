@@ -13,6 +13,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <array>
 #include <vector>
 
 #include "core/cli/cli_console.hpp"
@@ -20,6 +21,7 @@
 #include "core/network/telegram/telegram.hpp"
 #include "core/network/telegram/telegram_menu.hpp"
 #include "core/network/wifi_manager.hpp"
+#include "core/network/gsm_modem.hpp"
 #include "controllers/controllers.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
@@ -32,7 +34,7 @@ public:
 
     ConfigsManager(Configs &configs, WifiManager &wifi, TelegramClient &telegram,
                    Network &network, CliConsole &console, TelegramMenu &telegram_menu, PlcControl &plc,
-                   Controllers &controllers)
+                   Controllers &controllers, GsmModem &gsm)
         : _configs(configs),
           _wifi(wifi),
           _telegram(telegram),
@@ -40,14 +42,17 @@ public:
           _console(console),
           _telegram_menu(telegram_menu),
           _plc(plc),
-          _controllers(controllers)
+          _controllers(controllers),
+          _gsm(gsm)
     {
     }
 
     StackRole stackRole() const override { return _stack_role; }
     String stackMasterHost() const override { return _stack_master_host; }
+    String stackApiKey() const override { return _stack_api_key; }
     void setStackRole(StackRole role) override { _stack_role = role; }
     void setStackMasterHost(const String &host) override { _stack_master_host = host; }
+    void setStackApiKey(const String &key) override { _stack_api_key = key; }
 
     bool loadConfigs()
     {
@@ -83,8 +88,10 @@ public:
         t["proxy_path"] = _telegram.proxyPath();
         JsonArray allowed = t["allowed_users"].to<JsonArray>();
         size_t allow_idx = 0;
-        for (const auto &user : _telegram_menu.allowedUsers())
+        const auto users = _telegram_menu.allowedUsers();
+        for (size_t i = 0; i < users.size; ++i)
         {
+            const auto &user = users[i];
             if (!user.enabled)
                 continue;
             JsonObject u = allowed.add<JsonObject>();
@@ -111,9 +118,13 @@ public:
         JsonObject s = _doc["stack"].to<JsonObject>();
         s["role"] = (_stack_role == StackRole::Master) ? "master" : "slave";
         s["master_host"] = _stack_master_host;
+        s["api_key"] = _stack_api_key;
 
         JsonObject ctrl = _doc["controllers"].to<JsonObject>();
         _controllers.serialize(ctrl);
+
+        JsonObject g = _doc["gsm"].to<JsonObject>();
+        g["enabled"] = _gsm.enabled();
 
         return _configs.save(_doc);
     }
@@ -204,7 +215,9 @@ private:
 
             if (t["allowed_users"].is<JsonArrayConst>())
             {
-                std::vector<TelegramMenu::AllowedUser> users;
+                std::array<TelegramMenu::AllowedUser, TelegramMenu::kMaxAllowedUsers> ordered{};
+                std::array<bool, TelegramMenu::kMaxAllowedUsers> used{};
+                std::vector<TelegramMenu::AllowedUser> tail;
                 JsonArrayConst arr = t["allowed_users"].as<JsonArrayConst>();
                 for (JsonVariantConst v : arr)
                 {
@@ -213,17 +226,22 @@ private:
                         TelegramMenu::AllowedUser u{};
                         u.username = v.as<const char *>();
                         u.is_admin = true;
-                        users.push_back(u);
+                        tail.push_back(u);
                         continue;
                     }
                     if (!v.is<JsonObjectConst>())
                         continue;
                     JsonObjectConst obj = v.as<JsonObjectConst>();
                     TelegramMenu::AllowedUser u{};
+                    uint8_t id = 0;
+                    if (obj["id"].is<unsigned>())
+                    {
+                        const unsigned raw = obj["id"].as<unsigned>();
+                        if (raw >= 1 && raw <= TelegramMenu::kMaxAllowedUsers)
+                            id = (uint8_t)raw;
+                    }
                     if (obj["username"].is<const char *>())
                         u.username = obj["username"].as<const char *>();
-                    if (obj["id"].is<const char *>())
-                        u.username = obj["id"].as<const char *>();
                     if (obj["chat_id"].is<long long>())
                         u.chat_id = (int64_t)obj["chat_id"].as<long long>();
                     if (obj["is_admin"].is<bool>())
@@ -232,10 +250,32 @@ private:
                         u.is_notify = obj["is_notify"].as<bool>();
                     if (obj["enabled"].is<bool>())
                         u.enabled = obj["enabled"].as<bool>();
-                    users.push_back(u);
+                    if (id > 0 && !used[id - 1])
+                    {
+                        ordered[id - 1] = u;
+                        used[id - 1] = true;
+                    }
+                    else
+                    {
+                        tail.push_back(u);
+                    }
                 }
+                std::vector<TelegramMenu::AllowedUser> users;
+                for (size_t i = 0; i < TelegramMenu::kMaxAllowedUsers; ++i)
+                {
+                    if (used[i])
+                        users.push_back(ordered[i]);
+                }
+                users.insert(users.end(), tail.begin(), tail.end());
                 _telegram_menu.setAllowedUsers(users);
             }
+        }
+
+        if (doc["gsm"].is<JsonObjectConst>())
+        {
+            JsonObjectConst g = doc["gsm"].as<JsonObjectConst>();
+            if (g["enabled"].is<bool>())
+                _gsm.setEnabled(g["enabled"].as<bool>());
         }
 
         if (doc["admin"].is<JsonObjectConst>())
@@ -255,7 +295,11 @@ private:
         {
             JsonObjectConst p = doc["plc"].as<JsonObjectConst>();
             if (p["device_name"].is<const char *>())
-                _plc.setDeviceName(p["device_name"].as<const char *>());
+            {
+                String name = p["device_name"].as<const char *>();
+                name = sanitizeUtf8_(name);
+                _plc.setDeviceName(name);
+            }
         }
 
         if (doc["stack"].is<JsonObjectConst>())
@@ -269,12 +313,112 @@ private:
             }
             if (s["master_host"].is<const char *>())
                 _stack_master_host = s["master_host"].as<const char *>();
+            if (s["api_key"].is<const char *>())
+                _stack_api_key = s["api_key"].as<const char *>();
         }
 
         if (doc["controllers"].is<JsonObjectConst>())
         {
             _controllers.applyConfig(doc["controllers"].as<JsonObjectConst>());
         }
+    }
+
+    static String sanitizeUtf8_(const String &in)
+    {
+        if (isValidUtf8_(in))
+            return in;
+        return cp1251ToUtf8_(in);
+    }
+
+    static bool isValidUtf8_(const String &in)
+    {
+        size_t i = 0;
+        while (i < (size_t)in.length())
+        {
+            const uint8_t c = (uint8_t)in[i];
+            if (c < 0x80)
+            {
+                ++i;
+                continue;
+            }
+            size_t need = 0;
+            if ((c & 0xE0) == 0xC0)
+            {
+                if (c < 0xC2)
+                    return false;
+                need = 1;
+            }
+            else if ((c & 0xF0) == 0xE0)
+            {
+                need = 2;
+            }
+            else if ((c & 0xF8) == 0xF0)
+            {
+                if (c > 0xF4)
+                    return false;
+                need = 3;
+            }
+            else
+            {
+                return false;
+            }
+
+            if (i + need >= (size_t)in.length())
+                return false;
+
+            for (size_t j = 1; j <= need; ++j)
+            {
+                const uint8_t cc = (uint8_t)in[i + j];
+                if ((cc & 0xC0) != 0x80)
+                    return false;
+            }
+            i += need + 1;
+        }
+        return true;
+    }
+
+    static void appendUtf8_(String &out, uint16_t code)
+    {
+        if (code < 0x80)
+        {
+            out += (char)code;
+            return;
+        }
+        if (code < 0x800)
+        {
+            out += (char)(0xC0 | (code >> 6));
+            out += (char)(0x80 | (code & 0x3F));
+            return;
+        }
+        out += (char)(0xE0 | (code >> 12));
+        out += (char)(0x80 | ((code >> 6) & 0x3F));
+        out += (char)(0x80 | (code & 0x3F));
+    }
+
+    static String cp1251ToUtf8_(const String &in)
+    {
+        String out;
+        out.reserve(in.length() * 2);
+        for (size_t i = 0; i < (size_t)in.length(); ++i)
+        {
+            const uint8_t c = (uint8_t)in[i];
+            if (c < 0x80)
+            {
+                out += (char)c;
+                continue;
+            }
+            uint16_t code = '?';
+            if (c == 0xA8)
+                code = 0x0401;
+            else if (c == 0xB8)
+                code = 0x0451;
+            else if (c >= 0xC0 && c <= 0xFF)
+                code = (uint16_t)(0x0410 + (c - 0xC0));
+            else
+                code = '?';
+            appendUtf8_(out, code);
+        }
+        return out;
     }
 
     Configs &_configs;
@@ -285,7 +429,9 @@ private:
     TelegramMenu &_telegram_menu;
     PlcControl &_plc;
     Controllers &_controllers;
+    GsmModem &_gsm;
     StackRole _stack_role = StackRole::Master;
     String _stack_master_host;
+    String _stack_api_key;
     DynamicJsonDocument _doc{kConfigDocCapacity};
 };

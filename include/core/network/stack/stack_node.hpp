@@ -17,6 +17,7 @@
 
 #include "core/network/stack/stack_protocol.hpp"
 #include "core/network/stack/stack_types.hpp"
+#include "utils/logger.hpp"
 
 class StackNode
 {
@@ -24,7 +25,7 @@ public:
     using FrameHandler = void (*)(void *ctx, const StackFrame &frame);
     using StatusProvider = size_t (*)(void *ctx, uint8_t *out, size_t cap);
 
-    StackNode() = default;
+    explicit StackNode(Logger &log) : _log(&log) {}
 
     void setFrameHandler(FrameHandler cb, void *ctx)
     {
@@ -53,7 +54,13 @@ public:
     void begin()
     {
         if (_host.length() == 0 || _port == 0)
+        {
+            if (_log)
+                _log->warn(F("STACK"), F("Node begin skipped, host/port missing"));
             return;
+        }
+        if (_log)
+            _log->info(F("STACK"), F("Node begin: %s:%u"), _host.c_str(), (unsigned)_port);
         setupClient_();
         connect_();
     }
@@ -122,6 +129,7 @@ private:
     void *_frame_ctx = nullptr;
     StatusProvider _status_cb = nullptr;
     void *_status_ctx = nullptr;
+    Logger *_log = nullptr;
     StackCodec _codec;
 
     AsyncClient _client;

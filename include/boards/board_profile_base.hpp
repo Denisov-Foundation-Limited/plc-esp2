@@ -84,6 +84,12 @@ struct TelegramNetCfg
     const char *proxy_path = "";
 };
 
+struct GsmCfg
+{
+    bool enabled = false;
+    uint8_t uart_index = 0; // UARTS[index]
+};
+
 struct SpiCfg
 {
     uint8_t bus_num; // 0->SPI, 1->HSPI, 2->VSPI (ESP32 Arduino policy)

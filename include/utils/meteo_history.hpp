@@ -131,35 +131,42 @@ private:
 
         for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
         {
-            const auto *cfg = _meteo.configByIndex(i);
-            const auto *st = _meteo.stateByIndex(i);
-            int16_t t10 = kInvalid;
-            int16_t h10 = kInvalid;
-            if (cfg && st && cfg->enabled)
-            {
-                if (st->has_temp)
-                {
-                    const float v = st->temp_c * 10.0f;
-                    const float clamped = min(max(v, -32766.0f), 32766.0f);
-                    t10 = (int16_t)lroundf(clamped);
-                }
-                if (st->has_humidity)
-                {
-                    const float v = st->humidity * 10.0f;
-                    const float clamped = min(max(v, -32766.0f), 32766.0f);
-                    h10 = (int16_t)lroundf(clamped);
-                }
-            }
-            const size_t off = entryOffset_((uint8_t)i, hour);
-            if (!f.seek(off, SeekSet))
+            if (!writeEntry_(f, i, hour))
             {
                 f.close();
                 return false;
             }
-            f.write(reinterpret_cast<const uint8_t *>(&t10), sizeof(t10));
-            f.write(reinterpret_cast<const uint8_t *>(&h10), sizeof(h10));
         }
         f.close();
+        return true;
+    }
+
+    bool writeEntry_(File &f, size_t index, uint8_t hour)
+    {
+        const auto *cfg = _meteo.configByIndex(index);
+        const auto *st = _meteo.stateByIndex(index);
+        int16_t t10 = kInvalid;
+        int16_t h10 = kInvalid;
+        if (cfg && st && cfg->enabled)
+        {
+            if (st->has_temp)
+            {
+                const float v = st->temp_c * 10.0f;
+                const float clamped = min(max(v, -32766.0f), 32766.0f);
+                t10 = (int16_t)lroundf(clamped);
+            }
+            if (st->has_humidity)
+            {
+                const float v = st->humidity * 10.0f;
+                const float clamped = min(max(v, -32766.0f), 32766.0f);
+                h10 = (int16_t)lroundf(clamped);
+            }
+        }
+        const size_t off = entryOffset_((uint8_t)index, hour);
+        if (!f.seek(off, SeekSet))
+            return false;
+        f.write(reinterpret_cast<const uint8_t *>(&t10), sizeof(t10));
+        f.write(reinterpret_cast<const uint8_t *>(&h10), sizeof(h10));
         return true;
     }
 };

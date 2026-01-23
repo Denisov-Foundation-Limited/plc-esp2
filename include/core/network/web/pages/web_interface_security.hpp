@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -113,15 +113,16 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
     input:checked + .track .knob { transform: translateX(20px); }
     .buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
     button {
-      border: 1px solid var(--border);
-      background: #0b1220;
-      color: var(--text);
-      padding: 8px 14px;
+      border: none;
+      background: var(--accent);
+      color: #0b1220;
+      padding: 10px 16px;
       border-radius: 10px;
+      font-weight: 700;
       cursor: pointer;
     }
-    button.primary { border-color: #1d4ed8; background: #1e293b; }
-    button.warn { border-color: #b91c1c; background: #3f1d1d; }
+    button.primary { background: var(--accent); }
+    button.warn { background: #ef4444; }
     .field {
       width: 100%;
       padding: 6px 8px;
@@ -172,6 +173,7 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
           <span class="pill">Контроллер: <strong>%SECURITY_ENABLED_LABEL%</strong></span>
           <span class="pill">Статус: <strong>%SECURITY_ARMED_LABEL%</strong></span>
           <span class="pill">Тревога: <strong>%SECURITY_ALARM_LABEL%</strong></span>
+          <span class="pill">GSM: <strong>%SECURITY_GSM_LABEL%</strong></span>
           <span class="pill">%SECURITY_STATUS%</span>
         </div>
         <div class="grid">
@@ -195,10 +197,29 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
               <th class="right">ID</th>
               <th>Вкл</th>
               <th>Serial (hex16)</th>
+              <th>Name</th>
             </tr>
           </thead>
           <tbody>
             %SECURITY_KEYS_ROWS%
+          </tbody>
+        </table>
+        </div>
+        <h2>GSM телефоны</h2>
+        <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="right">ID</th>
+              <th>Вкл</th>
+              <th>Имя</th>
+              <th>Телефон</th>
+              <th>Уведомл.</th>
+              <th>Звонок</th>
+            </tr>
+          </thead>
+          <tbody>
+            %SECURITY_PHONES_ROWS%
           </tbody>
         </table>
         </div>
@@ -212,8 +233,8 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
               <th>Имя</th>
               <th>Тип</th>
               <th>Порт</th>
-              <th>Silent</th>
-              <th class="center">Detect</th>
+              <th>Тихий</th>
+              <th class="center">Сработал</th>
             </tr>
           </thead>
           <tbody>
