@@ -185,7 +185,7 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
             </label>
           </div>
           <div>
-            <label>Порт сирены (port | none)</label>
+            <label>Порт сирены</label>
             <select class="field mini siren-select" data-selected="%SECURITY_SIREN%" name="security_siren"></select>
           </div>
         </div>
@@ -196,8 +196,8 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
             <tr>
               <th class="right">ID</th>
               <th>Вкл</th>
-              <th>Serial (hex16)</th>
-              <th>Name</th>
+              <th>Серийный (hex16)</th>
+              <th>Имя</th>
             </tr>
           </thead>
           <tbody>

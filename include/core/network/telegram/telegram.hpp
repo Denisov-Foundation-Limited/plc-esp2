@@ -15,6 +15,7 @@
 #include <ArduinoJson.h>
 #include <Client.h>
 #include <WiFiClientSecure.h>
+#include <array>
 #include <vector>
 
 #include <FastBot2Client.h>
@@ -138,8 +139,12 @@ public:
     {
         if (!_poll_has_updates)
             return false;
-        out = _poll_updates;
-        _poll_updates.clear();
+        out.clear();
+        out.reserve(_poll_count);
+        for (size_t i = 0; i < _poll_count; ++i)
+            out.push_back(_poll_updates[(_poll_head + i) % kMaxPollUpdates]);
+        _poll_count = 0;
+        _poll_head = 0;
         _poll_has_updates = false;
         return true;
     }
@@ -186,12 +191,16 @@ public:
             _last_error = F("chat_id not set");
             return false;
         }
-        StaticJsonDocument<256> doc;
+        DynamicJsonDocument doc(text.length() + 128);
         doc["chat_id"] = _chat_id;
         doc["text"] = text;
         String payload;
         payload.reserve(text.length() + 64);
-        serializeJson(doc, payload);
+        if (serializeJson(doc, payload) == 0)
+        {
+            _last_error = F("payload too large");
+            return false;
+        }
         return sendCommand_(F("sendMessage"), payload);
     }
 
@@ -231,9 +240,12 @@ private:
     FastBot2Client *_fb = nullptr;
     Client *_fb_client = nullptr;
     alignas(FastBot2Client) uint8_t _fb_storage[sizeof(FastBot2Client)] = {};
-    std::vector<Update> _poll_updates;
     bool _poll_has_updates = false;
     std::vector<Update> _task_updates_tmp;
+    static constexpr size_t kMaxPollUpdates = 32;
+    std::array<Update, kMaxPollUpdates> _poll_updates = {};
+    size_t _poll_head = 0;
+    size_t _poll_count = 0;
     bool _auto_poll = false;
     uint16_t _auto_poll_timeout_s = 20;
     uint32_t _auto_poll_interval_ms = 5000;
@@ -308,7 +320,17 @@ private:
         _task_updates_tmp.push_back(out);
         if (!_updates_handler)
         {
-            _poll_updates.push_back(out);
+            if (_poll_count < kMaxPollUpdates)
+            {
+                const size_t idx = (_poll_head + _poll_count) % kMaxPollUpdates;
+                _poll_updates[idx] = out;
+                ++_poll_count;
+            }
+            else
+            {
+                _poll_updates[_poll_head] = out;
+                _poll_head = (_poll_head + 1) % kMaxPollUpdates;
+            }
             _poll_has_updates = true;
         }
     }

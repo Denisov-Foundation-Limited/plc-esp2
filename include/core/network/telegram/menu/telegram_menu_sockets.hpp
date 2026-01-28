@@ -127,7 +127,7 @@ public:
                 continue;
             any = true;
             out += "\n  ";
-            out += st->relay_on ? F("?? ") : F("? ");
+            out += st->relay_on ? F("🟢 ") : F("⚪ ");
             out += String((unsigned)cfg->id);
             out += ": ";
             if (cfg->name.length())
@@ -176,7 +176,7 @@ public:
             return false;
         if (u.text == F("Назад"))
         {
-            self._bot->enterMenu(u.chat_id, "device", self.adminPrefix_(u.chat_id));
+            self._bot->enterMenu(u.chat_id, "device");
             return true;
         }
         uint8_t id = 0;

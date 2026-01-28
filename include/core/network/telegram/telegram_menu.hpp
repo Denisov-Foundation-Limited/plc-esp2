@@ -211,7 +211,7 @@ private:
         ChatAuth *st = self.ensureAuth_(u.chat_id);
         if (!st || !st->authorized)
         {
-            reply = "Нужна авторизация. Используйте /admin.";
+            reply = "РќСѓР¶РЅР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ /admin.";
             return false;
         }
         return true;
@@ -228,27 +228,27 @@ private:
         if (_self->isLocked_(*st))
         {
             const uint32_t left_s = (_self->msLeft_(st->lock_until_ms) + 999) / 1000;
-            String msg = "Блокировка ";
+            String msg = "Р‘Р»РѕРєРёСЂРѕРІРєР° ";
             msg += String((unsigned)left_s);
-            msg += " сек";
+            msg += " СЃРµРє";
             bot.sendText(u.chat_id, msg);
             return true;
         }
         if (_self->_admin_password.length() == 0)
         {
-            bot.enterMenu(u.chat_id, "admin", _self->adminPrefix_(u.chat_id));
+            bot.enterMenu(u.chat_id, "admin");
             return true;
         }
 
         if (st && st->authorized)
         {
-            bot.enterMenu(u.chat_id, "admin", _self->adminPrefix_(u.chat_id));
+            bot.enterMenu(u.chat_id, "admin");
             return true;
         }
 
         st->awaiting = true;
         st->authorized = false;
-        bot.sendText(u.chat_id, F("Введите пароль администратора:"));
+        bot.sendText(u.chat_id, F("Р’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°:"));
         return true;
     }
 
@@ -263,29 +263,35 @@ private:
 
     static bool cmdStatus_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
     {
-        (void)bot;
+        (void)reply;
         if (!_self)
             return false;
         const float temp = _self->_plc.boardTemp();
         const bool fan = _self->_plc.fanStatus();
         char buf[96] = {};
-        snprintf(buf, sizeof(buf), "Статус ПЛК:\n  temp_c: %.1f\n  fan: %s",
-                 temp, fan ? "вкл" : "выкл");
-        reply = buf;
+        snprintf(buf, sizeof(buf), "%.1f", temp);
+        String out = F("РЎС‚Р°С‚СѓСЃ РџР›Рљ:\n  temp_c: <b>");
+        out += buf;
+        out += F("</b>\n  fan: <b>");
+        out += fan ? F("РІРєР»") : F("РІС‹РєР»");
+        out += F("</b>");
+        bot.sendText(u.chat_id, out, "", "HTML");
         return true;
     }
 
     static bool cmdWifi_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
     {
-        (void)bot;
+        (void)reply;
         if (!_self)
             return false;
-        reply = "Wi-Fi:\n  режим: ";
-        reply += _self->_wifi.ap() ? "AP" : "STA";
-        reply += "\n  ssid  : ";
-        reply += _self->_wifi.ssid();
-        reply += "\n  ap_ssid: ";
-        reply += _self->_wifi.apSsid();
+        String out = F("Wi-Fi:\n  СЂРµР¶РёРј: <b>");
+        out += _self->_wifi.ap() ? F("AP") : F("STA");
+        out += F("</b>\n  ssid: <b>");
+        out += _self->escapeHtml_(_self->_wifi.ssid());
+        out += F("</b>\n  ap_ssid: <b>");
+        out += _self->escapeHtml_(_self->_wifi.apSsid());
+        out += F("</b>");
+        bot.sendText(u.chat_id, out, "", "HTML");
         return true;
     }
 
@@ -297,16 +303,16 @@ private:
             return true;
         if (!_self->_stack_master)
         {
-            reply = "Стек недоступен";
+            reply = "РЎС‚РµРє РЅРµРґРѕСЃС‚СѓРїРµРЅ";
             return true;
         }
         const size_t count = _self->_stack_master->nodeCount();
         if (count == 0)
         {
-            reply = "Контроллеры: нет активных";
+            reply = "РљРѕРЅС‚СЂРѕР»Р»РµСЂС‹: РЅРµС‚ Р°РєС‚РёРІРЅС‹С…";
             return true;
         }
-        reply = "Контроллеры:";
+        String out = F("РљРѕРЅС‚СЂРѕР»Р»РµСЂС‹:");
         for (size_t i = 0; i < count; ++i)
         {
             const uint32_t node_id = _self->_stack_master->nodeIdAt(i);
@@ -314,17 +320,20 @@ private:
             if (name.length() == 0)
                 name = fallbackNodeName_(node_id);
             const String ip = _self->_stack_master->nodeIpAt(i);
-            reply += "\n  ";
-            reply += name;
-            reply += " (id=";
-            reply += String(node_id);
+            out += F("\n  <b>");
+            out += _self->escapeHtml_(name);
+            out += F("</b> (id=<b>");
+            out += String(node_id);
+            out += F("</b>");
             if (ip.length())
             {
-                reply += ", ip=";
-                reply += ip;
+                out += F(", ip=<b>");
+                out += _self->escapeHtml_(ip);
+                out += F("</b>");
             }
-            reply += ")";
+            out += F(")");
         }
+        bot.sendText(u.chat_id, out, "", "HTML");
         return true;
     }
 
@@ -382,9 +391,9 @@ private:
         if (!_self)
             return false;
         if (_self->_wifi.begin())
-            reply = "Wi-Fi перезапущен";
+            reply = "Wi-Fi РїРµСЂРµР·Р°РїСѓС‰РµРЅ";
         else
-            reply = "Не удалось перезапустить Wi-Fi";
+            reply = "РќРµ СѓРґР°Р»РѕСЃСЊ РїРµСЂРµР·Р°РїСѓСЃС‚РёС‚СЊ Wi-Fi";
         return true;
     }
     static bool cmdPlcRestart_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
@@ -392,7 +401,7 @@ private:
         (void)reply;
         if (!_self)
             return false;
-        bot.sendText(u.chat_id, F("Перезапуск ПЛК"));
+        bot.sendText(u.chat_id, F("РџРµСЂРµР·Р°РїСѓСЃРє РџР›Рљ"));
         delay(200);
         ESP.restart();
         return true;
@@ -405,9 +414,9 @@ private:
             return false;
         _self->_wifi.setAp(true);
         if (_self->_wifi.begin())
-            reply = "Wi-Fi AP включен";
+            reply = "Wi-Fi AP РІРєР»СЋС‡РµРЅ";
         else
-            reply = "Не удалось включить Wi-Fi AP";
+            reply = "РќРµ СѓРґР°Р»РѕСЃСЊ РІРєР»СЋС‡РёС‚СЊ Wi-Fi AP";
         return true;
     }
 
@@ -418,9 +427,9 @@ private:
             return false;
         _self->_wifi.setAp(false);
         if (_self->_wifi.begin())
-            reply = "Wi-Fi AP выключен";
+            reply = "Wi-Fi AP РІС‹РєР»СЋС‡РµРЅ";
         else
-            reply = "Не удалось выключить Wi-Fi AP";
+            reply = "РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РєР»СЋС‡РёС‚СЊ Wi-Fi AP";
         return true;
     }
 
@@ -432,16 +441,16 @@ private:
             return true;
         if (!_self->_logs)
         {
-            reply = "Логгер недоступен";
+            reply = "Р›РѕРіРіРµСЂ РЅРµРґРѕСЃС‚СѓРїРµРЅ";
             return true;
         }
         const size_t count = _self->_logs->recentCount();
         if (count == 0)
         {
-            reply = "Логи пусты";
+            reply = "Р›РѕРіРё РїСѓСЃС‚С‹";
             return true;
         }
-        reply = "Логи:\n";
+        reply = "Р›РѕРіРё:\n";
         char buf[LOGGER_BUFFER_SIZE] = {};
         static constexpr size_t kMaxReply = 3900;
         for (size_t i = 0; i < count; ++i)
@@ -470,12 +479,12 @@ private:
             return false;
         if (_self->_admin_password.length() > 0 && !st->authorized)
         {
-            bot.sendText(u.chat_id, F("Нужна авторизация. Используйте /admin."));
+            bot.sendText(u.chat_id, F("РќСѓР¶РЅР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ /admin."));
             return true;
         }
         st->awaiting_config = true;
         st->awaiting = false;
-        bot.sendText(u.chat_id, F("Отправьте JSON для сохранения startup-config. /back - отмена."));
+        bot.sendText(u.chat_id, F("РћС‚РїСЂР°РІСЊС‚Рµ JSON РґР»СЏ СЃРѕС…СЂР°РЅРµРЅРёСЏ startup-config. /back - РѕС‚РјРµРЅР°."));
         return true;
     }
 
@@ -487,29 +496,32 @@ private:
             return true;
         if (_self->_allowed_users_count == 0)
         {
-            reply = "Список разрешенных пользователей пуст.";
+            reply = "РЎРїРёСЃРѕРє СЂР°Р·СЂРµС€РµРЅРЅС‹С… РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№ РїСѓСЃС‚.";
             return true;
         }
-        reply = "Разрешенные пользователи:";
+        String out = F("Р Р°Р·СЂРµС€РµРЅРЅС‹Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»Рё:");
         for (size_t i = 0; i < _self->_allowed_users_count; ++i)
         {
             const auto &user = _self->_allowed_users[i];
-            reply += "\n  ";
-            reply += String((unsigned)(i + 1));
-            reply += " ";
-            reply += user.username.length() ? user.username : String("-");
+            out += F("\n  <b>");
+            out += String((unsigned)(i + 1));
+            out += F("</b> ");
+            out += user.username.length() ? _self->escapeHtml_(user.username) : String("-");
             if (user.chat_id)
             {
-                reply += " chat=";
-                reply += String((long long)user.chat_id);
+                out += F(" chat=<b>");
+                out += String((long long)user.chat_id);
+                out += F("</b>");
             }
-            reply += " admin=";
-            reply += user.is_admin ? "1" : "0";
-            reply += " notify=";
-            reply += user.is_notify ? "1" : "0";
-            reply += " enabled=";
-            reply += user.enabled ? "1" : "0";
+            out += F(" admin=<b>");
+            out += user.is_admin ? "1" : "0";
+            out += F("</b> notify=<b>");
+            out += user.is_notify ? "1" : "0";
+            out += F("</b> enabled=<b>");
+            out += user.enabled ? "1" : "0";
+            out += F("</b>");
         }
+        bot.sendText(u.chat_id, out, "", "HTML");
         return true;
     }
 
@@ -524,7 +536,7 @@ private:
         name.trim();
         if (name.length() == 0)
         {
-            reply = "Использование: /allow_add <username> [chat_id] [admin] [notify] [off]";
+            reply = "РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: /allow_add <username> [chat_id] [admin] [notify] [off]";
             return true;
         }
         AllowedUser user{};
@@ -533,11 +545,11 @@ private:
         if (res == AllowResult::Ok)
             reply = "OK";
         else if (res == AllowResult::Exists)
-            reply = "Уже в списке";
+            reply = "РЈР¶Рµ РІ СЃРїРёСЃРєРµ";
         else if (res == AllowResult::Full)
-            reply = "Лимит 10";
+            reply = "Р›РёРјРёС‚ 10";
         else
-            reply = "Некорректный username";
+            reply = "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ username";
         return true;
     }
 
@@ -552,13 +564,13 @@ private:
         name.trim();
         if (name.length() == 0)
         {
-            reply = "Использование: /allow_del <username>";
+            reply = "РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: /allow_del <username>";
             return true;
         }
         if (_self->removeAllowedUser(name))
             reply = "OK";
         else
-            reply = "Не найден";
+            reply = "РќРµ РЅР°Р№РґРµРЅ";
         return true;
     }
 
@@ -575,13 +587,13 @@ private:
 
     static bool cmdTime_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
     {
-        (void)bot;
+        (void)reply;
         if (!_self)
             return false;
         Ds3231Mz::DateTime dt;
         if (!_self->_rtc.Time(dt))
         {
-            reply = "RTC: нет данных";
+            reply = "RTC: РЅРµС‚ РґР°РЅРЅС‹С…";
             return true;
         }
         char date_buf[16] = {};
@@ -590,12 +602,14 @@ private:
                  (unsigned)dt.year, (unsigned)dt.month, (unsigned)dt.day);
         snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
                  (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
-        reply = "RTC:\n  дата: ";
-        reply += date_buf;
-        reply += "\n  время: ";
-        reply += time_buf;
-        reply += "\n  день недели: ";
-        reply += String((unsigned)dt.day_of_week);
+        String out = F("RTC:\n  РґР°С‚Р°: <b>");
+        out += date_buf;
+        out += F("</b>\n  РІСЂРµРјСЏ: <b>");
+        out += time_buf;
+        out += F("</b>\n  РґРµРЅСЊ РЅРµРґРµР»Рё: <b>");
+        out += String((unsigned)dt.day_of_week);
+        out += F("</b>");
+        bot.sendText(u.chat_id, out, "", "HTML");
         return true;
     }
 
@@ -613,7 +627,7 @@ private:
         if (self._admin_password.length() > 0 && !st->authorized)
         {
             if (self._bot)
-                self._bot->sendText(u.chat_id, F("Нужна авторизация. Используйте /admin."));
+                self._bot->sendText(u.chat_id, F("РќСѓР¶РЅР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ /admin."));
             return true;
         }
         st->awaiting_config = false;
@@ -621,7 +635,7 @@ private:
         if (is_config && u.document_size > 0 && u.document_size > kMaxConfigBytes)
         {
             if (self._bot)
-                self._bot->sendText(u.chat_id, F("Слишком большой файл."));
+                self._bot->sendText(u.chat_id, F("РЎР»РёС€РєРѕРј Р±РѕР»СЊС€РѕР№ С„Р°Р№Р»."));
             return true;
         }
         if (!self._bot)
@@ -678,17 +692,17 @@ private:
         DeserializationError err = deserializeJson(self._cfg_doc, json);
         if (err)
         {
-            self._bot->sendText(u.chat_id, F("Ошибка разбора JSON."));
+            self._bot->sendText(u.chat_id, F("РћС€РёР±РєР° СЂР°Р·Р±РѕСЂР° JSON."));
             return true;
         }
         const bool saved = self._configs_manager ? self._configs_manager->save(self._cfg_doc)
                                                  : self._configs.save(self._cfg_doc);
         if (!saved)
         {
-            self._bot->sendText(u.chat_id, F("Не удалось сохранить конфиг."));
+            self._bot->sendText(u.chat_id, F("РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РєРѕРЅС„РёРі."));
             return true;
         }
-        self._bot->sendText(u.chat_id, F("Startup-config сохранен. Перезагрузите контроллер для применения."));
+        self._bot->sendText(u.chat_id, F("Startup-config СЃРѕС…СЂР°РЅРµРЅ. РџРµСЂРµР·Р°РіСЂСѓР·РёС‚Рµ РєРѕРЅС‚СЂРѕР»Р»РµСЂ РґР»СЏ РїСЂРёРјРµРЅРµРЅРёСЏ."));
         return true;
     }
 
@@ -703,7 +717,7 @@ private:
         if (!self->isAllowedUser_(u))
         {
             if (self->_bot)
-                self->_bot->sendText(u.chat_id, F("Доступ запрещен"));
+                self->_bot->sendText(u.chat_id, F("Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰РµРЅ"));
             return true;
         }
         if (handleDocument_(*self, u))
@@ -722,17 +736,24 @@ private:
         if (st && st->awaiting_socket)
         {
             uint8_t id = 0;
-            if (!parseSocketId_(u.text, id));
+            if (!parseSocketId_(u.text, id))
+            {
+                if (self->_bot)
+                    self->_bot->sendText(u.chat_id, F("РќРµРІРµСЂРЅС‹Р№ ID СЂРѕР·РµС‚РєРё"));
+                st->awaiting_socket = false;
+                st->socket_action = 0;
+                return true;
+            }
             if (!self->_sockets)
             {
-                self->_bot->sendText(u.chat_id, F("Розетки недоступны"));
+                self->_bot->sendText(u.chat_id, F("Р РѕР·РµС‚РєРё РЅРµРґРѕСЃС‚СѓРїРЅС‹"));
                 st->awaiting_socket = false;
                 st->socket_action = 0;
                 return true;
             }
             if (!self->isLocalSelected_(u.chat_id))
             {
-                self->_bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
+                self->_bot->sendText(u.chat_id, F("Р”РѕСЃС‚СѓРїРЅРѕ С‚РѕР»СЊРєРѕ РґР»СЏ Р»РѕРєР°Р»СЊРЅРѕРіРѕ СѓСЃС‚СЂРѕР№СЃС‚РІР°"));
                 st->awaiting_socket = false;
                 st->socket_action = 0;
                 return true;
@@ -747,7 +768,7 @@ private:
             st->awaiting_socket = false;
             st->socket_action = 0;
             if (!ok)
-                self->_bot->sendText(u.chat_id, F("Не удалось"));
+                self->_bot->sendText(u.chat_id, F("РќРµ СѓРґР°Р»РѕСЃСЊ"));
             else
                 self->sendSocketMenu_(u.chat_id);
             return true;
@@ -770,14 +791,13 @@ private:
             return true;
         if (self->handleRootDeviceSelection_(u))
             return true;
-        if (st && st->awaiting_device);
         if (st && st->awaiting_config)
         {
             if (self->_admin_password.length() > 0 && !st->authorized)
             {
                 st->awaiting_config = false;
                 if (self->_bot)
-                    self->_bot->sendText(u.chat_id, F("Нужна авторизация. Используйте /admin."));
+                    self->_bot->sendText(u.chat_id, F("РќСѓР¶РЅР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ /admin."));
                 return true;
             }
             st->awaiting_config = false;
@@ -786,7 +806,7 @@ private:
             if (err)
             {
                 if (self->_bot)
-                    self->_bot->sendText(u.chat_id, F("Ошибка разбора JSON."));
+                    self->_bot->sendText(u.chat_id, F("РћС€РёР±РєР° СЂР°Р·Р±РѕСЂР° JSON."));
                 return true;
             }
             const bool saved = self->_configs_manager ? self->_configs_manager->save(self->_cfg_doc)
@@ -794,11 +814,11 @@ private:
             if (!saved)
             {
                 if (self->_bot)
-                    self->_bot->sendText(u.chat_id, F("Не удалось сохранить конфиг."));
+                    self->_bot->sendText(u.chat_id, F("РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РєРѕРЅС„РёРі."));
                 return true;
             }
             if (self->_bot)
-                self->_bot->sendText(u.chat_id, F("Startup-config сохранен. Перезагрузите контроллер для применения."));
+                self->_bot->sendText(u.chat_id, F("Startup-config СЃРѕС…СЂР°РЅРµРЅ. РџРµСЂРµР·Р°РіСЂСѓР·РёС‚Рµ РєРѕРЅС‚СЂРѕР»Р»РµСЂ РґР»СЏ РїСЂРёРјРµРЅРµРЅРёСЏ."));
             return true;
         }
         if (!st || !st->awaiting)
@@ -806,9 +826,9 @@ private:
         if (self->isLocked_(*st))
         {
             const uint32_t left_s = (self->msLeft_(st->lock_until_ms) + 999) / 1000;
-            String msg = "Блокировка ";
+            String msg = "Р‘Р»РѕРєРёСЂРѕРІРєР° ";
             msg += String((unsigned)left_s);
-            msg += " сек";
+            msg += " СЃРµРє";
             self->_bot->sendText(u.chat_id, msg);
             return true;
         }
@@ -820,7 +840,7 @@ private:
             st->fail_count = 0;
             st->lock_until_ms = 0;
             if (self->_bot)
-                self->_bot->enterMenu(u.chat_id, "admin", F("Доступ разрешен"));
+                self->_bot->enterMenu(u.chat_id, "admin", F("Р”РѕСЃС‚СѓРї СЂР°Р·СЂРµС€РµРЅ"));
         }
         else
         {
@@ -828,7 +848,7 @@ private:
             st->awaiting = true;
             self->onFail_(*st);
             if (self->_bot && !self->isLocked_(*st))
-                self->_bot->sendText(u.chat_id, F("Неверный пароль\nВведите пароль администратора:"));
+                self->_bot->sendText(u.chat_id, F("РќРµРІРµСЂРЅС‹Р№ РїР°СЂРѕР»СЊ\nР’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°:"));
         }
         return true;
     }
@@ -915,14 +935,14 @@ private:
     static inline const std::array<TelegramBot::MenuItem, 0> kRootItems = {};
 
     static inline const std::array<TelegramBot::MenuItem, 8> kDeviceItems = {{
-        { "Админка", "Админка", nullptr, nullptr },
-        { "Розетки", "/sockets", nullptr, nullptr },
-        { "Метео", "/meteo", nullptr, nullptr },
-        { "Термо", "/thermo", nullptr, nullptr },
-        { "Баки", "/tanks", nullptr, nullptr },
-        { "Септик", "/septic", nullptr, nullptr },
-        { "Охрана", "/security", nullptr, nullptr },
-        { "Назад", "/back", nullptr, nullptr },
+        { "РђРґРјРёРЅРєР°", "РђРґРјРёРЅРєР°", nullptr, nullptr },
+        { "Р РѕР·РµС‚РєРё", "/sockets", nullptr, nullptr },
+        { "РњРµС‚РµРѕ", "/meteo", nullptr, nullptr },
+        { "РўРµСЂРјРѕ", "/thermo", nullptr, nullptr },
+        { "Р‘Р°РєРё", "/tanks", nullptr, nullptr },
+        { "РЎРµРїС‚РёРє", "/septic", nullptr, nullptr },
+        { "РћС…СЂР°РЅР°", "/security", nullptr, nullptr },
+        { "РќР°Р·Р°Рґ", "/back", nullptr, nullptr },
     }};
 
     static inline const std::array<TelegramBot::MenuItem, 0> kSocketsItems = {};
@@ -933,56 +953,56 @@ private:
     static inline const std::array<TelegramBot::MenuItem, 0> kSecurityItems = {};
 
     static inline const std::array<TelegramBot::MenuItem, 6> kAdminItems = {{
-        { "ПЛК", nullptr, "plc", nullptr },
-        { "Часы", nullptr, "rtc", nullptr },
+        { "РџР›Рљ", nullptr, "plc", nullptr },
+        { "Р§Р°СЃС‹", nullptr, "rtc", nullptr },
         { "Wi-Fi", nullptr, "wifi", nullptr },
-        { "Настройки", nullptr, "settings", nullptr },
-        { "Логи", "/logs", nullptr, nullptr },
-        { "Назад", "/back", nullptr, nullptr },
+        { "РќР°СЃС‚СЂРѕР№РєРё", nullptr, "settings", nullptr },
+        { "Р›РѕРіРё", "/logs", nullptr, nullptr },
+        { "РќР°Р·Р°Рґ", "/back", nullptr, nullptr },
     }};
 
     static inline const std::array<TelegramBot::MenuItem, 2> kPlcItems = {{
-        { "Статус", "/status", nullptr, nullptr },
-        { "Назад", "/back", nullptr, nullptr },
+        { "РЎС‚Р°С‚СѓСЃ", "/status", nullptr, nullptr },
+        { "РќР°Р·Р°Рґ", "/back", nullptr, nullptr },
     }};
 
     static inline const std::array<TelegramBot::MenuItem, 2> kRtcItems = {{
-        { "Время", "/time", nullptr, nullptr },
-        { "Назад", "/back", nullptr, nullptr },
+        { "Р’СЂРµРјСЏ", "/time", nullptr, nullptr },
+        { "РќР°Р·Р°Рґ", "/back", nullptr, nullptr },
     }};
 
     static inline const std::array<TelegramBot::MenuItem, 2> kWifiItems = {{
-        { "Состояние", "/wifi", nullptr, nullptr },
-        { "Назад", "/back", nullptr, nullptr },
+        { "РЎРѕСЃС‚РѕСЏРЅРёРµ", "/wifi", nullptr, nullptr },
+        { "РќР°Р·Р°Рґ", "/back", nullptr, nullptr },
     }};
 
     static inline const std::array<TelegramBot::MenuItem, 6> kSettingsItems = {{
-        { "Перезапуск Wi-Fi", "/wifi_restart", nullptr, nullptr },
-        { "Перезапуск ПЛК", "/plc_restart", nullptr, nullptr },
-        { "Wi-Fi AP Вкл", "/wifi_ap_on", nullptr, nullptr },
-        { "Wi-Fi AP Выкл", "/wifi_ap_off", nullptr, nullptr },
+        { "РџРµСЂРµР·Р°РїСѓСЃРє Wi-Fi", "/wifi_restart", nullptr, nullptr },
+        { "РџРµСЂРµР·Р°РїСѓСЃРє РџР›Рљ", "/plc_restart", nullptr, nullptr },
+        { "Wi-Fi AP Р’РєР»", "/wifi_ap_on", nullptr, nullptr },
+        { "Wi-Fi AP Р’С‹РєР»", "/wifi_ap_off", nullptr, nullptr },
         { "Startup-config", "/config_set", nullptr, nullptr },
-        { "Назад", "/back", nullptr, nullptr },
+        { "РќР°Р·Р°Рґ", "/back", nullptr, nullptr },
     }};
 
     static inline const std::array<TelegramBot::Menu, 13> kMenus = {{
-        { "root", "Выбор устройства", kRootItems.data(), kRootItems.size(), nullptr },
-        { "device", "Меню устройства", kDeviceItems.data(), kDeviceItems.size(), "root" },
-        { "sockets", "Розетки", kSocketsItems.data(), kSocketsItems.size(), "device" },
-        { "meteo", "Метео", kMeteoItems.data(), kMeteoItems.size(), "device" },
-        { "thermo", "Термо", kThermoItems.data(), kThermoItems.size(), "device" },
-        { "tanks", "Баки", kTanksItems.data(), kTanksItems.size(), "device" },
-        { "septic", "Септик", kSepticItems.data(), kSepticItems.size(), "device" },
-        { "security", "Охрана", kSecurityItems.data(), kSecurityItems.size(), "device" },
-        { "admin", "Админка", kAdminItems.data(), kAdminItems.size(), "device" },
-        { "plc", "ПЛК", kPlcItems.data(), kPlcItems.size(), "admin" },
-        { "rtc", "Часы", kRtcItems.data(), kRtcItems.size(), "admin" },
+        { "root", "Р’С‹Р±РѕСЂ СѓСЃС‚СЂРѕР№СЃС‚РІР°", kRootItems.data(), kRootItems.size(), nullptr },
+        { "device", "РњРµРЅСЋ СѓСЃС‚СЂРѕР№СЃС‚РІР°", kDeviceItems.data(), kDeviceItems.size(), "root" },
+        { "sockets", "Р РѕР·РµС‚РєРё", kSocketsItems.data(), kSocketsItems.size(), "device" },
+        { "meteo", "РњРµС‚РµРѕ", kMeteoItems.data(), kMeteoItems.size(), "device" },
+        { "thermo", "РўРµСЂРјРѕ", kThermoItems.data(), kThermoItems.size(), "device" },
+        { "tanks", "Р‘Р°РєРё", kTanksItems.data(), kTanksItems.size(), "device" },
+        { "septic", "РЎРµРїС‚РёРє", kSepticItems.data(), kSepticItems.size(), "device" },
+        { "security", "РћС…СЂР°РЅР°", kSecurityItems.data(), kSecurityItems.size(), "device" },
+        { "admin", "РђРґРјРёРЅРєР°", kAdminItems.data(), kAdminItems.size(), "device" },
+        { "plc", "РџР›Рљ", kPlcItems.data(), kPlcItems.size(), "admin" },
+        { "rtc", "Р§Р°СЃС‹", kRtcItems.data(), kRtcItems.size(), "admin" },
         { "wifi", "Wi-Fi", kWifiItems.data(), kWifiItems.size(), "admin" },
-        { "settings", "Настройки", kSettingsItems.data(), kSettingsItems.size(), "admin" },
+        { "settings", "РќР°СЃС‚СЂРѕР№РєРё", kSettingsItems.data(), kSettingsItems.size(), "admin" },
     }};
 
     static inline const std::array<TelegramBot::Command, 40> kCommands = {{
-        { "Админка", &TelegramMenu::cmdAdmin_ },
+        { "РђРґРјРёРЅРєР°", &TelegramMenu::cmdAdmin_ },
         { "/status", &TelegramMenu::cmdStatus_ },
         { "/wifi", &TelegramMenu::cmdWifi_ },
         { "/time", &TelegramMenu::cmdTime_ },
@@ -1048,7 +1068,7 @@ private:
             st.fail_count = 0;
             st.awaiting = false;
             if (_bot)
-                _bot->sendText(st.chat_id, F("Слишком много неверных попыток. Блокировка 30 сек"));
+                _bot->sendText(st.chat_id, F("РЎР»РёС€РєРѕРј РјРЅРѕРіРѕ РЅРµРІРµСЂРЅС‹С… РїРѕРїС‹С‚РѕРє. Р‘Р»РѕРєРёСЂРѕРІРєР° 30 СЃРµРє"));
         }
     }
     static String normalizeUsername_(String user)
@@ -1294,7 +1314,7 @@ private:
 
     String adminPrefix_(int64_t chat_id) const
     {
-        String prefix = F("Устройство: ");
+        String prefix = F("РЈСЃС‚СЂРѕР№СЃС‚РІРѕ: ");
         prefix += selectedDeviceLabel_(chat_id);
         return prefix;
     }
@@ -1461,10 +1481,11 @@ private:
             return "";
         String prefix;
         if (strcmp(menu.id, "root") == 0)
-            prefix = F("Текущее устройство: ");
+            prefix = F("РўРµРєСѓС‰РµРµ СѓСЃС‚СЂРѕР№СЃС‚РІРѕ: <b>");
         else
-            prefix = F("Устройство: ");
-        prefix += self->selectedDeviceLabel_(chat_id);
+            prefix = F("РЈСЃС‚СЂРѕР№СЃС‚РІРѕ: <b>");
+        prefix += self->escapeHtml_(self->selectedDeviceLabel_(chat_id));
+        prefix += F("</b>");
         return prefix;
     }
 
@@ -1518,20 +1539,20 @@ private:
             std::vector<String> labels;
             labels.reserve(7);
             if (self->isAdminChat_(chat_id))
-                labels.push_back(F("Админка"));
+                labels.push_back(F("РђРґРјРёРЅРєР°"));
             if (self->_sockets && self->_sockets->controllerEnabled())
-                labels.push_back(F("Розетки"));
+                labels.push_back(F("Р РѕР·РµС‚РєРё"));
             if (self->_meteo && self->_meteo->controllerEnabled())
-                labels.push_back(F("Метео"));
+                labels.push_back(F("РњРµС‚РµРѕ"));
             if (self->_thermo && self->_thermo->controllerEnabled())
-                labels.push_back(F("Термо"));
+                labels.push_back(F("РўРµСЂРјРѕ"));
             if (self->_tanks && self->_tanks->controllerEnabled())
-                labels.push_back(F("Баки"));
+                labels.push_back(F("Р‘Р°РєРё"));
             if (self->_septic && self->_septic->controllerEnabled())
-                labels.push_back(F("Септик"));
+                labels.push_back(F("РЎРµРїС‚РёРє"));
             if (self->_security && self->_security->controllerEnabled())
-                labels.push_back(F("Охрана"));
-            labels.push_back(F("Назад"));
+                labels.push_back(F("РћС…СЂР°РЅР°"));
+            labels.push_back(F("РќР°Р·Р°Рґ"));
             return buildKeyboardMarkup_(labels);
         }
         return "";
@@ -1547,9 +1568,9 @@ private:
         labels.reserve(devices.size() + 1);
         for (const auto &d : devices)
             labels.push_back(d.label);
-        labels.push_back(F("Назад"));
+        labels.push_back(F("РќР°Р·Р°Рґ"));
         String text = prefix;
-        text += "\nТекущее: ";
+        text += "\nРўРµРєСѓС‰РµРµ: ";
         text += selectedDeviceLabel_(chat_id);
         const String markup = buildKeyboardMarkup_(labels);
         _bot->sendText(chat_id, text, markup);

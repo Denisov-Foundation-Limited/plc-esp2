@@ -2485,12 +2485,26 @@ private:
         auto appendRow = [&](const TankController::TankConfig &cfg, const TankController::TankState &st,
                              bool enabled) {
             const char *level = "пусто";
+            const char *level_class = "level-empty";
+            unsigned level_pct = 8;
             if (st.level_full)
+            {
                 level = "полный";
+                level_class = "level-full";
+                level_pct = 90;
+            }
             else if (st.level_mid)
+            {
                 level = "средний";
+                level_class = "level-mid";
+                level_pct = 60;
+            }
             else if (st.level_low)
+            {
                 level = "низкий";
+                level_class = "level-low";
+                level_pct = 30;
+            }
 
             items += "<tr><td class=\"right\"><strong>";
             items += String((unsigned)cfg.id);
@@ -2534,6 +2548,16 @@ private:
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_alarm\"></select></td><td class=\"center\">";
+            items += "<div class=\"tank-mini ";
+            if (!enabled)
+                items += "disabled ";
+            items += level_class;
+            items += "\"><div class=\"tank-fill\" style=\"height:";
+            items += String(level_pct);
+            items += "%\"></div><div class=\"tank-label\">";
+            items += level;
+            items += "</div></div>";
+            items += "</td><td class=\"center\">";
             items += level;
             items += "</td><td class=\"center\"><label class=\"switch\"><input type=\"checkbox\" name=\"k";
             items += String((unsigned)cfg.id);
@@ -2564,7 +2588,7 @@ private:
         if (first_disabled && first_disabled_state)
             appendRow(*first_disabled, *first_disabled_state, false);
         if (items.length() == 0)
-            items = "<tr><td colspan=\"11\" style=\"color:#94a3b8\"><strong>Баки отсутствуют</strong></td></tr>";
+            items = "<tr><td colspan=\"12\" style=\"color:#94a3b8\"><strong>Баки отсутствуют</strong></td></tr>";
         return items;
     }
 
@@ -3125,6 +3149,18 @@ private:
             bool set_cookie = false;
             if (!checkAuth_(request, &set_cookie, true))
                 return;
+            if (_upload_in_progress && _upload)
+                _upload.close();
+            _upload_in_progress = true;
+            request->onDisconnect([this]() {
+                if (!_upload_in_progress)
+                    return;
+                if (_upload)
+                    _upload.close();
+                _upload_ok = false;
+                _upload_error = "Upload disconnected";
+                _upload_in_progress = false;
+            });
             _upload_set_cookie = set_cookie;
             _upload_ok = true;
             _upload_error = "";
@@ -3134,12 +3170,14 @@ private:
             {
                 _upload_ok = false;
                 _upload_error = "Invalid file name";
+                _upload_in_progress = false;
                 return;
             }
             if (!isAllowedExt_(path))
             {
                 _upload_ok = false;
                 _upload_error = "File extension not allowed";
+                _upload_in_progress = false;
                 return;
             }
             _upload_size = 0;
@@ -3148,6 +3186,7 @@ private:
             {
                 _upload_ok = false;
                 _upload_error = "Open failed";
+                _upload_in_progress = false;
                 return;
             }
         }
@@ -3160,12 +3199,17 @@ private:
             _upload_error = "File too large";
             if (_upload)
                 _upload.close();
+            _upload_in_progress = false;
             return;
         }
         if (_upload)
             _upload.write(data, len);
-        if (final && _upload)
-            _upload.close();
+        if (final)
+        {
+            if (_upload)
+                _upload.close();
+            _upload_in_progress = false;
+        }
     }
 
     void handleOta_(AsyncWebServerRequest *request, const String &filename, size_t index, uint8_t *data, size_t len,
@@ -3180,8 +3224,20 @@ private:
 #if !defined(ESP32)
             _ota_ok = false;
             _ota_error = "OTA not supported";
+            _ota_in_progress = false;
             return;
 #else
+            if (_ota_in_progress)
+                Update.abort();
+            _ota_in_progress = true;
+            request->onDisconnect([this]() {
+                if (!_ota_in_progress)
+                    return;
+                Update.abort();
+                _ota_ok = false;
+                _ota_error = "OTA disconnected";
+                _ota_in_progress = false;
+            });
             _ota_ok = true;
             _ota_error = "";
             _ota_size = 0;
@@ -3190,6 +3246,7 @@ private:
             {
                 _ota_ok = false;
                 _ota_error = Update.errorString();
+                _ota_in_progress = false;
             }
 #endif
         }
@@ -3202,6 +3259,7 @@ private:
             _ota_ok = false;
             _ota_error = "Firmware image too large";
             Update.abort();
+            _ota_in_progress = false;
             return;
         }
         if (Update.write(data, len) != len)
@@ -3209,6 +3267,7 @@ private:
             _ota_ok = false;
             _ota_error = Update.errorString();
             Update.abort();
+            _ota_in_progress = false;
             return;
         }
         if (final)
@@ -3218,6 +3277,7 @@ private:
                 _ota_ok = false;
                 _ota_error = Update.errorString();
             }
+            _ota_in_progress = false;
         }
 #endif
     }
@@ -4586,6 +4646,7 @@ sendRedirect_(request, "/", set_cookie);
     OneWireManager *_ow = nullptr;
     File _upload;
     bool _upload_ok = true;
+    bool _upload_in_progress = false;
     size_t _upload_size = 0;
     size_t _max_upload = 0;
     bool _ota_ok = false;
@@ -4620,6 +4681,7 @@ sendRedirect_(request, "/", set_cookie);
     uint32_t _session_ttl_ms = 10u * 60u * 1000u;
     bool _upload_set_cookie = false;
     bool _ota_set_cookie = false;
+    bool _ota_in_progress = false;
 };
 
 

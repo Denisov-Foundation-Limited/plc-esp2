@@ -160,7 +160,7 @@ public:
             out += "</b>";
             out += " питание: ";
             out += "<b>";
-            out += cfg->power_on ? F("??") : F("?");
+            out += cfg->power_on ? F("🟢") : F("⚪");
             out += "</b>";
         }
         if (!any)
@@ -199,7 +199,7 @@ public:
         out += "</b>";
         out += "\n  питание: ";
         out += "<b>";
-        out += cfg->power_on ? F("??") : F("?");
+        out += cfg->power_on ? F("🟢") : F("⚪");
         out += "</b>";
         return out;
     }
@@ -325,7 +325,7 @@ public:
             return false;
         if (u.text == F("Назад"))
         {
-            self._bot->enterMenu(u.chat_id, "device", self.adminPrefix_(u.chat_id));
+            self._bot->enterMenu(u.chat_id, "device");
             return true;
         }
         uint8_t id = 0;

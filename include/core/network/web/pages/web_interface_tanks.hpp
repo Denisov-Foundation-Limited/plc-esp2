@@ -109,8 +109,59 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       transform: translateX(18px);
     }
     .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .tank-mini {
+      position: relative;
+      width: clamp(44px, 10vw, 54px);
+      height: clamp(60px, 14vw, 74px);
+      margin: 0 auto;
+      border-radius: 10px;
+      border: 2px solid #1f2937;
+      background: #0b1220;
+      overflow: hidden;
+    }
+    .tank-mini.disabled { opacity: 0.45; }
+    .tank-fill {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 8%;
+      background: linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%);
+      transition: height .2s ease;
+    }
+    .tank-mini.level-low .tank-fill {
+      background: linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%);
+    }
+    .tank-mini.level-mid .tank-fill {
+      background: linear-gradient(180deg, #facc15 0%, #eab308 100%);
+    }
+    .tank-mini.level-full .tank-fill {
+      background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+    }
+    .tank-label {
+      position: absolute;
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      background: rgba(17, 24, 39, 0.8);
+      font-size: 10px;
+      color: var(--text);
+      letter-spacing: 0.2px;
+    }
     @media (max-width: 900px) {
       .wrap { margin: 20px auto; }
+    }
+    @media (max-width: 720px) {
+      .tank-mini {
+        width: 46px;
+        height: 64px;
+      }
+      .tank-label {
+        font-size: 9px;
+      }
     }
   </style>
 </head>
@@ -135,6 +186,7 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
                 <th class="right">Клапан</th>
                 <th class="right">Насос</th>
                 <th class="right">Сигнал</th>
+                <th class="center">Бак</th>
                 <th class="center">Уровень</th>
                 <th class="center">Питание</th>
               </tr>

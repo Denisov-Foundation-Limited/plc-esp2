@@ -31,7 +31,7 @@ public:
     {
         uint8_t id = 1;
         bool enabled = false;
-        bool monitoring_on = true;
+        bool monitoring_on = false;
         uint8_t warning_port = kInvalidPort;
         uint8_t alarm_port = kInvalidPort;
         uint8_t relay_warning = kInvalidPort;

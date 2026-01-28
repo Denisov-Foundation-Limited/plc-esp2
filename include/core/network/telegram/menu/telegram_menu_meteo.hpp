@@ -388,7 +388,7 @@ public:
             return false;
         if (u.text == F("Назад"))
         {
-            self._bot->enterMenu(u.chat_id, "device", self.adminPrefix_(u.chat_id));
+            self._bot->enterMenu(u.chat_id, "device");
             return true;
         }
         uint8_t id = 0;

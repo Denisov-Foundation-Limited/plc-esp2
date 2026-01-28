@@ -140,7 +140,7 @@ public:
             markup = _menu_markup_handler(_menu_markup_ctx, chat_id, *menu);
         if (markup.length() == 0)
             markup = buildMenuMarkup_(*menu);
-        return sendText(chat_id, text, markup);
+        return sendText(chat_id, text, markup, "HTML");
     }
 
     bool goRoot(int64_t chat_id)

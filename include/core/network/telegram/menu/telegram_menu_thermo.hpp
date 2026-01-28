@@ -111,13 +111,6 @@ public:
             if (cfg->name.length())
             {
                 label += cfg->name;
-                label += " (";
-                label += TelegramMenuThermo::thermoModeLabel_(cfg->mode);
-                label += ")";
-            }
-            else
-            {
-                label += TelegramMenuThermo::thermoModeLabel_(cfg->mode);
             }
             out.push_back(label);
         }
@@ -158,15 +151,15 @@ public:
             out += TelegramMenuThermo::thermoModeLabel_(cfg->mode);
             out += "</b>";
             out += "\n   питание: <b>";
-            out += st->power_on ? F("??") : F("?");
+            out += st->power_on ? F("🟢") : F("⚪");
             out += "</b>";
             out += "\n   статус: <b>";
             if (st->heat_on)
-                out += F("??");
+                out += F("🔥");
             else if (st->cool_on)
-                out += F("??");
+                out += F("❄️");
             else
-                out += F("??");
+                out += F("⏸");
             out += "</b>";
         }
         if (!any)
@@ -238,15 +231,15 @@ public:
         out += "\n  статус: ";
         out += "<b>";
         if (st->heat_on)
-            out += F("??");
+            out += F("🔥");
         else if (st->cool_on)
-            out += F("??");
+            out += F("❄️");
         else
-            out += F("??");
+            out += F("⏸");
         out += "</b>";
         out += "\n  питание: ";
         out += "<b>";
-        out += st->power_on ? F("??") : F("?");
+        out += st->power_on ? F("🟢") : F("⚪");
         out += "</b>";
         return out;
     }
@@ -323,9 +316,9 @@ public:
         labels.push_back(F("Темп -"));
         labels.push_back(F("Питание Вкл"));
         labels.push_back(F("Питание Выкл"));
-        labels.push_back(F("Режим Авто"));
-        labels.push_back(F("Режим Нагрев"));
-        labels.push_back(F("Режим Охлаждение"));
+        labels.push_back(F("Авто"));
+        labels.push_back(F("Нагрев"));
+        labels.push_back(F("Охлаждение"));
         labels.push_back(F("Назад"));
         return TelegramMenu::buildKeyboardMarkup_(labels);
     }
@@ -381,15 +374,15 @@ public:
         {
             self._thermo->setPower(id, false, "tgbot");
         }
-        else if (u.text == F("Режим Авто"))
+        else if (u.text == F("Авто"))
         {
             self._thermo->setMode(id, ThermoController::Mode::Auto);
         }
-        else if (u.text == F("Режим Нагрев"))
+        else if (u.text == F("Нагрев"))
         {
             self._thermo->setMode(id, ThermoController::Mode::Heat);
         }
-        else if (u.text == F("Режим Охлаждение"))
+        else if (u.text == F("Охлаждение"))
         {
             self._thermo->setMode(id, ThermoController::Mode::Cool);
         }
@@ -417,7 +410,7 @@ public:
             return false;
         if (u.text == F("Назад"))
         {
-            self._bot->enterMenu(u.chat_id, "device", self.adminPrefix_(u.chat_id));
+            self._bot->enterMenu(u.chat_id, "device");
             return true;
         }
         uint8_t id = 0;
