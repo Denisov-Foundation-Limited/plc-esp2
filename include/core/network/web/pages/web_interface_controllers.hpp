@@ -134,6 +134,21 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">%CONTROLLERS_STATUS%</span>
         </div>
         <div class="tile">
+          <form method="POST" action="/controllers" id="lights-form">
+            <input type="hidden" name="ctrl" value="sockets">
+            <div class="tile-head">
+              <a href="/lights">Свет</a>
+              <label class="switch">
+                <input type="checkbox" id="lights-enabled" name="sockets_enabled" %SOCKETS_ENABLED_CHECKED%>
+                <span class="track"><span class="knob"></span></span>
+              </label>
+            </div>
+          </form>
+          <span>Настройка освещения</span>
+          <span class="status">Свет: <strong>%SOCKETS_ENABLED_LABEL%</strong></span>
+          <span class="status">%CONTROLLERS_STATUS%</span>
+        </div>
+        <div class="tile">
           <form method="POST" action="/controllers" id="meteo-form">
             <input type="hidden" name="ctrl" value="meteo">
             <div class="tile-head">
@@ -216,6 +231,11 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
     const socketsForm = document.getElementById('sockets-form');
     if (socketsToggle && socketsForm) {
       socketsToggle.addEventListener('change', () => socketsForm.submit());
+    }
+    const lightsToggle = document.getElementById('lights-enabled');
+    const lightsForm = document.getElementById('lights-form');
+    if (lightsToggle && lightsForm) {
+      lightsToggle.addEventListener('change', () => lightsForm.submit());
     }
     const meteoToggle = document.getElementById('meteo-enabled');
     const meteoForm = document.getElementById('meteo-form');

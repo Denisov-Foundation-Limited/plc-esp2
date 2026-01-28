@@ -45,6 +45,7 @@
 #include "core/network/web/pages/web_interface_telegram.hpp"
 #include "core/network/web/pages/web_interface_status.hpp"
 #include "core/network/web/pages/web_interface_sockets.hpp"
+#include "core/network/web/pages/web_interface_lights.hpp"
 #include "core/rtc.hpp"
 #include "plc/plc_control.hpp"
 #include "core/network/telegram/telegram.hpp"
@@ -121,7 +122,9 @@ public:
         _server.on("/stack", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStack_(request); });
         _server.on("/stack/gen_key", HTTP_POST, [this](AsyncWebServerRequest *request) { handleStackGenKey_(request); });
         _server.on("/sockets", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSockets_(request); });
-        _server.on("/sockets", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsSave_(request); });
+        _server.on("/sockets", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsSave_(request, "/sockets"); });
+        _server.on("/lights", HTTP_GET, [this](AsyncWebServerRequest *request) { handleLights_(request); });
+        _server.on("/lights", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsSave_(request, "/lights"); });
         _server.on("/meteo", HTTP_GET, [this](AsyncWebServerRequest *request) { handleMeteo_(request); });
         _server.on("/meteo", HTTP_POST, [this](AsyncWebServerRequest *request) { handleMeteoSave_(request); });
         _server.on("/thermo", HTTP_GET, [this](AsyncWebServerRequest *request) { handleThermo_(request); });
@@ -570,7 +573,25 @@ private:
         String page = FPSTR(kWebInterfaceSocketsHtml);
         page.reserve(page.length() + 8192);
         page.replace("%NAV%", navHtml_());
-        page.replace("%SOCKETS%", listSocketsHtml_());
+        page.replace("%SOCKETS%", listSocketsHtml_(false));
+        page.replace("%DINPUT_JSON%", socketPortOptionsJson_(PortIO::PinType::DInput));
+        page.replace("%RELAY_JSON%", socketPortOptionsJson_(PortIO::PinType::Relay));
+        page.replace("%DINPUT_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::DInput));
+        page.replace("%RELAY_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::Relay));
+        page.replace("%SOCKETS_STATUS%", _sockets_status);
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        sendHtml_(request, page, set_cookie);
+    }
+
+    void handleLights_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        String page = FPSTR(kWebInterfaceLightsHtml);
+        page.reserve(page.length() + 8192);
+        page.replace("%NAV%", navHtml_());
+        page.replace("%LIGHTS%", listSocketsHtml_(true));
         page.replace("%DINPUT_JSON%", socketPortOptionsJson_(PortIO::PinType::DInput));
         page.replace("%RELAY_JSON%", socketPortOptionsJson_(PortIO::PinType::Relay));
         page.replace("%DINPUT_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::DInput));
@@ -636,7 +657,7 @@ private:
         sendHtml_(request, page, set_cookie);
     }
 
-    void handleSocketsSave_(AsyncWebServerRequest *request)
+    void handleSocketsSave_(AsyncWebServerRequest *request, const char *redirect)
     {
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
@@ -658,11 +679,13 @@ private:
             const String prefix = String("s") + idx + "_";
             const String en_key = prefix + "en";
             const String name_key = prefix + "name";
+            const String type_key = prefix + "type";
             const String btn_key = prefix + "btn";
             const String relay_key = prefix + "relay";
             const String action_key = prefix + "action";
             const bool has_any = request->hasParam(en_key, true) ||
                                  request->hasParam(name_key, true) ||
+                                 request->hasParam(type_key, true) ||
                                  request->hasParam(btn_key, true) ||
                                  request->hasParam(relay_key, true) ||
                                  request->hasParam(action_key, true);
@@ -670,10 +693,12 @@ private:
                 continue;
             const bool enabled = request->hasParam(en_key, true);
             String name = paramValue_(request, name_key);
+            String type = paramValue_(request, type_key);
             String btn = paramValue_(request, btn_key);
             String relay = paramValue_(request, relay_key);
             String action = paramValue_(request, action_key);
             name.trim();
+            type.trim();
             uint8_t btn_port = SocketController::kInvalidPort;
             uint8_t relay_port = SocketController::kInvalidPort;
             if (!parseSocketPort_(btn, btn_port) || !parseSocketPort_(relay, relay_port))
@@ -682,8 +707,17 @@ private:
                 _sockets_status = String("Invalid port for socket ") + idx;
                 break;
             }
+            SocketController::Kind kind = SocketController::Kind::Socket;
+            if (!parseSocketKind_(type, kind))
+            {
+                ok = false;
+                _sockets_status = String("Invalid type for socket ") + idx;
+                break;
+            }
             if (cfg->name != name)
                 sockets.setName(cfg->id, name);
+            if (cfg->kind != kind)
+                sockets.setKind(cfg->id, kind);
             if (cfg->button_port != btn_port)
                 sockets.setButtonPort(cfg->id, btn_port);
             if (cfg->relay_port != relay_port)
@@ -726,7 +760,7 @@ private:
         }
         if (ok)
             _sockets_status = changed ? "Updated" : "Saved";
-        sendRedirect_(request, "/sockets", set_cookie);
+        sendRedirect_(request, redirect ? redirect : "/sockets", set_cookie);
     }
 
     void handleMeteoSave_(AsyncWebServerRequest *request)
@@ -1950,7 +1984,7 @@ private:
         return items;
     }
 
-    String listSocketsHtml_()
+    String listSocketsHtml_(bool lights_only)
     {
         if (!_controllers)
             return "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
@@ -1995,28 +2029,55 @@ private:
             items += "<input type=\"hidden\" name=\"s";
             items += String((unsigned)cfg.id);
             items += "_action\" value=\"\">";
+            if (lights_only)
+            {
+                items += "<input type=\"hidden\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_type\" value=\"light\">";
+            }
+            else
+            {
+                items += "<input type=\"hidden\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_type\" value=\"socket\">";
+            }
             items += "</td></tr>";
         };
 
         const SocketController::SocketConfig *first_disabled = nullptr;
+        const SocketController::SocketConfig *first_disabled_any = nullptr;
         for (size_t i = 0; i < SocketController::kSocketCount; ++i)
         {
             const auto *cfg = sockets.configByIndex(i);
             if (!cfg)
                 continue;
+            if (!lights_only && cfg->kind == SocketController::Kind::Light)
+                continue;
             if (cfg->enabled)
             {
+                if (lights_only && cfg->kind != SocketController::Kind::Light)
+                    continue;
                 appendRow(*cfg, true);
+            }
+            else if (lights_only)
+            {
+                if (!first_disabled && cfg->kind == SocketController::Kind::Light)
+                    first_disabled = cfg;
+                if (!first_disabled_any)
+                    first_disabled_any = cfg;
             }
             else if (!first_disabled)
             {
                 first_disabled = cfg;
             }
         }
+        if (lights_only && !first_disabled)
+            first_disabled = first_disabled_any;
         if (first_disabled)
             appendRow(*first_disabled, false);
         if (items.length() == 0)
-            items = "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Розетки отсутствуют</strong></td></tr>";
+            items = lights_only ? "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Свет отсутствует</strong></td></tr>"
+                                : "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Розетки отсутствуют</strong></td></tr>";
         return items;
     }
 
@@ -3838,6 +3899,24 @@ sendRedirect_(request, "/", set_cookie);
             return false;
         out = (uint8_t)v;
         return true;
+    }
+
+    static bool parseSocketKind_(const String &input, SocketController::Kind &out)
+    {
+        String t = input;
+        t.trim();
+        t.toLowerCase();
+        if (t.length() == 0 || t == "socket" || t == "розетка")
+        {
+            out = SocketController::Kind::Socket;
+            return true;
+        }
+        if (t == "light" || t == "lamp" || t == "свет")
+        {
+            out = SocketController::Kind::Light;
+            return true;
+        }
+        return false;
     }
 
     static bool parseMeteoType_(const String &input, MeteoController::SensorType &out)

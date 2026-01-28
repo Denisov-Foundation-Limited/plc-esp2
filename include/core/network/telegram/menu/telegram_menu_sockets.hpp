@@ -21,7 +21,18 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        TelegramMenuSockets::sendSocketMenu_(*TelegramMenu::_self, u.chat_id);
+        TelegramMenuSockets::sendSocketMenu_(*TelegramMenu::_self, u.chat_id, false);
+        return true;
+    }
+
+    static bool cmdLights_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+    {
+        (void)reply;
+        if (!TelegramMenu::_self)
+            return false;
+        if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
+            return true;
+        TelegramMenuSockets::sendSocketMenu_(*TelegramMenu::_self, u.chat_id, true);
         return true;
     }
 
@@ -41,7 +52,7 @@ public:
             reply = "Список доступен только для локального устройства";
             return true;
         }
-        const String text = TelegramMenuSockets::socketListTextHtml_(*TelegramMenu::_self);
+        const String text = TelegramMenuSockets::socketListTextHtml_(*TelegramMenu::_self, false);
         bot.sendText(u.chat_id, text, "", "HTML");
         return true;
     }
@@ -77,7 +88,7 @@ public:
         return true;
     }
 
-    static void buildSocketLabels_(TelegramMenu &self, std::vector<String> &out)
+    static void buildSocketLabels_(TelegramMenu &self, std::vector<String> &out, bool lights_only = false)
     {
         out.clear();
         if (!self._sockets)
@@ -91,6 +102,10 @@ public:
                 const auto *cfg = self._sockets->configByIndex(i);
                 if (!cfg || !cfg->enabled)
                     continue;
+                if (lights_only && cfg->kind != SocketController::Kind::Light)
+                    continue;
+                if (!lights_only && cfg->kind == SocketController::Kind::Light)
+                    continue;
                 String label;
                 if (cfg->name.length())
                 {
@@ -100,7 +115,7 @@ public:
                 }
                 else
                 {
-                    label += F("Socket ");
+                    label += lights_only ? F("Свет ") : F("Розетка ");
                     label += String((unsigned)cfg->id);
                 }
                 out.push_back(label);
@@ -109,9 +124,9 @@ public:
         out.push_back(F("Назад"));
     }
 
-    static String socketListTextHtml_(TelegramMenu &self)
+    static String socketListTextHtml_(TelegramMenu &self, bool lights_only = false)
     {
-        String out = F("<b>Розетки:</b>");
+        String out = lights_only ? F("<b>Свет:</b>") : F("<b>Розетки:</b>");
         out.reserve(512);
         if (!self._sockets)
         {
@@ -124,6 +139,10 @@ public:
             const auto *cfg = self._sockets->configByIndex(i);
             const auto *st = self._sockets->stateByIndex(i);
             if (!cfg || !st || !cfg->enabled)
+                continue;
+            if (lights_only && cfg->kind != SocketController::Kind::Light)
+                continue;
+            if (!lights_only && cfg->kind == SocketController::Kind::Light)
                 continue;
             any = true;
             out += "\n  ";
@@ -144,7 +163,7 @@ public:
         return out;
     }
 
-    static void sendSocketMenu_(TelegramMenu &self, int64_t chat_id)
+    static void sendSocketMenu_(TelegramMenu &self, int64_t chat_id, bool lights_only)
     {
         if (!self._bot)
             return;
@@ -160,10 +179,10 @@ public:
             st->socket_action = 0;
         }
         std::vector<String> labels;
-        TelegramMenuSockets::buildSocketLabels_(self, labels);
+        TelegramMenuSockets::buildSocketLabels_(self, labels, lights_only);
         const String markup = TelegramMenu::buildKeyboardMarkup_(labels);
-        const String list = TelegramMenuSockets::socketListTextHtml_(self);
-        self._bot->setMenu(chat_id, "sockets");
+        const String list = TelegramMenuSockets::socketListTextHtml_(self, lights_only);
+        self._bot->setMenu(chat_id, lights_only ? "lights" : "sockets");
         self._bot->sendText(chat_id, list, markup, "HTML");
     }
 
@@ -172,7 +191,10 @@ public:
         if (!self._bot)
             return false;
         const char *menu_id = self._bot->currentMenuId(u.chat_id);
-        if (!menu_id || strcmp(menu_id, "sockets") != 0)
+        if (!menu_id)
+            return false;
+        const bool lights_only = (strcmp(menu_id, "lights") == 0);
+        if (!lights_only && strcmp(menu_id, "sockets") != 0)
             return false;
         if (u.text == F("Назад"))
         {
@@ -182,7 +204,7 @@ public:
         uint8_t id = 0;
         if (!TelegramMenuSockets::parseSocketLabel_(u.text, id))
         {
-            self._bot->sendText(u.chat_id, F("Неизвестная розетка"));
+            self._bot->sendText(u.chat_id, lights_only ? F("Неизвестный свет") : F("Неизвестная розетка"));
             return true;
         }
         if (!self._sockets)
@@ -195,12 +217,19 @@ public:
             self._bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
             return true;
         }
+        const auto *cfg = self._sockets->config(id);
+        if (!cfg || (lights_only && cfg->kind != SocketController::Kind::Light) ||
+            (!lights_only && cfg->kind == SocketController::Kind::Light))
+        {
+            self._bot->sendText(u.chat_id, lights_only ? F("Неизвестный свет") : F("Неизвестная розетка"));
+            return true;
+        }
         if (!self._sockets->toggleRelayById(id))
         {
             self._bot->sendText(u.chat_id, F("Не удалось"));
             return true;
         }
-        TelegramMenuSockets::sendSocketMenu_(self, u.chat_id);
+        TelegramMenuSockets::sendSocketMenu_(self, u.chat_id, lights_only);
         return true;
     }
 

@@ -25,6 +25,12 @@ public:
     static constexpr size_t kSocketCount = 72;
     static constexpr uint8_t kInvalidPort = 0xFF;
 
+    enum class Kind : uint8_t
+    {
+        Socket = 0,
+        Light = 1
+    };
+
     struct SocketConfig
     {
         uint8_t id = 0;
@@ -32,6 +38,7 @@ public:
         uint8_t button_port = kInvalidPort;
         uint8_t relay_port = kInvalidPort;
         String name;
+        Kind kind = Kind::Socket;
     };
 
     struct SocketState
@@ -80,6 +87,15 @@ public:
             }
             if (obj["name"].is<const char *>())
                 cfg.name = obj["name"].as<const char *>();
+            if (obj["type"].is<const char *>())
+            {
+                String type = obj["type"].as<const char *>();
+                type.toLowerCase();
+                if (type == "light" || type == "lamp")
+                    cfg.kind = Kind::Light;
+                else
+                    cfg.kind = Kind::Socket;
+            }
             parsePort_(obj["button"], cfg.button_port);
             parsePort_(obj["relay"], cfg.relay_port);
             if (!enabled_set)
@@ -257,6 +273,16 @@ public:
         return true;
     }
 
+    bool setKind(size_t id, Kind kind)
+    {
+        size_t idx = 0;
+        if (!indexById_(id, idx))
+            return false;
+        _cfg[idx].kind = kind;
+        _dirty = true;
+        return true;
+    }
+
     const SocketConfig *config(size_t id) const
     {
         size_t idx = 0;
@@ -299,6 +325,8 @@ public:
             obj["enabled"] = cfg.enabled;
             if (cfg.name.length())
                 obj["name"] = cfg.name;
+            if (cfg.kind == Kind::Light)
+                obj["type"] = "light";
             if (cfg.button_port != kInvalidPort)
                 obj["button"] = cfg.button_port;
             if (cfg.relay_port != kInvalidPort)

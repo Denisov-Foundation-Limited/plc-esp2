@@ -339,6 +339,8 @@ private:
 
     static bool cmdSockets_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
 
+    static bool cmdLights_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
+
     static bool cmdMeteo_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
 
     static bool cmdThermo_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
@@ -934,9 +936,10 @@ private:
 
     static inline const std::array<TelegramBot::MenuItem, 0> kRootItems = {};
 
-    static inline const std::array<TelegramBot::MenuItem, 8> kDeviceItems = {{
+    static inline const std::array<TelegramBot::MenuItem, 9> kDeviceItems = {{
         { "Админка", "Админка", nullptr, nullptr },
         { "Розетки", "/sockets", nullptr, nullptr },
+        { "Свет", "/lights", nullptr, nullptr },
         { "Метео", "/meteo", nullptr, nullptr },
         { "Термо", "/thermo", nullptr, nullptr },
         { "Баки", "/tanks", nullptr, nullptr },
@@ -985,10 +988,11 @@ private:
         { "Назад", "/back", nullptr, nullptr },
     }};
 
-    static inline const std::array<TelegramBot::Menu, 13> kMenus = {{
+    static inline const std::array<TelegramBot::Menu, 14> kMenus = {{
         { "root", "Выбор устройства", kRootItems.data(), kRootItems.size(), nullptr },
         { "device", "Меню устройства", kDeviceItems.data(), kDeviceItems.size(), "root" },
         { "sockets", "Розетки", kSocketsItems.data(), kSocketsItems.size(), "device" },
+        { "lights", "Свет", kSocketsItems.data(), kSocketsItems.size(), "device" },
         { "meteo", "Метео", kMeteoItems.data(), kMeteoItems.size(), "device" },
         { "thermo", "Термо", kThermoItems.data(), kThermoItems.size(), "device" },
         { "tanks", "Баки", kTanksItems.data(), kTanksItems.size(), "device" },
@@ -1001,7 +1005,7 @@ private:
         { "settings", "Настройки", kSettingsItems.data(), kSettingsItems.size(), "admin" },
     }};
 
-    static inline const std::array<TelegramBot::Command, 40> kCommands = {{
+    static inline const std::array<TelegramBot::Command, 41> kCommands = {{
         { "Админка", &TelegramMenu::cmdAdmin_ },
         { "/status", &TelegramMenu::cmdStatus_ },
         { "/wifi", &TelegramMenu::cmdWifi_ },
@@ -1019,6 +1023,7 @@ private:
         { "/device", &TelegramMenu::cmdDevice_ },
         { "/stack_list", &TelegramMenu::cmdStackList_ },
         { "/sockets", &TelegramMenu::cmdSockets_ },
+        { "/lights", &TelegramMenu::cmdLights_ },
         { "/socket_list", &TelegramMenu::cmdSocketList_ },
         { "/socket_on", &TelegramMenu::cmdSocketOn_ },
         { "/socket_off", &TelegramMenu::cmdSocketOff_ },
@@ -1266,6 +1271,7 @@ private:
     }
 
     void buildSocketLabels_(std::vector<String> &out) const;
+    void buildSocketLabels_(std::vector<String> &out, bool lights_only) const;
 
     void buildMeteoLabels_(std::vector<String> &out) const;
 
@@ -1507,7 +1513,13 @@ private:
         if (strcmp(menu.id, "sockets") == 0)
         {
             std::vector<String> labels;
-            self->buildSocketLabels_(labels);
+            self->buildSocketLabels_(labels, false);
+            return buildKeyboardMarkup_(labels);
+        }
+        if (strcmp(menu.id, "lights") == 0)
+        {
+            std::vector<String> labels;
+            self->buildSocketLabels_(labels, true);
             return buildKeyboardMarkup_(labels);
         }
         if (strcmp(menu.id, "meteo") == 0)
@@ -1537,11 +1549,13 @@ private:
         if (strcmp(menu.id, "device") == 0)
         {
             std::vector<String> labels;
-            labels.reserve(7);
+            labels.reserve(9);
             if (self->isAdminChat_(chat_id))
                 labels.push_back(F("Админка"));
             if (self->_sockets && self->_sockets->controllerEnabled())
                 labels.push_back(F("Розетки"));
+            if (self->_sockets && self->_sockets->controllerEnabled())
+                labels.push_back(F("Свет"));
             if (self->_meteo && self->_meteo->controllerEnabled())
                 labels.push_back(F("Метео"));
             if (self->_thermo && self->_thermo->controllerEnabled())
@@ -1663,6 +1677,11 @@ private:
 inline bool TelegramMenu::cmdSockets_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
     return TelegramMenuSockets::cmdSockets_(bot, u, reply);
+}
+
+inline bool TelegramMenu::cmdLights_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+{
+    return TelegramMenuSockets::cmdLights_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdMeteo_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
@@ -1859,7 +1878,12 @@ inline bool TelegramMenu::parseSecurityId_(const String &text, uint8_t &out)
 
 inline void TelegramMenu::buildSocketLabels_(std::vector<String> &out) const
 {
-    TelegramMenuSockets::buildSocketLabels_(*const_cast<TelegramMenu *>(this), out);
+    TelegramMenuSockets::buildSocketLabels_(*const_cast<TelegramMenu *>(this), out, false);
+}
+
+inline void TelegramMenu::buildSocketLabels_(std::vector<String> &out, bool lights_only) const
+{
+    TelegramMenuSockets::buildSocketLabels_(*const_cast<TelegramMenu *>(this), out, lights_only);
 }
 
 inline void TelegramMenu::buildMeteoLabels_(std::vector<String> &out) const
@@ -1959,7 +1983,7 @@ inline String TelegramMenu::securityListTextHtml_() const
 
 inline void TelegramMenu::sendSocketMenu_(int64_t chat_id)
 {
-    TelegramMenuSockets::sendSocketMenu_(*this, chat_id);
+    TelegramMenuSockets::sendSocketMenu_(*this, chat_id, false);
 }
 
 inline void TelegramMenu::sendMeteoMenu_(int64_t chat_id)
