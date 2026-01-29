@@ -49,9 +49,6 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     h1 { margin: 0 0 6px; font-size: 22px; }
     p { margin: 0 0 18px; color: var(--muted); }
     a { color: #7dd3fc; text-decoration: none; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { text-align: left; padding: 6px; border-bottom: 1px solid #1f2937; }
-    th { color: var(--muted); font-weight: 600; }
     .right { text-align: right; }
     .center { text-align: center; }
     .nav { margin-bottom: 12px; }
@@ -90,7 +87,7 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       width: 100%;
       height: 100%;
       padding: 2px;
-      background: #ef4444;
+      background: #64748b;
       border-radius: 999px;
       border: 1px solid #1f2937;
       transition: .2s;
@@ -108,60 +105,123 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     .switch input:checked + .track .knob {
       transform: translateX(18px);
     }
-    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .tank-mini {
-      position: relative;
-      width: clamp(44px, 10vw, 54px);
-      height: clamp(60px, 14vw, 74px);
-      margin: 0 auto;
-      border-radius: 10px;
-      border: 2px solid #1f2937;
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 10px;
+    }
+    .tile {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 14px;
+      padding: 16px;
+      border-radius: 12px;
+      border: 1px solid #1f2937;
       background: #0b1220;
+    }
+    .tile.disabled { opacity: 0.55; }
+    .tile-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .tank-visual {
+      position: relative;
+      height: 240px;
+      border-radius: 16px;
+      border: 2px solid #1f2937;
+      background: linear-gradient(180deg, #0a1220 0%, #0c1628 100%);
       overflow: hidden;
     }
-    .tank-mini.disabled { opacity: 0.45; }
     .tank-fill {
       position: absolute;
       left: 0;
       right: 0;
       bottom: 0;
-      height: 8%;
+      height: 10%;
       background: linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%);
       transition: height .2s ease;
     }
-    .tank-mini.level-low .tank-fill {
-      background: linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%);
-    }
-    .tank-mini.level-mid .tank-fill {
-      background: linear-gradient(180deg, #facc15 0%, #eab308 100%);
-    }
-    .tank-mini.level-full .tank-fill {
-      background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
-    }
+    .tank-fill.level-low { background: linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%); }
+    .tank-fill.level-mid { background: linear-gradient(180deg, #facc15 0%, #eab308 100%); }
+    .tank-fill.level-full { background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%); }
     .tank-label {
       position: absolute;
-      top: 6px;
+      top: 10px;
       left: 50%;
       transform: translateX(-50%);
-      padding: 2px 6px;
+      padding: 3px 10px;
       border-radius: 999px;
       border: 1px solid #1f2937;
-      background: rgba(17, 24, 39, 0.8);
-      font-size: 10px;
+      background: rgba(17, 24, 39, 0.85);
       color: var(--text);
+      font-size: 12px;
       letter-spacing: 0.2px;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .status-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
+    }
+    .status-on { background: #22c55e; }
+    .status-off { background: #64748b; }
+    .tile .field.name {
+      margin-bottom: 8px;
+    }
+    .form-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .form-row > label:not(.switch) {
+      color: var(--muted);
+      font-size: 12px;
+      min-width: 72px;
+    }
+    .form-row > label.switch {
+      min-width: 0;
+    }
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .badge {
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      background: #111827;
+      color: var(--text);
+      font-size: 11px;
     }
     @media (max-width: 900px) {
       .wrap { margin: 20px auto; }
-    }
-    @media (max-width: 720px) {
-      .tank-mini {
-        width: 46px;
-        height: 64px;
-      }
-      .tank-label {
-        font-size: 9px;
-      }
+      .tile { grid-template-columns: 1fr; }
+      .tank-visual { height: 220px; }
+      .form-grid { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -173,28 +233,8 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       <p>%BOARD_NAME%</p>
       <div class="status">%TANK_STATUS%</div>
       <form method="POST" action="/tanks" id="tanks-form">
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th class="right">ID</th>
-                <th>Вкл</th>
-                <th>Имя</th>
-                <th class="right">Низкий</th>
-                <th class="right">Средний</th>
-                <th class="right">Полный</th>
-                <th class="right">Клапан</th>
-                <th class="right">Насос</th>
-                <th class="right">Сигнал</th>
-                <th class="center">Бак</th>
-                <th class="center">Уровень</th>
-                <th class="center">Питание</th>
-              </tr>
-            </thead>
-            <tbody>
-              %TANK_ITEMS%
-            </tbody>
-          </table>
+        <div class="grid">
+          %TANK_ITEMS%
         </div>
         <div class="actions">
           <button type="submit">Сохранить</button>
@@ -231,10 +271,26 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     });
     const tanksForm = document.getElementById('tanks-form');
     let tanksDirty = false;
+    const markDirty = () => {
+      tanksDirty = true;
+      window.__plcDirty = true;
+    };
     if (tanksForm) {
-      tanksForm.addEventListener('input', () => { tanksDirty = true; });
-      tanksForm.addEventListener('change', () => { tanksDirty = true; });
+      tanksForm.addEventListener('input', markDirty);
+      tanksForm.addEventListener('change', markDirty);
     }
+    document.querySelectorAll('input.tank-power').forEach((el) => {
+      el.addEventListener('change', () => {
+        const name = el.dataset.action;
+        const hidden = document.querySelector('input[name="' + name + '"]');
+        if (hidden) {
+          hidden.value = el.checked ? 'on' : 'off';
+        }
+        if (tanksForm) {
+          tanksForm.submit();
+        }
+      });
+    });
     const scrollKey = 'tanks_scroll_y';
     const savedScroll = sessionStorage.getItem(scrollKey);
     if (savedScroll) {
@@ -246,16 +302,6 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     window.addEventListener('scroll', () => {
       sessionStorage.setItem(scrollKey, String(window.scrollY));
     }, { passive: true });
-    setInterval(() => {
-      if (tanksDirty) {
-        return;
-      }
-      const el = document.activeElement;
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')) {
-        return;
-      }
-      location.reload();
-    }, 3000);
   </script>
 </body>
 </html>

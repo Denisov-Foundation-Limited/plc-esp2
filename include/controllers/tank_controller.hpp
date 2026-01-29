@@ -31,7 +31,7 @@ public:
     {
         uint8_t id = 1;
         bool enabled = false;
-        bool power_on = true;
+        bool power_on = false;
         uint8_t level_low = kInvalidPort;
         uint8_t level_mid = kInvalidPort;
         uint8_t level_full = kInvalidPort;
@@ -469,7 +469,7 @@ private:
             cfg = TankConfig{};
             cfg.id = (uint8_t)(i + 1);
             cfg.enabled = false;
-            cfg.power_on = true;
+            cfg.power_on = false;
             TankState &st = _state[i];
             st = TankState{};
         }

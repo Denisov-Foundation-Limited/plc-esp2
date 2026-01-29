@@ -81,7 +81,7 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
     }
     .status-ok { background: #22c55e; }
-    .status-err { background: #ef4444; }
+    .status-err { background: #64748b; }
     .status-na { background: #64748b; }
     .actions { margin-top: 14px; }
     .mini { width: 90px; }
@@ -206,16 +206,6 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     window.addEventListener('scroll', () => {
       sessionStorage.setItem(scrollKey, String(window.scrollY));
     }, { passive: true });
-    setInterval(() => {
-      if (meteoDirty) {
-        return;
-      }
-      const el = document.activeElement;
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')) {
-        return;
-      }
-      location.reload();
-    }, 3000);
   </script>
 </body>
 </html>

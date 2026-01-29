@@ -89,7 +89,7 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
     }
     .status-on { background: #22c55e; }
-    .status-off { background: #ef4444; }
+    .status-off { background: #64748b; }
     .mini { width: 72px; }
     .name { width: 180px; }
     .actions { margin-top: 14px; }
@@ -107,7 +107,7 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       width: 100%;
       height: 100%;
       padding: 2px;
-      background: #ef4444;
+      background: #64748b;
       border-radius: 999px;
       border: 1px solid #1f2937;
       transition: .2s;
@@ -209,13 +209,6 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         }
       });
     });
-    setInterval(() => {
-      const el = document.activeElement;
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')) {
-        return;
-      }
-      location.reload();
-    }, 3000);
   </script>
 </body>
 </html>

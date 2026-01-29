@@ -49,9 +49,6 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
     h1 { margin: 0 0 6px; font-size: 22px; }
     p { margin: 0 0 18px; color: var(--muted); }
     a { color: #7dd3fc; text-decoration: none; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { text-align: left; padding: 6px; border-bottom: 1px solid #1f2937; }
-    th { color: var(--muted); font-weight: 600; }
     .right { text-align: right; }
     .center { text-align: center; }
     .nav { margin-bottom: 12px; }
@@ -64,25 +61,19 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       background: #0b1220;
       color: var(--text);
     }
-    .btn {
+    .field.mini { padding: 4px 6px; }
+    .field.temp { width: 100%; }
+    .field.name { min-width: 160px; }
+    .actions { display: flex; gap: 10px; margin-top: 16px; }
+    button {
       border: none;
-      padding: 10px 16px;
       border-radius: 10px;
+      padding: 10px 16px;
       background: var(--accent);
       color: #0b1220;
       font-weight: 700;
       cursor: pointer;
     }
-    .status-dot {
-      display: inline-block;
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
-    }
-    .status-heat { background: #f97316; }
-    .status-cool { background: #38bdf8; }
-    .status-idle { background: #64748b; }
     .switch {
       display: inline-block;
       width: 40px;
@@ -97,7 +88,7 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       width: 100%;
       height: 100%;
       padding: 2px;
-      background: #ef4444;
+      background: #64748b;
       border-radius: 999px;
       border: 1px solid #1f2937;
       transition: .2s;
@@ -112,24 +103,128 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
     }
     input:checked + .track { background: #22c55e; }
     input:checked + .track .knob { transform: translateX(20px); }
-    .actions { margin-top: 14px; }
-    .mini { width: 90px; }
-    .temp { width: 80px; }
-    .name { width: 140px; }
-    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    table { min-width: 760px; }
-    @media (max-width: 720px) {
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 10px;
+    }
+    .tile {
+      display: grid;
+      grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+      gap: 14px;
+      padding: 16px;
+      border-radius: 12px;
+      border: 1px solid #1f2937;
+      background: #0b1220;
+    }
+    .tile.disabled { opacity: 0.55; }
+    .tile.empty { grid-template-columns: 1fr; text-align: center; color: var(--muted); }
+    .tile-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .thermo-visual {
+      position: relative;
+      height: 240px;
+      border-radius: 16px;
+      border: 2px solid #1f2937;
+      background: linear-gradient(180deg, #0a1220 0%, #0c1628 100%);
+      overflow: hidden;
+    }
+    .icon {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 120px;
+      height: 120px;
+      opacity: 0.2;
+      transition: opacity .2s ease, transform .2s ease;
+    }
+    .icon.heat { color: #f97316; }
+    .icon.cool { color: #38bdf8; }
+    .icon.active { opacity: 1; transform: translate(-50%, -50%) scale(1.02); }
+    .icon.inactive { opacity: 0.18; }
+    .temp-pill {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 2px 10px;
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      background: rgba(17, 24, 39, 0.85);
+      color: var(--text);
+      font-size: 12px;
+      letter-spacing: 0.2px;
+      z-index: 2;
+    }
+    .temp-pill.sensor { top: 10px; }
+    .temp-pill.target { bottom: 10px; }
+    .status-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
+    }
+    .status-heat { background: #f97316; }
+    .status-cool { background: #38bdf8; }
+    .status-idle { background: #64748b; }
+    .badge {
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      background: #111827;
+      color: var(--text);
+      font-size: 11px;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 14px;
+    }
+    .form-row {
+      display: grid;
+      grid-template-columns: 78px minmax(0, 1fr);
+      align-items: center;
+      gap: 8px;
+    }
+    .form-row > label:not(.switch) {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .form-row > label.switch {
+      justify-self: end;
+    }
+    .form-row .field,
+    .form-row select {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .form-row > label.switch {
+      justify-self: start;
+    }
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 8px;
+    }
+    .tile .field.name { margin-bottom: 10px; }
+    @media (max-width: 900px) {
       .wrap { margin: 20px auto; }
-      .card { padding: 16px; }
-      h1 { font-size: 20px; }
-      table { min-width: 680px; font-size: 12px; }
-      th, td { padding: 5px; }
-      .field { padding: 5px 6px; }
-      .btn { padding: 8px 12px; }
-      .mini { width: 64px; }
-      .addr { width: 140px; }
-      .name { width: 120px; }
-      .temp { width: 70px; }
+      .grid { grid-template-columns: 1fr; }
+      .tile { grid-template-columns: 1fr; }
+      .thermo-visual { height: 220px; }
+      .form-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -141,32 +236,12 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <div class="status">%THERMO_STATUS%</div>
       <form method="POST" action="/thermo" id="thermo-form">
-        <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th class="right">ID</th>
-              <th>Вкл</th>
-              <th>Имя</th>
-              <th>Датчик</th>
-              <th>Режим</th>
-              <th class="right">Цель</th>
-              <th class="right">Гист</th>
-              <th class="right">Нагрев</th>
-              <th class="right">Охлажд</th>
-              <th class="right">Кнопка</th>
-              <th class="center">Статус</th>
-              <th class="center">Питание</th>
-            </tr>
-          </thead>
-          <tbody>
-            %THERMO_ROWS%
-          </tbody>
-        </table>
+        <div class="grid">
+          %THERMO_ROWS%
         </div>
-        <p class="actions">
-          <button class="btn" type="submit">Сохранить</button>
-        </p>
+        <div class="actions">
+          <button type="submit">Сохранить</button>
+        </div>
       </form>
     </div>
   </div>
@@ -198,10 +273,10 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       el.innerHTML = buildOptions(list, selected, type);
     });
     const thermoForm = document.getElementById('thermo-form');
-    let thermoDirty = false;
     if (thermoForm) {
-      thermoForm.addEventListener('input', () => { thermoDirty = true; });
-      thermoForm.addEventListener('change', () => { thermoDirty = true; });
+      const markDirty = () => { window.__plcDirty = true; };
+      thermoForm.addEventListener('input', markDirty);
+      thermoForm.addEventListener('change', markDirty);
     }
     document.querySelectorAll('input.thermo-power').forEach((el) => {
       el.addEventListener('change', () => {
@@ -210,6 +285,13 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
         if (hidden) {
           hidden.value = el.checked ? 'on' : 'off';
         }
+        if (thermoForm) {
+          thermoForm.submit();
+        }
+      });
+    });
+    document.querySelectorAll('input.thermo-enable').forEach((el) => {
+      el.addEventListener('change', () => {
         if (thermoForm) {
           thermoForm.submit();
         }
@@ -226,25 +308,7 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
     window.addEventListener('scroll', () => {
       sessionStorage.setItem(scrollKey, String(window.scrollY));
     }, { passive: true });
-    setInterval(() => {
-      if (thermoDirty) {
-        return;
-      }
-      const el = document.activeElement;
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')) {
-        return;
-      }
-      location.reload();
-    }, 3000);
   </script>
 </body>
 </html>
 )HTML";
-
-
-
-
-
-
-
-

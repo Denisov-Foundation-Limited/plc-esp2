@@ -96,7 +96,7 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       width: 100%;
       height: 100%;
       padding: 2px;
-      background: #ef4444;
+      background: #64748b;
       border-radius: 999px;
       border: 1px solid var(--border);
       transition: .2s;
@@ -145,7 +145,7 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
     }
     .status-on { background: #22c55e; }
-    .status-off { background: #ef4444; }
+    .status-off { background: #64748b; }
     .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
     table { min-width: 720px; }
     @media (max-width: 720px) {

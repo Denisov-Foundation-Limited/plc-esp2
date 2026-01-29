@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -38,7 +38,7 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       background-attachment: fixed;
       color: var(--text);
     }
-    .wrap { max-width: 1100px; margin: 40px auto; padding: 0 16px; }
+    .wrap { max-width: 1200px; margin: 40px auto; padding: 0 16px; }
     .card {
       background: linear-gradient(180deg, #0f172a 0%, #0b1220 100%);
       border: 1px solid #1f2937;
@@ -49,9 +49,6 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
     h1 { margin: 0 0 6px; font-size: 22px; }
     p { margin: 0 0 18px; color: var(--muted); }
     a { color: #7dd3fc; text-decoration: none; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { text-align: left; padding: 6px; border-bottom: 1px solid #1f2937; }
-    th { color: var(--muted); font-weight: 600; }
     .right { text-align: right; }
     .center { text-align: center; }
     .nav { margin-bottom: 12px; }
@@ -90,7 +87,7 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       width: 100%;
       height: 100%;
       padding: 2px;
-      background: #ef4444;
+      background: #64748b;
       border-radius: 999px;
       border: 1px solid #1f2937;
       transition: .2s;
@@ -104,7 +101,30 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
     }
     .switch input:checked + .track { background: #22c55e; }
     .switch input:checked + .track .knob { transform: translateX(18px); }
-    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 10px;
+    }
+    .tile {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 14px;
+      padding: 16px;
+      border-radius: 12px;
+      border: 1px solid #1f2937;
+      background: #0b1220;
+    }
+    .tile.disabled { opacity: 0.55; }
+    .tile.empty { grid-template-columns: 1fr; text-align: center; color: var(--muted); }
+    .tile-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
     .status-dot {
       display: inline-block;
       width: 10px;
@@ -113,30 +133,10 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
     }
     .status-on { background: #22c55e; }
-    .status-off { background: #ef4444; }
-    .water-low {
-      background: linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%);
-    }
-    .water-warn {
-      background: linear-gradient(180deg, #facc15 0%, #eab308 100%);
-    }
-    .water-alarm {
-      background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
-    }
-    .schematic {
-      margin: 10px 0 16px;
-      padding: 16px;
-      border-radius: 12px;
-      border: 1px solid #1f2937;
-      background: #0b1220;
-      display: grid;
-      grid-template-columns: 1fr 240px;
-      gap: 16px;
-      align-items: center;
-    }
-    .tank {
+    .status-off { background: #64748b; }
+    .septic-visual {
       position: relative;
-      height: 220px;
+      height: 240px;
       border-radius: 16px;
       border: 2px solid #1f2937;
       background: linear-gradient(180deg, #0a1220 0%, #0c1628 100%);
@@ -153,21 +153,14 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       z-index: 1;
       transition: height .3s ease, background .3s ease;
     }
-    .liquid::before {
-      content: "";
-      position: absolute;
-      left: -20%;
-      right: -20%;
-      top: -12px;
-      height: 24px;
-      background: radial-gradient(circle at 20% 50%, rgba(255,255,255,0.25) 0 18px, transparent 20px) repeat-x;
-      background-size: 80px 24px;
-      opacity: 0.55;
-      animation: wave 3.2s linear infinite;
+    .water-low {
+      background: linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%);
     }
-    @keyframes wave {
-      0% { transform: translateX(0); }
-      100% { transform: translateX(80px); }
+    .water-warn {
+      background: linear-gradient(180deg, #facc15 0%, #eab308 100%);
+    }
+    .water-alarm {
+      background: linear-gradient(180deg, #64748b 0%, #475569 100%);
     }
     .level-label {
       position: absolute;
@@ -183,45 +176,6 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       letter-spacing: 0.2px;
       z-index: 2;
     }
-    .probe {
-      position: absolute;
-      left: 16px;
-      right: 16px;
-      height: 2px;
-      background: #1f2937;
-    }
-    .probe.warn { top: 60px; }
-    .probe.alarm { top: 24px; }
-    .probe-label {
-      position: absolute;
-      right: 8px;
-      top: -10px;
-      font-size: 11px;
-      color: var(--muted);
-    }
-    .probe-dot {
-      position: absolute;
-      left: 10px;
-      top: -5px;
-    }
-    .legend {
-      display: grid;
-      gap: 10px;
-      font-size: 13px;
-      color: var(--muted);
-    }
-    .legend .row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      justify-content: space-between;
-    }
-    .legend .label {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--text);
-    }
     .badge {
       padding: 2px 8px;
       border-radius: 999px;
@@ -230,9 +184,48 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       color: var(--text);
       font-size: 11px;
     }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .form-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .form-row > label:not(.switch) {
+      color: var(--muted);
+      font-size: 12px;
+      min-width: 96px;
+    }
+    .form-row > label.switch {
+      min-width: 0;
+    }
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 12px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .tile .field.name {
+      margin-bottom: 10px;
+    }
     @media (max-width: 900px) {
       .wrap { margin: 20px auto; }
-      .schematic { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: 1fr; }
+      .tile { grid-template-columns: 1fr; }
+      .septic-visual { height: 220px; }
+      .form-grid { grid-template-columns: 1fr; }
+      .status-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -241,69 +234,11 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
     %NAV%
     <div class="card">
       <h1>Септик</h1>
-      <p>Плата: <strong>%BOARD_NAME%</strong></p>
+      <p>%BOARD_NAME%</p>
       <div class="status">%SEPTIC_STATUS%</div>
-      <div class="schematic">
-        <div class="tank">
-          <div class="liquid %SEPTIC_WATER_CLASS%" style="height:%SEPTIC_WATER_LEVEL%;"></div>
-          <div class="level-label">%SEPTIC_WATER_LABEL%</div>
-          <div class="probe alarm">
-            <span class="probe-label">ТРЕВОГА</span>
-            <span class="probe-dot status-dot %SEPTIC_ALARM_CLASS%"></span>
-          </div>
-          <div class="probe warn">
-            <span class="probe-label">ПРЕДУПРЕЖДЕНИЕ</span>
-            <span class="probe-dot status-dot %SEPTIC_WARN_CLASS%"></span>
-          </div>
-        </div>
-        <div class="legend">
-          <div class="row">
-            <div class="label">
-              <span class="status-dot %SEPTIC_WARN_CLASS%"></span>
-              <span>Датчик предупреждения</span>
-            </div>
-          </div>
-          <div class="row">
-            <div class="label">
-              <span class="status-dot %SEPTIC_ALARM_CLASS%"></span>
-              <span>Датчик тревоги</span>
-            </div>
-          </div>
-          <div class="row">
-            <div class="label">
-              <span class="status-dot %SEPTIC_RELAY_WARN_CLASS%"></span>
-              <span>Реле предупреждения</span>
-            </div>
-          </div>
-          <div class="row">
-            <div class="label">
-              <span class="status-dot %SEPTIC_RELAY_ALARM_CLASS%"></span>
-              <span>Реле тревоги</span>
-            </div>
-          </div>
-        </div>
-      </div>
       <form method="POST" action="/septic" id="septic-form">
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th class="right">ID</th>
-                <th>Вкл</th>
-                <th>Имя</th>
-                <th class="right">Предупр</th>
-                <th class="right">Тревога</th>
-                <th class="right">Реле пред.</th>
-                <th class="right">Реле трев.</th>
-                <th class="center">Предупреждение</th>
-                <th class="center">Тревога</th>
-                <th class="center">Мониторинг</th>
-              </tr>
-            </thead>
-            <tbody>
-              %SEPTIC_ITEMS%
-            </tbody>
-          </table>
+        <div class="grid">
+          %SEPTIC_ITEMS%
         </div>
         <div class="actions">
           <button type="submit">Сохранить</button>

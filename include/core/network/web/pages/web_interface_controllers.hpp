@@ -66,7 +66,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
       width: 100%;
       height: 100%;
       padding: 2px;
-      background: #ef4444;
+      background: #64748b;
       border-radius: 999px;
       border: 1px solid #1f2937;
       transition: .2s;

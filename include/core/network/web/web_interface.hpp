@@ -62,6 +62,46 @@
 #include "hal/ibutton.hpp"
 #include "controllers/controllers.hpp"
 
+static const char kWebAutoRefreshScript[] PROGMEM = R"HTML(
+<script>
+(() => {
+  const pollMs = 5000;
+  const endpoint = '/ui/hash';
+  let lastHash = '';
+  const markDirty = () => { window.__plcDirty = true; };
+  document.addEventListener('input', markDirty, true);
+  document.addEventListener('change', markDirty, true);
+  async function poll() {
+    try {
+      const path = location.pathname || '/';
+      const res = await fetch(endpoint + '?path=' + encodeURIComponent(path), { cache: 'no-store' });
+      if (!res.ok) {
+        return;
+      }
+      const hash = (await res.text()).trim();
+      if (!lastHash) {
+        lastHash = hash;
+        return;
+      }
+      if (hash && hash !== lastHash) {
+        const active = document.activeElement;
+        if (window.__plcDirty) {
+          return;
+        }
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA')) {
+          return;
+        }
+        location.reload();
+      }
+    } catch (e) {
+    }
+  }
+  poll();
+  setInterval(poll, pollMs);
+})();
+</script>
+)HTML";
+
 class WebInterface
 {
 public:
@@ -157,6 +197,7 @@ public:
         _server.on("/files", HTTP_GET, [this](AsyncWebServerRequest *request) { handleFileDownload_(request); });
         _server.on("/delete", HTTP_GET, [this](AsyncWebServerRequest *request) { handleDelete_(request); });
         _server.on("/status", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStatus_(request); });
+        _server.on("/ui/hash", HTTP_GET, [this](AsyncWebServerRequest *request) { handleUiHash_(request); });
         _server.onNotFound([this](AsyncWebServerRequest *request) {
             const String uri = request->url();
             if (uri.startsWith("/files/"))
@@ -1137,7 +1178,8 @@ private:
                 continue;
 
             const bool enabled = request->hasParam(en_key, true);
-            const bool power_on = request->hasParam(power_key, true);
+            const String power_str = paramValue_(request, power_key);
+            const bool power_on = (power_str == "on" || power_str == "1" || power_str == "true");
             String name = paramValue_(request, name_key);
             name.trim();
             const String low_str = paramValue_(request, low_key);
@@ -2414,10 +2456,11 @@ private:
     String listThermoHtml_()
     {
         if (!_controllers)
-            return "<tr><td colspan=\"12\" style=\"color:#94a3b8\"><strong>Thermo unavailable</strong></td></tr>";
+            return "<div class=\"tile empty\"><strong>Thermo unavailable</strong></div>";
         String items;
         items.reserve(4096);
         ThermoController &thermo = _controllers->thermo();
+        MeteoController &meteo = _controllers->meteo();
         uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
 
         for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
@@ -2429,85 +2472,176 @@ private:
                 sensor_used[cfg->sensor_id]++;
         }
 
-        auto appendRow = [&](const ThermoController::DeviceConfig &cfg, const ThermoController::DeviceState &st,
-                             bool enabled) {
-            items += "<tr><td class=\"right\"><strong>";
-            items += String((unsigned)cfg.id);
-            items += "</strong></td><td><input type=\"checkbox\" name=\"t";
-            items += String((unsigned)cfg.id);
-            items += "_en\"";
-            if (enabled)
-                items += " checked";
-            items += "></td><td><input class=\"field name\" type=\"text\" name=\"t";
-            items += String((unsigned)cfg.id);
-            items += "_name\" value=\"";
-            appendHtmlEscaped_(items, cfg.name.c_str());
-            items += "\"></td><td><select class=\"field mini\" name=\"t";
-            items += String((unsigned)cfg.id);
-            items += "_sensor\">";
-            items += meteoSensorOptionsHtml_(cfg.sensor_id, sensor_used);
-            items += "</select></td><td><select class=\"field mini\" name=\"t";
-            items += String((unsigned)cfg.id);
-            items += "_mode\">";
-            items += "<option value=\"off\"";
+        auto appendTile = [&](const ThermoController::DeviceConfig &cfg, const ThermoController::DeviceState &st,
+                              bool enabled) {
+            const MeteoController::SensorState *sensor_st = nullptr;
+            const MeteoController::SensorConfig *sensor_cfg = nullptr;
+            if (cfg.sensor_id != ThermoController::kInvalidSensor)
+            {
+                for (size_t s = 0; s < MeteoController::kSensorCount; ++s)
+                {
+                    const auto *scfg = meteo.configByIndex(s);
+                    if (scfg && scfg->id == cfg.sensor_id)
+                    {
+                        sensor_cfg = scfg;
+                        sensor_st = meteo.stateByIndex(s);
+                        break;
+                    }
+                }
+            }
+
+            const char *sensor_label = "нет";
+            const char *sensor_suffix = "";
+            char sensor_buf[16] = {};
+            if (cfg.sensor_id != ThermoController::kInvalidSensor)
+            {
+                if (sensor_st && sensor_st->has_temp)
+                {
+                    dtostrf(sensor_st->temp_c, 0, 1, sensor_buf);
+                    sensor_label = sensor_buf;
+                    sensor_suffix = "°C";
+                }
+                else
+                {
+                    sensor_label = "--";
+                }
+            }
+
+            const char *mode_label = "авто";
             if (cfg.mode == ThermoController::Mode::Off)
-                items += " selected";
-            items += ">off</option>";
-            items += "<option value=\"heat\"";
-            if (cfg.mode == ThermoController::Mode::Heat)
-                items += " selected";
-            items += ">heat only</option>";
-            items += "<option value=\"cool\"";
-            if (cfg.mode == ThermoController::Mode::Cool)
-                items += " selected";
-            items += ">cool only</option>";
-            items += "<option value=\"auto\"";
-            if (cfg.mode == ThermoController::Mode::Auto)
-                items += " selected";
-            items += ">auto</option>";
-            items += "</select></td><td class=\"right\"><input class=\"field temp\" type=\"text\" name=\"t";
-            items += String((unsigned)cfg.id);
-            items += "_target\" value=\"";
-            items += String(cfg.target_c, 2);
-            items += "\"></td><td class=\"right\"><input class=\"field temp\" type=\"text\" name=\"t";
-            items += String((unsigned)cfg.id);
-            items += "_hyst\" value=\"";
-            items += String(cfg.hysteresis, 2);
-            items += "\"></td><td class=\"right\"><select class=\"field mini thermo-select\" data-type=\"relay\" data-selected=\"";
-            if (cfg.heat_port != ThermoController::kInvalidPort)
-                items += String((unsigned)cfg.heat_port);
-            items += "\" name=\"t";
-            items += String((unsigned)cfg.id);
-            items += "_heat\"></select></td><td class=\"right\"><select class=\"field mini thermo-select\" data-type=\"relay\" data-selected=\"";
-            if (cfg.cool_port != ThermoController::kInvalidPort)
-                items += String((unsigned)cfg.cool_port);
-            items += "\" name=\"t";
-            items += String((unsigned)cfg.id);
-            items += "_cool\"></select></td><td class=\"right\"><select class=\"field mini thermo-select\" data-type=\"dinput\" data-selected=\"";
-            if (cfg.button_port != ThermoController::kInvalidPort)
-                items += String((unsigned)cfg.button_port);
-            items += "\" name=\"t";
-            items += String((unsigned)cfg.id);
-            items += "_button\"></select></td><td class=\"center\">";
+                mode_label = "выкл";
+            else if (cfg.mode == ThermoController::Mode::Heat)
+                mode_label = "нагрев";
+            else if (cfg.mode == ThermoController::Mode::Cool)
+                mode_label = "охлаждение";
+
+            const char *state_label = "ожидание";
+            const char *state_class = "status-idle";
             if (st.heat_on)
-                items += "<span class=\"status-dot status-heat\" title=\"Heat\"></span>";
+            {
+                state_label = "нагрев";
+                state_class = "status-heat";
+            }
             else if (st.cool_on)
-                items += "<span class=\"status-dot status-cool\" title=\"Cool\"></span>";
+            {
+                state_label = "охлаждение";
+                state_class = "status-cool";
+            }
+
+            String heat_class = "icon heat ";
+            String cool_class = "icon cool ";
+            if (cfg.mode == ThermoController::Mode::Off)
+            {
+                heat_class += "inactive";
+                cool_class += "inactive";
+            }
+            else if (cfg.mode == ThermoController::Mode::Heat)
+            {
+                heat_class += "active";
+                cool_class += "inactive";
+            }
+            else if (cfg.mode == ThermoController::Mode::Cool)
+            {
+                heat_class += "inactive";
+                cool_class += "active";
+            }
             else
-                items += "<span class=\"status-dot status-idle\" title=\"Idle\"></span>";
-            items += "</td><td class=\"center\">";
-            const bool ui_power_on = enabled ? st.power_on : false;
-            items += "<label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
+            {
+                heat_class += st.heat_on ? "active" : "inactive";
+                cool_class += st.cool_on ? "active" : "inactive";
+            }
+
+            items += "<div class=\"tile";
+            if (!enabled)
+                items += " disabled";
+            items += "\"><div class=\"thermo-visual\"><div class=\"temp-pill sensor\">Текущая: ";
+            items += sensor_label;
+            items += sensor_suffix;
+            items += "</div><div class=\"temp-pill target\">Цель: ";
+            items += String(cfg.target_c, 1);
+            items += "°C</div><svg class=\"";
+            items += heat_class;
+            items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"22\" y=\"30\" width=\"76\" height=\"60\" rx=\"10\"/><line x1=\"36\" y1=\"40\" x2=\"36\" y2=\"80\"/><line x1=\"52\" y1=\"40\" x2=\"52\" y2=\"80\"/><line x1=\"68\" y1=\"40\" x2=\"68\" y2=\"80\"/><line x1=\"84\" y1=\"40\" x2=\"84\" y2=\"80\"/></svg><svg class=\"";
+            items += cool_class;
+            items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"18\" y=\"28\" width=\"84\" height=\"46\" rx=\"10\"/><line x1=\"28\" y1=\"44\" x2=\"92\" y2=\"44\"/><line x1=\"28\" y1=\"56\" x2=\"92\" y2=\"56\"/><line x1=\"40\" y1=\"78\" x2=\"34\" y2=\"92\"/><line x1=\"60\" y1=\"78\" x2=\"60\" y2=\"94\"/><line x1=\"80\" y1=\"78\" x2=\"86\" y2=\"92\"/></svg></div><div><div class=\"tile-head\"><div><strong>Термо #";
+            items += String((unsigned)cfg.id);
+            items += "</strong> <span class=\"badge\">";
+            items += mode_label;
+            items += "</span>";
+            if (!enabled)
+                items += " <span class=\"badge\">выкл</span>";
+            items += "</div><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
             items += String((unsigned)cfg.id);
             items += "_power\"";
+            const bool ui_power_on = enabled ? st.power_on : false;
             if (ui_power_on)
                 items += " checked";
             if (!enabled)
                 items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div><input class=\"field name\" type=\"text\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_name\" value=\"";
+            appendHtmlEscaped_(items, cfg.name.c_str());
+            items += "\"><div class=\"form-grid\"><div class=\"form-row\"><label>Вкл</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-enable\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_en\"";
+            if (enabled)
+                items += " checked";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div><div class=\"form-row\"><label>Датчик</label><select class=\"field mini\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_sensor\">";
+            items += meteoSensorOptionsHtml_(cfg.sensor_id, sensor_used);
+            items += "</select></div><div class=\"form-row\"><label>Режим</label><select class=\"field mini\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_mode\"><option value=\"off\"";
+            if (cfg.mode == ThermoController::Mode::Off)
+                items += " selected";
+            items += ">off</option><option value=\"heat\"";
+            if (cfg.mode == ThermoController::Mode::Heat)
+                items += " selected";
+            items += ">heat only</option><option value=\"cool\"";
+            if (cfg.mode == ThermoController::Mode::Cool)
+                items += " selected";
+            items += ">cool only</option><option value=\"auto\"";
+            if (cfg.mode == ThermoController::Mode::Auto)
+                items += " selected";
+            items += ">auto</option></select></div><div class=\"form-row\"><label>Цель</label><input class=\"field temp\" type=\"text\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_target\" value=\"";
+            items += String(cfg.target_c, 1);
+            items += "\"></div><div class=\"form-row\"><label>Гист</label><input class=\"field temp\" type=\"text\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_hyst\" value=\"";
+            items += String(cfg.hysteresis, 1);
+            items += "\"></div><div class=\"form-row\"><label>Нагрев</label><select class=\"field mini thermo-select\" data-type=\"relay\" data-selected=\"";
+            if (cfg.heat_port != ThermoController::kInvalidPort)
+                items += String((unsigned)cfg.heat_port);
+            items += "\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_heat\"></select></div><div class=\"form-row\"><label>Охлажд</label><select class=\"field mini thermo-select\" data-type=\"relay\" data-selected=\"";
+            if (cfg.cool_port != ThermoController::kInvalidPort)
+                items += String((unsigned)cfg.cool_port);
+            items += "\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_cool\"></select></div><div class=\"form-row\"><label>Кнопка</label><select class=\"field mini thermo-select\" data-type=\"dinput\" data-selected=\"";
+            if (cfg.button_port != ThermoController::kInvalidPort)
+                items += String((unsigned)cfg.button_port);
+            items += "\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_button\"></select></div></div><div class=\"status-line\"><span class=\"status-dot ";
+            items += state_class;
+            items += "\"></span><span>Статус: ";
+            items += state_label;
+            items += "</span></div>";
+            if (sensor_cfg && sensor_cfg->name.length())
+            {
+                items += "<div class=\"status-line\"><span class=\"badge\">";
+                appendHtmlEscaped_(items, sensor_cfg->name.c_str());
+                items += "</span></div>";
+            }
             items += "<input type=\"hidden\" name=\"t";
             items += String((unsigned)cfg.id);
-            items += "_power\" value=\"\"></td></tr>";
+            items += "_power\" value=\"\"></div></div>";
         };
 
         const ThermoController::DeviceConfig *first_disabled = nullptr;
@@ -2520,7 +2654,7 @@ private:
                 continue;
             if (cfg->enabled)
             {
-                appendRow(*cfg, *st, true);
+                appendTile(*cfg, *st, true);
             }
             else if (!first_disabled)
             {
@@ -2529,16 +2663,16 @@ private:
             }
         }
         if (first_disabled && first_disabled_state)
-            appendRow(*first_disabled, *first_disabled_state, false);
+            appendTile(*first_disabled, *first_disabled_state, false);
         if (items.length() == 0)
-            items = "<tr><td colspan=\"12\" style=\"color:#94a3b8\"><strong>Thermo empty</strong></td></tr>";
+            items = "<div class=\"tile empty\"><strong>Thermo empty</strong></div>";
         return items;
     }
 
     String listTanksHtml_()
     {
         if (!_controllers)
-            return "<tr><td colspan=\"11\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
+            return "<div class=\"tile\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></div>";
         String items;
         items.reserve(4096);
         TankController &tanks = _controllers->tanks();
@@ -2547,7 +2681,7 @@ private:
                              bool enabled) {
             const char *level = "пусто";
             const char *level_class = "level-empty";
-            unsigned level_pct = 8;
+            unsigned level_pct = 10;
             if (st.level_full)
             {
                 level = "полный";
@@ -2567,65 +2701,103 @@ private:
                 level_pct = 30;
             }
 
-            items += "<tr><td class=\"right\"><strong>";
+            items += "<div class=\"tile";
+            if (!enabled)
+                items += " disabled";
+            items += "\">";
+            items += "<div>";
+            items += "<div class=\"tank-visual\">";
+            items += "<div class=\"tank-fill ";
+            items += level_class;
+            items += "\" style=\"height:";
+            items += String(level_pct);
+            items += "%\"></div>";
+            items += "<div class=\"tank-label\">";
+            items += level;
+            items += "</div></div>";
+            items += "<div class=\"status-line\">";
+            items += "<span class=\"badge\">ID ";
             items += String((unsigned)cfg.id);
-            items += "</strong></td><td><input type=\"checkbox\" name=\"k";
+            items += "</span>";
+            items += "<span class=\"badge\">";
+            items += enabled ? "вкл" : "выкл";
+            items += "</span>";
+            items += "</div></div>";
+            items += "<div>";
+            items += "<div class=\"tile-head\">";
+            items += "<strong>";
+            if (cfg.name.length())
+                appendHtmlEscaped_(items, cfg.name.c_str());
+            else
+                items += "Бак";
+            items += "</strong>";
+            items += "<label class=\"switch\"><input type=\"checkbox\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_en\"";
             if (enabled)
                 items += " checked";
-            items += "></td><td><input class=\"field name\" type=\"text\" name=\"k";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "</div>";
+            items += "<input class=\"field name\" type=\"text\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
             appendHtmlEscaped_(items, cfg.name.c_str());
-            items += "\"></td><td class=\"right\"><select class=\"field mini tank-select\" data-type=\"dinput\" data-selected=\"";
+            items += "\">";
+            items += "<div class=\"form-grid\">";
+            items += "<div class=\"form-row\"><label>Низкий</label><select class=\"field mini tank-select\" data-type=\"dinput\" data-selected=\"";
             if (cfg.level_low != TankController::kInvalidPort)
                 items += String((unsigned)cfg.level_low);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_low\"></select></td><td class=\"right\"><select class=\"field mini tank-select\" data-type=\"dinput\" data-selected=\"";
+            items += "_low\"></select></div>";
+            items += "<div class=\"form-row\"><label>Средний</label><select class=\"field mini tank-select\" data-type=\"dinput\" data-selected=\"";
             if (cfg.level_mid != TankController::kInvalidPort)
                 items += String((unsigned)cfg.level_mid);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_mid\"></select></td><td class=\"right\"><select class=\"field mini tank-select\" data-type=\"dinput\" data-selected=\"";
+            items += "_mid\"></select></div>";
+            items += "<div class=\"form-row\"><label>Полный</label><select class=\"field mini tank-select\" data-type=\"dinput\" data-selected=\"";
             if (cfg.level_full != TankController::kInvalidPort)
                 items += String((unsigned)cfg.level_full);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_full\"></select></td><td class=\"right\"><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
+            items += "_full\"></select></div>";
+            items += "<div class=\"form-row\"><label>Клапан</label><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.relay_valve != TankController::kInvalidPort)
                 items += String((unsigned)cfg.relay_valve);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_valve\"></select></td><td class=\"right\"><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
+            items += "_valve\"></select></div>";
+            items += "<div class=\"form-row\"><label>Насос</label><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.relay_pump != TankController::kInvalidPort)
                 items += String((unsigned)cfg.relay_pump);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_pump\"></select></td><td class=\"right\"><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
+            items += "_pump\"></select></div>";
+            items += "<div class=\"form-row\"><label>Сигнал</label><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.relay_alarm != TankController::kInvalidPort)
                 items += String((unsigned)cfg.relay_alarm);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_alarm\"></select></td><td class=\"center\">";
-            items += "<div class=\"tank-mini ";
-            if (!enabled)
-                items += "disabled ";
-            items += level_class;
-            items += "\"><div class=\"tank-fill\" style=\"height:";
-            items += String(level_pct);
-            items += "%\"></div><div class=\"tank-label\">";
-            items += level;
-            items += "</div></div>";
-            items += "</td><td class=\"center\">";
-            items += level;
-            items += "</td><td class=\"center\"><label class=\"switch\"><input type=\"checkbox\" name=\"k";
+            items += "_alarm\"></select></div>";
+            items += "<div>";
+            items += "<div class=\"form-row\"><label>Питание</label><label class=\"switch\"><input type=\"checkbox\" class=\"tank-power\" data-action=\"k";
             items += String((unsigned)cfg.id);
             items += "_power\"";
             if (cfg.power_on)
                 items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></td></tr>";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_power\" value=\"\"></div>";
+            items += "<div class=\"status-row\">";
+            items += "<span class=\"status-dot ";
+            items += st.pump_on ? "status-on" : "status-off";
+            items += "\"></span><span>Насос</span>";
+            items += "<span class=\"status-dot ";
+            items += st.valve_on ? "status-on" : "status-off";
+            items += "\"></span><span>Клапан</span>";
+            items += "</div></div>";
+            items += "</div></div></div>";
         };
 
         const TankController::TankConfig *first_disabled = nullptr;
@@ -2649,16 +2821,16 @@ private:
         if (first_disabled && first_disabled_state)
             appendRow(*first_disabled, *first_disabled_state, false);
         if (items.length() == 0)
-            items = "<tr><td colspan=\"12\" style=\"color:#94a3b8\"><strong>Баки отсутствуют</strong></td></tr>";
+            items = "<div class=\"tile\" style=\"color:#94a3b8\"><strong>Баки отсутствуют</strong></div>";
         return items;
     }
 
     String listSepticHtml_()
     {
         if (!_controllers)
-            return "<tr><td colspan=\"10\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
+            return "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>";
         String items;
-        items.reserve(1024);
+        items.reserve(2048);
         SepticController &septic = _controllers->septic();
         for (size_t i = 0; i < SepticController::kSepticCount; ++i)
         {
@@ -2666,57 +2838,91 @@ private:
             const auto *st = septic.stateByIndex(i);
             if (!cfg || !st)
                 continue;
-            items += "<tr><td class=\"right\"><strong>";
+            const bool warn = st->warning;
+            const bool alarm = st->alarm;
+            const bool relay_warn = st->relay_warning;
+            const bool relay_alarm = st->relay_alarm;
+            const char *water_class = "water-low";
+            const char *water_level = "20%";
+            const char *water_label = "Уровень: 20%";
+            if (alarm)
+            {
+                water_class = "water-alarm";
+                water_level = "100%";
+                water_label = "Уровень: 100%";
+            }
+            else if (warn)
+            {
+                water_class = "water-warn";
+                water_level = "80%";
+                water_label = "Уровень: 80%";
+            }
+            items += "<div class=\"tile";
+            if (!cfg->enabled)
+                items += " disabled";
+            items += "\"><div class=\"septic-visual\"><div class=\"liquid ";
+            items += water_class;
+            items += "\" style=\"height:";
+            items += water_level;
+            items += ";\"></div><div class=\"level-label\">";
+            items += water_label;
+            items += "</div></div><div><div class=\"tile-head\"><div><strong>Септик #";
             items += String((unsigned)cfg->id);
-            items += "</strong></td><td><input type=\"checkbox\" name=\"sep";
+            items += "</strong>";
+            if (!cfg->enabled)
+                items += " <span class=\"badge\">выкл</span>";
+            items += "</div><label class=\"switch\"><input type=\"checkbox\" name=\"sep";
             items += String((unsigned)cfg->id);
             items += "_en\"";
             if (cfg->enabled)
                 items += " checked";
-            items += "></td><td><input class=\"field name\" type=\"text\" name=\"sep";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div><input class=\"field name\" type=\"text\" name=\"sep";
             items += String((unsigned)cfg->id);
             items += "_name\" value=\"";
             appendHtmlEscaped_(items, cfg->name.c_str());
-            items += "\"></td><td class=\"right\"><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
+            items += "\"><div class=\"form-grid\"><div class=\"form-row\"><label>Предупр.</label><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
             if (cfg->warning_port != SepticController::kInvalidPort)
                 items += String((unsigned)cfg->warning_port);
             items += "\" name=\"sep";
             items += String((unsigned)cfg->id);
-            items += "_warn\"></select></td><td class=\"right\"><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
+            items += "_warn\"></select></div><div class=\"form-row\"><label>Тревога</label><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
             if (cfg->alarm_port != SepticController::kInvalidPort)
                 items += String((unsigned)cfg->alarm_port);
             items += "\" name=\"sep";
             items += String((unsigned)cfg->id);
-            items += "_alarm\"></select></td><td class=\"right\"><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
+            items += "_alarm\"></select></div><div class=\"form-row\"><label>Реле пред.</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
             if (cfg->relay_warning != SepticController::kInvalidPort)
                 items += String((unsigned)cfg->relay_warning);
             items += "\" name=\"sep";
             items += String((unsigned)cfg->id);
-            items += "_relay_warn\"></select></td><td class=\"right\"><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
+            items += "_relay_warn\"></select></div><div class=\"form-row\"><label>Реле трев.</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
             if (cfg->relay_alarm != SepticController::kInvalidPort)
                 items += String((unsigned)cfg->relay_alarm);
             items += "\" name=\"sep";
             items += String((unsigned)cfg->id);
-            items += "_relay_alarm\"></select></td><td class=\"center\"><span class=\"status-dot ";
-            items += st->warning ? "status-on" : "status-off";
-            items += "\"></span></td><td class=\"center\"><span class=\"status-dot ";
-            items += st->alarm ? "status-on" : "status-off";
-            items += "\"></span></td><td class=\"center\"><label class=\"switch\"><input type=\"checkbox\" class=\"septic-monitor\" data-action=\"sep";
+            items += "_relay_alarm\"></select></div></div><div class=\"status-grid\"><div class=\"status-line\"><span class=\"status-dot ";
+            items += warn ? "status-on" : "status-off";
+            items += "\"></span><span>Датчик предупреждения</span></div><div class=\"status-line\"><span class=\"status-dot ";
+            items += alarm ? "status-on" : "status-off";
+            items += "\"></span><span>Датчик тревоги</span></div><div class=\"status-line\"><span class=\"status-dot ";
+            items += relay_warn ? "status-on" : "status-off";
+            items += "\"></span><span>Реле предупреждения</span></div><div class=\"status-line\"><span class=\"status-dot ";
+            items += relay_alarm ? "status-on" : "status-off";
+            items += "\"></span><span>Реле тревоги</span></div></div><div class=\"form-row\" style=\"margin-top:8px;\"><label>Мониторинг</label><label class=\"switch\"><input type=\"checkbox\" class=\"septic-monitor\" data-action=\"sep";
             items += String((unsigned)cfg->id);
             items += "_mon\"";
             if (cfg->monitoring_on)
                 items += " checked";
             if (!cfg->enabled)
                 items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
-            items += "<input type=\"hidden\" name=\"sep";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"sep";
             items += String((unsigned)cfg->id);
             items += "_mon\" value=\"";
             items += cfg->monitoring_on ? "on" : "off";
-            items += "\"></td></tr>";
+            items += "\"></div></div></div>";
         }
         if (items.length() == 0)
-            items = "<tr><td colspan=\"10\" style=\"color:#94a3b8\"><strong>Септик отсутствует</strong></td></tr>";
+            items = "<div class=\"tile empty\"><strong>Септик отсутствует</strong></div>";
         return items;
     }
 
@@ -3687,6 +3893,24 @@ sendRedirect_(request, "/", set_cookie);
         sendHtml_(request, page, set_cookie);
     }
 
+    void handleUiHash_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        String path = "/";
+        if (request->hasParam("path"))
+        {
+            path = request->getParam("path")->value();
+            if (path.length() == 0)
+                path = "/";
+        }
+        const uint32_t hash = uiPageHash_(path);
+        char buf[9] = {};
+        snprintf(buf, sizeof(buf), "%08lX", (unsigned long)hash);
+        sendText_(request, 200, "text/plain", buf, set_cookie);
+    }
+
     bool checkAuth_(AsyncWebServerRequest *request, bool *set_cookie, bool require_session = false)
     {
         if (set_cookie)
@@ -4567,7 +4791,9 @@ sendRedirect_(request, "/", set_cookie);
 
     void sendHtml_(AsyncWebServerRequest *request, const String &page, bool set_cookie)
     {
-        auto *response = request->beginResponse(200, "text/html; charset=utf-8", page);
+        String out = page;
+        injectAutoRefresh_(out);
+        auto *response = request->beginResponse(200, "text/html; charset=utf-8", out);
         if (set_cookie)
             response->addHeader("Set-Cookie", sessionCookie_());
         request->send(response);
@@ -4599,6 +4825,418 @@ sendRedirect_(request, "/", set_cookie);
                         "; Max-Age=" + String(_session_ttl_ms / 1000) +
                         "; Path=/; HttpOnly; SameSite=Strict";
         return cookie;
+    }
+
+    void injectAutoRefresh_(String &page) const
+    {
+        const int idx = page.lastIndexOf("</body>");
+        if (idx < 0)
+            return;
+        String out;
+        out.reserve(page.length() + 512);
+        out += page.substring(0, idx);
+        out += FPSTR(kWebAutoRefreshScript);
+        out += page.substring(idx);
+        page = out;
+    }
+
+    static uint32_t fnv1a_(uint32_t hash, const uint8_t *data, size_t len)
+    {
+        for (size_t i = 0; i < len; ++i)
+        {
+            hash ^= data[i];
+            hash *= 16777619u;
+        }
+        return hash;
+    }
+
+    static void hashAdd_(uint32_t &hash, const String &value)
+    {
+        hash = fnv1a_(hash, reinterpret_cast<const uint8_t *>(value.c_str()), value.length());
+    }
+
+    static void hashAdd_(uint32_t &hash, const char *value)
+    {
+        if (!value)
+            return;
+        hash = fnv1a_(hash, reinterpret_cast<const uint8_t *>(value), strlen(value));
+    }
+
+    static void hashAdd_(uint32_t &hash, uint32_t value)
+    {
+        hash = fnv1a_(hash, reinterpret_cast<const uint8_t *>(&value), sizeof(value));
+    }
+
+    static void hashAdd_(uint32_t &hash, int32_t value)
+    {
+        hash = fnv1a_(hash, reinterpret_cast<const uint8_t *>(&value), sizeof(value));
+    }
+
+    static void hashAdd_(uint32_t &hash, const uint8_t *data, size_t len)
+    {
+        if (!data || !len)
+            return;
+        hash = fnv1a_(hash, data, len);
+    }
+
+    static int32_t scaled10_(float value)
+    {
+        if (value >= 0.0f)
+            return (int32_t)(value * 10.0f + 0.5f);
+        return (int32_t)(value * 10.0f - 0.5f);
+    }
+
+    uint32_t uiPageHash_(const String &path)
+    {
+        uint32_t hash = 2166136261u;
+        hashAdd_(hash, path);
+        hashAdd_(hash, _last_status);
+        hashAdd_(hash, _wifi_status);
+        hashAdd_(hash, _gsm_status);
+        hashAdd_(hash, _tgbot_status);
+        hashAdd_(hash, _stack_status);
+        hashAdd_(hash, _device_status);
+        hashAdd_(hash, _sockets_status);
+        hashAdd_(hash, _controllers_status);
+        hashAdd_(hash, _meteo_status);
+        hashAdd_(hash, _thermo_status);
+        hashAdd_(hash, _tanks_status);
+        hashAdd_(hash, _septic_status);
+        hashAdd_(hash, _security_status);
+
+        if (path == "/" || path == "/index")
+        {
+            hashAdd_(hash, deviceName_());
+            hashAdd_(hash, stackRoleName_(stackRole_()));
+            hashAdd_(hash, wifiIp_());
+            hashAdd_(hash, formatTemp_(boardTemp_()));
+            hashAdd_(hash, formatTemp_(cpuTemp_()));
+            hashAdd_(hash, formatTemp_(rtcTemp_()));
+            return hash;
+        }
+        if (path == "/wifi")
+        {
+            hashAdd_(hash, _wifi.ap() ? "AP" : "STA");
+            hashAdd_(hash, _wifi.ap() ? _wifi.apSsid() : _wifi.ssid());
+            hashAdd_(hash, wifiIp_());
+            if (_gsm)
+            {
+                hashAdd_(hash, _gsm->imei());
+                hashAdd_(hash, _gsm->imsi());
+                hashAdd_(hash, _gsm->operatorName());
+                hashAdd_(hash, _gsm->signalQuality());
+                hashAdd_(hash, _gsm->regStatus());
+                hashAdd_(hash, _gsm->lastError());
+                hashAdd_(hash, _gsm->lastUrc());
+                hashAdd_(hash, _gsm->lastCallNumber());
+                hashAdd_(hash, _gsm->lastUssd());
+            }
+            return hash;
+        }
+        if (path == "/manage")
+        {
+            hashAdd_(hash, listFilesHtml_());
+            return hash;
+        }
+        if (path == "/controllers")
+        {
+            if (_controllers)
+            {
+                hashAdd_(hash, _controllers->sockets().controllerEnabled() ? 1u : 0u);
+                hashAdd_(hash, _controllers->meteo().controllerEnabled() ? 1u : 0u);
+                hashAdd_(hash, _controllers->thermo().controllerEnabled() ? 1u : 0u);
+                hashAdd_(hash, _controllers->tanks().controllerEnabled() ? 1u : 0u);
+                hashAdd_(hash, _controllers->septic().controllerEnabled() ? 1u : 0u);
+                hashAdd_(hash, _controllers->security().controllerEnabled() ? 1u : 0u);
+            }
+            return hash;
+        }
+        if (path == "/sockets")
+        {
+            if (_controllers)
+            {
+                SocketController &sockets = _controllers->sockets();
+                for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+                {
+                    const auto *cfg = sockets.configByIndex(i);
+                    const auto *st = sockets.stateByIndex(i);
+                    if (!cfg || !st)
+                        continue;
+                    hashAdd_(hash, (uint32_t)cfg->id);
+                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cfg->button_port);
+                    hashAdd_(hash, (uint32_t)cfg->relay_port);
+                    hashAdd_(hash, (uint32_t)(cfg->kind == SocketController::Kind::Light ? 1u : 0u));
+                    hashAdd_(hash, cfg->name);
+                    hashAdd_(hash, st->relay_on ? 1u : 0u);
+                }
+            }
+            return hash;
+        }
+        if (path == "/lights")
+        {
+            if (_controllers)
+            {
+                SocketController &sockets = _controllers->sockets();
+                for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+                {
+                    const auto *cfg = sockets.configByIndex(i);
+                    const auto *st = sockets.stateByIndex(i);
+                    if (!cfg || !st)
+                        continue;
+                    if (cfg->kind != SocketController::Kind::Light)
+                        continue;
+                    hashAdd_(hash, (uint32_t)cfg->id);
+                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cfg->button_port);
+                    hashAdd_(hash, (uint32_t)cfg->relay_port);
+                    hashAdd_(hash, cfg->name);
+                    hashAdd_(hash, st->relay_on ? 1u : 0u);
+                }
+            }
+            return hash;
+        }
+        if (path == "/meteo")
+        {
+            if (_controllers)
+            {
+                MeteoController &meteo = _controllers->meteo();
+                for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+                {
+                    const auto *cfg = meteo.configByIndex(i);
+                    const auto *st = meteo.stateByIndex(i);
+                    if (!cfg || !st)
+                        continue;
+                    hashAdd_(hash, (uint32_t)cfg->id);
+                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cfg->type);
+                    hashAdd_(hash, (uint32_t)cfg->dht_pin);
+                    hashAdd_(hash, cfg->ds18_addr_set ? 1u : 0u);
+                    hashAdd_(hash, cfg->name);
+                    if (cfg->ds18_addr_set)
+                        hashAdd_(hash, cfg->ds18_addr, MeteoController::kAddrLen);
+                    hashAdd_(hash, st->ok ? 1u : 0u);
+                    hashAdd_(hash, st->has_temp ? 1u : 0u);
+                    hashAdd_(hash, st->has_humidity ? 1u : 0u);
+                    if (st->has_temp)
+                        hashAdd_(hash, scaled10_(st->temp_c));
+                    if (st->has_humidity)
+                        hashAdd_(hash, scaled10_(st->humidity));
+                    hashAdd_(hash, st->last_read_ms);
+                }
+            }
+            return hash;
+        }
+        if (path == "/thermo")
+        {
+            if (_controllers)
+            {
+                ThermoController &thermo = _controllers->thermo();
+                MeteoController &meteo = _controllers->meteo();
+                const MeteoController::SensorState *sensor_state_by_id[MeteoController::kSensorCount + 1] = {};
+                for (size_t s = 0; s < MeteoController::kSensorCount; ++s)
+                {
+                    const auto *scfg = meteo.configByIndex(s);
+                    const auto *sst = meteo.stateByIndex(s);
+                    if (!scfg || !sst)
+                        continue;
+                    if (scfg->id <= MeteoController::kSensorCount)
+                        sensor_state_by_id[scfg->id] = sst;
+                }
+                for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+                {
+                    const auto *cfg = thermo.configByIndex(i);
+                    const auto *st = thermo.stateByIndex(i);
+                    if (!cfg || !st)
+                        continue;
+                    hashAdd_(hash, (uint32_t)cfg->id);
+                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cfg->sensor_id);
+                    hashAdd_(hash, (uint32_t)cfg->heat_port);
+                    hashAdd_(hash, (uint32_t)cfg->cool_port);
+                    hashAdd_(hash, (uint32_t)cfg->button_port);
+                    hashAdd_(hash, cfg->name);
+                    hashAdd_(hash, (uint32_t)cfg->mode);
+                    hashAdd_(hash, scaled10_(cfg->target_c));
+                    hashAdd_(hash, scaled10_(cfg->hysteresis));
+                    hashAdd_(hash, st->heat_on ? 1u : 0u);
+                    hashAdd_(hash, st->cool_on ? 1u : 0u);
+                    hashAdd_(hash, st->power_on ? 1u : 0u);
+                    if (cfg->sensor_id <= MeteoController::kSensorCount)
+                    {
+                        const auto *sst = sensor_state_by_id[cfg->sensor_id];
+                        hashAdd_(hash, sst && sst->has_temp ? 1u : 0u);
+                        if (sst && sst->has_temp)
+                            hashAdd_(hash, scaled10_(sst->temp_c));
+                    }
+                }
+            }
+            return hash;
+        }
+        if (path == "/tanks")
+        {
+            if (_controllers)
+            {
+                TankController &tanks = _controllers->tanks();
+                for (size_t i = 0; i < TankController::kTankCount; ++i)
+                {
+                    const auto *cfg = tanks.configByIndex(i);
+                    const auto *st = tanks.stateByIndex(i);
+                    if (!cfg || !st)
+                        continue;
+                    hashAdd_(hash, (uint32_t)cfg->id);
+                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
+                    hashAdd_(hash, cfg->power_on ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cfg->level_low);
+                    hashAdd_(hash, (uint32_t)cfg->level_mid);
+                    hashAdd_(hash, (uint32_t)cfg->level_full);
+                    hashAdd_(hash, (uint32_t)cfg->relay_valve);
+                    hashAdd_(hash, (uint32_t)cfg->relay_pump);
+                    hashAdd_(hash, (uint32_t)cfg->relay_alarm);
+                    hashAdd_(hash, cfg->name);
+                    hashAdd_(hash, st->level_low ? 1u : 0u);
+                    hashAdd_(hash, st->level_mid ? 1u : 0u);
+                    hashAdd_(hash, st->level_full ? 1u : 0u);
+                    hashAdd_(hash, st->levels_ok ? 1u : 0u);
+                    hashAdd_(hash, st->valve_on ? 1u : 0u);
+                    hashAdd_(hash, st->pump_on ? 1u : 0u);
+                    hashAdd_(hash, st->alarm_on ? 1u : 0u);
+                }
+            }
+            return hash;
+        }
+        if (path == "/septic")
+        {
+            if (_controllers)
+            {
+                SepticController &septic = _controllers->septic();
+                for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+                {
+                    const auto *cfg = septic.configByIndex(i);
+                    const auto *st = septic.stateByIndex(i);
+                    if (!cfg || !st)
+                        continue;
+                    hashAdd_(hash, (uint32_t)cfg->id);
+                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
+                    hashAdd_(hash, cfg->monitoring_on ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cfg->warning_port);
+                    hashAdd_(hash, (uint32_t)cfg->alarm_port);
+                    hashAdd_(hash, (uint32_t)cfg->relay_warning);
+                    hashAdd_(hash, (uint32_t)cfg->relay_alarm);
+                    hashAdd_(hash, cfg->name);
+                    hashAdd_(hash, st->warning ? 1u : 0u);
+                    hashAdd_(hash, st->alarm ? 1u : 0u);
+                    hashAdd_(hash, st->relay_warning ? 1u : 0u);
+                    hashAdd_(hash, st->relay_alarm ? 1u : 0u);
+                }
+            }
+            return hash;
+        }
+        if (path == "/security")
+        {
+            if (_controllers)
+            {
+                SecurityController &sec = _controllers->security();
+                hashAdd_(hash, sec.controllerEnabled() ? 1u : 0u);
+                hashAdd_(hash, sec.armed() ? 1u : 0u);
+                hashAdd_(hash, sec.alarmOn() ? 1u : 0u);
+                hashAdd_(hash, static_cast<uint32_t>(sec.sirenPort()));
+                for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+                {
+                    const auto *cfg = sec.configByIndex(i);
+                    const auto *st = sec.stateByIndex(i);
+                    if (!cfg || !st)
+                        continue;
+                    hashAdd_(hash, (uint32_t)cfg->id);
+                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cfg->type);
+                    hashAdd_(hash, (uint32_t)cfg->port);
+                    hashAdd_(hash, cfg->silent ? 1u : 0u);
+                    hashAdd_(hash, cfg->name);
+                    hashAdd_(hash, st->raw ? 1u : 0u);
+                    hashAdd_(hash, st->is_detect ? 1u : 0u);
+                }
+                for (size_t i = 0; i < SecurityController::kPhoneCount; ++i)
+                {
+                    hashAdd_(hash, sec.phoneByIndex(i));
+                    hashAdd_(hash, sec.phoneNameByIndex(i));
+                    hashAdd_(hash, sec.phoneNotifyByIndex(i) ? 1u : 0u);
+                    hashAdd_(hash, sec.phoneCallByIndex(i) ? 1u : 0u);
+                    bool enabled = false;
+                    String number;
+                    sec.phoneSlot(i, number, enabled);
+                    hashAdd_(hash, enabled ? 1u : 0u);
+                }
+                for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
+                {
+                    uint8_t addr[8] = {};
+                    bool enabled = false;
+                    if (sec.keySlot(i, addr, enabled))
+                    {
+                        hashAdd_(hash, enabled ? 1u : 0u);
+                        if (enabled)
+                            hashAdd_(hash, addr, sizeof(addr));
+                    }
+                }
+            }
+            return hash;
+        }
+        if (path == "/ports")
+        {
+            hashAdd_(hash, listPortsHtml_());
+            return hash;
+        }
+        if (path == "/buses")
+        {
+            hashAdd_(hash, listI2cHtml_());
+            hashAdd_(hash, listOwHtml_());
+            return hash;
+        }
+        if (path == "/stack")
+        {
+            hashAdd_(hash, stackRoleName_(stackRole_()));
+            hashAdd_(hash, stackMasterHost_());
+            hashAdd_(hash, stackApiKey_());
+            hashAdd_(hash, listStackNodesHtml_());
+            return hash;
+        }
+        if (path == "/admin")
+        {
+            if (_cli_auth)
+                hashAdd_(hash, _cli_auth->adminPasswordSet() ? 1u : 0u);
+            return hash;
+        }
+        if (path == "/logs")
+        {
+            if (_log)
+            {
+                const size_t count = _log->recentCount();
+                hashAdd_(hash, static_cast<uint32_t>(count));
+                if (count > 0)
+                {
+                    char buf[LOGGER_BUFFER_SIZE] = {};
+                    if (_log->getRecentLine(count - 1, buf, sizeof(buf)))
+                        hashAdd_(hash, buf);
+                }
+            }
+            return hash;
+        }
+        if (path == "/telegram")
+        {
+            if (_tgbot)
+            {
+                hashAdd_(hash, _tgbot->token());
+                hashAdd_(hash, String((long long)_tgbot->chatId()));
+                hashAdd_(hash, _tgbot->clientKindName());
+                hashAdd_(hash, _tgbot->useProxy() ? "1" : "0");
+                hashAdd_(hash, _tgbot->proxyHost());
+                hashAdd_(hash, String((unsigned)_tgbot->proxyPort()));
+                hashAdd_(hash, _tgbot->proxyPath());
+            }
+            hashAdd_(hash, allowedUsersRowsHtml_());
+            return hash;
+        }
+        return hash;
     }
 
     static void appendHex_(String &out, uint32_t value)

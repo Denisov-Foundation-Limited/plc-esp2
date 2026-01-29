@@ -93,7 +93,7 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
       box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
     }
     .status-on { background: #22c55e; }
-    .status-off { background: #ef4444; }
+    .status-off { background: #64748b; }
   </style>
 </head>
 <body>
