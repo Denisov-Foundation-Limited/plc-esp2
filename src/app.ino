@@ -9,9 +9,9 @@
 /*                                                                    */
 /**********************************************************************/
 
-#include "app_services.hpp"
+#include "app.hpp"
 
-AppServices app;
+App app;
 
 void setup()
 {
