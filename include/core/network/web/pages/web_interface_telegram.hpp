@@ -70,6 +70,7 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
       cursor: pointer;
     }
     .status { color: var(--muted); font-size: 12px; }
+    .id-highlight { color: var(--accent); font-weight: 700; }
     a { color: #7dd3fc; text-decoration: none; }
     .nav { margin-bottom: 12px; }
     .checkbox { display: flex; gap: 8px; align-items: center; }
@@ -86,7 +87,7 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
       <h1>Telegram</h1>
       <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
       <p class="status">Клиент: <strong>%TGBOT_CLIENT%</strong></p>
-      <form method="POST" action="/telegram">
+      <form method="POST" action="/telegram" id="telegram-form">
         <div class="section">
           <h2>Доступ</h2>
           <div class="grid">
@@ -96,12 +97,18 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
             </div>
             <div>
               <label>Chat ID</label>
-              <input type="text" name="chat_id" value="%TGBOT_CHAT_ID%" placeholder="123456789">
+              <input type="text" name="chat_id" list="chat-id-list" value="%TGBOT_CHAT_ID%" placeholder="123456789">
+              <datalist id="chat-id-list">
+                <option value="%TGBOT_LAST_CHAT_ID%"></option>
+              </datalist>
             </div>
             <div class="checkbox" style="margin-top:22px;">
               <input type="checkbox" id="insecure" name="insecure" %TGBOT_INSECURE_CHECKED%>
               <label for="insecure">Insecure TLS</label>
             </div>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <span class="status">Последний Chat ID: <span id="last-chat-id" class="id-highlight">%TGBOT_LAST_CHAT_ID%</span></span>
           </div>
         </div>
         <div class="section">
@@ -162,6 +169,29 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
     if (useProxy) {
       useProxy.addEventListener('change', updateProxyFields);
       updateProxyFields();
+    }
+    const lastChatIdEl = document.getElementById('last-chat-id');
+    if (lastChatIdEl) {
+      const lastChatId = (lastChatIdEl.textContent || '').trim();
+      const hasLast = lastChatId && lastChatId !== '0';
+      if (!hasLast) {
+        lastChatIdEl.textContent = 'неизвестно';
+        const list = document.getElementById('chat-id-list');
+        if (list) {
+          list.innerHTML = '';
+        }
+      }
+    }
+    const telegramForm = document.getElementById('telegram-form');
+    const reloadKey = 'telegram_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname);
+    }
+    if (telegramForm) {
+      telegramForm.addEventListener('submit', () => {
+        sessionStorage.setItem(reloadKey, '1');
+      });
     }
   </script>
 </body>

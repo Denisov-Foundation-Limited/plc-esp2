@@ -49,11 +49,6 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     h1 { margin: 0 0 6px; font-size: 22px; }
     p { margin: 0 0 18px; color: var(--muted); }
     a { color: #7dd3fc; text-decoration: none; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { text-align: left; padding: 6px; border-bottom: 1px solid #1f2937; }
-    th { color: var(--muted); font-weight: 600; }
-    .right { text-align: right; }
-    .center { text-align: center; }
     .nav { margin-bottom: 12px; }
     .status { margin: 8px 0 16px; color: var(--accent); font-weight: 600; }
     .field {
@@ -84,19 +79,141 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     .status-err { background: #64748b; }
     .status-na { background: #64748b; }
     .actions { margin-top: 14px; }
-    .mini { width: 90px; }
-    .addr { width: 160px; }
-    .temp { width: 90px; }
-    .hum { width: 90px; }
-    .name { width: 140px; }
-    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    table { min-width: 760px; }
+    .mini { width: 100%; }
+    .addr { width: 100%; }
+    .temp { width: 100%; }
+    .hum { width: 100%; }
+    .name { width: 100%; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 10px;
+    }
+    .tile {
+      display: grid;
+      grid-template-columns: 140px minmax(0, 1fr);
+      gap: 14px;
+      padding: 16px;
+      border-radius: 12px;
+      border: 1px solid #1f2937;
+      background: #0b1220;
+      position: relative;
+      overflow: hidden;
+    }
+    .tile.disabled { opacity: 0.55; }
+    .tile.empty { grid-template-columns: 1fr; text-align: center; color: var(--muted); }
+    .tile-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .sensor-visual {
+      position: relative;
+      height: 140px;
+      border-radius: 16px;
+      border: 2px solid #1f2937;
+      background: linear-gradient(180deg, #0a1220 0%, #0c1628 100%);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px;
+    }
+    .sensor-icon {
+      width: 72px;
+      height: 72px;
+      opacity: 1;
+      color: #ef4444;
+    }
+    .sensor-icon.na {
+      opacity: 0.35;
+      color: #64748b;
+    }
+    .sensor-hum-icon {
+      width: 22px;
+      height: 22px;
+      color: #38bdf8;
+      opacity: 0.9;
+    }
+    .sensor-readout {
+      text-align: center;
+      line-height: 1.1;
+    }
+    .sensor-value {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+    .sensor-unit {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .sensor-hum {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .sensor-hum .sensor-value {
+      font-size: 18px;
+    }
+    .badge {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      background: rgba(17, 24, 39, 0.85);
+      color: var(--text);
+      font-size: 11px;
+      letter-spacing: 0.2px;
+      z-index: 2;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 14px;
+    }
+    .form-row {
+      display: grid;
+      grid-template-columns: 64px minmax(0, 1fr);
+      align-items: center;
+      gap: 8px;
+    }
+    .form-row.full {
+      grid-column: 1 / -1;
+      grid-template-columns: 64px minmax(0, 1fr);
+    }
+    .form-row > label:not(.switch) {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      margin: 8px 0 10px;
+      flex-wrap: wrap;
+    }
     @media (max-width: 720px) {
       .wrap { margin: 20px auto; }
       .card { padding: 16px; }
       h1 { font-size: 20px; }
-      table { min-width: 680px; font-size: 12px; }
-      th, td { padding: 5px; }
+      .grid { grid-template-columns: 1fr; }
+      .tile { grid-template-columns: 1fr; }
+      .sensor-visual { height: 120px; }
+      .sensor-value { font-size: 22px; }
       .field { padding: 5px 6px; }
       .btn { padding: 8px 12px; }
       .mini { width: 64px; }
@@ -114,26 +231,8 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <div class="status">%METEO_STATUS%</div>
       <form method="POST" action="/meteo" id="meteo-form">
-        <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th class="right">ID</th>
-              <th>Вкл</th>
-              <th>Имя</th>
-              <th>Тип</th>
-              <th>Пин</th>
-              <th>Адрес</th>
-              <th class="right">Темп</th>
-              <th class="right">Влажн</th>
-              <th class="center">OK</th>
-              <th class="right">Возраст</th>
-            </tr>
-          </thead>
-          <tbody>
-            %METEO_ROWS%
-          </tbody>
-        </table>
+        <div class="grid">
+          %METEO_TILES%
         </div>
         <p class="actions">
           <button class="btn" type="submit">Сохранить</button>
@@ -145,14 +244,25 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     const sensorOptions = %SENSOR_JSON%;
     const sensorUsed = %SENSOR_USED_JSON%;
 
+    function labelFor(val) {
+      return 'sens' + val;
+    }
+    function optionValue(item) {
+      return (item && typeof item === 'object') ? String(item.v) : String(item);
+    }
+    function optionLabel(item) {
+      if (item && typeof item === 'object' && item.l) return item.l;
+      return labelFor(optionValue(item));
+    }
     function buildOptions(list, selected) {
       let html = '<option value="">-</option>';
       for (let i = 0; i < list.length; i++) {
-        const val = String(list[i]);
+        const val = optionValue(list[i]);
         if (sensorUsed.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
           continue;
         }
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + val + '</option>';
+        const label = optionLabel(list[i]);
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
       }
       return html;
     }
@@ -177,13 +287,23 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       const addrCell = row.querySelector('.addr-cell');
       const pinSelect = pinCell ? pinCell.querySelector('select') : null;
       const addrInput = addrCell ? addrCell.querySelector('input') : null;
+      const addrSelect = addrCell ? addrCell.querySelector('select') : null;
       const val = type ? type.value : 'none';
-      setDisabled(pinSelect, val !== 'dht22');
-      setDisabled(addrInput, val !== 'ds18b20');
+      const showPin = (val === 'dht22');
+      const showAddr = (val === 'ds18b20');
+      if (pinCell) {
+        pinCell.style.display = showPin ? '' : 'none';
+      }
+      if (addrCell) {
+        addrCell.style.display = showAddr ? '' : 'none';
+      }
+      setDisabled(pinSelect, !showPin);
+      setDisabled(addrInput, !showAddr);
+      setDisabled(addrSelect, !showAddr);
     }
 
     document.querySelectorAll('select.meteo-type').forEach((el) => {
-      const row = el.closest('tr');
+      const row = el.closest('.tile');
       if (row) {
         updateRow(row);
         el.addEventListener('change', () => updateRow(row));
@@ -194,6 +314,16 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     if (meteoForm) {
       meteoForm.addEventListener('input', () => { meteoDirty = true; });
       meteoForm.addEventListener('change', () => { meteoDirty = true; });
+    }
+    const reloadKey = 'meteo_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname);
+    }
+    if (meteoForm) {
+      meteoForm.addEventListener('submit', () => {
+        sessionStorage.setItem(reloadKey, '1');
+      });
     }
     const scrollKey = 'meteo_scroll_y';
     const savedScroll = sessionStorage.getItem(scrollKey);

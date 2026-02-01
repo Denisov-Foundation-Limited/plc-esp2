@@ -13,7 +13,7 @@
 
 #include "core/task_manager.hpp"
 #include "core/network/wifi_manager.hpp"
-#include "core/network/telegram/telegram.hpp"
+#include "core/network/telegram/telegram_bot.hpp"
 #include "hal/gpio/extender.hpp"
 #include "controllers/controllers.hpp"
 #include "utils/meteo_history.hpp"
@@ -22,7 +22,7 @@ template <size_t N>
 class TaskBinder
 {
 public:
-    TaskBinder(TaskManager<N> &tm, WifiManager &wifi, TelegramClient &tgbot, Extender &ext,
+    TaskBinder(TaskManager<N> &tm, WifiManager &wifi, TelegramBot &tgbot, Extender &ext,
                Controllers &controllers, MeteoHistory &meteo_history)
         : _tm(tm),
           _wifi(wifi),
@@ -99,7 +99,7 @@ private:
 
     TaskManager<N> &_tm;
     WifiManager &_wifi;
-    TelegramClient &_tgbot;
+    TelegramBot &_tgbot;
     Extender &_ext;
     Controllers &_controllers;
     MeteoHistory &_meteo_history;

@@ -78,13 +78,26 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
       %NAV%
       <h1>Админка</h1>
       <p class="status">Статус: <strong>%ADMIN_STATUS%</strong></p>
-      <form method="POST" action="/admin">
+      <form method="POST" action="/admin" id="admin-form">
         <label for="password">Новый пароль</label>
         <input id="password" type="password" name="password" placeholder="Введите новый пароль">
         <button type="submit">Сохранить</button>
       </form>
     </div>
   </div>
+  <script>
+    const adminForm = document.getElementById('admin-form');
+    const reloadKey = 'admin_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname);
+    }
+    if (adminForm) {
+      adminForm.addEventListener('submit', () => {
+        sessionStorage.setItem(reloadKey, '1');
+      });
+    }
+  </script>
 </body>
 </html>
 )HTML";

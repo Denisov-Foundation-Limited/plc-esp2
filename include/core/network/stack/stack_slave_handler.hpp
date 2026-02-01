@@ -668,6 +668,31 @@ private:
             sendAck_(cmd_id, doc);
             return;
         }
+        if (action == "get_lights")
+        {
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            JsonArray arr = doc["items"].to<JsonArray>();
+            for (size_t i = 0; i < SocketController::kLightCount; ++i)
+            {
+                const auto *cfg = _sockets.lightConfigByIndex(i);
+                const auto *st = _sockets.lightStateByIndex(i);
+                if (!cfg || !st || !cfg->enabled)
+                    continue;
+                JsonObject o = arr.add<JsonObject>();
+                o["id"] = (unsigned)cfg->id;
+                o["enabled"] = cfg->enabled;
+                if (cfg->name.length())
+                    o["name"] = cfg->name;
+                if (cfg->button_port != SocketController::kInvalidPort)
+                    o["button"] = cfg->button_port;
+                if (cfg->relay_port != SocketController::kInvalidPort)
+                    o["relay"] = cfg->relay_port;
+                o["state"] = st->relay_on;
+            }
+            sendAck_(cmd_id, doc);
+            return;
+        }
         if (action == "set")
         {
             if (!params.is<JsonObjectConst>() || !params["items"].is<JsonArrayConst>())
@@ -698,6 +723,41 @@ private:
                 {
                     const bool on = item["state"].as<int>() != 0;
                     _sockets.setRelayById(id, on);
+                }
+            }
+            sendAck_(cmd_id);
+            return;
+        }
+        if (action == "set_lights")
+        {
+            if (!params.is<JsonObjectConst>() || !params["items"].is<JsonArrayConst>())
+            {
+                sendErr_(cmd_id, "missing items");
+                return;
+            }
+            JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            for (JsonVariantConst v : items)
+            {
+                if (!v.is<JsonObjectConst>())
+                    continue;
+                JsonObjectConst item = v.as<JsonObjectConst>();
+                if (!item["id"].is<unsigned>())
+                    continue;
+                const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
+                {
+                    _sockets.toggleLightRelayById(id);
+                    continue;
+                }
+                if (item["state"].is<bool>())
+                {
+                    const bool on = item["state"].as<bool>();
+                    _sockets.setLightRelayById(id, on);
+                }
+                else if (item["state"].is<int>())
+                {
+                    const bool on = item["state"].as<int>() != 0;
+                    _sockets.setLightRelayById(id, on);
                 }
             }
             sendAck_(cmd_id);

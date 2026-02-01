@@ -706,9 +706,15 @@ private:
 
         const bool changed = writeOutputs_(cfg, st, heat, cool);
         if (changed)
-            _logs.info(F("THERMO"), F("id: %u mode: %s temp: %.2f heat: %s cool: %s"),
-                       (unsigned)cfg.id, modeName_(cfg.mode), t,
-                       st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
+        {
+            const char *status = "idle";
+            if (st.heat_on)
+                status = "heat";
+            else if (st.cool_on)
+                status = "cool";
+            _logs.info(F("THERMO"), F("id: %u mode: %s temp: %.2f status: %s"),
+                       (unsigned)cfg.id, modeName_(cfg.mode), t, status);
+        }
     }
 
     bool writeOff_(const DeviceConfig &cfg, DeviceState &st)

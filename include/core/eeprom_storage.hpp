@@ -23,6 +23,8 @@ public:
     static constexpr uint16_t kDefaultBase = 0;
     static constexpr uint16_t kSocketCount = 72;
     static constexpr uint16_t kSocketMaskBytes = (kSocketCount + 7) / 8;
+    static constexpr uint16_t kLightCount = 72;
+    static constexpr uint16_t kLightMaskBytes = (kLightCount + 7) / 8;
     static constexpr uint16_t kThermoCount = 20;
     static constexpr uint16_t kThermoMaskBytes = (kThermoCount + 7) / 8;
     static constexpr uint16_t kThermoTargetBytes = (uint16_t)(kThermoCount * sizeof(int16_t));
@@ -33,6 +35,12 @@ public:
     {
         uint8_t enabled_mask[kSocketMaskBytes] = {};
         uint8_t state_mask[kSocketMaskBytes] = {};
+    };
+
+    struct LightSnapshot
+    {
+        uint8_t enabled_mask[kLightMaskBytes] = {};
+        uint8_t state_mask[kLightMaskBytes] = {};
     };
 
     struct ThermoSnapshot
@@ -61,6 +69,11 @@ public:
     {
         _thermo_base = base;
         _thermo_base_set = true;
+    }
+    void setLightsBase(uint16_t base)
+    {
+        _lights_base = base;
+        _lights_base_set = true;
     }
     void setTankBase(uint16_t base)
     {
@@ -144,6 +157,75 @@ public:
         }
 
         return loadLegacy_(out);
+    }
+
+    bool saveLights(const LightSnapshot &snap)
+    {
+        if (!_eeprom)
+            return false;
+        uint16_t slot = 0;
+        uint32_t seq = 1;
+        if (_wl_slots > 1 && _lights_has_seq)
+        {
+            slot = (uint16_t)((_lights_last_slot + 1) % _wl_slots);
+            seq = _lights_last_seq + 1;
+        }
+        const uint16_t base = lightSlotBase_(slot);
+        LightHeader hdr{};
+        hdr.magic = kLightMagic;
+        hdr.version = kLightVersion;
+        hdr.light_count = kLightCount;
+        hdr.seq = seq;
+        if (!_eeprom->write(base, reinterpret_cast<const uint8_t *>(&hdr), sizeof(hdr)))
+            return false;
+        const uint16_t off = base + sizeof(hdr);
+        if (!_eeprom->write(off, snap.enabled_mask, kLightMaskBytes))
+            return false;
+        if (!_eeprom->write(off + kLightMaskBytes, snap.state_mask, kLightMaskBytes))
+            return false;
+        _lights_last_slot = slot;
+        _lights_last_seq = seq;
+        _lights_has_seq = true;
+        return true;
+    }
+
+    bool loadLights(LightSnapshot &out)
+    {
+        if (!_eeprom)
+            return false;
+        LightHeader best_hdr{};
+        uint16_t best_slot = 0;
+        bool found = false;
+
+        const uint16_t slots = (_wl_slots == 0) ? 1 : _wl_slots;
+        for (uint16_t i = 0; i < slots; ++i)
+        {
+            LightHeader hdr{};
+            const uint16_t base = lightSlotBase_(i);
+            if (!_eeprom->read(base, reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)))
+                continue;
+            if (hdr.magic != kLightMagic || hdr.version != kLightVersion || hdr.light_count != kLightCount)
+                continue;
+            if (!found || isSeqNewer_(hdr.seq, best_hdr.seq))
+            {
+                best_hdr = hdr;
+                best_slot = i;
+                found = true;
+            }
+        }
+
+        if (!found)
+            return false;
+
+        const uint16_t off = lightSlotBase_(best_slot) + sizeof(best_hdr);
+        if (!_eeprom->read(off, out.enabled_mask, kLightMaskBytes))
+            return false;
+        if (!_eeprom->read(off + kLightMaskBytes, out.state_mask, kLightMaskBytes))
+            return false;
+        _lights_last_slot = best_slot;
+        _lights_last_seq = best_hdr.seq;
+        _lights_has_seq = true;
+        return true;
     }
 
     bool saveThermo(const ThermoSnapshot &snap)
@@ -355,6 +437,14 @@ private:
         uint32_t seq = 0;
     };
 
+    struct LightHeader
+    {
+        uint32_t magic = 0;
+        uint16_t version = 0;
+        uint16_t light_count = 0;
+        uint32_t seq = 0;
+    };
+
     struct ThermoHeader
     {
         uint32_t magic = 0;
@@ -382,6 +472,8 @@ private:
     static constexpr uint32_t kMagic = 0x45535031u; // "ESP1"
     static constexpr uint16_t kVersion = 2;
     static constexpr uint16_t kLegacyVersion = 1;
+    static constexpr uint32_t kLightMagic = 0x45535035u; // "ESP5"
+    static constexpr uint16_t kLightVersion = 1;
     static constexpr uint32_t kThermoMagic = 0x45535032u; // "ESP2"
     static constexpr uint16_t kThermoVersion = 2;
     static constexpr uint32_t kTankMagic = 0x45535033u; // "ESP3"
@@ -396,6 +488,11 @@ private:
     uint16_t _last_slot = 0;
     uint32_t _last_seq = 0;
     bool _has_seq = false;
+    bool _lights_base_set = false;
+    uint16_t _lights_base = 0;
+    uint16_t _lights_last_slot = 0;
+    uint32_t _lights_last_seq = 0;
+    bool _lights_has_seq = false;
     bool _thermo_base_set = false;
     uint16_t _thermo_base = 0;
     uint16_t _thermo_last_slot = 0;
@@ -423,6 +520,11 @@ private:
         return (uint16_t)(sizeof(StorageHeader) + 2u * kSocketMaskBytes);
     }
 
+    uint16_t lightSlotSize_() const
+    {
+        return (uint16_t)(sizeof(LightHeader) + 2u * kLightMaskBytes);
+    }
+
     uint16_t thermoSlotSize_() const
     {
         return (uint16_t)(sizeof(ThermoHeader) + kThermoMaskBytes + kThermoTargetBytes);
@@ -438,11 +540,19 @@ private:
         return (uint16_t)(sizeof(SecurityHeader) + sizeof(SecuritySnapshot));
     }
 
+    uint16_t lightsBase_() const
+    {
+        if (_lights_base_set)
+            return _lights_base;
+        const uint32_t base = (uint32_t)_base + (uint32_t)_wl_slots * slotSize_();
+        return (uint16_t)base;
+    }
+
     uint16_t thermoBase_() const
     {
         if (_thermo_base_set)
             return _thermo_base;
-        const uint32_t base = (uint32_t)_base + (uint32_t)_wl_slots * slotSize_();
+        const uint32_t base = (uint32_t)lightsBase_() + (uint32_t)_wl_slots * lightSlotSize_();
         return (uint16_t)base;
     }
 
@@ -465,6 +575,12 @@ private:
     uint16_t thermoSlotBase_(uint16_t slot) const
     {
         const uint32_t base = (uint32_t)thermoBase_() + (uint32_t)slot * thermoSlotSize_();
+        return (uint16_t)base;
+    }
+
+    uint16_t lightSlotBase_(uint16_t slot) const
+    {
+        const uint32_t base = (uint32_t)lightsBase_() + (uint32_t)slot * lightSlotSize_();
         return (uint16_t)base;
     }
 

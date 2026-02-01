@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -92,7 +92,8 @@ public:
             reply = "Доступно только для локального устройства";
             return true;
         }
-        if (TelegramMenu::_self->_security->arm())
+        const String user = TelegramMenuSecurity::userFromChat_(*TelegramMenu::_self, u);
+        if (TelegramMenu::_self->_security->armFrom("telegram", user))
             reply = "Охрана включена";
         else
             reply = "Контроллер охраны выключен";
@@ -115,7 +116,8 @@ public:
             reply = "Доступно только для локального устройства";
             return true;
         }
-        TelegramMenu::_self->_security->disarm();
+        const String user = TelegramMenuSecurity::userFromChat_(*TelegramMenu::_self, u);
+        TelegramMenu::_self->_security->disarmFrom("telegram", user);
         reply = "Охрана выключена";
         return true;
     }
@@ -287,13 +289,15 @@ public:
         }
         if (u.text == F("Взять под охрану"))
         {
-            self._security->arm();
+            const String user = TelegramMenuSecurity::userFromChat_(self, u);
+            self._security->armFrom("telegram", user);
             TelegramMenuSecurity::sendSecurityMenu_(self, u.chat_id);
             return true;
         }
         if (u.text == F("Снять с охраны"))
         {
-            self._security->disarm();
+            const String user = TelegramMenuSecurity::userFromChat_(self, u);
+            self._security->disarmFrom("telegram", user);
             TelegramMenuSecurity::sendSecurityMenu_(self, u.chat_id);
             return true;
         }
@@ -310,6 +314,18 @@ public:
             return true;
         }
         return false;
+    }
+
+    static String userFromChat_(TelegramMenu &self, const TelegramClient::Update &u)
+    {
+        String user = self.normalizeUsername_(u.from);
+        size_t idx = 0;
+        if (u.chat_id != 0 && self.findAllowedUserByChatId_(u.chat_id, idx))
+        {
+            if (self._allowed_users[idx].username.length())
+                user = self._allowed_users[idx].username;
+        }
+        return user;
     }
 
     static bool parseSecurityId_(const String &text, uint8_t &out)
@@ -331,3 +347,5 @@ public:
         return true;
     }
 };
+
+

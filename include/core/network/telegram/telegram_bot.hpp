@@ -112,14 +112,19 @@ public:
 
     bool sendText(int64_t chat_id, const String &text, const String &reply_markup = "")
     {
-        String payload = buildMessagePayload_(chat_id, text, reply_markup);
-        return _client.sendMessageRaw(payload);
+        return enqueueText_(chat_id, text, reply_markup, "");
     }
 
     bool sendText(int64_t chat_id, const String &text, const String &reply_markup, const String &parse_mode)
     {
-        String payload = buildMessagePayload_(chat_id, text, reply_markup, parse_mode);
-        return _client.sendMessageRaw(payload);
+        return enqueueText_(chat_id, text, reply_markup, parse_mode);
+    }
+
+    void task()
+    {
+        _client.task();
+        processOutbox_();
+        ++_send_tick;
     }
 
     bool showMenu(int64_t chat_id, const Menu *menu, const String &prefix = "")
@@ -185,6 +190,15 @@ private:
         const char *menu_id = nullptr;
     };
 
+    struct OutMsg
+    {
+        int64_t chat_id = 0;
+        String text;
+        String reply_markup;
+        String parse_mode;
+        uint32_t ready_tick = 0;
+    };
+
     TelegramClient &_client;
     const Menu *_menus = nullptr;
     size_t _menu_count = 0;
@@ -201,6 +215,11 @@ private:
 
     size_t _max_chats = 8;
     std::vector<ChatState> _chat_states;
+    std::vector<OutMsg> _out_queue;
+    size_t _out_head = 0;
+    uint32_t _send_tick = 0;
+
+    static constexpr size_t kMaxOutQueue = 32;
 
     bool handleUpdate_(const TelegramClient::Update &u)
     {
@@ -572,5 +591,42 @@ private:
             return;
         TelegramBot *bot = static_cast<TelegramBot *>(ctx);
         bot->processUpdates(updates);
+    }
+
+    bool enqueueText_(int64_t chat_id, const String &text, const String &reply_markup, const String &parse_mode)
+    {
+        const size_t pending = (_out_queue.size() >= _out_head) ? (_out_queue.size() - _out_head) : 0;
+        if (pending >= kMaxOutQueue)
+            return false;
+        OutMsg msg;
+        msg.chat_id = chat_id;
+        msg.text = text;
+        msg.reply_markup = reply_markup;
+        msg.parse_mode = parse_mode;
+        msg.ready_tick = _send_tick + 1;
+        _out_queue.push_back(msg);
+        return true;
+    }
+
+    void processOutbox_()
+    {
+        if (_out_head >= _out_queue.size())
+            return;
+        OutMsg &msg = _out_queue[_out_head];
+        if (msg.ready_tick > _send_tick)
+            return;
+        String payload = buildMessagePayload_(msg.chat_id, msg.text, msg.reply_markup, msg.parse_mode);
+        _client.sendMessageRaw(payload);
+        ++_out_head;
+        if (_out_head >= _out_queue.size())
+        {
+            _out_queue.clear();
+            _out_head = 0;
+        }
+        else if (_out_head >= 16 && _out_head * 2 >= _out_queue.size())
+        {
+            _out_queue.erase(_out_queue.begin(), _out_queue.begin() + (int)_out_head);
+            _out_head = 0;
+        }
     }
 };

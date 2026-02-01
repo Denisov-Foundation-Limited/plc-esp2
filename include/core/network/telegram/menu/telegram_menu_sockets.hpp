@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -92,74 +92,129 @@ public:
     {
         out.clear();
         if (!self._sockets)
+        {
             out.reserve(1);
+        }
+        else if (lights_only)
+        {
+            out.reserve(SocketController::kLightCount + 1);
+        }
         else
+        {
             out.reserve(SocketController::kSocketCount + 1);
+        }
         if (self._sockets)
         {
-            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+            if (lights_only)
             {
-                const auto *cfg = self._sockets->configByIndex(i);
-                if (!cfg || !cfg->enabled)
-                    continue;
-                if (lights_only && cfg->kind != SocketController::Kind::Light)
-                    continue;
-                if (!lights_only && cfg->kind == SocketController::Kind::Light)
-                    continue;
-                String label;
-                if (cfg->name.length())
+                for (size_t i = 0; i < SocketController::kLightCount; ++i)
                 {
-                    label += String((unsigned)cfg->id);
-                    label += ": ";
-                    label += cfg->name;
+                    const auto *cfg = self._sockets->lightConfigByIndex(i);
+                    if (!cfg || !cfg->enabled)
+                        continue;
+                    String label;
+                    if (cfg->name.length())
+                    {
+                        label += String((unsigned)cfg->id);
+                        label += ": ";
+                        label += cfg->name;
+                    }
+                    else
+                    {
+                        label += F("РЎРІРµС‚ ");
+                        label += String((unsigned)cfg->id);
+                    }
+                    out.push_back(label);
                 }
-                else
+            }
+            else
+            {
+                for (size_t i = 0; i < SocketController::kSocketCount; ++i)
                 {
-                    label += lights_only ? F("Свет ") : F("Розетка ");
-                    label += String((unsigned)cfg->id);
+                    const auto *cfg = self._sockets->configByIndex(i);
+                    if (!cfg || !cfg->enabled)
+                        continue;
+                    String label;
+                    if (cfg->name.length())
+                    {
+                        label += String((unsigned)cfg->id);
+                        label += ": ";
+                        label += cfg->name;
+                    }
+                    else
+                    {
+                        label += F("Р РѕР·РµС‚РєР° ");
+                        label += String((unsigned)cfg->id);
+                    }
+                    out.push_back(label);
                 }
-                out.push_back(label);
             }
         }
-        out.push_back(F("Назад"));
+        out.push_back(F("РќР°Р·Р°Рґ"));
     }
 
     static String socketListTextHtml_(TelegramMenu &self, bool lights_only = false)
     {
-        String out = lights_only ? F("<b>Свет:</b>") : F("<b>Розетки:</b>");
+        String out = lights_only ? F("<b>РЎРІРµС‚:</b>") : F("<b>Р РѕР·РµС‚РєРё:</b>");
         out.reserve(512);
         if (!self._sockets)
         {
-            out += F("\n  недоступны");
+            out += F("\n  РЅРµРґРѕСЃС‚СѓРїРЅС‹");
             return out;
         }
         bool any = false;
-        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+        if (lights_only)
         {
-            const auto *cfg = self._sockets->configByIndex(i);
-            const auto *st = self._sockets->stateByIndex(i);
-            if (!cfg || !st || !cfg->enabled)
-                continue;
-            if (lights_only && cfg->kind != SocketController::Kind::Light)
-                continue;
-            if (!lights_only && cfg->kind == SocketController::Kind::Light)
-                continue;
-            any = true;
-            out += "\n  ";
-            out += st->relay_on ? F("🟢 ") : F("⚪ ");
-            out += String((unsigned)cfg->id);
-            out += ": ";
-            if (cfg->name.length())
+            for (size_t i = 0; i < SocketController::kLightCount; ++i)
             {
-                out += "<b>";
-                out += self.escapeHtml_(cfg->name);
-                out += "</b>";
+                const auto *cfg = self._sockets->lightConfigByIndex(i);
+                const auto *st = self._sockets->lightStateByIndex(i);
+                if (!cfg || !st || !cfg->enabled)
+                    continue;
+                any = true;
+                out += "\n  ";
+                out += st->relay_on ? F("рџџў ") : F("вљЄ ");
+                out += String((unsigned)cfg->id);
+                out += ": ";
+                if (cfg->name.length())
+                {
+                    out += "<b>";
+                    out += self.escapeHtml_(cfg->name);
+                    out += "</b>";
+                }
+                else
+                {
+                    out += "-";
+                }
             }
-            else
-                out += "-";
+        }
+        else
+        {
+            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+            {
+                const auto *cfg = self._sockets->configByIndex(i);
+                const auto *st = self._sockets->stateByIndex(i);
+                if (!cfg || !st || !cfg->enabled)
+                    continue;
+                any = true;
+                out += "\n  ";
+                out += st->relay_on ? F("рџџў ") : F("вљЄ ");
+                out += String((unsigned)cfg->id);
+                out += ": ";
+                if (cfg->name.length())
+                {
+                    out += "<b>";
+                    out += self.escapeHtml_(cfg->name);
+                    out += "</b>";
+                }
+                else
+                {
+                    out += "-";
+                }
+            }
         }
         if (!any)
-            out += F("\n  пусто");
+            out += F("\n  РїСѓСЃС‚Рѕ");
         return out;
     }
 
@@ -202,14 +257,16 @@ public:
             return true;
         }
         uint8_t id = 0;
-        if (!TelegramMenuSockets::parseSocketLabel_(u.text, id))
+        const uint8_t max_id = lights_only ? (uint8_t)SocketController::kLightCount
+                                           : (uint8_t)SocketController::kSocketCount;
+        if (!TelegramMenuSockets::parseSocketLabel_(u.text, id, max_id))
         {
             self._bot->sendText(u.chat_id, lights_only ? F("Неизвестный свет") : F("Неизвестная розетка"));
             return true;
         }
         if (!self._sockets)
         {
-            self._bot->sendText(u.chat_id, F("Розетки недоступны"));
+            self._bot->sendText(u.chat_id, lights_only ? F("Свет недоступен") : F("Розетки недоступны"));
             return true;
         }
         if (!self.isLocalSelected_(u.chat_id))
@@ -217,23 +274,39 @@ public:
             self._bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
             return true;
         }
-        const auto *cfg = self._sockets->config(id);
-        if (!cfg || (lights_only && cfg->kind != SocketController::Kind::Light) ||
-            (!lights_only && cfg->kind == SocketController::Kind::Light))
+        if (lights_only)
         {
-            self._bot->sendText(u.chat_id, lights_only ? F("Неизвестный свет") : F("Неизвестная розетка"));
-            return true;
+            const auto *cfg = self._sockets->lightConfig(id);
+            if (!cfg)
+            {
+                self._bot->sendText(u.chat_id, F("Неизвестный свет"));
+                return true;
+            }
+            if (!self._sockets->toggleLightRelayById(id))
+            {
+                self._bot->sendText(u.chat_id, F("Не удалось"));
+                return true;
+            }
         }
-        if (!self._sockets->toggleRelayById(id))
+        else
         {
-            self._bot->sendText(u.chat_id, F("Не удалось"));
-            return true;
+            const auto *cfg = self._sockets->config(id);
+            if (!cfg)
+            {
+                self._bot->sendText(u.chat_id, F("Неизвестная розетка"));
+                return true;
+            }
+            if (!self._sockets->toggleRelayById(id))
+            {
+                self._bot->sendText(u.chat_id, F("Не удалось"));
+                return true;
+            }
         }
         TelegramMenuSockets::sendSocketMenu_(self, u.chat_id, lights_only);
         return true;
     }
 
-    static bool parseSocketIdFromText_(const String &text, uint8_t &out)
+    static bool parseSocketIdFromText_(const String &text, uint8_t &out, uint8_t max_id)
     {
         const size_t len = text.length();
         if (len == 0)
@@ -257,10 +330,10 @@ public:
         if (start < 0 || end <= start)
             return false;
         String num = text.substring(start, end);
-        return TelegramMenuSockets::parseSocketId_(num, out);
+        return TelegramMenuSockets::parseSocketId_(num, out, max_id);
     }
 
-    static bool parseSocketId_(const String &text, uint8_t &out)
+    static bool parseSocketId_(const String &text, uint8_t &out, uint8_t max_id)
     {
         String t = text;
         t.trim();
@@ -273,13 +346,13 @@ public:
                 return false;
         }
         const int v = t.toInt();
-        if (v <= 0 || v > (int)SocketController::kSocketCount)
+        if (v <= 0 || v > (int)max_id)
             return false;
         out = (uint8_t)v;
         return true;
     }
 
-    static bool parseSocketLabel_(const String &text, uint8_t &out)
+    static bool parseSocketLabel_(const String &text, uint8_t &out, uint8_t max_id)
     {
         String t = text;
         t.trim();
@@ -290,7 +363,7 @@ public:
         {
             String head = t.substring(0, colon);
             head.trim();
-            return TelegramMenuSockets::parseSocketIdFromText_(head, out);
+            return TelegramMenuSockets::parseSocketIdFromText_(head, out, max_id);
         }
         String low = t;
         low.toLowerCase();
@@ -298,8 +371,8 @@ public:
         {
             String tail = t.substring(6);
             tail.trim();
-            return TelegramMenuSockets::parseSocketIdFromText_(tail, out);
+            return TelegramMenuSockets::parseSocketIdFromText_(tail, out, max_id);
         }
-        return TelegramMenuSockets::parseSocketIdFromText_(t, out);
+        return TelegramMenuSockets::parseSocketIdFromText_(t, out, max_id);
     }
 };

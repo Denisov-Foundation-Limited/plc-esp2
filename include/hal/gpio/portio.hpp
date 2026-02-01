@@ -94,6 +94,7 @@ public:
         PortMode mode;
         PinType type;
         Location location = Location::Cpu;
+        uint8_t ui_id = 0;
         bool allow_control;
         bool initial_level;
 

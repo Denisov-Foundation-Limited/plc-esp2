@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -146,8 +146,9 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       transition: height .2s ease;
     }
     .tank-fill.level-low { background: linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%); }
-    .tank-fill.level-mid { background: linear-gradient(180deg, #facc15 0%, #eab308 100%); }
-    .tank-fill.level-full { background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%); }
+    .tank-fill.level-mid { background: linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%); }
+    .tank-fill.level-full { background: linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%); }
+    .tank-fill.level-empty { background: linear-gradient(180deg, #dc2626 0%, #7f1d1d 100%); }
     .tank-label {
       position: absolute;
       top: 10px;
@@ -251,15 +252,29 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       dinput: %TANK_DINPUT_USED_JSON%,
       relay: %TANK_RELAY_USED_JSON%
     };
+    function labelFor(type, val) {
+      if (type === 'dinput') return 'in' + val;
+      if (type === 'relay') return 'rly' + val;
+      if (type === 'sensor') return 'sens' + val;
+      return val;
+    }
+    function optionValue(item) {
+      return (item && typeof item === 'object') ? String(item.v) : String(item);
+    }
+    function optionLabel(item, type) {
+      if (item && typeof item === 'object' && item.l) return item.l;
+      return labelFor(type, optionValue(item));
+    }
     function buildOptions(list, selected, type) {
       let html = '<option value="">-</option>';
       const used = tankUsed[type] || [];
       for (let i = 0; i < list.length; i++) {
-        const val = String(list[i]);
+        const val = optionValue(list[i]);
         if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
           continue;
         }
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + val + '</option>';
+        const label = optionLabel(list[i], type);
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
       }
       return html;
     }
@@ -279,8 +294,21 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       tanksForm.addEventListener('input', markDirty);
       tanksForm.addEventListener('change', markDirty);
     }
+    const reloadKey = 'tanks_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname);
+    }
+    if (tanksForm) {
+      tanksForm.addEventListener('submit', () => {
+        sessionStorage.setItem(reloadKey, '1');
+      });
+    }
     document.querySelectorAll('input.tank-power').forEach((el) => {
       el.addEventListener('change', () => {
+        if (el.dataset.busy === '1') return;
+        el.dataset.busy = '1';
+        el.disabled = true;
         const name = el.dataset.action;
         const hidden = document.querySelector('input[name="' + name + '"]');
         if (hidden) {

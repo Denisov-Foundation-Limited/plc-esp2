@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -311,9 +311,11 @@ public:
     static String thermoControlMarkup_()
     {
         std::vector<String> labels;
-        labels.reserve(8);
+        labels.reserve(10);
         labels.push_back(F("Темп +"));
         labels.push_back(F("Темп -"));
+        labels.push_back(F("Гист +"));
+        labels.push_back(F("Гист -"));
         labels.push_back(F("Питание Вкл"));
         labels.push_back(F("Питание Выкл"));
         labels.push_back(F("Авто"));
@@ -365,6 +367,23 @@ public:
             const auto *cfg = self._thermo->config(id);
             if (cfg)
                 self._thermo->setTarget(id, cfg->target_c - TelegramMenu::kThermoTargetStep);
+        }
+        else if (u.text == F("Гист +"))
+        {
+            const auto *cfg = self._thermo->config(id);
+            if (cfg)
+                self._thermo->setHysteresis(id, cfg->hysteresis + TelegramMenu::kThermoHystStep);
+        }
+        else if (u.text == F("Гист -"))
+        {
+            const auto *cfg = self._thermo->config(id);
+            if (cfg)
+            {
+                float h = cfg->hysteresis - TelegramMenu::kThermoHystStep;
+                if (h < 0.0f)
+                    h = 0.0f;
+                self._thermo->setHysteresis(id, h);
+            }
         }
         else if (u.text == F("Питание Вкл"))
         {
@@ -503,3 +522,4 @@ public:
         return TelegramMenuThermo::parseThermoIdFromText_(t, out);
     }
 };
+

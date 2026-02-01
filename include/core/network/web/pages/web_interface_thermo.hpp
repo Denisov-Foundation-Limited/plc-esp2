@@ -135,6 +135,11 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       background: linear-gradient(180deg, #0a1220 0%, #0c1628 100%);
       overflow: hidden;
     }
+    .thermo-left {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
     .icon {
       position: absolute;
       left: 50%;
@@ -161,6 +166,11 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       font-size: 12px;
       letter-spacing: 0.2px;
       z-index: 2;
+      white-space: nowrap;
+    }
+    .temp-pill .temp-value {
+      font-weight: 700;
+      color: #38bdf8;
     }
     .temp-pill.sensor { top: 10px; }
     .temp-pill.target { bottom: 10px; }
@@ -189,9 +199,12 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
     }
     .form-row {
       display: grid;
-      grid-template-columns: 78px minmax(0, 1fr);
+      grid-template-columns: max-content minmax(0, 1fr);
       align-items: center;
       gap: 8px;
+    }
+    .form-row.full {
+      grid-column: 1 / -1;
     }
     .form-row > label:not(.switch) {
       color: var(--muted);
@@ -218,6 +231,13 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       font-size: 12px;
       margin-top: 8px;
     }
+    .status-line .status-value {
+      font-weight: 700;
+      color: #38bdf8;
+    }
+    .status-line .status-value.status-text-heat { color: #f97316; }
+    .status-line .status-value.status-text-cool { color: #38bdf8; }
+    .status-line .status-value.status-text-idle { color: #64748b; }
     .tile .field.name { margin-bottom: 10px; }
     @media (max-width: 900px) {
       .wrap { margin: 20px auto; }
@@ -254,15 +274,29 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       relay: %THERMO_RELAY_USED_JSON%,
       dinput: %THERMO_DINPUT_USED_JSON%
     };
+    function labelFor(type, val) {
+      if (type === 'dinput') return 'in' + val;
+      if (type === 'relay') return 'rly' + val;
+      if (type === 'sensor') return 'sens' + val;
+      return val;
+    }
+    function optionValue(item) {
+      return (item && typeof item === 'object') ? String(item.v) : String(item);
+    }
+    function optionLabel(item, type) {
+      if (item && typeof item === 'object' && item.l) return item.l;
+      return labelFor(type, optionValue(item));
+    }
     function buildOptions(list, selected, type) {
       let html = '<option value="">-</option>';
       const used = thermoUsed[type] || [];
       for (let i = 0; i < list.length; i++) {
-        const val = String(list[i]);
+        const val = optionValue(list[i]);
         if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
           continue;
         }
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + val + '</option>';
+        const label = optionLabel(list[i], type);
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
       }
       return html;
     }
@@ -278,22 +312,61 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       thermoForm.addEventListener('input', markDirty);
       thermoForm.addEventListener('change', markDirty);
     }
+    const reloadKey = 'thermo_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname);
+    }
+    if (thermoForm) {
+      thermoForm.addEventListener('submit', () => {
+        sessionStorage.setItem(reloadKey, '1');
+      });
+    }
     document.querySelectorAll('input.thermo-power').forEach((el) => {
       el.addEventListener('change', () => {
+        if (el.dataset.busy === '1') return;
+        el.dataset.busy = '1';
         const name = el.dataset.action;
         const hidden = document.querySelector('input[name="' + name + '"]');
         if (hidden) {
           hidden.value = el.checked ? 'on' : 'off';
         }
+        const tile = el.closest('.tile');
+        if (tile) {
+          const en = tile.querySelector('input.thermo-enable');
+          const enForce = tile.querySelector('input[type="hidden"][name$="_en_force"]');
+          if (enForce && en) {
+            enForce.value = en.checked ? '1' : '0';
+          }
+        }
         if (thermoForm) {
           thermoForm.submit();
+          setTimeout(() => {
+            el.dataset.busy = '0';
+          }, 1500);
+        } else {
+          el.dataset.busy = '0';
         }
       });
     });
     document.querySelectorAll('input.thermo-enable').forEach((el) => {
       el.addEventListener('change', () => {
+        if (el.dataset.busy === '1') return;
+        el.dataset.busy = '1';
+        const tile = el.closest('.tile');
+        if (tile) {
+          const enForce = tile.querySelector('input[type="hidden"][name$="_en_force"]');
+          if (enForce) {
+            enForce.value = '';
+          }
+        }
         if (thermoForm) {
           thermoForm.submit();
+          setTimeout(() => {
+            el.dataset.busy = '0';
+          }, 1500);
+        } else {
+          el.dataset.busy = '0';
         }
       });
     });

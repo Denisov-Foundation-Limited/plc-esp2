@@ -18,6 +18,7 @@
 #include "hal/bus/onewire.hpp"
 #include "hal/dht22.hpp"
 #include "hal/ds18b20.hpp"
+#include "boards/board_profile.hpp"
 #include "utils/logger.hpp"
 
 class MeteoController
@@ -300,6 +301,15 @@ public:
         return &_state[idx];
     }
 
+    void listDs18b20Serials(char out[][17], size_t max, size_t &count)
+    {
+        count = 0;
+        if (!_ds_bus || !out || max == 0)
+            return;
+        _ds18b20.begin(*_ds_bus);
+        _ds18b20.listSerials(out, max, count);
+    }
+
     static bool parseHexAddr(const char *hex, uint8_t out[kAddrLen])
     {
         if (!hex)
@@ -431,12 +441,20 @@ private:
             st.humidity = 0.0f;
             return false;
         }
+        uint8_t gpio = 0xFF;
+        if (!mapDhtPinToGpio_(cfg.dht_pin, gpio))
+        {
+            st.has_temp = false;
+            st.has_humidity = false;
+            st.humidity = 0.0f;
+            return false;
+        }
         float t = 0.0f;
         float h = 0.0f;
-        if (_dht22_pin != cfg.dht_pin)
+        if (_dht22_pin != gpio)
         {
-            _dht22.begin(cfg.dht_pin);
-            _dht22_pin = cfg.dht_pin;
+            _dht22.begin(gpio);
+            _dht22_pin = gpio;
         }
         if (!_dht22.read(t, h))
         {
@@ -449,6 +467,21 @@ private:
         st.humidity = h;
         st.has_temp = true;
         st.has_humidity = true;
+        return true;
+    }
+
+    static bool mapDhtPinToGpio_(uint8_t port, uint8_t &gpio)
+    {
+        if (port >= PortIO::PORT_COUNT)
+            return false;
+        const auto &p = ActiveBoardProfile::PORTS[port];
+        if (p.caps == Cap::None)
+            return false;
+        if (p.backend != PortIO::Backend::Esp32)
+            return false;
+        if (p.u.esp.gpio == 0xFF)
+            return false;
+        gpio = p.u.esp.gpio;
         return true;
     }
 

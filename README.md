@@ -25,6 +25,12 @@ Programmable Logic Controller for ESP microcontrollers
 <br>
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web12.png" width=700 />
 <br>
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web13.png" width=700 />
+<br>
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web14.png" width=700 />
+<br>
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web15.png" width=700 />
+<br>
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/board2.png" width=700 />
 <br>
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/ext.png" width=700 />

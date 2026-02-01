@@ -164,6 +164,7 @@ public:
     }
 
     uint32_t lastUpdateId() const { return _last_update_id; }
+    int64_t lastIncomingChatId() const { return _last_incoming_chat_id; }
 
     void task()
     {
@@ -250,6 +251,7 @@ private:
     uint16_t _auto_poll_timeout_s = 20;
     uint32_t _auto_poll_interval_ms = 5000;
     uint32_t _last_update_id = 0;
+    int64_t _last_incoming_chat_id = 0;
     uint32_t _log_next_ms = 0;
     String _last_log_msg;
     bool _reboot_logged = false;
@@ -317,6 +319,8 @@ private:
         }
         if (out.update_id > _last_update_id)
             _last_update_id = out.update_id;
+        if (out.chat_id != 0)
+            _last_incoming_chat_id = out.chat_id;
         _task_updates_tmp.push_back(out);
         if (!_updates_handler)
         {

@@ -146,6 +146,7 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
     }
     .status-on { background: #22c55e; }
     .status-off { background: #64748b; }
+    .status-bad { background: #ef4444; }
     .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
     table { min-width: 720px; }
     @media (max-width: 720px) {
@@ -168,13 +169,13 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       %NAV%
       <h1>Охрана</h1>
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
-      <form method="POST" action="/security">
+      <form method="POST" action="/security" id="security-form">
         <div class="status">
-          <span class="pill">Контроллер: <strong>%SECURITY_ENABLED_LABEL%</strong></span>
-          <span class="pill">Статус: <strong>%SECURITY_ARMED_LABEL%</strong></span>
-          <span class="pill">Тревога: <strong>%SECURITY_ALARM_LABEL%</strong></span>
-          <span class="pill">GSM: <strong>%SECURITY_GSM_LABEL%</strong></span>
-          <span class="pill">%SECURITY_STATUS%</span>
+          <span class="pill">Контроллер: <span class="status-dot" data-state="%SECURITY_ENABLED_LABEL%" title="%SECURITY_ENABLED_LABEL%"></span></span>
+          <span class="pill">Статус: <span class="status-dot" data-state="%SECURITY_ARMED_LABEL%" title="%SECURITY_ARMED_LABEL%"></span></span>
+          <span class="pill">Тревога: <span class="status-dot" data-state="%SECURITY_ALARM_LABEL%" title="%SECURITY_ALARM_LABEL%"></span></span>
+          <span class="pill">GSM: <span class="status-dot" data-kind="gsm" data-state="%SECURITY_GSM_LABEL%" title="%SECURITY_GSM_LABEL%"></span></span>
+          <span class="pill">Состояние: <span class="status-dot" data-state="%SECURITY_STATUS%" title="%SECURITY_STATUS%"></span></span>
         </div>
         <div class="grid">
           <div>
@@ -196,8 +197,8 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
             <tr>
               <th class="right">ID</th>
               <th>Вкл</th>
-              <th>Серийный (hex16)</th>
               <th>Имя</th>
+              <th>Серийный</th>
             </tr>
           </thead>
           <tbody>
@@ -252,11 +253,41 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
     </div>
   </div>
   <script>
+    function stateToBool(value) {
+      const s = String(value || '').trim().toLowerCase();
+      if (!s) return false;
+      if (s === '1' || s === 'true' || s === 'on' || s === 'ok' || s === 'ready' || s === 'active') return true;
+      if (s.indexOf('вкл') !== -1) return true;
+      if (s.indexOf('под охраной') !== -1) return true;
+      if (s.indexOf('включ') !== -1) return true;
+      if (s.indexOf('armed') !== -1) return true;
+      if (s.indexOf('enabled') !== -1) return true;
+      if (s.indexOf('alarm') !== -1) return true;
+      if (s.indexOf('updated') !== -1) return true;
+      if (s.indexOf('saved') !== -1) return true;
+      return false;
+    }
+    document.querySelectorAll('.status-dot[data-state]').forEach((dot) => {
+      const kind = dot.dataset.kind || '';
+      const state = dot.dataset.state || '';
+      if (kind === 'gsm') {
+        const s = String(state).trim().toLowerCase();
+        const ok = s === 'ok' || s === '1' || s === 'true' || s === 'on';
+        const off = s === 'off' || s === 'недоступно' || s === 'выкл' || s === 'not started';
+        dot.classList.toggle('status-on', ok);
+        dot.classList.toggle('status-off', off);
+        dot.classList.toggle('status-bad', !ok && !off);
+        return;
+      }
+      const on = stateToBool(state);
+      dot.classList.toggle('status-on', on);
+      dot.classList.toggle('status-off', !on);
+    });
     const sensorOptions = {
-      sensor: %SECURITY_SENSOR_JSON%
+      dinput: %SECURITY_SENSOR_JSON%
     };
     const sensorUsed = {
-      sensor: %SECURITY_SENSOR_USED_JSON%
+      dinput: %SECURITY_SENSOR_USED_JSON%
     };
     const sirenOptions = {
       relay: %SECURITY_SIREN_JSON%
@@ -264,15 +295,29 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
     const sirenUsed = {
       relay: %SECURITY_SIREN_USED_JSON%
     };
+    function labelFor(type, val) {
+      if (type === 'dinput') return 'in' + val;
+      if (type === 'relay') return 'rly' + val;
+      if (type === 'sensor') return 'sens' + val;
+      return val;
+    }
+    function optionValue(item) {
+      return (item && typeof item === 'object') ? String(item.v) : String(item);
+    }
+    function optionLabel(item, type) {
+      if (item && typeof item === 'object' && item.l) return item.l;
+      return labelFor(type, optionValue(item));
+    }
     function buildOptions(list, selected, type) {
       let html = '<option value="">-</option>';
       const used = sensorUsed[type] || [];
       for (let i = 0; i < list.length; i++) {
-        const val = String(list[i]);
+        const val = optionValue(list[i]);
         if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
           continue;
         }
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + val + '</option>';
+        const label = optionLabel(list[i], type);
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
       }
       return html;
     }
@@ -286,11 +331,12 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       let html = '<option value="">-</option>';
       const used = sirenUsed.relay || [];
       for (let i = 0; i < list.length; i++) {
-        const val = String(list[i]);
+        const val = optionValue(list[i]);
         if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
           continue;
         }
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + val + '</option>';
+        const label = optionLabel(list[i], 'relay');
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
       }
       return html;
     }
@@ -299,6 +345,21 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       const list = sirenOptions.relay || [];
       el.innerHTML = buildSirenOptions(list, selected);
     });
+    const securityForm = document.getElementById('security-form');
+    const reloadKey = 'security_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname);
+    }
+    if (securityForm) {
+      securityForm.addEventListener('submit', (e) => {
+        const submitter = e.submitter;
+        if (submitter && submitter.value !== 'save') {
+          return;
+        }
+        sessionStorage.setItem(reloadKey, '1');
+      });
+    }
   </script>
 </body>
 </html>

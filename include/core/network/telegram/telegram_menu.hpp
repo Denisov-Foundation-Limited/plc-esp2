@@ -203,6 +203,7 @@ private:
     DynamicJsonDocument _cfg_doc{kConfigDocCapacity};
     static constexpr uint32_t kHistoryMagic = 0x4D544831u; // "MTH1"
     static constexpr float kThermoTargetStep = 1.0f;
+    static constexpr float kThermoHystStep = 0.5f;
     static bool requireAdmin_(TelegramMenu &self, TelegramBot &bot, const TelegramClient::Update &u, String &reply)
     {
         (void)bot;
@@ -1808,17 +1809,17 @@ inline bool TelegramMenu::startSocketAction_(TelegramBot &bot, const TelegramCli
 
 inline bool TelegramMenu::parseSocketIdFromText_(const String &text, uint8_t &out)
 {
-    return TelegramMenuSockets::parseSocketIdFromText_(text, out);
+    return TelegramMenuSockets::parseSocketIdFromText_(text, out, (uint8_t)SocketController::kSocketCount);
 }
 
 inline bool TelegramMenu::parseSocketId_(const String &text, uint8_t &out)
 {
-    return TelegramMenuSockets::parseSocketId_(text, out);
+    return TelegramMenuSockets::parseSocketId_(text, out, (uint8_t)SocketController::kSocketCount);
 }
 
 inline bool TelegramMenu::parseSocketLabel_(const String &text, uint8_t &out)
 {
-    return TelegramMenuSockets::parseSocketLabel_(text, out);
+    return TelegramMenuSockets::parseSocketLabel_(text, out, (uint8_t)SocketController::kSocketCount);
 }
 
 inline bool TelegramMenu::parseMeteoIdFromText_(const String &text, uint8_t &out)

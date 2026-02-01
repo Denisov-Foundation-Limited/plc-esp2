@@ -93,6 +93,15 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     .mini { width: 72px; }
     .name { width: 180px; }
     .actions { margin-top: 14px; }
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 8px 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .page-info { white-space: nowrap; }
     .switch {
       display: inline-block;
       width: 40px;
@@ -122,18 +131,113 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     }
     input:checked + .track { background: #22c55e; }
     input:checked + .track .knob { transform: translateX(20px); }
-    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    table { min-width: 720px; }
-    @media (max-width: 720px) {
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 10px;
+    }
+    .tile {
+      display: grid;
+      grid-template-columns: 140px minmax(0, 1fr);
+      gap: 14px;
+      padding: 16px;
+      border-radius: 12px;
+      border: 1px solid #1f2937;
+      background: #0b1220;
+      position: relative;
+      overflow: hidden;
+    }
+    .tile.disabled { opacity: 0.55; }
+    .tile.empty { grid-template-columns: 1fr; text-align: center; color: var(--muted); }
+    .tile-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .sock-visual {
+      position: relative;
+      height: 140px;
+      border-radius: 16px;
+      border: 2px solid #1f2937;
+      background: linear-gradient(180deg, #0a1220 0%, #0c1628 100%);
+      overflow: hidden;
+    }
+    .sock-icon {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 90px;
+      height: 90px;
+      opacity: 0.2;
+      color: #38bdf8;
+      transition: opacity .2s ease, transform .2s ease, filter .2s ease;
+    }
+    .sock-icon.on {
+      opacity: 1;
+      filter: drop-shadow(0 0 12px rgba(34, 197, 94, 0.6));
+      color: #22c55e;
+      transform: translate(-50%, -50%) scale(1.02);
+    }
+    .sock-icon.off {
+      opacity: 0.22;
+      filter: none;
+      color: #64748b;
+    }
+    .badge {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      background: rgba(17, 24, 39, 0.85);
+      color: var(--text);
+      font-size: 11px;
+      letter-spacing: 0.2px;
+      z-index: 2;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 14px;
+    }
+    .form-row {
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      align-items: center;
+      gap: 8px;
+    }
+    .form-row > label:not(.switch) {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .form-row .field,
+    .form-row select {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      margin: 8px 0 10px;
+    }
+    @media (max-width: 900px) {
       .wrap { margin: 20px auto; }
       .card { padding: 16px; }
       h1 { font-size: 20px; }
-      table { min-width: 640px; font-size: 12px; }
-      th, td { padding: 5px; }
-      .field { padding: 5px 6px; }
-      .btn { padding: 8px 12px; }
-      .mini { width: 64px; }
-      .name { width: 140px; }
+      .grid { grid-template-columns: 1fr; }
+      .tile { grid-template-columns: 1fr; }
+      .sock-visual { height: 120px; }
+      .form-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -144,24 +248,16 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       <h1>Розетки</h1>
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <div class="status">%SOCKETS_STATUS%</div>
+      <div class="pagination">
+        <button type="button" class="btn btn-sm" id="sockets-prev">Назад</button>
+        <span class="page-info">Страница</span>
+        <select id="sockets-page" class="field mini"></select>
+        <span class="page-info">/ %SOCKETS_PAGES%</span>
+        <button type="button" class="btn btn-sm" id="sockets-next">Вперёд</button>
+      </div>
       <form method="POST" action="/sockets" id="sockets-form">
-        <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th class="right">ID</th>
-              <th>Вкл</th>
-              <th>Имя</th>
-              <th>Кнопка</th>
-              <th>Реле</th>
-              <th class="center">Статус</th>
-              <th>Управление</th>
-            </tr>
-          </thead>
-          <tbody>
-            %SOCKETS%
-          </tbody>
-        </table>
+        <div class="grid">
+          %SOCKETS%
         </div>
         <p class="actions">
           <button class="btn" type="submit">Сохранить</button>
@@ -174,19 +270,35 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       dinput: %DINPUT_JSON%,
       relay: %RELAY_JSON%
     };
+    const socketsPage = %SOCKETS_PAGE%;
+    const socketsPages = %SOCKETS_PAGES%;
     const socketUsed = {
       dinput: %DINPUT_USED_JSON%,
       relay: %RELAY_USED_JSON%
     };
+    function labelFor(type, val) {
+      if (type === 'dinput') return 'in' + val;
+      if (type === 'relay') return 'rly' + val;
+      if (type === 'sensor') return 'sens' + val;
+      return val;
+    }
+    function optionValue(item) {
+      return (item && typeof item === 'object') ? String(item.v) : String(item);
+    }
+    function optionLabel(item, type) {
+      if (item && typeof item === 'object' && item.l) return item.l;
+      return labelFor(type, optionValue(item));
+    }
     function buildOptions(list, selected, type) {
       let html = '<option value="">-</option>';
       const used = socketUsed[type] || [];
       for (let i = 0; i < list.length; i++) {
-        const val = String(list[i]);
+        const val = optionValue(list[i]);
         if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
           continue;
         }
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + val + '</option>';
+        const label = optionLabel(list[i], type);
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
       }
       return html;
     }
@@ -196,23 +308,167 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       const list = socketOptions[type] || [];
       el.innerHTML = buildOptions(list, selected, type);
     });
-    const socketsForm = document.getElementById('sockets-form');
+    const prevBtn = document.getElementById('sockets-prev');
+    const nextBtn = document.getElementById('sockets-next');
+    const pageSelect = document.getElementById('sockets-page');
+    if (pageSelect) {
+      for (let i = 1; i <= socketsPages; i++) {
+        const opt = document.createElement('option');
+        opt.value = String(i);
+        opt.textContent = String(i);
+        if (i === socketsPage) opt.selected = true;
+        pageSelect.appendChild(opt);
+      }
+      pageSelect.addEventListener('change', () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', pageSelect.value || String(socketsPage));
+        window.location.href = url.toString();
+      });
+    }
+    if (prevBtn) {
+      prevBtn.disabled = socketsPage <= 1;
+      prevBtn.addEventListener('click', () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', String(Math.max(1, socketsPage - 1)));
+        window.location.href = url.toString();
+      });
+    }
+    if (nextBtn) {
+      nextBtn.disabled = socketsPage >= socketsPages;
+      nextBtn.addEventListener('click', () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', String(Math.min(socketsPages, socketsPage + 1)));
+        window.location.href = url.toString();
+      });
+    }
+    async function postForm(url, body) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        credentials: 'same-origin'
+      });
+      if (!res.ok) {
+        throw new Error('Request failed');
+      }
+      return (await res.text()).trim();
+    }
+    function updateSocketVisual(tile, isOn) {
+      if (!tile) return;
+      const icon = tile.querySelector('.sock-icon');
+      const dot = tile.querySelector('.status-dot');
+      const text = tile.querySelector('.status-text');
+      if (icon) {
+        icon.classList.toggle('on', isOn);
+        icon.classList.toggle('off', !isOn);
+      }
+      if (dot) {
+        dot.classList.toggle('status-on', isOn);
+        dot.classList.toggle('status-off', !isOn);
+      }
+      if (text) {
+        text.textContent = isOn ? 'Включена' : 'Выключена';
+      }
+    }
+    function updateSocketEnabled(tile, enabled) {
+      if (!tile) return;
+      tile.classList.toggle('disabled', !enabled);
+      const toggle = tile.querySelector('input.socket-toggle');
+      if (toggle) {
+        toggle.disabled = !enabled;
+      }
+    }
     document.querySelectorAll('input.socket-toggle').forEach((el) => {
-      el.addEventListener('change', () => {
-        const name = el.dataset.action;
-        const hidden = document.querySelector('input[name="' + name + '"]');
-        if (hidden) {
-          hidden.value = el.checked ? 'on' : 'off';
-        }
-        if (socketsForm) {
-          socketsForm.submit();
+      el.addEventListener('change', async () => {
+        const id = el.dataset.id;
+        const tile = el.closest('.tile');
+        if (el.dataset.busy === '1') return;
+        el.dataset.busy = '1';
+        el.disabled = true;
+        try {
+          const action = el.checked ? 'on' : 'off';
+          const state = await postForm('/sockets/toggle', 'id=' + encodeURIComponent(id) + '&action=' + action);
+          const isOn = state === 'on' || state === '1' || state === 'true';
+          el.checked = isOn;
+          updateSocketVisual(tile, isOn);
+        } catch (e) {
+          el.checked = !el.checked;
+          updateSocketVisual(tile, el.checked);
+        } finally {
+          el.disabled = false;
+          el.dataset.busy = '0';
         }
       });
     });
-  </script>
+    document.querySelectorAll('input.socket-enable').forEach((el) => {
+        el.addEventListener('change', async () => {
+        const id = el.dataset.id;
+        const tile = el.closest('.tile');
+        const enabled = el.checked ? '1' : '0';
+        try {
+          const state = await postForm('/sockets/enable', 'id=' + encodeURIComponent(id) + '&enabled=' + enabled);
+          let isEnabled = false;
+          try {
+            const data = JSON.parse(state);
+            isEnabled = data.parsed === true || data.parsed === 'true' || data.result === '1';
+          } catch (e) {
+            isEnabled = state === '1' || state === 'true' || state === 'on';
+          }
+          el.checked = isEnabled;
+          updateSocketEnabled(tile, isEnabled);
+        } catch (e) {
+          el.checked = !el.checked;
+        }
+        });
+      });
+      async function fetchState(id) {
+        const res = await fetch('/sockets/toggle?id=' + encodeURIComponent(id) + '&action=state', {
+          cache: 'no-store',
+          credentials: 'same-origin'
+        });
+        if (!res.ok) {
+          throw new Error('state');
+        }
+        return (await res.text()).trim();
+      }
+      async function pollStates() {
+        if (document.hidden) return;
+        const toggles = document.querySelectorAll('input.socket-toggle');
+        for (let i = 0; i < toggles.length; i++) {
+          const el = toggles[i];
+          if (el.dataset.busy === '1') continue;
+          if (el.disabled) continue;
+          const tile = el.closest('.tile');
+          try {
+            const state = await fetchState(el.dataset.id);
+            const isOn = state === 'on' || state === '1' || state === 'true';
+            if (el.checked !== isOn) {
+              el.checked = isOn;
+              updateSocketVisual(tile, isOn);
+            }
+          } catch (e) {
+          }
+        }
+      }
+      setInterval(pollStates, 2000);
+      const socketsForm = document.getElementById('sockets-form');
+      const reloadKey = 'sockets_reload';
+      if (sessionStorage.getItem(reloadKey)) {
+        sessionStorage.removeItem(reloadKey);
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', String(socketsPage));
+        location.replace(url.toString());
+      }
+      if (socketsForm) {
+        socketsForm.addEventListener('submit', () => {
+          sessionStorage.setItem(reloadKey, '1');
+        });
+      }
+    </script>
 </body>
 </html>
 )HTML";
+
 
 
 

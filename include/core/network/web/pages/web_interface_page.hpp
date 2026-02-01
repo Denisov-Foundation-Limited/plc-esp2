@@ -119,7 +119,7 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
       </div>
       <div class="section">
         <h2>Имя устройства</h2>
-        <form method="POST" action="/device">
+        <form method="POST" action="/device" id="device-form">
           <div class="row">
             <input type="text" name="device_name" value="%DEVICE_NAME%" placeholder="FCPLC">
             <button type="submit">Сохранить</button>
@@ -137,6 +137,19 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
       </div>
     </div>
   </div>
+  <script>
+    const deviceForm = document.getElementById('device-form');
+    const reloadKey = 'device_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname);
+    }
+    if (deviceForm) {
+      deviceForm.addEventListener('submit', () => {
+        sessionStorage.setItem(reloadKey, '1');
+      });
+    }
+  </script>
 </body>
 </html>
 )HTML";

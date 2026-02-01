@@ -159,12 +159,20 @@ public:
         _server.on("/controllers", HTTP_POST, [this](AsyncWebServerRequest *request) { handleControllersSave_(request); });
         _server.on("/ports", HTTP_GET, [this](AsyncWebServerRequest *request) { handlePorts_(request); });
         _server.on("/buses", HTTP_GET, [this](AsyncWebServerRequest *request) { handleBuses_(request); });
-        _server.on("/stack", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStack_(request); });
         _server.on("/stack/gen_key", HTTP_POST, [this](AsyncWebServerRequest *request) { handleStackGenKey_(request); });
+        _server.on("/stack", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStack_(request); });
+        _server.on("/sockets/toggle", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsToggle_(request); });
+        _server.on("/sockets/toggle", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSocketsToggle_(request); });
+        _server.on("/sockets/enable", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsEnable_(request); });
+        _server.on("/sockets/enable", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSocketsEnable_(request); });
         _server.on("/sockets", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSockets_(request); });
         _server.on("/sockets", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsSave_(request, "/sockets"); });
+        _server.on("/lights/toggle", HTTP_POST, [this](AsyncWebServerRequest *request) { handleLightsToggle_(request); });
+        _server.on("/lights/toggle", HTTP_GET, [this](AsyncWebServerRequest *request) { handleLightsToggle_(request); });
+        _server.on("/lights/enable", HTTP_POST, [this](AsyncWebServerRequest *request) { handleLightsEnable_(request); });
+        _server.on("/lights/enable", HTTP_GET, [this](AsyncWebServerRequest *request) { handleLightsEnable_(request); });
         _server.on("/lights", HTTP_GET, [this](AsyncWebServerRequest *request) { handleLights_(request); });
-        _server.on("/lights", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsSave_(request, "/lights"); });
+        _server.on("/lights", HTTP_POST, [this](AsyncWebServerRequest *request) { handleLightsSave_(request, "/lights"); });
         _server.on("/meteo", HTTP_GET, [this](AsyncWebServerRequest *request) { handleMeteo_(request); });
         _server.on("/meteo", HTTP_POST, [this](AsyncWebServerRequest *request) { handleMeteoSave_(request); });
         _server.on("/thermo", HTTP_GET, [this](AsyncWebServerRequest *request) { handleThermo_(request); });
@@ -473,6 +481,9 @@ private:
             const bool enabled = _controllers->sockets().controllerEnabled();
             page.replace("%SOCKETS_ENABLED_CHECKED%", enabled ? "checked" : "");
             page.replace("%SOCKETS_ENABLED_LABEL%", enabled ? "включены" : "выключены");
+            const bool lights_enabled = _controllers->sockets().lightsEnabled();
+            page.replace("%LIGHTS_ENABLED_CHECKED%", lights_enabled ? "checked" : "");
+            page.replace("%LIGHTS_ENABLED_LABEL%", lights_enabled ? "включены" : "выключены");
             const bool meteo_enabled = _controllers->meteo().controllerEnabled();
             page.replace("%METEO_ENABLED_CHECKED%", meteo_enabled ? "checked" : "");
             page.replace("%METEO_ENABLED_LABEL%", meteo_enabled ? "включено" : "выключено");
@@ -493,6 +504,8 @@ private:
         {
             page.replace("%SOCKETS_ENABLED_CHECKED%", "");
             page.replace("%SOCKETS_ENABLED_LABEL%", "недоступно");
+            page.replace("%LIGHTS_ENABLED_CHECKED%", "");
+            page.replace("%LIGHTS_ENABLED_LABEL%", "недоступно");
             page.replace("%METEO_ENABLED_CHECKED%", "");
             page.replace("%METEO_ENABLED_LABEL%", "недоступно");
             page.replace("%THERMO_ENABLED_CHECKED%", "");
@@ -504,7 +517,8 @@ private:
             page.replace("%SECURITY_ENABLED_CHECKED%", "");
             page.replace("%SECURITY_ENABLED_LABEL%", "недоступно");
         }
-        page.replace("%CONTROLLERS_STATUS%", _controllers_status);
+        page.replace("%SOCKETS_STATUS%", _sockets_status);
+        page.replace("%LIGHTS_STATUS%", _lights_status);
         page.replace("%METEO_STATUS%", _meteo_status);
         page.replace("%THERMO_STATUS%", _thermo_status);
         page.replace("%TANKS_STATUS%", _tanks_status);
@@ -534,6 +548,15 @@ private:
             if (_controllers->sockets().controllerEnabled() != enabled)
             {
                 _controllers->sockets().setControllerEnabled(enabled);
+                changed = true;
+            }
+        }
+        if (ctrl.length() == 0 || ctrl == "lights")
+        {
+            const bool lights_enabled = request->hasParam("lights_enabled", true);
+            if (_controllers->sockets().lightsEnabled() != lights_enabled)
+            {
+                _controllers->sockets().setLightsEnabled(lights_enabled);
                 changed = true;
             }
         }
@@ -598,6 +621,8 @@ private:
         }
         if (ok)
             _controllers_status = changed ? "Updated" : "No changes";
+        _sockets_status = _controllers_status;
+        _lights_status = _controllers_status;
         _meteo_status = _controllers_status;
         _thermo_status = _controllers_status;
         _tanks_status = _controllers_status;
@@ -612,16 +637,33 @@ private:
         if (!checkAuth_(request, &set_cookie))
             return;
         String page = FPSTR(kWebInterfaceSocketsHtml);
-        page.reserve(page.length() + 8192);
         page.replace("%NAV%", navHtml_());
-        page.replace("%SOCKETS%", listSocketsHtml_(false));
+        const uint8_t page_size = 8u;
+        const String page_str = paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+        const uint8_t max_pages = (uint8_t)((SocketController::kSocketCount + page_size - 1) / page_size);
+        if (page_idx >= max_pages)
+            page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        const uint8_t start = (uint8_t)(page_idx * page_size + 1);
+        const uint8_t end = (uint8_t)(start + page_size - 1);
+        const size_t extra = 4096u + (size_t)page_size * 900u;
+        page.reserve(page.length() + extra);
+        page.replace("%SOCKETS%", listSocketsHtml_(start, end));
+        page.replace("%SOCKETS_PAGE%", String((unsigned)(page_idx + 1)));
+        page.replace("%SOCKETS_PAGES%", String((unsigned)max_pages));
         page.replace("%DINPUT_JSON%", socketPortOptionsJson_(PortIO::PinType::DInput));
         page.replace("%RELAY_JSON%", socketPortOptionsJson_(PortIO::PinType::Relay));
         page.replace("%DINPUT_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::DInput));
         page.replace("%RELAY_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::Relay));
-        page.replace("%SOCKETS_STATUS%", _sockets_status);
+        page.replace("%LIGHTS_STATUS%", _lights_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        sendHtml_(request, page, set_cookie);
+        sendHtmlRaw_(request, page, set_cookie);
     }
 
     void handleLights_(AsyncWebServerRequest *request)
@@ -630,14 +672,31 @@ private:
         if (!checkAuth_(request, &set_cookie))
             return;
         String page = FPSTR(kWebInterfaceLightsHtml);
-        page.reserve(page.length() + 8192);
+        const uint8_t page_size = 8u;
+        const String page_str = paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+        const uint8_t max_pages = (uint8_t)((SocketController::kLightCount + page_size - 1) / page_size);
+        if (page_idx >= max_pages)
+            page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        const uint8_t start = (uint8_t)(page_idx * page_size + 1);
+        const uint8_t end = (uint8_t)(start + page_size - 1);
+        const size_t extra = 4096u + (size_t)page_size * 900u;
+        page.reserve(page.length() + extra);
         page.replace("%NAV%", navHtml_());
-        page.replace("%LIGHTS%", listSocketsHtml_(true));
+        page.replace("%LIGHTS%", listLightsHtml_(start, end));
+        page.replace("%LIGHTS_PAGE%", String((unsigned)(page_idx + 1)));
+        page.replace("%LIGHTS_PAGES%", String((unsigned)max_pages));
         page.replace("%DINPUT_JSON%", socketPortOptionsJson_(PortIO::PinType::DInput));
         page.replace("%RELAY_JSON%", socketPortOptionsJson_(PortIO::PinType::Relay));
         page.replace("%DINPUT_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::DInput));
         page.replace("%RELAY_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::Relay));
-        page.replace("%SOCKETS_STATUS%", _sockets_status);
+        page.replace("%LIGHTS_STATUS%", _lights_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         sendHtml_(request, page, set_cookie);
     }
@@ -648,9 +707,9 @@ private:
         if (!checkAuth_(request, &set_cookie))
             return;
         String page = FPSTR(kWebInterfaceMeteoHtml);
-        page.reserve(page.length() + 8192);
+        page.reserve(page.length() + 16384);
         page.replace("%NAV%", navHtml_());
-        page.replace("%METEO_ROWS%", listMeteoHtml_());
+        page.replace("%METEO_TILES%", listMeteoHtml_());
         page.replace("%METEO_STATUS%", _meteo_status);
         page.replace("%SENSOR_JSON%", meteoPortOptionsJson_());
         page.replace("%SENSOR_USED_JSON%", meteoUsedPinsJson_());
@@ -664,7 +723,7 @@ private:
         if (!checkAuth_(request, &set_cookie))
             return;
         String page = FPSTR(kWebInterfaceThermoHtml);
-        page.reserve(page.length() + 8192);
+        page.reserve(page.length() + 16384);
         page.replace("%NAV%", navHtml_());
         page.replace("%THERMO_ROWS%", listThermoHtml_());
         page.replace("%THERMO_STATUS%", _thermo_status);
@@ -686,6 +745,7 @@ private:
         page.replace("%NAV%", navHtml_());
         page.replace("%TGBOT_TOKEN%", _tgbot ? _tgbot->token() : String(""));
         page.replace("%TGBOT_CHAT_ID%", _tgbot ? String((long long)_tgbot->chatId()) : String("0"));
+        page.replace("%TGBOT_LAST_CHAT_ID%", _tgbot ? String((long long)_tgbot->lastIncomingChatId()) : String("0"));
         page.replace("%TGBOT_INSECURE_CHECKED%", _tgbot && _tgbot->insecure() ? "checked" : "");
         page.replace("%TGBOT_CLIENT%", _tgbot ? _tgbot->clientKindName() : "none");
         page.replace("%TGBOT_USE_PROXY_CHECKED%", _tgbot && _tgbot->useProxy() ? "checked" : "");
@@ -720,13 +780,11 @@ private:
             const String prefix = String("s") + idx + "_";
             const String en_key = prefix + "en";
             const String name_key = prefix + "name";
-            const String type_key = prefix + "type";
             const String btn_key = prefix + "btn";
             const String relay_key = prefix + "relay";
             const String action_key = prefix + "action";
             const bool has_any = request->hasParam(en_key, true) ||
                                  request->hasParam(name_key, true) ||
-                                 request->hasParam(type_key, true) ||
                                  request->hasParam(btn_key, true) ||
                                  request->hasParam(relay_key, true) ||
                                  request->hasParam(action_key, true);
@@ -734,12 +792,10 @@ private:
                 continue;
             const bool enabled = request->hasParam(en_key, true);
             String name = paramValue_(request, name_key);
-            String type = paramValue_(request, type_key);
             String btn = paramValue_(request, btn_key);
             String relay = paramValue_(request, relay_key);
             String action = paramValue_(request, action_key);
             name.trim();
-            type.trim();
             uint8_t btn_port = SocketController::kInvalidPort;
             uint8_t relay_port = SocketController::kInvalidPort;
             if (!parseSocketPort_(btn, btn_port) || !parseSocketPort_(relay, relay_port))
@@ -748,17 +804,8 @@ private:
                 _sockets_status = String("Invalid port for socket ") + idx;
                 break;
             }
-            SocketController::Kind kind = SocketController::Kind::Socket;
-            if (!parseSocketKind_(type, kind))
-            {
-                ok = false;
-                _sockets_status = String("Invalid type for socket ") + idx;
-                break;
-            }
             if (cfg->name != name)
                 sockets.setName(cfg->id, name);
-            if (cfg->kind != kind)
-                sockets.setKind(cfg->id, kind);
             if (cfg->button_port != btn_port)
                 sockets.setButtonPort(cfg->id, btn_port);
             if (cfg->relay_port != relay_port)
@@ -802,6 +849,335 @@ private:
         if (ok)
             _sockets_status = changed ? "Updated" : "Saved";
         sendRedirect_(request, redirect ? redirect : "/sockets", set_cookie);
+    }
+
+    void handleLightsSave_(AsyncWebServerRequest *request, const char *redirect)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!_controllers)
+        {
+            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            return;
+        }
+        SocketController &sockets = _controllers->sockets();
+        bool ok = true;
+        bool changed = false;
+        for (size_t i = 0; i < SocketController::kLightCount; ++i)
+        {
+            const auto *cfg = sockets.lightConfigByIndex(i);
+            if (!cfg)
+                continue;
+            const String idx = String((unsigned)cfg->id);
+            const String prefix = String("s") + idx + "_";
+            const String en_key = prefix + "en";
+            const String name_key = prefix + "name";
+            const String btn_key = prefix + "btn";
+            const String relay_key = prefix + "relay";
+            const String action_key = prefix + "action";
+            const bool has_any = request->hasParam(en_key, true) ||
+                                 request->hasParam(name_key, true) ||
+                                 request->hasParam(btn_key, true) ||
+                                 request->hasParam(relay_key, true) ||
+                                 request->hasParam(action_key, true);
+            if (!has_any)
+                continue;
+            const bool enabled = request->hasParam(en_key, true);
+            String name = paramValue_(request, name_key);
+            String btn = paramValue_(request, btn_key);
+            String relay = paramValue_(request, relay_key);
+            String action = paramValue_(request, action_key);
+            name.trim();
+            uint8_t btn_port = SocketController::kInvalidPort;
+            uint8_t relay_port = SocketController::kInvalidPort;
+            if (!parseSocketPort_(btn, btn_port) || !parseSocketPort_(relay, relay_port))
+            {
+                ok = false;
+                _lights_status = String("Invalid port for light ") + idx;
+                break;
+            }
+            if (cfg->name != name)
+                sockets.setLightName(cfg->id, name);
+            if (cfg->button_port != btn_port)
+                sockets.setLightButtonPort(cfg->id, btn_port);
+            if (cfg->relay_port != relay_port)
+                sockets.setLightRelayPort(cfg->id, relay_port);
+            if (cfg->enabled != enabled)
+                sockets.setLightEnabled(cfg->id, enabled);
+            if (action.length())
+            {
+                String act = action;
+                act.toLowerCase();
+                if (act == "on")
+                {
+                    sockets.setLightRelay(cfg->id, true);
+                    changed = true;
+                }
+                else if (act == "off")
+                {
+                    sockets.setLightRelay(cfg->id, false);
+                    changed = true;
+                }
+                else if (act == "toggle")
+                {
+                    sockets.toggleLightRelay(cfg->id);
+                    changed = true;
+                }
+            }
+        }
+        if (ok)
+        {
+            if (!_configs_manager)
+            {
+                ok = false;
+                _lights_status = "Config manager missing";
+            }
+            else if (!_configs_manager->save())
+            {
+                ok = false;
+                _lights_status = "Save failed";
+            }
+        }
+        if (ok)
+            _lights_status = changed ? "Updated" : "Saved";
+        sendRedirect_(request, redirect ? redirect : "/lights", set_cookie);
+    }
+
+    void handleSocketsToggle_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuthApi_(request, &set_cookie))
+            return;
+        if (!_controllers)
+        {
+            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            return;
+        }
+        const String id_str = paramValueAny_(request, "id");
+        if (!id_str.length())
+        {
+            String dbg = String("{\"ok\":false,\"err\":\"missing id\"");
+            dbg += ",\"id\":\"\"";
+            dbg += ",\"enabled\":\"\"";
+            dbg += "}";
+            sendText_(request, 400, "application/json", dbg, set_cookie);
+            return;
+        }
+        const uint16_t id = (uint16_t)id_str.toInt();
+        SocketController &sockets = _controllers->sockets();
+        if (id == 0 || !sockets.config(id))
+        {
+            sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
+            return;
+        }
+        String action = paramValueAny_(request, "action");
+        action.trim();
+        action.toLowerCase();
+        bool ok = false;
+        bool state = false;
+        if (action == "state")
+        {
+            ok = sockets.relayStateById(id, state);
+        }
+        else if (action.length() == 0 || action == "toggle")
+        {
+            ok = sockets.toggleRelayById(id);
+            if (ok)
+                ok = sockets.relayStateById(id, state);
+        }
+        else if (action == "on")
+        {
+            ok = sockets.setRelayById(id, true);
+            if (ok)
+                ok = sockets.relayStateById(id, state);
+        }
+        else if (action == "off")
+        {
+            ok = sockets.setRelayById(id, false);
+            if (ok)
+                ok = sockets.relayStateById(id, state);
+        }
+        if (!ok)
+        {
+            sendText_(request, 400, "text/plain", "Toggle failed", set_cookie);
+            return;
+        }
+        sendText_(request, 200, "text/plain", state ? "on" : "off", set_cookie);
+    }
+
+    void handleSocketsEnable_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuthApi_(request, &set_cookie))
+            return;
+        if (!_controllers)
+        {
+            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            return;
+        }
+        const String id_str = paramValueAny_(request, "id");
+        if (!id_str.length())
+        {
+            sendText_(request, 400, "text/plain", "Missing id", set_cookie);
+            return;
+        }
+        const uint16_t id = (uint16_t)id_str.toInt();
+        SocketController &sockets = _controllers->sockets();
+        if (id == 0 || !sockets.config(id))
+        {
+            String dbg = String("{\"ok\":false,\"err\":\"invalid id\"");
+            dbg += ",\"id\":\"" + id_str + "\"";
+            dbg += ",\"enabled\":\"\"";
+            dbg += "}";
+            sendText_(request, 400, "application/json", dbg, set_cookie);
+            return;
+        }
+        const String enabled_str = paramValueAny_(request, "enabled");
+        const bool enable = enabled_str == "1" || enabled_str == "true" || enabled_str == "on";
+        if (!sockets.setEnabled(id, enable))
+        {
+            String dbg = String("{\"ok\":false,\"err\":\"enable failed\"");
+            dbg += ",\"id\":\"" + id_str + "\"";
+            dbg += ",\"enabled\":\"" + enabled_str + "\"";
+            dbg += ",\"parsed\":" + String(enable ? "true" : "false");
+            dbg += "}";
+            sendText_(request, 400, "application/json", dbg, set_cookie);
+            return;
+        }
+        if (!_configs_manager)
+        {
+            _sockets_status = "Config manager missing";
+        }
+        else if (!_configs_manager->save())
+        {
+            _sockets_status = "Save failed";
+        }
+        String dbg = String("{\"ok\":true");
+        dbg += ",\"id\":\"" + id_str + "\"";
+        dbg += ",\"enabled\":\"" + enabled_str + "\"";
+        dbg += ",\"parsed\":" + String(enable ? "true" : "false");
+        dbg += ",\"result\":\"" + String(enable ? "1" : "0") + "\"";
+        dbg += "}";
+        sendText_(request, 200, "application/json", dbg, set_cookie);
+    }
+
+    void handleLightsToggle_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuthApi_(request, &set_cookie))
+            return;
+        if (!_controllers)
+        {
+            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            return;
+        }
+        const String id_str = paramValueAny_(request, "id");
+        if (!id_str.length())
+        {
+            String dbg = String("{\"ok\":false,\"err\":\"missing id\"");
+            dbg += ",\"id\":\"\"";
+            dbg += ",\"enabled\":\"\"";
+            dbg += "}";
+            sendText_(request, 400, "application/json", dbg, set_cookie);
+            return;
+        }
+        const uint16_t id = (uint16_t)id_str.toInt();
+        SocketController &sockets = _controllers->sockets();
+        if (id == 0 || !sockets.lightConfig(id))
+        {
+            sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
+            return;
+        }
+        String action = paramValueAny_(request, "action");
+        action.trim();
+        action.toLowerCase();
+        bool ok = false;
+        bool state = false;
+        if (action == "state")
+        {
+            ok = sockets.lightRelayStateById(id, state);
+        }
+        else if (action.length() == 0 || action == "toggle")
+        {
+            ok = sockets.toggleLightRelayById(id);
+            if (ok)
+                ok = sockets.lightRelayStateById(id, state);
+        }
+        else if (action == "on")
+        {
+            ok = sockets.setLightRelayById(id, true);
+            if (ok)
+                ok = sockets.lightRelayStateById(id, state);
+        }
+        else if (action == "off")
+        {
+            ok = sockets.setLightRelayById(id, false);
+            if (ok)
+                ok = sockets.lightRelayStateById(id, state);
+        }
+        if (!ok)
+        {
+            sendText_(request, 400, "text/plain", "Toggle failed", set_cookie);
+            return;
+        }
+        sendText_(request, 200, "text/plain", state ? "on" : "off", set_cookie);
+    }
+
+    void handleLightsEnable_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuthApi_(request, &set_cookie))
+            return;
+        if (!_controllers)
+        {
+            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            return;
+        }
+        const String id_str = paramValueAny_(request, "id");
+        if (!id_str.length())
+        {
+            sendText_(request, 400, "text/plain", "Missing id", set_cookie);
+            return;
+        }
+        const uint16_t id = (uint16_t)id_str.toInt();
+        SocketController &sockets = _controllers->sockets();
+        if (id == 0 || !sockets.lightConfig(id))
+        {
+            String dbg = String("{\"ok\":false,\"err\":\"invalid id\"");
+            dbg += ",\"id\":\"" + id_str + "\"";
+            dbg += ",\"enabled\":\"\"";
+            dbg += "}";
+            sendText_(request, 400, "application/json", dbg, set_cookie);
+            return;
+        }
+        const String enabled_str = paramValueAny_(request, "enabled");
+        const bool enable = enabled_str == "1" || enabled_str == "true" || enabled_str == "on";
+        if (!sockets.setLightEnabled(id, enable))
+        {
+            String dbg = String("{\"ok\":false,\"err\":\"enable failed\"");
+            dbg += ",\"id\":\"" + id_str + "\"";
+            dbg += ",\"enabled\":\"" + enabled_str + "\"";
+            dbg += ",\"parsed\":" + String(enable ? "true" : "false");
+            dbg += "}";
+            sendText_(request, 400, "application/json", dbg, set_cookie);
+            return;
+        }
+        if (!_configs_manager)
+        {
+            _lights_status = "Config manager missing";
+        }
+        else if (!_configs_manager->save())
+        {
+            _lights_status = "Save failed";
+        }
+        String dbg = String("{\"ok\":true");
+        dbg += ",\"id\":\"" + id_str + "\"";
+        dbg += ",\"enabled\":\"" + enabled_str + "\"";
+        dbg += ",\"parsed\":" + String(enable ? "true" : "false");
+        dbg += ",\"result\":\"" + String(enable ? "1" : "0") + "\"";
+        dbg += "}";
+        sendText_(request, 200, "application/json", dbg, set_cookie);
     }
 
     void handleMeteoSave_(AsyncWebServerRequest *request)
@@ -954,6 +1330,7 @@ private:
             const String cool_key = prefix + "cool";
             const String button_key = prefix + "button";
             const String power_key = prefix + "power";
+            const String en_force_key = prefix + "en_force";
             const bool has_any = request->hasParam(en_key, true) ||
                                  request->hasParam(name_key, true) ||
                                  request->hasParam(sensor_key, true) ||
@@ -967,7 +1344,12 @@ private:
             if (!has_any)
                 continue;
 
-            const bool enabled = request->hasParam(en_key, true);
+            const String en_force_str = paramValue_(request, en_force_key);
+            const bool en_force_known = (en_force_str == "1" || en_force_str == "0" ||
+                                         en_force_str == "true" || en_force_str == "false" ||
+                                         en_force_str == "on" || en_force_str == "off");
+            const bool en_force_on = (en_force_str == "1" || en_force_str == "true" || en_force_str == "on");
+            const bool enabled = en_force_known ? en_force_on : request->hasParam(en_key, true);
             const String sensor_str = paramValue_(request, sensor_key);
             const String mode_str = paramValue_(request, mode_key);
             const String target_str = paramValue_(request, target_key);
@@ -1124,7 +1506,7 @@ private:
         if (!checkAuth_(request, &set_cookie))
             return;
         String page = FPSTR(kWebInterfaceTanksHtml);
-        page.reserve(page.length() + 8192);
+        page.reserve(page.length() + 16384);
         page.replace("%NAV%", navHtml_());
         page.replace("%TANK_STATUS%", _tanks_status);
         page.replace("%TANK_ITEMS%", listTanksHtml_());
@@ -1438,7 +1820,8 @@ private:
             if (!has_any)
                 continue;
             const bool enabled = request->hasParam(en_key, true);
-            const bool monitoring = request->hasParam(monitor_key, true);
+            const String monitor_val = paramValue_(request, monitor_key);
+            const bool monitoring = monitor_val == "on" || monitor_val == "1" || monitor_val == "true";
             String name = paramValue_(request, name_key);
             String warn = paramValue_(request, warn_key);
             String alarm = paramValue_(request, alarm_key);
@@ -1946,6 +2329,59 @@ private:
         }
     }
 
+    static uint8_t locationIndex_(PortIO::Location loc)
+    {
+        switch (loc)
+        {
+        case PortIO::Location::Cpu:
+            return 0;
+        case PortIO::Location::Ext1:
+            return 1;
+        case PortIO::Location::Ext2:
+            return 2;
+        case PortIO::Location::Ext3:
+            return 3;
+        case PortIO::Location::Ext4:
+            return 4;
+        case PortIO::Location::Ext5:
+            return 5;
+        case PortIO::Location::Ext6:
+            return 6;
+        case PortIO::Location::Ext7:
+            return 7;
+        case PortIO::Location::Ext8:
+            return 8;
+        case PortIO::Location::Ext9:
+            return 9;
+        case PortIO::Location::Ext10:
+            return 10;
+        default:
+            return 0;
+        }
+    }
+
+    static void appendPortLabel_(String &out, PortIO::PinType type, const PortIO::PortDesc &p, uint8_t ui_id)
+    {
+        const char *prefix = "p";
+        if (type == PortIO::PinType::Relay)
+            prefix = "rly";
+        else if (type == PortIO::PinType::DInput)
+            prefix = "in";
+        else if (type == PortIO::PinType::Sensor)
+            prefix = "sens";
+        const uint8_t loc = locationIndex_(p.location);
+        out += prefix;
+        out += "-";
+        if (type == PortIO::PinType::Sensor && loc == 0)
+        {
+            out += String((unsigned)ui_id);
+            return;
+        }
+        out += String((unsigned)loc);
+        out += "/";
+        out += String((unsigned)ui_id);
+    }
+
     static const char *owBusName_(OneWireCfg::OwType t)
     {
         switch (t)
@@ -2026,100 +2462,216 @@ private:
         return items;
     }
 
-    String listSocketsHtml_(bool lights_only)
+    String listSocketsHtml_(uint8_t start_id, uint8_t end_id)
     {
         if (!_controllers)
-            return "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
+            return "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>";
         String items;
-        items.reserve(4096);
+        if (start_id == 0)
+            start_id = 1;
+        if (end_id < start_id)
+            end_id = start_id;
+        size_t reserve = 2048u + (size_t)(end_id - start_id + 1) * 700u;
+        if (reserve < 16384u)
+            reserve = 16384u;
+        items.reserve(reserve);
         SocketController &sockets = _controllers->sockets();
         bool tmp_state = false;
         auto appendRow = [&](const SocketController::SocketConfig &cfg, bool enabled) {
             const bool on = enabled && sockets.relayState(cfg.id, tmp_state) ? tmp_state : false;
-            items += "<tr><td class=\"right\"><strong>";
+            items += "<div class=\"tile";
+            if (!enabled)
+                items += " disabled";
+            items += "\">";
+            items += "<div class=\"sock-visual\">";
+            items += "<span class=\"badge\">#";
             items += String((unsigned)cfg.id);
-            items += "</strong></td><td><input type=\"checkbox\" name=\"s";
+            items += "</span>";
+            items += "<svg class=\"sock-icon ";
+            items += on ? "on" : "off";
+            items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+            items += "<path fill=\"currentColor\" d=\"M16 10h32c3.3 0 6 2.7 6 6v32c0 3.3-2.7 6-6 6H16c-3.3 0-6-2.7-6-6V16c0-3.3 2.7-6 6-6zm0 4c-1.1 0-2 .9-2 2v32c0 1.1.9 2 2 2h32c1.1 0 2-.9 2-2V16c0-1.1-.9-2-2-2H16z\"/>";
+            items += "<circle cx=\"24\" cy=\"26\" r=\"4\" fill=\"currentColor\"/>";
+            items += "<circle cx=\"40\" cy=\"26\" r=\"4\" fill=\"currentColor\"/>";
+            items += "<rect x=\"28\" y=\"36\" width=\"8\" height=\"10\" rx=\"2\" fill=\"currentColor\"/>";
+            items += "</svg>";
+            items += "</div>";
+            items += "<div>";
+            items += "<div class=\"tile-head\">";
+            items += "<strong>";
+            if (cfg.name.length())
+                appendHtmlEscaped_(items, cfg.name.c_str());
+            else
+                items += "Розетка";
+            items += "</strong>";
+            items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-enable\" data-id=\"";
+            items += String((unsigned)cfg.id);
+            items += "\" name=\"s";
             items += String((unsigned)cfg.id);
             items += "_en\"";
             if (enabled)
                 items += " checked";
-            items += "></td><td><input class=\"field name\" type=\"text\" name=\"s";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "</div>";
+            items += "<input class=\"field name\" type=\"text\" name=\"s";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
             appendHtmlEscaped_(items, cfg.name.c_str());
-            items += "\"></td><td><select class=\"field mini socket-select\" data-type=\"dinput\" data-selected=\"";
+            items += "\">";
+            items += "<div class=\"status-line\"><span class=\"status-dot ";
+            items += on ? "status-on" : "status-off";
+            items += "\"></span>";
+            items += "<span class=\"status-text\">";
+            items += on ? "Включена" : "Выключена";
+            items += "</span>";
+            items += "</div>";
+            items += "<div class=\"form-grid\">";
+            items += "<div class=\"form-row\"><label>Кнопка</label>";
+            items += "<select class=\"field mini socket-select\" data-type=\"dinput\" data-selected=\"";
             if (cfg.button_port != SocketController::kInvalidPort)
                 items += String((unsigned)cfg.button_port);
             items += "\" name=\"s";
             items += String((unsigned)cfg.id);
-            items += "_btn\"></select></td><td><select class=\"field mini socket-select\" data-type=\"relay\" data-selected=\"";
+            items += "_btn\"></select></div>";
+            items += "<div class=\"form-row\"><label>Реле</label>";
+            items += "<select class=\"field mini socket-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.relay_port != SocketController::kInvalidPort)
                 items += String((unsigned)cfg.relay_port);
             items += "\" name=\"s";
             items += String((unsigned)cfg.id);
-            items += "_relay\"></select></td><td class=\"center\"><span class=\"status-dot ";
-            items += on ? "status-on" : "status-off";
-            items += "\"></span></td><td>";
-            items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-action=\"s";
+            items += "_relay\"></select></div>";
+            items += "<div class=\"form-row\"><label>Перекл.</label>";
+            items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-id=\"";
             items += String((unsigned)cfg.id);
-            items += "_action\"";
+            items += "\"";
             if (on)
                 items += " checked";
             if (!enabled)
                 items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+            items += "</div>";
             items += "<input type=\"hidden\" name=\"s";
             items += String((unsigned)cfg.id);
             items += "_action\" value=\"\">";
-            if (lights_only)
-            {
-                items += "<input type=\"hidden\" name=\"s";
-                items += String((unsigned)cfg.id);
-                items += "_type\" value=\"light\">";
-            }
-            else
-            {
-                items += "<input type=\"hidden\" name=\"s";
-                items += String((unsigned)cfg.id);
-                items += "_type\" value=\"socket\">";
-            }
-            items += "</td></tr>";
+            items += "</div></div>";
         };
 
-        const SocketController::SocketConfig *first_disabled = nullptr;
-        const SocketController::SocketConfig *first_disabled_any = nullptr;
         for (size_t i = 0; i < SocketController::kSocketCount; ++i)
         {
             const auto *cfg = sockets.configByIndex(i);
             if (!cfg)
                 continue;
-            if (!lights_only && cfg->kind == SocketController::Kind::Light)
+            if (cfg->id < start_id || cfg->id > end_id)
                 continue;
-            if (cfg->enabled)
-            {
-                if (lights_only && cfg->kind != SocketController::Kind::Light)
-                    continue;
-                appendRow(*cfg, true);
-            }
-            else if (lights_only)
-            {
-                if (!first_disabled && cfg->kind == SocketController::Kind::Light)
-                    first_disabled = cfg;
-                if (!first_disabled_any)
-                    first_disabled_any = cfg;
-            }
-            else if (!first_disabled)
-            {
-                first_disabled = cfg;
-            }
+            appendRow(*cfg, cfg->enabled);
         }
-        if (lights_only && !first_disabled)
-            first_disabled = first_disabled_any;
-        if (first_disabled)
-            appendRow(*first_disabled, false);
         if (items.length() == 0)
-            items = lights_only ? "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Свет отсутствует</strong></td></tr>"
-                                : "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Розетки отсутствуют</strong></td></tr>";
+            items = "<div class=\"tile empty\"><strong>Розетки отсутствуют</strong></div>";
+        return items;
+    }
+
+    String listLightsHtml_(uint8_t start_id, uint8_t end_id)
+    {
+        if (!_controllers)
+            return "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>";
+        String items;
+        if (start_id == 0)
+            start_id = 1;
+        if (end_id < start_id)
+            end_id = start_id;
+        size_t reserve = 2048u + (size_t)(end_id - start_id + 1) * 700u;
+        if (reserve < 16384u)
+            reserve = 16384u;
+        items.reserve(reserve);
+        SocketController &sockets = _controllers->sockets();
+        bool tmp_state = false;
+        auto appendRow = [&](const SocketController::LightConfig &cfg, bool enabled) {
+            const bool on = enabled && sockets.lightRelayState(cfg.id, tmp_state) ? tmp_state : false;
+            items += "<div class=\"tile";
+            if (!enabled)
+                items += " disabled";
+            items += "\">";
+            items += "<div class=\"sock-visual\">";
+            items += "<span class=\"badge\">#";
+            items += String((unsigned)cfg.id);
+            items += "</span>";
+            items += "<svg class=\"sock-icon ";
+            items += on ? "on" : "off";
+            items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+            items += "<path fill=\"currentColor\" d=\"M32 4c-9.9 0-18 8.1-18 18 0 7.1 4.1 13.2 10 16.2V50c0 2.2 1.8 4 4 4h8c2.2 0 4-1.8 4-4V38.2c5.9-3 10-9.1 10-16.2 0-9.9-8.1-18-18-18zm6 42H26v-4h12v4zm0-8H26v-4h12v4z\"/>";
+            items += "</svg>";
+            items += "</div>";
+            items += "<div>";
+            items += "<div class=\"tile-head\">";
+            items += "<strong>";
+            if (cfg.name.length())
+                appendHtmlEscaped_(items, cfg.name.c_str());
+            else
+                items += "Свет";
+            items += "</strong>";
+            items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-enable\" data-id=\"";
+            items += String((unsigned)cfg.id);
+            items += "\" name=\"s";
+            items += String((unsigned)cfg.id);
+            items += "_en\"";
+            if (enabled)
+                items += " checked";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "</div>";
+            items += "<input class=\"field name\" type=\"text\" name=\"s";
+            items += String((unsigned)cfg.id);
+            items += "_name\" value=\"";
+            appendHtmlEscaped_(items, cfg.name.c_str());
+            items += "\">";
+            items += "<div class=\"status-line\"><span class=\"status-dot ";
+            items += on ? "status-on" : "status-off";
+            items += "\"></span>";
+            items += "<span class=\"status-text\">";
+            items += on ? "Включена" : "Выключена";
+            items += "</span>";
+            items += "</div>";
+            items += "<div class=\"form-grid\">";
+            items += "<div class=\"form-row\"><label>Кнопка</label>";
+            items += "<select class=\"field mini socket-select\" data-type=\"dinput\" data-selected=\"";
+            if (cfg.button_port != SocketController::kInvalidPort)
+                items += String((unsigned)cfg.button_port);
+            items += "\" name=\"s";
+            items += String((unsigned)cfg.id);
+            items += "_btn\"></select></div>";
+            items += "<div class=\"form-row\"><label>Реле</label>";
+            items += "<select class=\"field mini socket-select\" data-type=\"relay\" data-selected=\"";
+            if (cfg.relay_port != SocketController::kInvalidPort)
+                items += String((unsigned)cfg.relay_port);
+            items += "\" name=\"s";
+            items += String((unsigned)cfg.id);
+            items += "_relay\"></select></div>";
+            items += "<div class=\"form-row\"><label>Перекл.</label>";
+            items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-id=\"";
+            items += String((unsigned)cfg.id);
+            items += "\"";
+            if (on)
+                items += " checked";
+            if (!enabled)
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+            items += "</div>";
+            items += "<input type=\"hidden\" name=\"s";
+            items += String((unsigned)cfg.id);
+            items += "_action\" value=\"\">";
+            items += "</div></div>";
+        };
+
+        for (size_t i = 0; i < SocketController::kLightCount; ++i)
+        {
+            const auto *cfg = sockets.lightConfigByIndex(i);
+            if (!cfg)
+                continue;
+            if (cfg->id < start_id || cfg->id > end_id)
+                continue;
+            appendRow(*cfg, cfg->enabled);
+        }
+        if (items.length() == 0)
+            items = "<div class=\"tile empty\"><strong>Свет отсутствует</strong></div>";
         return items;
     }
 
@@ -2130,6 +2682,8 @@ private:
         String items;
         items.reserve(1400);
         SecurityController &sec = _controllers->security();
+        char last_hex[17] = {};
+        const bool has_last = sec.lastKeyHex(last_hex);
         auto appendRow = [&](size_t idx, bool enabled, const char *hex, const String &name) {
             items += "<tr><td class=\"right\"><strong>";
             items += String((unsigned)(idx + 1));
@@ -2138,17 +2692,28 @@ private:
             items += "_en\"";
             if (enabled)
                 items += " checked";
-            items += "></td><td><input class=\"field serial\" type=\"text\" name=\"k";
-            items += String((unsigned)(idx + 1));
-            items += "_serial\" value=\"";
-            if (enabled && hex)
-                appendHtmlEscaped_(items, hex);
-            items += "\"></td><td><input class=\"field name\" type=\"text\" name=\"k";
+            items += "></td><td><input class=\"field name\" type=\"text\" name=\"k";
             items += String((unsigned)(idx + 1));
             items += "_name\" value=\"";
             if (name.length())
                 appendHtmlEscaped_(items, name.c_str());
-            items += "\"></td></tr>";
+            items += "\"></td><td><input class=\"field serial\" type=\"text\" name=\"k";
+            items += String((unsigned)(idx + 1));
+            items += "_serial\" list=\"k";
+            items += String((unsigned)(idx + 1));
+            items += "_serial_list\" value=\"";
+            if (enabled && hex)
+                appendHtmlEscaped_(items, hex);
+            items += "\">";
+            if (has_last)
+            {
+                items += "<datalist id=\"k";
+                items += String((unsigned)(idx + 1));
+                items += "_serial_list\"><option value=\"";
+                items += last_hex;
+                items += "\"></option></datalist>";
+            }
+            items += "</td></tr>";
         };
 
         int first_disabled = -1;
@@ -2255,7 +2820,7 @@ private:
         if (!_controllers)
             return "<tr><td colspan=\"7\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
         String items;
-        items.reserve(4096);
+        items.reserve(16384);
         SecurityController &sec = _controllers->security();
 
         auto appendTypeOption = [&](const char *value, const char *label, bool selected) {
@@ -2287,7 +2852,7 @@ private:
             items += "_type\">";
             appendTypeOption("pir", "pir", cfg.type == SecurityController::SensorType::Pir);
             appendTypeOption("reed", "reed", cfg.type == SecurityController::SensorType::Reed);
-            items += "</select></td><td><select class=\"field mini security-port\" data-type=\"sensor\" data-selected=\"";
+            items += "</select></td><td><select class=\"field mini security-port\" data-type=\"dinput\" data-selected=\"";
             if (cfg.port != SecurityController::kInvalidPort)
                 items += String((unsigned)cfg.port);
             items += "\" name=\"sec";
@@ -2331,11 +2896,41 @@ private:
     String listMeteoHtml_()
     {
         if (!_controllers)
-            return "<tr><td colspan=\"10\" style=\"color:#94a3b8\"><strong>Meteo unavailable</strong></td></tr>";
+            return "<div class=\"tile empty\"><strong>Метео недоступно</strong></div>";
         String items;
-        items.reserve(4096);
+        items.reserve(16384);
         MeteoController &meteo = _controllers->meteo();
         const uint32_t now = millis();
+        static constexpr size_t kDs18Max = 32;
+        char ds18_list[kDs18Max][17] = {};
+        size_t ds18_count = 0;
+        meteo.listDs18b20Serials(ds18_list, kDs18Max, ds18_count);
+        char ds18_used[MeteoController::kSensorCount][17] = {};
+        size_t ds18_used_count = 0;
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = meteo.configByIndex(i);
+            if (!cfg)
+                continue;
+            if (cfg->type != MeteoController::SensorType::Ds18b20 || !cfg->ds18_addr_set)
+                continue;
+            char hex[17] = {};
+            MeteoController::formatHexAddr(cfg->ds18_addr, hex);
+            bool exists = false;
+            for (size_t j = 0; j < ds18_used_count; ++j)
+            {
+                if (strcmp(ds18_used[j], hex) == 0)
+                {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists && ds18_used_count < MeteoController::kSensorCount)
+            {
+                strncpy(ds18_used[ds18_used_count], hex, sizeof(ds18_used[ds18_used_count]) - 1);
+                ++ds18_used_count;
+            }
+        }
 
         auto appendTypeOption = [&](const char *value, const char *label, bool selected) {
             items += "<option value=\"";
@@ -2390,42 +2985,115 @@ private:
                 addr = hex;
             }
 
-            items += "<tr data-row=\"";
+            const bool show_hum = (cfg.type == MeteoController::SensorType::Dht22);
+            const bool ok_on = has_read && st.ok;
+
+            items += "<div class=\"tile";
+            if (!enabled)
+                items += " disabled";
+            items += "\">";
+            items += "<div class=\"sensor-visual\">";
+            items += "<span class=\"badge\">#";
             items += String((unsigned)cfg.id);
-            items += "\"><td class=\"right\"><strong>";
-            items += String((unsigned)cfg.id);
-            items += "</strong></td><td><input type=\"checkbox\" name=\"m";
+            items += "</span>";
+            items += "<svg class=\"sensor-icon ";
+            if (!ok_on)
+                items += "na";
+            items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+            items += "<path fill=\"currentColor\" d=\"M32 6c-5.5 0-10 4.5-10 10v19.2c-2.6 2.4-4 5.7-4 9.3 0 7.2 5.8 13 13 13s13-5.8 13-13c0-3.6-1.4-6.9-4-9.3V16c0-5.5-4.5-10-10-10zm6 33.1V16c0-3.3-2.7-6-6-6s-6 2.7-6 6v23.1l-0.9 0.9c-1.8 1.7-2.8 3.9-2.8 6.4 0 4.9 4 9 9 9s9-4 9-9c0-2.5-1-4.8-2.8-6.4l-0.5-0.5z\"/>";
+            items += "<rect x=\"30\" y=\"20\" width=\"4\" height=\"20\" rx=\"2\" fill=\"currentColor\"/>";
+            items += "</svg>";
+            items += "<div class=\"sensor-readout\">";
+            items += "<div class=\"sensor-value\">";
+            items += temp;
+            items += "</div><div class=\"sensor-unit\">°C</div>";
+            if (show_hum)
+            {
+                items += "<div class=\"sensor-hum\"><svg class=\"sensor-hum-icon\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+                items += "<path fill=\"currentColor\" d=\"M32 6c7 12 16 22 16 34 0 8.8-7.2 16-16 16S16 48.8 16 40c0-12 9-22 16-34z\"/>";
+                items += "</svg><div class=\"sensor-value\">";
+                items += hum;
+                items += "</div><div class=\"sensor-unit\">%</div></div>";
+            }
+            items += "</div>";
+            items += "</div>";
+            items += "<div>";
+            items += "<div class=\"tile-head\"><strong>";
+            if (cfg.name.length())
+                appendHtmlEscaped_(items, cfg.name.c_str());
+            else
+                items += "Датчик";
+            items += "</strong>";
+            items += "<label class=\"switch\"><input type=\"checkbox\" class=\"meteo-enable\" name=\"m";
             items += String((unsigned)cfg.id);
             items += "_en\"";
             if (enabled)
                 items += " checked";
-            items += "></td><td><input class=\"field name\" type=\"text\" name=\"m";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+            items += "<input class=\"field name\" type=\"text\" name=\"m";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
             appendHtmlEscaped_(items, cfg.name.c_str());
-            items += "\"></td><td><select class=\"field mini meteo-type\" name=\"m";
+            items += "\">";
+            items += "<div class=\"status-line\">";
+            items += ok;
+            items += "<span>Возраст: ";
+            items += age;
+            items += "</span></div>";
+            items += "<div class=\"form-grid\">";
+            items += "<div class=\"form-row\"><label>Тип</label><select class=\"field mini meteo-type\" name=\"m";
             items += String((unsigned)cfg.id);
             items += "_type\">";
             appendTypeOption("none", "none", cfg.type == MeteoController::SensorType::None);
             appendTypeOption("ds18b20", "ds18b20", cfg.type == MeteoController::SensorType::Ds18b20);
             appendTypeOption("dht22", "dht22", cfg.type == MeteoController::SensorType::Dht22);
-            items += "</select></td><td class=\"pin-cell\"><select class=\"field mini meteo-pin\" data-selected=\"";
+            items += "</select></div>";
+            items += "<div class=\"form-row pin-cell\"><label>Пин</label><select class=\"field mini meteo-pin\" data-selected=\"";
             items += pin;
             items += "\" name=\"m";
             items += String((unsigned)cfg.id);
-            items += "_pin\"></select></td><td class=\"addr-cell\"><input class=\"field addr meteo-addr\" type=\"text\" name=\"m";
+            items += "_pin\"></select></div>";
+            items += "<div class=\"form-row addr-cell full\"><label>Адрес</label><select class=\"field addr meteo-addr\" name=\"m";
             items += String((unsigned)cfg.id);
-            items += "_addr\" value=\"";
-            items += addr;
-            items += "\"></td><td class=\"right\">";
-            items += temp;
-            items += "</td><td class=\"right hum-cell\">";
-            items += hum;
-            items += "</td><td class=\"center\">";
-            items += ok;
-            items += "</td><td class=\"right\">";
-            items += age;
-            items += "</td></tr>";
+            items += "_addr\">";
+            items += "<option value=\"\">-</option>";
+            bool addr_found = false;
+            for (size_t i = 0; i < ds18_count; ++i)
+            {
+                bool used = false;
+                for (size_t j = 0; j < ds18_used_count; ++j)
+                {
+                    if (strcmp(ds18_used[j], ds18_list[i]) == 0)
+                    {
+                        used = true;
+                        break;
+                    }
+                }
+                if (used && (!addr.length() || addr != ds18_list[i]))
+                    continue;
+                items += "<option value=\"";
+                items += ds18_list[i];
+                items += "\"";
+                if (addr.length() && addr == ds18_list[i])
+                {
+                    items += " selected";
+                    addr_found = true;
+                }
+                items += ">";
+                items += ds18_list[i];
+                items += "</option>";
+            }
+            if (addr.length() && !addr_found)
+            {
+                items += "<option value=\"";
+                items += addr;
+                items += "\" selected>";
+                items += addr;
+                items += "</option>";
+            }
+            items += "</select></div>";
+            items += "</div>";
+            items += "</div></div>";
         };
 
         const MeteoController::SensorConfig *first_disabled = nullptr;
@@ -2449,7 +3117,7 @@ private:
         if (first_disabled && first_disabled_state)
             appendRow(*first_disabled, *first_disabled_state, false);
         if (items.length() == 0)
-            items = "<tr><td colspan=\"10\" style=\"color:#94a3b8\"><strong>Meteo empty</strong></td></tr>";
+            items = "<div class=\"tile empty\"><strong>Датчики отсутствуют</strong></div>";
         return items;
     }
 
@@ -2458,7 +3126,7 @@ private:
         if (!_controllers)
             return "<div class=\"tile empty\"><strong>Thermo unavailable</strong></div>";
         String items;
-        items.reserve(4096);
+        items.reserve(16384);
         ThermoController &thermo = _controllers->thermo();
         MeteoController &meteo = _controllers->meteo();
         uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
@@ -2499,7 +3167,7 @@ private:
                 {
                     dtostrf(sensor_st->temp_c, 0, 1, sensor_buf);
                     sensor_label = sensor_buf;
-                    sensor_suffix = "°C";
+                      sensor_suffix = "°C";
                 }
                 else
                 {
@@ -2554,23 +3222,46 @@ private:
             items += "<div class=\"tile";
             if (!enabled)
                 items += " disabled";
-            items += "\"><div class=\"thermo-visual\"><div class=\"temp-pill sensor\">Текущая: ";
+            items += "\"><div class=\"thermo-left\"><div class=\"thermo-visual\"><div class=\"temp-pill sensor\">Текущая: <span class=\"temp-value\">";
             items += sensor_label;
             items += sensor_suffix;
-            items += "</div><div class=\"temp-pill target\">Цель: ";
+            items += "</span>";
+            items += "</div><div class=\"temp-pill target\">Цель: <span class=\"temp-value\">";
             items += String(cfg.target_c, 1);
-            items += "°C</div><svg class=\"";
+            items += "°C</span></div><svg class=\"";
             items += heat_class;
             items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"22\" y=\"30\" width=\"76\" height=\"60\" rx=\"10\"/><line x1=\"36\" y1=\"40\" x2=\"36\" y2=\"80\"/><line x1=\"52\" y1=\"40\" x2=\"52\" y2=\"80\"/><line x1=\"68\" y1=\"40\" x2=\"68\" y2=\"80\"/><line x1=\"84\" y1=\"40\" x2=\"84\" y2=\"80\"/></svg><svg class=\"";
             items += cool_class;
-            items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"18\" y=\"28\" width=\"84\" height=\"46\" rx=\"10\"/><line x1=\"28\" y1=\"44\" x2=\"92\" y2=\"44\"/><line x1=\"28\" y1=\"56\" x2=\"92\" y2=\"56\"/><line x1=\"40\" y1=\"78\" x2=\"34\" y2=\"92\"/><line x1=\"60\" y1=\"78\" x2=\"60\" y2=\"94\"/><line x1=\"80\" y1=\"78\" x2=\"86\" y2=\"92\"/></svg></div><div><div class=\"tile-head\"><div><strong>Термо #";
+            items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"18\" y=\"28\" width=\"84\" height=\"46\" rx=\"10\"/><line x1=\"28\" y1=\"44\" x2=\"92\" y2=\"44\"/><line x1=\"28\" y1=\"56\" x2=\"92\" y2=\"56\"/><line x1=\"40\" y1=\"78\" x2=\"34\" y2=\"92\"/><line x1=\"60\" y1=\"78\" x2=\"60\" y2=\"94\"/><line x1=\"80\" y1=\"78\" x2=\"86\" y2=\"92\"/></svg></div>";
+            items += "<div class=\"status-line\"><span class=\"status-dot ";
+            items += state_class;
+            items += "\"></span><span><span class=\"status-value ";
+            if (strcmp(state_class, "status-heat") == 0)
+                items += "status-text-heat";
+            else if (strcmp(state_class, "status-cool") == 0)
+                items += "status-text-cool";
+            else
+                items += "status-text-idle";
+            items += "\">";
+            items += state_label;
+            items += "</span></span></div>";
+            items += "</div><div><div class=\"tile-head\"><div><strong>Термо #";
             items += String((unsigned)cfg.id);
             items += "</strong> <span class=\"badge\">";
             items += mode_label;
             items += "</span>";
             if (!enabled)
                 items += " <span class=\"badge\">выкл</span>";
-            items += "</div><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
+            items += "</div><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-enable\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_en\"";
+            if (enabled)
+                items += " checked";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div><input class=\"field name\" type=\"text\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_name\" value=\"";
+            appendHtmlEscaped_(items, cfg.name.c_str());
+            items += "\"><div class=\"form-grid\"><div class=\"form-row\"><label>Активн.</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
             items += String((unsigned)cfg.id);
             items += "_power\"";
             const bool ui_power_on = enabled ? st.power_on : false;
@@ -2578,16 +3269,10 @@ private:
                 items += " checked";
             if (!enabled)
                 items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div><input class=\"field name\" type=\"text\" name=\"t";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div><input type=\"hidden\" name=\"t";
             items += String((unsigned)cfg.id);
-            items += "_name\" value=\"";
-            appendHtmlEscaped_(items, cfg.name.c_str());
-            items += "\"><div class=\"form-grid\"><div class=\"form-row\"><label>Вкл</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-enable\" name=\"t";
-            items += String((unsigned)cfg.id);
-            items += "_en\"";
-            if (enabled)
-                items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div><div class=\"form-row\"><label>Датчик</label><select class=\"field mini\" name=\"t";
+            items += "_en_force\" value=\"\">";
+            items += "<div class=\"form-row full\"><label>Датчик</label><select class=\"field mini\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_sensor\">";
             items += meteoSensorOptionsHtml_(cfg.sensor_id, sensor_used);
@@ -2605,11 +3290,11 @@ private:
             items += ">cool only</option><option value=\"auto\"";
             if (cfg.mode == ThermoController::Mode::Auto)
                 items += " selected";
-            items += ">auto</option></select></div><div class=\"form-row\"><label>Цель</label><input class=\"field temp\" type=\"text\" name=\"t";
+            items += ">auto</option></select></div><div class=\"form-row\"><label>Цель</label><input class=\"field temp\" type=\"number\" step=\"0.1\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_target\" value=\"";
             items += String(cfg.target_c, 1);
-            items += "\"></div><div class=\"form-row\"><label>Гист</label><input class=\"field temp\" type=\"text\" name=\"t";
+            items += "\"></div><div class=\"form-row\"><label>Гист.</label><input class=\"field temp\" type=\"number\" step=\"0.1\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_hyst\" value=\"";
             items += String(cfg.hysteresis, 1);
@@ -2628,11 +3313,7 @@ private:
                 items += String((unsigned)cfg.button_port);
             items += "\" name=\"t";
             items += String((unsigned)cfg.id);
-            items += "_button\"></select></div></div><div class=\"status-line\"><span class=\"status-dot ";
-            items += state_class;
-            items += "\"></span><span>Статус: ";
-            items += state_label;
-            items += "</span></div>";
+            items += "_button\"></select></div></div>";
             if (sensor_cfg && sensor_cfg->name.length())
             {
                 items += "<div class=\"status-line\"><span class=\"badge\">";
@@ -2641,7 +3322,8 @@ private:
             }
             items += "<input type=\"hidden\" name=\"t";
             items += String((unsigned)cfg.id);
-            items += "_power\" value=\"\"></div></div>";
+            items += "_power\" value=\"\">";
+            items += "</div></div>";
         };
 
         const ThermoController::DeviceConfig *first_disabled = nullptr;
@@ -2674,7 +3356,7 @@ private:
         if (!_controllers)
             return "<div class=\"tile\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></div>";
         String items;
-        items.reserve(4096);
+        items.reserve(16384);
         TankController &tanks = _controllers->tanks();
 
         auto appendRow = [&](const TankController::TankConfig &cfg, const TankController::TankState &st,
@@ -2762,7 +3444,7 @@ private:
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_full\"></select></div>";
-            items += "<div class=\"form-row\"><label>Клапан</label><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
+            items += "<div class=\"form-row\"><label>Вкл</label><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.relay_valve != TankController::kInvalidPort)
                 items += String((unsigned)cfg.relay_valve);
             items += "\" name=\"k";
@@ -2788,7 +3470,9 @@ private:
                 items += " checked";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_power\" value=\"\"></div>";
+            items += "_power\" value=\"";
+            items += cfg.power_on ? "on" : "off";
+            items += "\"></div>";
             items += "<div class=\"status-row\">";
             items += "<span class=\"status-dot ";
             items += st.pump_on ? "status-on" : "status-off";
@@ -2890,12 +3574,12 @@ private:
                 items += String((unsigned)cfg->alarm_port);
             items += "\" name=\"sep";
             items += String((unsigned)cfg->id);
-            items += "_alarm\"></select></div><div class=\"form-row\"><label>Реле пред.</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
+            items += "_alarm\"></select></div><div class=\"form-row\"><label>Реле предупр.</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
             if (cfg->relay_warning != SepticController::kInvalidPort)
                 items += String((unsigned)cfg->relay_warning);
             items += "\" name=\"sep";
             items += String((unsigned)cfg->id);
-            items += "_relay_warn\"></select></div><div class=\"form-row\"><label>Реле трев.</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
+            items += "_relay_warn\"></select></div><div class=\"form-row\"><label>Реле тревоги</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
             if (cfg->relay_alarm != SepticController::kInvalidPort)
                 items += String((unsigned)cfg->relay_alarm);
             items += "\" name=\"sep";
@@ -3017,6 +3701,7 @@ private:
         out.reserve(128);
         out += "[";
         bool first = true;
+        uint8_t next_id[11] = {};
         for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
         {
             const auto &p = ActiveBoardProfile::PORTS[i];
@@ -3035,9 +3720,22 @@ private:
                 if (!_ext->isPresent(dev))
                     continue;
             }
+            uint8_t ui_id = p.ui_id;
+            if (ui_id == 0)
+            {
+                const uint8_t loc = locationIndex_(p.location);
+                if (loc < 11)
+                    ui_id = ++next_id[loc];
+                else
+                    ui_id = 0;
+            }
             if (!first)
                 out += ",";
+            out += "{\"v\":";
             out += String((unsigned)i);
+            out += ",\"l\":\"";
+            appendPortLabel_(out, type, p, ui_id);
+            out += "\"}";
             first = false;
         }
         out += "]";
@@ -3057,6 +3755,18 @@ private:
             for (size_t i = 0; i < SocketController::kSocketCount; ++i)
             {
                 const auto *cfg = sockets.configByIndex(i);
+                if (!cfg)
+                    continue;
+                const uint8_t btn = cfg->button_port;
+                const uint8_t relay = cfg->relay_port;
+                if (btn != SocketController::kInvalidPort && btn < PortIO::PORT_COUNT)
+                    used[btn] = true;
+                if (relay != SocketController::kInvalidPort && relay < PortIO::PORT_COUNT)
+                    used[relay] = true;
+            }
+            for (size_t i = 0; i < SocketController::kLightCount; ++i)
+            {
+                const auto *cfg = sockets.lightConfigByIndex(i);
                 if (!cfg)
                     continue;
                 const uint8_t btn = cfg->button_port;
@@ -3114,7 +3824,7 @@ private:
                 if (!used[i])
                     continue;
                 const auto &p = ActiveBoardProfile::PORTS[i];
-                if (p.caps == Cap::None || p.type != PortIO::PinType::Sensor)
+                if (p.caps == Cap::None || p.type != PortIO::PinType::DInput)
                     continue;
                 if (!first)
                     out += ",";
@@ -3128,7 +3838,7 @@ private:
 
     String securityPortOptionsJson_() const
     {
-        return socketPortOptionsJson_(PortIO::PinType::Sensor);
+        return socketPortOptionsJson_(PortIO::PinType::DInput);
     }
 
     String securityUsedPinsJson_() const
@@ -3155,7 +3865,7 @@ private:
                 if (!used[i])
                     continue;
                 const auto &p = ActiveBoardProfile::PORTS[i];
-                if (p.caps == Cap::None || p.type != PortIO::PinType::Sensor)
+                if (p.caps == Cap::None || p.type != PortIO::PinType::DInput)
                     continue;
                 if (!first)
                     out += ",";
@@ -3981,6 +4691,42 @@ sendRedirect_(request, "/", set_cookie);
         return false;
     }
 
+    bool checkAuthApi_(AsyncWebServerRequest *request, bool *set_cookie)
+    {
+        if (set_cookie)
+            *set_cookie = false;
+        if (!request)
+            return false;
+
+        String token;
+        if (extractSessionToken_(request, token) && sessionValid_(token))
+        {
+            refreshSession_();
+            return true;
+        }
+
+        if (_cli_auth)
+        {
+            String user;
+            String pass;
+            if (parseBasicAuth_(request, user, pass))
+            {
+                String ulow = user;
+                ulow.toLowerCase();
+                if (ulow == CliConsole::kAdminUser && _cli_auth->checkAdminPassword(pass))
+                {
+                    issueSession_();
+                    if (set_cookie)
+                        *set_cookie = true;
+                    return true;
+                }
+            }
+        }
+
+        sendText_(request, 403, "application/json", "{\"ok\":false,\"err\":\"auth\"}", false);
+        return false;
+    }
+
     String requestIp_(AsyncWebServerRequest *request) const
     {
         if (!request)
@@ -4123,24 +4869,6 @@ sendRedirect_(request, "/", set_cookie);
             return false;
         out = (uint8_t)v;
         return true;
-    }
-
-    static bool parseSocketKind_(const String &input, SocketController::Kind &out)
-    {
-        String t = input;
-        t.trim();
-        t.toLowerCase();
-        if (t.length() == 0 || t == "socket" || t == "розетка")
-        {
-            out = SocketController::Kind::Socket;
-            return true;
-        }
-        if (t == "light" || t == "lamp" || t == "свет")
-        {
-            out = SocketController::Kind::Light;
-            return true;
-        }
-        return false;
     }
 
     static bool parseMeteoType_(const String &input, MeteoController::SensorType &out)
@@ -4320,17 +5048,24 @@ sendRedirect_(request, "/", set_cookie);
             if (!cfg || !cfg->enabled)
                 continue;
             const bool is_used = (id <= MeteoController::kSensorCount) && (used[id] > 0) && (id != selected);
+            if (is_used)
+                continue;
             out += "<option value=\"";
             out += String((unsigned)id);
             out += "\"";
             if (id == selected)
                 out += " selected";
-            if (is_used)
-                out += " disabled";
             out += ">";
-            out += String((unsigned)id);
-            if (is_used)
-                out += " (занят)";
+            if (cfg->name.length())
+            {
+                out += String((unsigned)id);
+                out += ": ";
+                appendHtmlEscaped_(out, cfg->name.c_str());
+            }
+            else
+            {
+                out += String((unsigned)id);
+            }
             out += "</option>";
         }
         return out;
@@ -4349,6 +5084,19 @@ sendRedirect_(request, "/", set_cookie);
         if (!request || !request->hasParam(name, true))
             return "";
         return request->getParam(name, true)->value();
+    }
+
+    static String paramValueAny_(AsyncWebServerRequest *request, const String &name)
+    {
+        if (!request)
+            return "";
+        if (request->hasParam(name, true))
+            return request->getParam(name, true)->value();
+        if (request->hasParam(name, false))
+            return request->getParam(name, false)->value();
+        if (request->hasParam(name))
+            return request->getParam(name)->value();
+        return "";
     }
 
     static void appendHtmlEscaped_(String &out, const char *in)
@@ -4810,6 +5558,14 @@ sendRedirect_(request, "/", set_cookie);
         request->send(response);
     }
 
+    void sendHtmlRaw_(AsyncWebServerRequest *request, const String &page, bool set_cookie)
+    {
+        auto *response = request->beginResponse(200, "text/html; charset=utf-8", page);
+        if (set_cookie)
+            response->addHeader("Set-Cookie", sessionCookie_());
+        request->send(response);
+    }
+
     void sendRedirect_(AsyncWebServerRequest *request, const char *path, bool set_cookie)
     {
         auto *response = request->beginResponse(302);
@@ -4898,6 +5654,8 @@ sendRedirect_(request, "/", set_cookie);
         hashAdd_(hash, _device_status);
         hashAdd_(hash, _sockets_status);
         hashAdd_(hash, _controllers_status);
+        hashAdd_(hash, _sockets_status);
+        hashAdd_(hash, _lights_status);
         hashAdd_(hash, _meteo_status);
         hashAdd_(hash, _thermo_status);
         hashAdd_(hash, _tanks_status);
@@ -4943,6 +5701,7 @@ sendRedirect_(request, "/", set_cookie);
             if (_controllers)
             {
                 hashAdd_(hash, _controllers->sockets().controllerEnabled() ? 1u : 0u);
+                hashAdd_(hash, _controllers->sockets().lightsEnabled() ? 1u : 0u);
                 hashAdd_(hash, _controllers->meteo().controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, _controllers->thermo().controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, _controllers->tanks().controllerEnabled() ? 1u : 0u);
@@ -4966,7 +5725,6 @@ sendRedirect_(request, "/", set_cookie);
                     hashAdd_(hash, cfg->enabled ? 1u : 0u);
                     hashAdd_(hash, (uint32_t)cfg->button_port);
                     hashAdd_(hash, (uint32_t)cfg->relay_port);
-                    hashAdd_(hash, (uint32_t)(cfg->kind == SocketController::Kind::Light ? 1u : 0u));
                     hashAdd_(hash, cfg->name);
                     hashAdd_(hash, st->relay_on ? 1u : 0u);
                 }
@@ -4978,13 +5736,11 @@ sendRedirect_(request, "/", set_cookie);
             if (_controllers)
             {
                 SocketController &sockets = _controllers->sockets();
-                for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+                for (size_t i = 0; i < SocketController::kLightCount; ++i)
                 {
-                    const auto *cfg = sockets.configByIndex(i);
-                    const auto *st = sockets.stateByIndex(i);
+                    const auto *cfg = sockets.lightConfigByIndex(i);
+                    const auto *st = sockets.lightStateByIndex(i);
                     if (!cfg || !st)
-                        continue;
-                    if (cfg->kind != SocketController::Kind::Light)
                         continue;
                     hashAdd_(hash, (uint32_t)cfg->id);
                     hashAdd_(hash, cfg->enabled ? 1u : 0u);
@@ -5343,9 +6099,14 @@ sendRedirect_(request, "/", set_cookie);
     {
         if (!_gsm)
             return "недоступно";
+        if (!_gsm->started())
+            return "off";
         const String &err = _gsm->lastError();
         if (err.length())
-            return err;
+            return "error";
+        const String &reg = _gsm->regStatus();
+        if (!reg.length())
+            return "no reg";
         return "ok";
     }
 
@@ -5380,6 +6141,7 @@ sendRedirect_(request, "/", set_cookie);
     String _stack_status;
     String _device_status;
     String _sockets_status;
+    String _lights_status;
     String _controllers_status;
     String _meteo_status;
     String _thermo_status;
@@ -5400,6 +6162,14 @@ sendRedirect_(request, "/", set_cookie);
     bool _ota_set_cookie = false;
     bool _ota_in_progress = false;
 };
+
+
+
+
+
+
+
+
 
 
 

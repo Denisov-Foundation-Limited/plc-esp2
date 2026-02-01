@@ -160,7 +160,7 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       background: linear-gradient(180deg, #facc15 0%, #eab308 100%);
     }
     .water-alarm {
-      background: linear-gradient(180deg, #64748b 0%, #475569 100%);
+      background: linear-gradient(180deg, #dc2626 0%, #7f1d1d 100%);
     }
     .level-label {
       position: absolute;
@@ -187,21 +187,27 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
     .form-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      gap: 10px 14px;
     }
     .form-row {
-      display: flex;
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
       align-items: center;
-      justify-content: space-between;
       gap: 8px;
     }
     .form-row > label:not(.switch) {
       color: var(--muted);
       font-size: 12px;
-      min-width: 96px;
+      white-space: nowrap;
     }
     .form-row > label.switch {
+      justify-self: start;
+    }
+    .form-row .field,
+    .form-row select {
+      width: 100%;
       min-width: 0;
+      max-width: 100%;
     }
     .status-grid {
       display: grid;
@@ -255,15 +261,29 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       dinput: %SEPTIC_DINPUT_USED_JSON%,
       relay: %SEPTIC_RELAY_USED_JSON%
     };
+    function labelFor(type, val) {
+      if (type === 'dinput') return 'in' + val;
+      if (type === 'relay') return 'rly' + val;
+      if (type === 'sensor') return 'sens' + val;
+      return val;
+    }
+    function optionValue(item) {
+      return (item && typeof item === 'object') ? String(item.v) : String(item);
+    }
+    function optionLabel(item, type) {
+      if (item && typeof item === 'object' && item.l) return item.l;
+      return labelFor(type, optionValue(item));
+    }
     function buildOptions(list, selected, type) {
       let html = '<option value="">-</option>';
       const used = septicUsed[type] || [];
       for (let i = 0; i < list.length; i++) {
-        const val = String(list[i]);
+        const val = optionValue(list[i]);
         if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
           continue;
         }
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + val + '</option>';
+        const label = optionLabel(list[i], type);
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
       }
       return html;
     }
@@ -274,8 +294,21 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       el.innerHTML = buildOptions(list, selected, type);
     });
     const septicForm = document.getElementById('septic-form');
+    const reloadKey = 'septic_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname);
+    }
+    if (septicForm) {
+      septicForm.addEventListener('submit', () => {
+        sessionStorage.setItem(reloadKey, '1');
+      });
+    }
     document.querySelectorAll('input.septic-monitor').forEach((el) => {
       el.addEventListener('change', () => {
+        if (el.dataset.busy === '1') return;
+        el.dataset.busy = '1';
+        el.disabled = true;
         const name = el.dataset.action;
         const hidden = document.querySelector('input[name="' + name + '"]');
         if (hidden) {

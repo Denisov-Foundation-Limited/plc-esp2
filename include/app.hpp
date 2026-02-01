@@ -151,7 +151,7 @@ struct ControlContext
         : telegram_menu(hw.plc, comms.wifi, hw.rtc, comms.telegram_bot, core.configs, core.logs),
           controllers(hw.gpio, hw.ow, hw.eeprom_storage, core.logs, comms.telegram_bot, telegram_menu, comms.gsm),
           meteo_history(hw.rtc, controllers.meteo()),
-          task_binder(core.tm, comms.wifi, comms.telegram, hw.ext, controllers, meteo_history),
+          task_binder(core.tm, comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history),
           ftest(core.logs, hw.io, hw.ow, hw.ibutton, hw.ds18b20, hw.i2c, hw.rtc, hw.ext, core.tm, task_binder),
           plc_scan(hw.io, hw.plc)
     {

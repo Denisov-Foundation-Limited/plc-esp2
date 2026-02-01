@@ -102,6 +102,8 @@ public:
     {
         if (cfg["sockets_enabled"].is<bool>())
             _sockets.setControllerEnabled(cfg["sockets_enabled"].as<bool>());
+        if (cfg["lights_enabled"].is<bool>())
+            _sockets.setLightsEnabled(cfg["lights_enabled"].as<bool>());
         if (cfg["meteo_enabled"].is<bool>())
             _meteo.setControllerEnabled(cfg["meteo_enabled"].as<bool>());
         if (cfg["thermo_enabled"].is<bool>())
@@ -112,8 +114,11 @@ public:
             _septic.setControllerEnabled(cfg["septic_enabled"].as<bool>());
         if (cfg["security_enabled"].is<bool>())
             _security.setControllerEnabled(cfg["security_enabled"].as<bool>());
+        const bool has_lights = cfg["lights"].is<JsonArrayConst>();
         if (cfg["sockets"].is<JsonArrayConst>())
-            _sockets.applyConfig(cfg["sockets"].as<JsonArrayConst>());
+            _sockets.applyConfig(cfg["sockets"].as<JsonArrayConst>(), !has_lights);
+        if (has_lights)
+            _sockets.applyLightsConfig(cfg["lights"].as<JsonArrayConst>());
         if (cfg["meteo"].is<JsonArrayConst>())
             _meteo.applyConfig(cfg["meteo"].as<JsonArrayConst>());
         if (cfg["thermo"].is<JsonArrayConst>())
@@ -141,6 +146,9 @@ public:
         out["sockets_enabled"] = _sockets.controllerEnabled();
         JsonArray arr = out["sockets"].to<JsonArray>();
         _sockets.serialize(arr);
+        out["lights_enabled"] = _sockets.lightsEnabled();
+        JsonArray larr = out["lights"].to<JsonArray>();
+        _sockets.serializeLights(larr);
         out["meteo_enabled"] = _meteo.controllerEnabled();
         JsonArray marr = out["meteo"].to<JsonArray>();
         _meteo.serialize(marr);
@@ -197,6 +205,9 @@ private:
         EepromStorage::SocketSnapshot snap;
         if (_storage.loadSockets(snap))
             _sockets.applySnapshot(snap.enabled_mask, snap.state_mask, EepromStorage::kSocketMaskBytes);
+        EepromStorage::LightSnapshot lsnap;
+        if (_storage.loadLights(lsnap))
+            _sockets.applyLightsSnapshot(lsnap.enabled_mask, lsnap.state_mask, EepromStorage::kLightMaskBytes);
         EepromStorage::ThermoSnapshot tsnap;
         if (_storage.loadThermo(tsnap))
         {
@@ -224,6 +235,13 @@ private:
             EepromStorage::SocketSnapshot snap;
             _sockets.buildSnapshot(snap.enabled_mask, snap.state_mask, EepromStorage::kSocketMaskBytes);
             if (_storage.saveSockets(snap))
+                saved = true;
+        }
+        if (_sockets.takeLightsDirty())
+        {
+            EepromStorage::LightSnapshot snap;
+            _sockets.buildLightsSnapshot(snap.enabled_mask, snap.state_mask, EepromStorage::kLightMaskBytes);
+            if (_storage.saveLights(snap))
                 saved = true;
         }
         if (_thermo.takeDirty())

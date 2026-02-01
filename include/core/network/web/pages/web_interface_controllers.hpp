@@ -131,22 +131,22 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           </form>
           <span>Настройка реле и кнопок</span>
           <span class="status">Розетки: <strong>%SOCKETS_ENABLED_LABEL%</strong></span>
-          <span class="status">%CONTROLLERS_STATUS%</span>
+          <span class="status">%SOCKETS_STATUS%</span>
         </div>
         <div class="tile">
           <form method="POST" action="/controllers" id="lights-form">
-            <input type="hidden" name="ctrl" value="sockets">
+            <input type="hidden" name="ctrl" value="lights">
             <div class="tile-head">
               <a href="/lights">Свет</a>
               <label class="switch">
-                <input type="checkbox" id="lights-enabled" name="sockets_enabled" %SOCKETS_ENABLED_CHECKED%>
+                <input type="checkbox" id="lights-enabled" name="lights_enabled" %LIGHTS_ENABLED_CHECKED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
           <span>Настройка освещения</span>
-          <span class="status">Свет: <strong>%SOCKETS_ENABLED_LABEL%</strong></span>
-          <span class="status">%CONTROLLERS_STATUS%</span>
+          <span class="status">Свет: <strong>%LIGHTS_ENABLED_LABEL%</strong></span>
+          <span class="status">%LIGHTS_STATUS%</span>
         </div>
         <div class="tile">
           <form method="POST" action="/controllers" id="meteo-form">

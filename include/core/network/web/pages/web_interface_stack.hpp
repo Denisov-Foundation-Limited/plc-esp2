@@ -90,7 +90,7 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
       %STACK_SELF_BLOCK%
       <div class="section">
         <p class="status">Роль: <strong>%STACK_ROLE%</strong></p>
-        <form method="POST" action="/stack">
+        <form method="POST" action="/stack" id="stack-form">
           <div class="grid">
             <div>
               <label>Роль</label>
@@ -140,6 +140,17 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
           .then((resp) => resp.ok ? resp.text() : Promise.reject(resp.status))
           .then((key) => { apiKeyInput.value = key.trim(); })
           .catch(() => {});
+      });
+    }
+    const stackForm = document.getElementById('stack-form');
+    const reloadKey = 'stack_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname);
+    }
+    if (stackForm) {
+      stackForm.addEventListener('submit', () => {
+        sessionStorage.setItem(reloadKey, '1');
       });
     }
   </script>

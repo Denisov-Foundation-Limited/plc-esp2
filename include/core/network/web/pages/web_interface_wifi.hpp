@@ -89,7 +89,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
           %WIFI_STA_ROW%
         </tbody>
       </table>
-      <form method="POST" action="/wifi">
+      <form method="POST" action="/wifi" id="wifi-form">
         <div class="grid">
           <div>
             <label>Режим</label>
@@ -161,6 +161,17 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
     if (modeSelect) {
       modeSelect.addEventListener('change', updateApFields);
       updateApFields();
+    }
+    const wifiForm = document.getElementById('wifi-form');
+    const reloadKey = 'wifi_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname);
+    }
+    if (wifiForm) {
+      wifiForm.addEventListener('submit', () => {
+        sessionStorage.setItem(reloadKey, '1');
+      });
     }
   </script>
 </body>

@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -678,6 +678,13 @@ public:
         }
         return true;
     }
+    bool lastKeyHex(char out[17]) const
+    {
+        if (!out || _last_key_ms == 0)
+            return false;
+        IButton::toHex(_last_key, out);
+        return true;
+    }
     bool setKeySlot(size_t idx, const uint8_t addr[8], bool enabled, const String &name)
     {
         if (idx >= kKeyCount)
@@ -728,6 +735,7 @@ private:
     Logger &_logs;
     TelegramBot &_tgbot;
     TelegramAllowedUsersProvider &_tgusers;
+    uint32_t _tg_last_send_ms = 0;
     GsmModem *_gsm = nullptr;
     IButton _ibutton;
     bool _ibutton_ready = false;
@@ -924,11 +932,17 @@ private:
         uint8_t addr[8] = {};
         if (!_ibutton.readSerial(addr))
             return;
-        String user;
-        if (!matchKey_(addr, user))
-            return;
         if (isKeyRepeat_(addr))
             return;
+        char hex[17] = {};
+        IButton::toHex(addr, hex);
+        _logs.info(F("SEC"), F("Detected iButton key: %s"), hex);
+        String user;
+        if (!matchKey_(addr, user))
+        {
+            _logs.warn(F("SEC"), F("iButton key is not valid"));
+            return;
+        }
         toggleArm_("ibutton", user);
     }
 
@@ -996,6 +1010,23 @@ private:
 
     void arm_()
     {
+        String blocked;
+        String blocked_log;
+        if (hasTriggeredBeforeArm_(blocked, &blocked_log))
+        {
+            _logs.warn(F("SEC"), F("arm blocked, triggered: %s"), blocked_log.c_str());
+            const char *src = "local";
+            const char *who = "unknown";
+            String msg = F("Охрана: невозможно поставить, источник: <b>");
+            msg += escapeHtml_(src);
+            msg += F("</b>, кто: <b>");
+            msg += escapeHtml_(who);
+            msg += F("</b>\nСработали датчики:\n<pre>");
+            msg += blocked;
+            msg += F("</pre>");
+            sendTgNotify_(msg, F("HTML"));
+            return;
+        }
         _armed = true;
         _alarm_on = false;
         clearDetect_();
@@ -1023,6 +1054,23 @@ private:
 
     void arm_(const char *src, const String &user)
     {
+        String blocked;
+        String blocked_log;
+        if (hasTriggeredBeforeArm_(blocked, &blocked_log))
+        {
+            _logs.warn(F("SEC"), F("arm blocked, triggered: %s"), blocked_log.c_str());
+            const char *who = user.length() ? user.c_str() : "unknown";
+            const char *from = src ? src : "local";
+            String msg = F("Охрана: невозможно поставить, источник: <b>");
+            msg += escapeHtml_(from);
+            msg += F("</b>, кто: <b>");
+            msg += escapeHtml_(who);
+            msg += F("</b>\nСработали датчики:\n<pre>");
+            msg += blocked;
+            msg += F("</pre>");
+            sendTgNotify_(msg, F("HTML"));
+            return;
+        }
         _armed = true;
         _alarm_on = false;
         clearDetect_();
@@ -1064,6 +1112,66 @@ private:
             _gpio.writeDyn(ActiveBoardProfile::BUZZER_PIN, false);
         }
         _dirty = false;
+    }
+
+    bool hasTriggeredBeforeArm_(String &out, String *plain_out = nullptr)
+    {
+        out = "";
+        if (plain_out)
+            *plain_out = "";
+        bool any = false;
+        for (size_t i = 0; i < kSensorCount; ++i)
+        {
+            SensorConfig &cfg = _cfg[i];
+            SensorState &st = _state[i];
+            if (!cfg.enabled)
+                continue;
+            const bool raw = readRaw_(cfg);
+            st.raw = raw;
+            if (!isTriggered_(cfg, raw))
+                continue;
+            if (any)
+                out += F("\n");
+            out += String((unsigned)cfg.id);
+            if (cfg.name.length())
+            {
+                out += F(" (");
+                out += F("<b>");
+                out += escapeHtml_(cfg.name);
+                out += F("</b>");
+                out += F(")");
+            }
+            if (plain_out)
+            {
+                if (any)
+                    *plain_out += F(", ");
+                *plain_out += String((unsigned)cfg.id);
+                if (cfg.name.length())
+                {
+                    *plain_out += F(" (");
+                    *plain_out += cfg.name;
+                    *plain_out += F(")");
+                }
+            }
+            any = true;
+        }
+        return any;
+    }
+
+    static String escapeHtml_(const char *text)
+    {
+        if (!text)
+            return String();
+        return escapeHtml_(String(text));
+    }
+
+    static String escapeHtml_(const String &text)
+    {
+        String out = text;
+        out.replace("&", "&amp;");
+        out.replace("<", "&lt;");
+        out.replace(">", "&gt;");
+        return out;
     }
 
     void clearDetect_()
@@ -1153,24 +1261,62 @@ private:
 
     void notifyDetect_(const SensorConfig &cfg)
     {
-        const auto users = _tgusers.allowedUsers();
-        String msg = F("Тревога: датчик ");
+        String msg = F("Охрана: тревога датчик ");
         msg += String((unsigned)cfg.id);
         if (cfg.name.length())
         {
             msg += F(" (");
-            msg += cfg.name;
+            msg += F("<b>");
+            msg += escapeHtml_(cfg.name);
+            msg += F("</b>");
             msg += F(")");
         }
-        for (size_t i = 0; i < users.size; ++i)
-        {
-            const auto &user = users[i];
-            if (!user.enabled || !user.is_notify || user.chat_id == 0)
-                continue;
-            _tgbot.sendText(user.chat_id, msg);
-        }
+        sendTgNotify_(msg, F("HTML"));
         sendSmsNotify_(cfg);
     }
+
+    void notifyArmAction_(bool armed, const char *src, const String &user)
+    {
+        String msg = armed ? F("Охрана: постановка") : F("Охрана: снятие");
+        const char *who = user.length() ? user.c_str() : "неизвестен";
+        const char *from = src ? src : "локально";
+        String who_txt = who;
+        String from_txt = from;
+        who_txt.replace("&", "&amp;");
+        who_txt.replace("<", "&lt;");
+        who_txt.replace(">", "&gt;");
+        from_txt.replace("&", "&amp;");
+        from_txt.replace("<", "&lt;");
+        from_txt.replace(">", "&gt;");
+        msg += F(", кто: <b>");
+        msg += who_txt;
+        msg += F("</b>, способ: <b>");
+        msg += from_txt;
+        msg += F("</b>");
+        sendTgNotify_(msg, F("HTML"));
+    }
+
+    void sendTgNotify_(const String &msg, const String &parse_mode = "")
+    {
+        const auto users = _tgusers.allowedUsers();
+        for (size_t i = 0; i < users.size; ++i)
+        {
+            const auto &u = users[i];
+            if (!u.enabled || !u.is_notify || u.chat_id == 0)
+                continue;
+            const uint32_t now = millis();
+            const int32_t delta = (int32_t)(now - _tg_last_send_ms);
+            if (_tg_last_send_ms != 0 && delta < (int32_t)kTgSendGapMs)
+                delay((uint32_t)((int32_t)kTgSendGapMs - delta));
+            if (parse_mode.length())
+                _tgbot.sendText(u.chat_id, msg, "", parse_mode);
+            else
+                _tgbot.sendText(u.chat_id, msg);
+            _tg_last_send_ms = millis();
+            delay(kTgBetweenUsersMs);
+        }
+    }
+
 
     bool isAllowedPhone_(const String &number) const
     {
@@ -1271,11 +1417,13 @@ private:
         if (!src && user.length() == 0)
         {
             _logs.info(F("SEC"), F("%s"), armed ? "armed" : "disarmed");
+            notifyArmAction_(armed, "local", String());
             return;
         }
         const char *who = user.length() ? user.c_str() : "unknown";
         const char *from = src ? src : "unknown";
         _logs.info(F("SEC"), F("%s by %s (%s)"), armed ? "armed" : "disarmed", who, from);
+        notifyArmAction_(armed, src, user);
     }
 
     static int hexNibble_(char c)
@@ -1305,6 +1453,8 @@ private:
     }
 
     static constexpr uint32_t kKeyRepeatMs = 2000;
+    static constexpr uint32_t kTgSendGapMs = 800;
+    static constexpr uint16_t kTgBetweenUsersMs = 200;
     static constexpr uint16_t kBeepShortMs = 120;
     static constexpr uint16_t kBeepGapMs = 120;
     static constexpr uint16_t kBeepLongMs = 500;
