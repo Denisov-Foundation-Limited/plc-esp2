@@ -54,9 +54,9 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
     .nav { margin-bottom: 12px; }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 12px;
-      margin: 12px 0;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 10px;
     }
     label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; }
     .status {
@@ -69,6 +69,11 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       border-radius: 10px;
       margin: 12px 0;
       font-size: 13px;
+    }
+    .status-msg {
+      margin: 6px 0 12px;
+      color: var(--muted);
+      font-size: 12px;
     }
     .pill {
       padding: 4px 8px;
@@ -121,6 +126,11 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       font-weight: 700;
       cursor: pointer;
     }
+    .btn-sm {
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
     button.primary { background: var(--accent); }
     button.warn { background: #ef4444; }
     .field {
@@ -147,6 +157,114 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
     .status-on { background: #22c55e; }
     .status-off { background: #64748b; }
     .status-bad { background: #ef4444; }
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 8px 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .page-info { white-space: nowrap; }
+    .tile {
+      display: grid;
+      grid-template-columns: 140px minmax(0, 1fr);
+      gap: 14px;
+      padding: 16px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #0b1220;
+      position: relative;
+      overflow: hidden;
+    }
+    .tile.disabled { opacity: 0.55; }
+    .tile.empty { grid-template-columns: 1fr; text-align: center; color: var(--muted); }
+    .tile-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .sock-visual {
+      position: relative;
+      height: 140px;
+      border-radius: 16px;
+      border: 2px solid var(--border);
+      background: linear-gradient(180deg, #0a1220 0%, #0c1628 100%);
+      overflow: hidden;
+    }
+    .sock-icon {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 90px;
+      height: 90px;
+      opacity: 0.2;
+      color: #38bdf8;
+      transition: opacity .2s ease, transform .2s ease, filter .2s ease;
+    }
+    .sock-icon.on {
+      opacity: 1;
+      filter: drop-shadow(0 0 12px rgba(34, 197, 94, 0.6));
+      color: #22c55e;
+      transform: translate(-50%, -50%) scale(1.02);
+    }
+    .sock-icon.off {
+      opacity: 0.22;
+      filter: none;
+      color: #64748b;
+    }
+    .sock-icon.alert {
+      opacity: 1;
+      filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.5));
+      color: #ef4444;
+      transform: translate(-50%, -50%) scale(1.02);
+    }
+    .badge {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(17, 24, 39, 0.85);
+      color: var(--text);
+      font-size: 11px;
+      letter-spacing: 0.2px;
+      z-index: 2;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 14px;
+    }
+    .form-row {
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      align-items: center;
+      gap: 8px;
+    }
+    .form-row > label:not(.switch) {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .form-row .field,
+    .form-row select {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      margin: 8px 0 10px;
+    }
     .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
     table { min-width: 720px; }
     @media (max-width: 720px) {
@@ -161,6 +279,12 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       .name { width: 140px; }
       .serial { width: 180px; }
     }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .tile { grid-template-columns: 1fr; }
+      .sock-visual { height: 120px; }
+      .form-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -171,19 +295,18 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <form method="POST" action="/security" id="security-form">
         <div class="status">
-          <span class="pill">Контроллер: <span class="status-dot" data-state="%SECURITY_ENABLED_LABEL%" title="%SECURITY_ENABLED_LABEL%"></span></span>
           <span class="pill">Статус: <span class="status-dot" data-state="%SECURITY_ARMED_LABEL%" title="%SECURITY_ARMED_LABEL%"></span></span>
           <span class="pill">Тревога: <span class="status-dot" data-state="%SECURITY_ALARM_LABEL%" title="%SECURITY_ALARM_LABEL%"></span></span>
           <span class="pill">GSM: <span class="status-dot" data-kind="gsm" data-state="%SECURITY_GSM_LABEL%" title="%SECURITY_GSM_LABEL%"></span></span>
-          <span class="pill">Состояние: <span class="status-dot" data-state="%SECURITY_STATUS%" title="%SECURITY_STATUS%"></span></span>
         </div>
+        <div class="status-msg" id="security-status">%SECURITY_STATUS%</div>
         <div class="grid">
           <div>
-            <label>Включить контроллер охраны</label>
-            <label class="switch">
-              <input type="checkbox" name="security_enabled" %SECURITY_ENABLED_CHECKED%>
-              <span class="track"><span class="knob"></span></span>
-            </label>
+            <label>Охрана</label>
+            <div class="buttons">
+              <button class="primary" name="action" value="arm">Поставить</button>
+              <button class="warn" name="action" value="disarm">Снять</button>
+            </div>
           </div>
           <div>
             <label>Порт сирены</label>
@@ -225,29 +348,18 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
         </table>
         </div>
         <h2>Датчики</h2>
-        <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th class="right">ID</th>
-              <th>Вкл</th>
-              <th>Имя</th>
-              <th>Тип</th>
-              <th>Порт</th>
-              <th>Тихий</th>
-              <th class="center">Сработал</th>
-            </tr>
-          </thead>
-          <tbody>
-            %SECURITY_SENSORS_ROWS%
-          </tbody>
-        </table>
+        <div class="pagination">
+          <button type="button" class="btn btn-sm" id="security-prev">Назад</button>
+          <span class="page-info">Страница</span>
+          <select id="security-page" class="field mini"></select>
+          <span class="page-info">/ %SECURITY_SENSORS_PAGES%</span>
+          <button type="button" class="btn btn-sm" id="security-next">Вперёд</button>
+        </div>
+        <div class="grid">
+          %SECURITY_SENSORS%
         </div>
         <div class="buttons">
           <button class="primary" name="action" value="save">Сохранить</button>
-          <button name="action" value="arm">Поставить на охрану</button>
-          <button name="action" value="disarm">Снять с охраны</button>
-          <button class="warn" name="action" value="clear">Сбросить сработки</button>
         </div>
       </form>
     </div>
@@ -321,6 +433,52 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       }
       return html;
     }
+    const secPrev = document.getElementById('security-prev');
+    const secNext = document.getElementById('security-next');
+    const secPage = document.getElementById('security-page');
+    const secPages = %SECURITY_SENSORS_PAGES%;
+    const secCurrent = %SECURITY_SENSORS_PAGE%;
+    if (secPage) {
+      for (let i = 1; i <= secPages; i++) {
+        const opt = document.createElement('option');
+        opt.value = String(i);
+        opt.textContent = String(i);
+        if (i === secCurrent) opt.selected = true;
+        secPage.appendChild(opt);
+      }
+      secPage.addEventListener('change', () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', secPage.value || String(secCurrent));
+        window.location.href = url.toString();
+      });
+    }
+    if (secPrev) {
+      secPrev.disabled = secCurrent <= 1;
+      secPrev.addEventListener('click', () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', String(Math.max(1, secCurrent - 1)));
+        window.location.href = url.toString();
+      });
+    }
+    if (secNext) {
+      secNext.disabled = secCurrent >= secPages;
+      secNext.addEventListener('click', () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', String(Math.min(secPages, secCurrent + 1)));
+        window.location.href = url.toString();
+      });
+    }
+    async function postForm(url, body) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        credentials: 'same-origin'
+      });
+      if (!res.ok) throw new Error('Request failed');
+      return (await res.text()).trim();
+    }
+    const securityStatus = document.getElementById('security-status');
     document.querySelectorAll('select.security-port').forEach((el) => {
       const type = el.dataset.type;
       const selected = el.dataset.selected || '';
@@ -328,7 +486,7 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       el.innerHTML = buildOptions(list, selected, type);
     });
     function buildSirenOptions(list, selected) {
-      let html = '<option value="">-</option>';
+      let html = '<option value="none">-</option>';
       const used = sirenUsed.relay || [];
       for (let i = 0; i < list.length; i++) {
         const val = optionValue(list[i]);
@@ -345,6 +503,23 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       const list = sirenOptions.relay || [];
       el.innerHTML = buildSirenOptions(list, selected);
     });
+    const securityPage = %SECURITY_SENSORS_PAGE%;
+    const securityPages = %SECURITY_SENSORS_PAGES%;
+    const pageSelect = document.getElementById('security-page');
+    if (pageSelect) {
+      for (let i = 1; i <= securityPages; i++) {
+        const opt = document.createElement('option');
+        opt.value = String(i);
+        opt.textContent = String(i);
+        if (i === securityPage) opt.selected = true;
+        pageSelect.appendChild(opt);
+      }
+      pageSelect.addEventListener('change', () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', pageSelect.value || String(securityPage));
+        window.location.href = url.toString();
+      });
+    }
     const securityForm = document.getElementById('security-form');
     const reloadKey = 'security_reload';
     if (sessionStorage.getItem(reloadKey)) {

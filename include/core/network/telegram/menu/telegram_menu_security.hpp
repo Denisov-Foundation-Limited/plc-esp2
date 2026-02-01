@@ -178,17 +178,25 @@ public:
         if (!self._security)
             return "Охрана недоступна";
         String out = F("Охрана:\n");
-        out += F("  Контроллер: ");
-        out += self._security->controllerEnabled() ? "включен" : "выключен";
-        out += F("\n  Статус: ");
-        out += self._security->armed() ? "под охраной" : "снято";
+        out += F("  Статус: ");
+        out += self._security->armed() ? "🟢" : "⚪";
         out += F("\n  Тревога: ");
-        out += self._security->alarmOn() ? "on" : "off";
-        out += F("\n  Сирена: ");
-        if (self._security->sirenPort() != SecurityController::kInvalidPort)
-            out += String((unsigned)self._security->sirenPort());
-        else
-            out += "none";
+        out += self._security->alarmOn() ? "🔴" : "⚪";
+        out += F("\n  Датчики:\n");
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+            const auto *cfg = self._security->configByIndex(i);
+            const auto *st = self._security->stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            out += F("    ");
+            out += st->is_detect ? "🔴 " : "🟢 ";
+            if (cfg->name.length())
+                out += cfg->name;
+            else
+                out += String(F("датчик ")) + String((unsigned)cfg->id);
+            out += F("\n");
+        }
         return out;
     }
 

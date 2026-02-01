@@ -181,6 +181,7 @@ public:
         _server.on("/tanks", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTanksSave_(request); });
         _server.on("/security", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSecurity_(request); });
         _server.on("/security", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSecuritySave_(request); });
+        _server.on("/security/arm", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSecurityArm_(request); });
         _server.on("/septic", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSeptic_(request); });
         _server.on("/septic", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSepticSave_(request); });
         _server.on("/telegram", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTelegram_(request); });
@@ -650,7 +651,7 @@ private:
         const uint8_t max_pages = (uint8_t)((SocketController::kSocketCount + page_size - 1) / page_size);
         if (page_idx >= max_pages)
             page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
-        const uint8_t start = (uint8_t)(page_idx * page_size + 1);
+        const uint8_t start = (uint8_t)(page_idx * page_size);
         const uint8_t end = (uint8_t)(start + page_size - 1);
         const size_t extra = 4096u + (size_t)page_size * 900u;
         page.reserve(page.length() + extra);
@@ -661,7 +662,7 @@ private:
         page.replace("%RELAY_JSON%", socketPortOptionsJson_(PortIO::PinType::Relay));
         page.replace("%DINPUT_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::DInput));
         page.replace("%RELAY_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::Relay));
-        page.replace("%LIGHTS_STATUS%", _lights_status);
+        page.replace("%SOCKETS_STATUS%", _sockets_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         sendHtmlRaw_(request, page, set_cookie);
     }
@@ -1739,7 +1740,21 @@ private:
         if (!checkAuth_(request, &set_cookie))
             return;
         String page = FPSTR(kWebInterfaceSecurityHtml);
-        page.reserve(page.length() + 12288);
+        const uint8_t page_size = 8u;
+        const String page_str = paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+        const uint8_t max_pages = (uint8_t)((SecurityController::kSensorCount + page_size - 1) / page_size);
+        if (page_idx >= max_pages)
+            page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        const uint8_t start = (uint8_t)(page_idx * page_size);
+        const uint8_t end = (uint8_t)(start + page_size - 1);
+        page.reserve(page.length() + 16384);
         page.replace("%NAV%", navHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         if (!_controllers)
@@ -1747,12 +1762,15 @@ private:
             page.replace("%SECURITY_ENABLED_CHECKED%", "");
             page.replace("%SECURITY_ENABLED_LABEL%", "недоступно");
             page.replace("%SECURITY_ARMED_LABEL%", "недоступно");
+            page.replace("%SECURITY_ARMED_CHECKED%", "");
             page.replace("%SECURITY_ALARM_LABEL%", "недоступно");
             page.replace("%SECURITY_GSM_LABEL%", gsmStatusLabel_());
             page.replace("%SECURITY_SIREN%", "");
             page.replace("%SECURITY_KEYS_ROWS%", "");
             page.replace("%SECURITY_PHONES_ROWS%", "");
-            page.replace("%SECURITY_SENSORS_ROWS%", "");
+            page.replace("%SECURITY_SENSORS%", "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>");
+            page.replace("%SECURITY_SENSORS_PAGE%", "1");
+            page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)(max_pages ? max_pages : 1)));
             page.replace("%SECURITY_SENSOR_JSON%", "[]");
             page.replace("%SECURITY_SENSOR_USED_JSON%", "[]");
             page.replace("%SECURITY_SIREN_JSON%", "[]");
@@ -1766,6 +1784,7 @@ private:
         page.replace("%SECURITY_ENABLED_CHECKED%", sec.controllerEnabled() ? "checked" : "");
         page.replace("%SECURITY_ENABLED_LABEL%", sec.controllerEnabled() ? "включено" : "выключено");
         page.replace("%SECURITY_ARMED_LABEL%", sec.armed() ? "под охраной" : "снято");
+        page.replace("%SECURITY_ARMED_CHECKED%", sec.armed() ? "checked" : "");
         page.replace("%SECURITY_ALARM_LABEL%", sec.alarmOn() ? "on" : "off");
         page.replace("%SECURITY_GSM_LABEL%", gsmStatusLabel_());
         if (sec.sirenPort() != SecurityController::kInvalidPort)
@@ -1774,7 +1793,9 @@ private:
             page.replace("%SECURITY_SIREN%", "");
         page.replace("%SECURITY_KEYS_ROWS%", listSecurityKeysHtml_());
         page.replace("%SECURITY_PHONES_ROWS%", listSecurityPhonesHtml_());
-        page.replace("%SECURITY_SENSORS_ROWS%", listSecuritySensorsHtml_());
+        page.replace("%SECURITY_SENSORS%", listSecuritySensorsTiles_(start, end));
+        page.replace("%SECURITY_SENSORS_PAGE%", String((unsigned)(page_idx + 1)));
+        page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)max_pages));
         page.replace("%SECURITY_SENSOR_JSON%", securityPortOptionsJson_());
         page.replace("%SECURITY_SENSOR_USED_JSON%", securityUsedPinsJson_());
         page.replace("%SECURITY_SIREN_JSON%", socketPortOptionsJson_(PortIO::PinType::Relay));
@@ -1913,27 +1934,43 @@ private:
         }
 
         bool changed = false;
-        const bool enabled = request->hasParam("security_enabled", true);
-        if (sec.controllerEnabled() != enabled)
+        if (request->hasParam("security_enabled", true))
         {
-            sec.setControllerEnabled(enabled);
-            changed = true;
+            const bool enabled = request->hasParam("security_enabled", true);
+            if (sec.controllerEnabled() != enabled)
+            {
+                sec.setControllerEnabled(enabled);
+                changed = true;
+            }
         }
 
         String siren_str = paramValue_(request, "security_siren");
         siren_str.trim();
-        uint8_t siren_port = SecurityController::kInvalidPort;
-        if (siren_str.length() > 0 && siren_str != "none")
+        if (siren_str.length() > 0)
         {
-            const int v = siren_str.toInt();
-            if (v >= 0 && v <= 255)
-                siren_port = (uint8_t)v;
+            uint8_t siren_port = sec.sirenPort();
+            bool set_siren = false;
+            if (siren_str == "none")
+            {
+                siren_port = SecurityController::kInvalidPort;
+                set_siren = true;
+            }
+            else
+            {
+                const int v = siren_str.toInt();
+                if (v >= 0 && v <= 255)
+                {
+                    siren_port = (uint8_t)v;
+                    set_siren = true;
+                }
+            }
+            if (set_siren && sec.sirenPort() != siren_port)
+            {
+                sec.setSirenPort(siren_port);
+                changed = true;
+            }
         }
-        if (sec.sirenPort() != siren_port)
-        {
-            sec.setSirenPort(siren_port);
-            changed = true;
-        }
+
 
         uint8_t new_keys[SecurityController::kKeyCount][8] = {};
         bool new_set[SecurityController::kKeyCount] = {};
@@ -2123,6 +2160,53 @@ private:
         if (ok)
             _security_status = changed ? "Updated" : "No changes";
         sendRedirect_(request, "/security", set_cookie);
+    }
+
+    void handleSecurityArm_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!_controllers)
+        {
+            sendText_(request, 500, "text/plain", "0", set_cookie);
+            return;
+        }
+        SecurityController &sec = _controllers->security();
+        const String armed_str = paramValueAny_(request, "armed");
+        if (armed_str.length() == 0)
+        {
+            _security_status = "Bad request";
+            sendText_(request, 400, "text/plain", "err", set_cookie);
+            return;
+        }
+        const bool desired = (armed_str == "1" || armed_str == "true" || armed_str == "on");
+        bool ok = true;
+        if (sec.armed() != desired)
+        {
+            if (desired)
+            {
+                if (!sec.controllerEnabled())
+                    sec.setControllerEnabled(true);
+                ok = sec.armFrom("web", "admin");
+            }
+            else
+            {
+                sec.disarmFrom("web", "admin");
+                ok = true;
+            }
+        }
+        if (!ok)
+            _security_status = "Security disabled";
+        if (desired && !sec.armed())
+        {
+            _security_status = "Arm blocked";
+            sendText_(request, 200, "text/plain", "blocked", set_cookie);
+        }
+        else
+        {
+            sendText_(request, 200, "text/plain", sec.armed() ? "1" : "0", set_cookie);
+        }
     }
 
     void handleTelegramSave_(AsyncWebServerRequest *request)
@@ -2892,6 +2976,131 @@ private:
         return items;
     }
 
+    String listSecuritySensorsTiles_(uint8_t start_idx, uint8_t end_idx)
+    {
+        if (!_controllers)
+            return "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>";
+        if (end_idx < start_idx)
+            end_idx = start_idx;
+
+        String items;
+        items.reserve(16384);
+        SecurityController &sec = _controllers->security();
+
+        auto appendTypeOption = [&](String &out, const char *value, const char *label, bool selected) {
+            out += "<option value=\"";
+            out += value;
+            out += "\"";
+            if (selected)
+                out += " selected";
+            out += ">";
+            out += label;
+            out += "</option>";
+        };
+
+        auto appendTile = [&](const SecurityController::SensorConfig &cfg, const SecurityController::SensorState &st) {
+            const bool enabled = cfg.enabled;
+            const bool detected = st.is_detect;
+            const bool is_reed = cfg.type == SecurityController::SensorType::Reed;
+            items += "<div class=\"tile";
+            if (!enabled)
+                items += " disabled";
+            items += "\"><div class=\"sock-visual\"><span class=\"badge\">#";
+            items += String((unsigned)cfg.id);
+            items += "</span>";
+            items += "<svg class=\"sock-icon ";
+            if (!enabled)
+                items += "off";
+            else if (detected)
+                items += "alert";
+            else
+                items += "on";
+            items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+            if (is_reed)
+            {
+                items += "<rect x=\"6\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
+                items += "<rect x=\"44\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
+                items += "<rect x=\"22\" y=\"30\" width=\"20\" height=\"4\" rx=\"2\" fill=\"currentColor\"/>";
+            }
+            else
+            {
+                items += "<circle cx=\"32\" cy=\"24\" r=\"6\" fill=\"currentColor\"/>";
+                items += "<path d=\"M14 48c6-10 12-14 18-14s12 4 18 14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"4\" stroke-linecap=\"round\"/>";
+                items += "<path d=\"M8 20c6-6 12-10 18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
+                items += "<path d=\"M56 20c-6-6-12-10-18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
+            }
+            items += "</svg></div><div>";
+            items += "<div class=\"tile-head\"><strong>";
+            if (cfg.name.length())
+                appendHtmlEscaped_(items, cfg.name.c_str());
+            else
+                items += String(F("Датчик #")) + String((unsigned)cfg.id);
+            items += "</strong><label class=\"switch\"><input type=\"checkbox\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_en\"";
+            if (enabled)
+                items += " checked";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+            items += "<input class=\"field name\" type=\"text\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_name\" value=\"";
+            appendHtmlEscaped_(items, cfg.name.c_str());
+            items += "\">";
+            items += "<div class=\"status-line\"><span class=\"status-dot ";
+            if (!enabled)
+                items += "status-off";
+            else if (detected)
+                items += "status-bad";
+            else
+                items += "status-on";
+            items += "\"></span><span class=\"status-text\">";
+            if (!enabled)
+                items += "Отключен";
+            else if (detected)
+                items += "Сработал";
+            else
+                items += "Активен";
+            items += "</span></div>";
+            items += "<div class=\"form-grid\">";
+            items += "<div class=\"form-row\"><label>Тип</label><select class=\"field mini\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_type\">";
+            appendTypeOption(items, "pir", "pir", cfg.type == SecurityController::SensorType::Pir);
+            appendTypeOption(items, "reed", "reed", cfg.type == SecurityController::SensorType::Reed);
+            items += "</select></div>";
+            items += "<div class=\"form-row\"><label>Порт</label><select class=\"field mini security-port\" data-type=\"dinput\" data-selected=\"";
+            if (cfg.port != SecurityController::kInvalidPort)
+                items += String((unsigned)cfg.port);
+            items += "\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_port\"></select></div>";
+            items += "<div class=\"form-row\"><label>Тихий</label><label class=\"switch\"><input type=\"checkbox\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_silent\"";
+            if (cfg.silent)
+                items += " checked";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+            items += "</div></div></div>";
+        };
+
+        const size_t max_idx = SecurityController::kSensorCount ? (SecurityController::kSensorCount - 1) : 0;
+        if (start_idx > max_idx)
+            start_idx = (uint8_t)max_idx;
+        if (end_idx > max_idx)
+            end_idx = (uint8_t)max_idx;
+        for (uint8_t idx = start_idx; idx <= end_idx && idx < SecurityController::kSensorCount; ++idx)
+        {
+            const auto *cfg = sec.configByIndex(idx);
+            const auto *st = sec.stateByIndex(idx);
+            if (!cfg || !st)
+                continue;
+            appendTile(*cfg, *st);
+        }
+        if (items.length() == 0)
+            items = "<div class=\"tile empty\"><strong>Датчики отсутствуют</strong></div>";
+        return items;
+    }
+
 
     String listMeteoHtml_()
     {
@@ -3481,7 +3690,7 @@ private:
             items += st.valve_on ? "status-on" : "status-off";
             items += "\"></span><span>Клапан</span>";
             items += "</div></div>";
-            items += "</div></div></div>";
+            items += "</div></div>";
         };
 
         const TankController::TankConfig *first_disabled = nullptr;
