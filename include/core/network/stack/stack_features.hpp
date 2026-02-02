@@ -32,5 +32,7 @@ enum class StackFeature : uint8_t
     Meteo = 0x0F,
     Thermo = 0x10,
     Security = 0x11,
-    Septic = 0x12
+    Septic = 0x12,
+    Tanks = 0x13,
+    Ring = 0x14
 };

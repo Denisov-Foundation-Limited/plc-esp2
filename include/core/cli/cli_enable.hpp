@@ -75,6 +75,7 @@ public:
             _c._io->print(F("    show security <id>"));
             _c._security_cli.printIdRangeInline();
             _c._io->println(F(" - sensor details"));
+            _c._io->println(F("    show ring       - ring status"));
             _c._io->print(F("    socket toggle <id>"));
             printSocketIdRangeInline_();
             _c._io->println(F(" - toggle socket relay"));
@@ -98,9 +99,12 @@ public:
             _c._io->println(F(" - control thermo device"));
             _c._io->println(F("    stack septic <unit> <status|get> - control septic"));
             _c._io->println(F("    stack security <unit> <arm|disarm|status|clear> - control security"));
+            _c._io->println(F("    stack ring <unit> <on|off> - control ring"));
             _c._io->println(F("    security status - show security status"));
             _c._io->println(F("    security arm    - arm security"));
             _c._io->println(F("    security disarm - disarm security"));
+            _c._io->println(F("    ring on         - hold relay on"));
+            _c._io->println(F("    ring off        - release relay"));
             _wifi.printHelpEnable();
             _c._io->println(F("    reload          - restart controller"));
             _c._io->println(F("    reset           - restart controller"));
@@ -188,6 +192,16 @@ public:
         if (startsWith_(cmd, "stack "))
         {
             _c.cmdStack_(cmd);
+            _c.printPrompt_();
+            return;
+        }
+        if (eq_(cmd, "ring on") || eq_(cmd, "ring off"))
+        {
+            const bool on = eq_(cmd, "ring on");
+            if (!_c._controllers.ring().setHoldRelayWithSource(on, RingController::Source::Cli))
+                _c._io->println(F("Failed"));
+            else
+                _c._io->println(F("OK"));
             _c.printPrompt_();
             return;
         }

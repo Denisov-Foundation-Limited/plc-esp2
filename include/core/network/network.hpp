@@ -231,7 +231,7 @@ private:
     }
 
 public:
-    StackNode *stackNode() { return &_stack_node; }
-    StackMaster *stackMaster() { return &_stack_master; }
+    StackNode &stackNode() { return _stack_node; }
+    StackMaster &stackMaster() { return _stack_master; }
     ConfigsManagerIface::StackRole stackRole() const { return _stack_role; }
 };

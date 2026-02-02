@@ -86,10 +86,7 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Стек</h1>
-      <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
-      %STACK_SELF_BLOCK%
       <div class="section">
-        <p class="status">Роль: <strong>%STACK_ROLE%</strong></p>
         <form method="POST" action="/stack" id="stack-form">
           <div class="grid">
             <div>
@@ -106,7 +103,7 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
             <div>
               <label>API key</label>
               <div class="row">
-                <input type="password" name="api_key" value="%STACK_API_KEY%" placeholder="optional">
+                <input type="text" name="api_key" value="%STACK_API_KEY%" placeholder="optional">
                 <button class="mini" type="button" id="gen-api-key">Сгенерировать</button>
               </div>
             </div>

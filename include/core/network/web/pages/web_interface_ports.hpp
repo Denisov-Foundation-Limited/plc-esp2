@@ -47,6 +47,7 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
       box-shadow: 0 10px 30px rgba(0,0,0,0.35);
     }
     h1 { margin: 0 0 6px; font-size: 22px; }
+    h2 { margin: 16px 0 8px; font-size: 18px; }
     p { margin: 0 0 18px; color: var(--muted); }
     a { color: #7dd3fc; text-decoration: none; }
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
@@ -54,6 +55,16 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
     th { color: var(--muted); font-weight: 600; }
     .right { text-align: right; }
     .nav { margin-bottom: 12px; }
+    .row { display: flex; gap: 10px; align-items: center; }
+    .status { margin: 8px 0 10px; color: var(--muted); }
+    select {
+      width: 100%;
+      background: #0b1220;
+      border: 1px solid #334155;
+      color: var(--text);
+      padding: 8px;
+      border-radius: 8px;
+    }
   </style>
 </head>
 <body>
@@ -61,7 +72,24 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Порты</h1>
-      <p>Плата: <strong>%BOARD_NAME%</strong></p>
+      <div class="status">%PORTS_STACK_STATUS%</div>
+      %PORTS_DEVICE_SELECT%
+      <h2>Extenders</h2>
+      <table>
+        <thead>
+          <tr>
+            <th class="right">ID</th>
+            <th class="right">Bus</th>
+            <th>Addr</th>
+            <th>Type</th>
+            <th>Present</th>
+          </tr>
+        </thead>
+        <tbody>
+          %EXTENDERS%
+        </tbody>
+      </table>
+      <h2>Ports</h2>
       <table>
         <thead>
           <tr>

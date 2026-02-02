@@ -99,6 +99,8 @@ public:
         return true;
     }
 
+    bool connected() const { return _client.connected(); }
+
     bool sendHello(uint16_t fw_ver = 0, uint32_t caps = 0)
     {
         StackHello hello{};

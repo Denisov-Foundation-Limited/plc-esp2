@@ -38,6 +38,18 @@ public:
         _frame_ctx = ctx;
     }
 
+    void setFrameHandlerSecondary(FrameHandler cb, void *ctx)
+    {
+        _frame_cb_secondary = cb;
+        _frame_ctx_secondary = ctx;
+    }
+
+    void setFrameHandlerTertiary(FrameHandler cb, void *ctx)
+    {
+        _frame_cb_tertiary = cb;
+        _frame_ctx_tertiary = ctx;
+    }
+
     void setEventHandler(EventHandler cb, void *ctx)
     {
         _event_cb = cb;
@@ -113,6 +125,23 @@ public:
         return "";
     }
 
+    bool nodeInfo(uint32_t node_id, String &name, String &ip, uint16_t &fw_ver) const
+    {
+        for (const auto &s : _sessions)
+        {
+            if (!s.used || !s.data.has_id || !s.data.client)
+                continue;
+            if (s.data.node_id == node_id)
+            {
+                name = s.data.name;
+                ip = s.data.ip;
+                fw_ver = s.data.fw_ver;
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool sendTo(uint32_t node_id, uint8_t type, const uint8_t *payload, size_t len)
     {
         Session *s = findByNode_(node_id);
@@ -169,6 +198,7 @@ private:
         bool has_id = false;
         String name;
         String ip;
+        uint16_t fw_ver = 0;
         uint32_t last_seen_ms = 0;
     };
 
@@ -181,6 +211,10 @@ private:
     std::array<Slot, MAX_SESSIONS> _sessions = {};
     FrameHandler _frame_cb = nullptr;
     void *_frame_ctx = nullptr;
+    FrameHandler _frame_cb_secondary = nullptr;
+    void *_frame_ctx_secondary = nullptr;
+    FrameHandler _frame_cb_tertiary = nullptr;
+    void *_frame_ctx_tertiary = nullptr;
     EventHandler _event_cb = nullptr;
     void *_event_ctx = nullptr;
     Logger *_log = nullptr;
@@ -276,27 +310,45 @@ private:
             if (StackHello::decode(frame.payload, frame.payload_len, hello))
             {
                 Session *s = findByNode_(hello.node_id);
+                if (s && s != session)
+                {
+                    // Node reconnected: release old session to avoid binding to a stale client.
+                    if (_log)
+                        _log->info(F("STACK"), F("node reconnected: 0x%08lX"), (unsigned long)hello.node_id);
+                    freeSession_(s);
+                    s = nullptr;
+                }
                 if (!s)
                 {
-                    // try to bind to first unbound session
-                    for (auto &slot : _sessions)
-                        if (slot.used && !slot.data.has_id)
-                        {
-                            s = &slot.data;
-                            break;
-                        }
+                    // Bind to current session if possible, otherwise use first unbound session.
+                    if (session)
+                        s = session;
+                    else
+                    {
+                        for (auto &slot : _sessions)
+                            if (slot.used && !slot.data.has_id)
+                            {
+                                s = &slot.data;
+                                break;
+                            }
+                    }
                 }
                 if (s)
                 {
                     s->node_id = hello.node_id;
                     s->has_id = true;
                     s->name = hello.name;
+                    s->fw_ver = hello.fw_ver;
                 }
                 notifyEvent_(hello.node_id, true);
             }
         }
         if (_frame_cb)
             _frame_cb(_frame_ctx, nodeIdFromFrame_(session, frame), frame);
+        if (_frame_cb_secondary)
+            _frame_cb_secondary(_frame_ctx_secondary, nodeIdFromFrame_(session, frame), frame);
+        if (_frame_cb_tertiary)
+            _frame_cb_tertiary(_frame_ctx_tertiary, nodeIdFromFrame_(session, frame), frame);
     }
 
     uint32_t nodeIdFromFrame_(Session *session, const StackFrame &frame)

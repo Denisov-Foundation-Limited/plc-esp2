@@ -94,6 +94,7 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
     }
     .status-on { background: #22c55e; }
     .status-off { background: #64748b; }
+    .mini { width: 72px; }
   </style>
 </head>
 <body>
@@ -105,9 +106,10 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
       <p>Управление контроллером FCPLC</p>
       <div class="section">
         <h2>Статус</h2>
+        %INDEX_DEVICE_SELECT%
         <table>
           <tbody>
-            <tr><td>Имя устройства</td><td><strong>%DEVICE_NAME%</strong></td></tr>
+            <tr><td>Имя устройства</td><td><strong>%STATUS_DEVICE_NAME%</strong></td></tr>
             <tr><td>Дата</td><td><strong>%RTC_DATE%</strong></td></tr>
             <tr><td>Время</td><td><strong>%RTC_TIME%</strong></td></tr>
             <tr><td>RTC температура</td><td><strong>%RTC_TEMP%</strong></td></tr>
@@ -139,6 +141,7 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
   </div>
   <script>
     const deviceForm = document.getElementById('device-form');
+    const deviceSelect = document.getElementById('index-device');
     const reloadKey = 'device_reload';
     if (sessionStorage.getItem(reloadKey)) {
       sessionStorage.removeItem(reloadKey);
@@ -147,6 +150,21 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
     if (deviceForm) {
       deviceForm.addEventListener('submit', () => {
         sessionStorage.setItem(reloadKey, '1');
+      });
+    }
+    if (deviceSelect) {
+      deviceSelect.addEventListener('change', () => {
+        const val = deviceSelect.value || 'local';
+        const url = new URL(window.location.href);
+        if (val === 'local') {
+          url.searchParams.delete('node');
+          url.searchParams.delete('node_id');
+          url.searchParams.delete('unit');
+        } else {
+          url.searchParams.set('unit', 'stack');
+          url.searchParams.set('node', val);
+        }
+        window.location.href = url.toString();
       });
     }
   </script>

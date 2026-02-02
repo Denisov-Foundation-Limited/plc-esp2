@@ -87,6 +87,11 @@ public:
             handleSecurityCmd_(cmd);
             return;
         }
+        if (cmd.startsWith("stack ring "))
+        {
+            handleRingCmd_(cmd);
+            return;
+        }
         if (!cmd.startsWith("stack send "))
         {
             _c._io->println(F("Usage: stack nodes"));
@@ -99,6 +104,7 @@ public:
             _c._io->println();
             _c._io->println(F("       stack security <unit> <arm|disarm|status|clear>"));
             _c._io->println(F("       stack septic <unit> <status|get|monitor>"));
+            _c._io->println(F("       stack ring <unit> <on|off>"));
             return;
         }
         if (!_stack_master)
@@ -1006,6 +1012,68 @@ private:
         appendApiKey_(doc);
 
         char payload[96] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+        {
+            _c._io->println(F("Serialize failed"));
+            return;
+        }
+        const bool ok = _stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                              (const uint8_t *)payload, len);
+        _c._io->println(ok ? F("OK") : F("Send failed"));
+    }
+
+    void handleRingCmd_(const String &cmd)
+    {
+        if (!_stack_master)
+        {
+            _c._io->println(F("Stack master unavailable"));
+            return;
+        }
+        if (_c._configs_manager &&
+            _c._configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
+        {
+            _c._io->println(F("Stack role is slave"));
+            return;
+        }
+        String rest = cmd.substring(strlen("stack ring "));
+        rest.trim();
+        const int sp1 = rest.indexOf(' ');
+        if (sp1 <= 0)
+        {
+            _c._io->println(F("Usage: stack ring <unit> <on|off>"));
+            return;
+        }
+        String unit_str = rest.substring(0, sp1);
+        String action = rest.substring(sp1 + 1);
+        action.trim();
+        action.toLowerCase();
+        if (action.length() == 0)
+        {
+            _c._io->println(F("Usage: stack ring <unit> <on|off>"));
+            return;
+        }
+        uint32_t node_id = resolveUnitToNodeId_(unit_str);
+        if (node_id == 0)
+        {
+            _c._io->println(F("Unknown unit"));
+            return;
+        }
+        if (action != "on" && action != "off")
+        {
+            _c._io->println(F("Invalid action"));
+            return;
+        }
+
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = nextStackCmdId_();
+        doc["feature"] = (uint8_t)StackFeature::Ring;
+        doc["action"] = "set";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["state"] = (action == "on");
+        appendApiKey_(doc);
+
+        char payload[128] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
         {

@@ -55,6 +55,25 @@ static const char kWebInterfaceBusesHtml[] PROGMEM = R"HTML(
     th { color: var(--muted); font-weight: 600; }
     .right { text-align: right; }
     .nav { margin-bottom: 12px; }
+    .row { display: flex; gap: 10px; align-items: center; }
+    .btn {
+      background: var(--accent);
+      color: #00111a;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-weight: 700;
+      text-decoration: none;
+      display: inline-block;
+    }
+    select {
+      width: 100%;
+      background: #0b1220;
+      border: 1px solid #334155;
+      color: var(--text);
+      padding: 8px;
+      border-radius: 8px;
+    }
   </style>
 </head>
 <body>
@@ -62,8 +81,12 @@ static const char kWebInterfaceBusesHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Шины</h1>
-      <p>Плата: <strong>%BOARD_NAME%</strong></p>
+      <div class="status">%BUS_STACK_STATUS%</div>
+      %BUS_DEVICE_SELECT%
       <h2>I2C</h2>
+      <div class="row" style="gap:8px; margin-bottom:8px;">
+        <a class="btn" href="%BUS_I2C_SCAN_URL%">Сканировать I2C</a>
+      </div>
       <table>
         <thead>
           <tr>
@@ -76,6 +99,9 @@ static const char kWebInterfaceBusesHtml[] PROGMEM = R"HTML(
         </tbody>
       </table>
       <h2>OneWire</h2>
+      <div class="row" style="gap:8px; margin-bottom:8px;">
+        <a class="btn" href="%BUS_OW_SCAN_URL%">Сканировать OW</a>
+      </div>
       <table>
         <thead>
           <tr>

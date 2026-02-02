@@ -17,7 +17,7 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Админка</title>
+  <title>Система</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -49,7 +49,7 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
     h1 { margin: 0 0 6px; font-size: 22px; }
     p { margin: 0 0 18px; color: var(--muted); }
     label { display: block; margin-bottom: 6px; font-size: 12px; color: var(--muted); }
-    input[type=password] {
+    input[type=password], input[type=date], input[type=time], input[type=text] {
       width: 100%;
       background: #0b1220;
       border: 1px solid #334155;
@@ -70,23 +70,45 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
     .status { color: var(--muted); font-size: 12px; }
     a { color: #7dd3fc; text-decoration: none; }
     .nav { margin-bottom: 12px; }
+    .section { margin-top: 18px; padding-top: 12px; border-top: 1px solid #1f2937; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 520px) {
+      .row { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Админка</h1>
+      <h1>Система</h1>
       <p class="status">Статус: <strong>%ADMIN_STATUS%</strong></p>
       <form method="POST" action="/admin" id="admin-form">
         <label for="password">Новый пароль</label>
         <input id="password" type="password" name="password" placeholder="Введите новый пароль">
         <button type="submit">Сохранить</button>
       </form>
+      <div class="section">
+        <p class="status">RTC сейчас: <strong>%RTC_DATE%</strong> <strong>%RTC_TIME%</strong></p>
+        <form method="POST" action="/admin" id="rtc-form">
+          <div class="row">
+            <div>
+              <label for="rtc-date">Дата</label>
+              <input id="rtc-date" type="date" name="rtc_date" value="%RTC_DATE_VAL%">
+            </div>
+            <div>
+              <label for="rtc-time">Время</label>
+              <input id="rtc-time" type="time" step="1" name="rtc_time" value="%RTC_TIME_VAL%">
+            </div>
+          </div>
+          <button type="submit">Сохранить RTC</button>
+        </form>
+      </div>
     </div>
   </div>
   <script>
     const adminForm = document.getElementById('admin-form');
+    const rtcForm = document.getElementById('rtc-form');
     const reloadKey = 'admin_reload';
     if (sessionStorage.getItem(reloadKey)) {
       sessionStorage.removeItem(reloadKey);
@@ -94,6 +116,11 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
     }
     if (adminForm) {
       adminForm.addEventListener('submit', () => {
+        sessionStorage.setItem(reloadKey, '1');
+      });
+    }
+    if (rtcForm) {
+      rtcForm.addEventListener('submit', () => {
         sessionStorage.setItem(reloadKey, '1');
       });
     }

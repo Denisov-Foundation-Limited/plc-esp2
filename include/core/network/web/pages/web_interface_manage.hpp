@@ -92,7 +92,6 @@ static const char kWebInterfaceManageHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Прошивка и файлы</h1>
-      <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
       <div class="section">
         <h2>Прошивка</h2>
         <p class="status">OTA загрузка (.bin)</p>

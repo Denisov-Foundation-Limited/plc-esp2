@@ -53,6 +53,8 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     .center { text-align: center; }
     .nav { margin-bottom: 12px; }
     .status { margin: 8px 0 16px; color: var(--accent); font-weight: 600; }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .muted { color: var(--muted); font-size: 12px; }
     .field {
       width: 100%;
       padding: 6px 8px;
@@ -61,7 +63,7 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       background: #0b1220;
       color: var(--text);
     }
-    .field.mini { padding: 4px 6px; }
+    .field.mini { padding: 4px 6px; width: 72px; }
     .field.name { min-width: 160px; }
     .actions { display: flex; gap: 10px; margin-top: 16px; }
     button {
@@ -231,14 +233,14 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     %NAV%
     <div class="card">
       <h1>Баки</h1>
-      <p>%BOARD_NAME%</p>
       <div class="status">%TANK_STATUS%</div>
+      %TANK_DEVICE_SELECT%
       <form method="POST" action="/tanks" id="tanks-form">
         <div class="grid">
           %TANK_ITEMS%
         </div>
         <div class="actions">
-          <button type="submit">Сохранить</button>
+          %TANK_SAVE_BTN%
         </div>
       </form>
     </div>
@@ -330,6 +332,21 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     window.addEventListener('scroll', () => {
       sessionStorage.setItem(scrollKey, String(window.scrollY));
     }, { passive: true });
+    const tanksDevice = document.getElementById('tanks-device');
+    if (tanksDevice) {
+      tanksDevice.addEventListener('change', () => {
+        const val = tanksDevice.value || 'local';
+        const url = new URL(window.location.href);
+        if (val === 'local') {
+          url.searchParams.delete('node');
+          url.searchParams.delete('unit');
+        } else {
+          url.searchParams.set('unit', 'stack');
+          url.searchParams.set('node', val);
+        }
+        window.location.href = url.toString();
+      });
+    }
   </script>
 </body>
 </html>

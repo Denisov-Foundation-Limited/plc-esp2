@@ -39,6 +39,7 @@
 #include "core/cli/modules/cli_tank.hpp"
 #include "core/cli/modules/cli_security.hpp"
 #include "core/cli/modules/cli_septic.hpp"
+#include "core/cli/modules/cli_ring.hpp"
 #include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
@@ -68,6 +69,7 @@ public:
     using CLITank = CLITankT<CliConsole>;
     using CLISeptic = CLISepticT<CliConsole>;
     using CLISecurity = CLISecurityT<CliConsole>;
+    using CLIRing = CLIRingT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
@@ -93,9 +95,10 @@ public:
           _tank_cli(*this, controllers.tanks()),
           _septic_cli(*this, controllers.septic()),
           _security_cli(*this, controllers.security()),
+          _ring_cli(*this, controllers.ring()),
           _enable(*this, _wifi_cli),
           _config(*this, _wifi_cli, _tgbot_cli, _socket_cli, _meteo_cli, _thermo_cli, _tank_cli, _septic_cli,
-                  _security_cli)
+                  _security_cli, _ring_cli)
     {
         _stack_cli.bind(stack_master);
     }
@@ -214,6 +217,7 @@ public:
     void enterConfigTank() { _mode = Mode::ConfigTank; printPrompt_(); }
     void enterConfigSeptic() { _mode = Mode::ConfigSeptic; printPrompt_(); }
     void enterConfigSecurity() { _mode = Mode::ConfigSecurity; printPrompt_(); }
+    void enterConfigRing() { _mode = Mode::ConfigRing; printPrompt_(); }
     void logout()
     {
         _state = State::NeedUser;
@@ -712,7 +716,8 @@ private:
         ConfigThermo,
         ConfigTank,
         ConfigSeptic,
-        ConfigSecurity
+        ConfigSecurity,
+        ConfigRing
     };
 
     enum class State : uint8_t
@@ -765,6 +770,7 @@ private:
             _io->print(F("  show security <id>"));
             _security_cli.printIdRangeInline();
             _io->println(F(" - sensor details"));
+            _io->println(F("  show ring       - ring status"));
             return;
         }
         if (t == "wifi")
@@ -814,6 +820,11 @@ private:
             _security_cli.printHelpContextLines();
             return;
         }
+        if (t == "ring")
+        {
+            _ring_cli.printHelpContextLines();
+            return;
+        }
         if (t == "system")
         {
             _io->println(F("System commands:"));
@@ -831,7 +842,7 @@ private:
     {
         if (!_io || _state != State::LoggedIn)
             return;
-        static const std::array<const char *, 62> kEnableCmds = {{
+        static const std::array<const char *, 67> kEnableCmds = {{
             "show plc",
             "show board",
             "show wifi",
@@ -856,6 +867,9 @@ private:
             "show septic <id>",
             "show security",
             "show security <id>",
+            "show ring",
+            "ring on",
+            "ring off",
             "socket toggle <id>",
             "socket on <id>",
             "socket off <id>",
@@ -871,6 +885,7 @@ private:
             "stack thermo <unit> <on|off|toggle> <id>",
             "stack septic <unit> <status|get>",
             "stack security <unit> <arm|disarm|status|clear>",
+            "stack ring <unit> <on|off>",
             "wifi restart",
             "reload",
             "reset",
@@ -893,9 +908,10 @@ private:
             "help thermo",
             "help tank",
             "help septic",
-            "help security"}};
+            "help security",
+            "help ring"}};
 
-        static const std::array<const char *, 30> kConfigCmds = {{
+        static const std::array<const char *, 32> kConfigCmds = {{
             "password <pass>",
             "admin password <pass>",
             "stack role <master|slave>",
@@ -912,6 +928,7 @@ private:
             "tank",
             "septic",
             "security",
+            "ring",
             "exit",
             "end",
             "help",
@@ -925,7 +942,8 @@ private:
             "help thermo",
             "help tank",
             "help septic",
-            "help security"}};
+            "help security",
+            "help ring"}};
 
         static const std::array<const char *, 16> kConfigWifiCmds = {{
             "ssid <value>",
@@ -1077,6 +1095,18 @@ private:
             "end",
             "help"}};
 
+        static const std::array<const char *, 10> kConfigRingCmds = {{
+            "show",
+            "on",
+            "off",
+            "enable",
+            "disable",
+            "button <port|none>",
+            "relay <port|none>",
+            "exit",
+            "end",
+            "help"}};
+
         const char *const *cmds = nullptr;
         size_t count = 0;
         switch (_mode)
@@ -1124,6 +1154,10 @@ private:
         case Mode::ConfigSecurity:
             cmds = kConfigSecurityCmds.data();
             count = kConfigSecurityCmds.size();
+            break;
+        case Mode::ConfigRing:
+            cmds = kConfigRingCmds.data();
+            count = kConfigRingCmds.size();
             break;
         case Mode::User:
             cmds = kEnableCmds.data();
@@ -1446,6 +1480,8 @@ private:
             else
                 _security_cli.showSensor(id);
         }
+        else if (eq_(what, "ring"))
+            _ring_cli.showRing();
         else
             _io->println(F("Unknown show"));
         printPrompt_();
@@ -1530,6 +1566,9 @@ private:
             break;
         case Mode::ConfigSecurity:
             _config.handleSecurityContext(line);
+            break;
+        case Mode::ConfigRing:
+            _config.handleRingContext(line);
             break;
         case Mode::User:
             _enable.handle(line);
@@ -1644,6 +1683,9 @@ private:
             break;
         case Mode::ConfigSecurity:
             _io->print(F("plc(config-security)# "));
+            break;
+        case Mode::ConfigRing:
+            _io->print(F("plc(config-ring)# "));
             break;
         }
     }
@@ -1952,6 +1994,7 @@ private:
     CLITank _tank_cli;
     CLISeptic _septic_cli;
     CLISecurity _security_cli;
+    CLIRing _ring_cli;
     CLIEnable _enable;
     CLIConfig _config;
     uint32_t _tgbot_last_update_id = 0;
@@ -2451,6 +2494,8 @@ private:
     friend class CLISepticT;
     template <typename>
     friend class CLISecurityT;
+    template <typename>
+    friend class CLIRingT;
 
 public:
     void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }

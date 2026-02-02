@@ -35,6 +35,8 @@
 #include "controllers/security_controller.hpp"
 #include "controllers/socket_controller.hpp"
 #include "controllers/thermo_controller.hpp"
+#include "controllers/tank_controller.hpp"
+#include "controllers/ring_controller.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/logger.hpp"
 
@@ -44,7 +46,8 @@ public:
     StackSlaveHandler(IoStack &io, Ds18b20 &ds18b20, OneWireManager &ow, I2CManager &i2c,
                       PlcControl &plc, RTC &rtc, TelegramClient &telegram, Logger &logs,
                       Extender &ext, SocketController &sockets, MeteoController &meteo,
-                      ThermoController &thermo, SepticController &septic, SecurityController &security)
+                      ThermoController &thermo, SepticController &septic, SecurityController &security,
+                      TankController &tanks, RingController &ring)
         : _io(io),
           _ds18b20(ds18b20),
           _ow(ow),
@@ -58,7 +61,9 @@ public:
           _meteo(meteo),
           _thermo(thermo),
           _septic(septic),
-          _security(security)
+          _security(security),
+          _tanks(tanks),
+          _ring(ring)
     {
     }
 
@@ -96,6 +101,8 @@ private:
     ThermoController &_thermo;
     SepticController &_septic;
     SecurityController &_security;
+    TankController &_tanks;
+    RingController &_ring;
     StackNode *_node = nullptr;
     ConfigsManagerIface *_configs = nullptr;
     static constexpr uint8_t MAX_I2C_ADDRS = 127;
@@ -201,6 +208,12 @@ private:
             break;
         case StackFeature::Septic:
             handleSeptic_(cmd_id, action, params);
+            break;
+        case StackFeature::Tanks:
+            handleTanks_(cmd_id, action);
+            break;
+        case StackFeature::Ring:
+            handleRing_(cmd_id, action, params);
             break;
         case StackFeature::Security:
             handleSecurity_(cmd_id, action, params);
@@ -937,6 +950,12 @@ private:
                 else
                     _security.disarmFrom("stack", user);
             }
+            if (obj["alarm"].is<bool>() || obj["alarm"].is<int>())
+            {
+                const bool on = obj["alarm"].is<bool>() ? obj["alarm"].as<bool>()
+                                                        : (obj["alarm"].as<int>() != 0);
+                _security.setAlarmState(on);
+            }
             if (obj["clear"].is<bool>() && obj["clear"].as<bool>())
                 _security.clearDetect();
             sendAck_(cmd_id);
@@ -1028,6 +1047,95 @@ private:
                 return;
             }
             sendErr_(cmd_id, "missing monitor");
+            return;
+        }
+        sendErr_(cmd_id, "unsupported");
+    }
+
+    void handleTanks_(uint16_t cmd_id, const String &action)
+    {
+        if (action != "get")
+        {
+            sendErr_(cmd_id, "unsupported");
+            return;
+        }
+        _tx_doc.clear();
+        JsonDocument &doc = _tx_doc;
+        JsonArray arr = doc["items"].to<JsonArray>();
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = _tanks.configByIndex(i);
+            const auto *st = _tanks.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            JsonObject o = arr.add<JsonObject>();
+            o["id"] = (unsigned)cfg->id;
+            o["enabled"] = cfg->enabled;
+            o["power_on"] = cfg->power_on;
+            if (cfg->name.length())
+                o["name"] = cfg->name;
+            if (cfg->level_low != TankController::kInvalidPort)
+                o["low"] = cfg->level_low;
+            if (cfg->level_mid != TankController::kInvalidPort)
+                o["mid"] = cfg->level_mid;
+            if (cfg->level_full != TankController::kInvalidPort)
+                o["full"] = cfg->level_full;
+            if (cfg->relay_valve != TankController::kInvalidPort)
+                o["valve"] = cfg->relay_valve;
+            if (cfg->relay_pump != TankController::kInvalidPort)
+                o["pump"] = cfg->relay_pump;
+            if (cfg->relay_alarm != TankController::kInvalidPort)
+                o["alarm"] = cfg->relay_alarm;
+
+            o["level_low"] = st->level_low;
+            o["level_mid"] = st->level_mid;
+            o["level_full"] = st->level_full;
+            o["levels_ok"] = st->levels_ok;
+            o["valve_on"] = st->valve_on;
+            o["pump_on"] = st->pump_on;
+            o["alarm_on"] = st->alarm_on;
+        }
+        sendAck_(cmd_id, doc);
+    }
+
+    void handleRing_(uint16_t cmd_id, const String &action, JsonVariantConst params)
+    {
+        if (action == "get")
+        {
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            const auto &cfg = _ring.config();
+            const auto &st = _ring.state();
+            doc["enabled"] = cfg.enabled;
+            if (cfg.button_port != RingController::kInvalidPort)
+                doc["button"] = cfg.button_port;
+            if (cfg.relay_port != RingController::kInvalidPort)
+                doc["relay"] = cfg.relay_port;
+            doc["relay_on"] = st.relay_on;
+            sendAck_(cmd_id, doc);
+            return;
+        }
+        if (action == "set")
+        {
+            if (!params.is<JsonObjectConst>())
+            {
+                sendErr_(cmd_id, "missing params");
+                return;
+            }
+            JsonObjectConst obj = params.as<JsonObjectConst>();
+            if (obj["state"].is<bool>() || obj["state"].is<int>())
+            {
+                const bool on = obj["state"].is<bool>() ? obj["state"].as<bool>()
+                                                        : (obj["state"].as<int>() != 0);
+                if (!_ring.setHoldRelayWithSource(on, RingController::Source::Stack))
+                {
+                    sendErr_(cmd_id, "failed");
+                    return;
+                }
+                sendAck_(cmd_id);
+                return;
+            }
+            sendErr_(cmd_id, "missing state");
             return;
         }
         sendErr_(cmd_id, "unsupported");

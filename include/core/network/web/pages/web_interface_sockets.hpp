@@ -56,6 +56,8 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     .center { text-align: center; }
     .nav { margin-bottom: 12px; }
     .status { margin: 8px 0 16px; color: var(--accent); font-weight: 600; }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .muted { color: var(--muted); font-size: 12px; }
     .field {
       width: 100%;
       padding: 6px 8px;
@@ -164,7 +166,9 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       border: 2px solid #1f2937;
       background: linear-gradient(180deg, #0a1220 0%, #0c1628 100%);
       overflow: hidden;
+      cursor: pointer;
     }
+    .tile.disabled .sock-visual { cursor: not-allowed; }
     .sock-icon {
       position: absolute;
       left: 50%;
@@ -246,9 +250,9 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Розетки</h1>
-      <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <div class="status">%SOCKETS_STATUS%</div>
-      <div class="pagination">
+      %SOCKETS_DEVICE_SELECT%
+      <div class="pagination" %SOCKETS_PAGINATION_STYLE%>
         <button type="button" class="btn btn-sm" id="sockets-prev">Назад</button>
         <span class="page-info">Страница</span>
         <select id="sockets-page" class="field mini"></select>
@@ -260,12 +264,14 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
           %SOCKETS%
         </div>
         <p class="actions">
-          <button class="btn" type="submit">Сохранить</button>
+          %SOCKETS_SAVE_BTN%
         </p>
       </form>
     </div>
   </div>
   <script>
+    const socketsUnit = "%SOCKETS_UNIT%";
+    const socketsNodeId = %SOCKETS_NODE_ID%;
     const socketOptions = {
       dinput: %DINPUT_JSON%,
       relay: %RELAY_JSON%
@@ -342,6 +348,9 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       });
     }
     async function postForm(url, body) {
+      if (socketsUnit === 'stack' && socketsNodeId) {
+        body += '&node_id=' + encodeURIComponent(String(socketsNodeId));
+      }
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -378,21 +387,37 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         toggle.disabled = !enabled;
       }
     }
+    function toggleFromVisual(visual) {
+      const tile = visual.closest('.tile');
+      if (!tile) return;
+      const toggle = tile.querySelector('input.socket-toggle');
+      if (!toggle || toggle.disabled || toggle.dataset.busy === '1') return;
+      toggle.checked = !toggle.checked;
+      toggle.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    document.querySelectorAll('.sock-visual').forEach((visual) => {
+      visual.addEventListener('click', () => toggleFromVisual(visual));
+    });
     document.querySelectorAll('input.socket-toggle').forEach((el) => {
       el.addEventListener('change', async () => {
         const id = el.dataset.id;
         const tile = el.closest('.tile');
         if (el.dataset.busy === '1') return;
+        const desired = el.checked;
         el.dataset.busy = '1';
         el.disabled = true;
         try {
           const action = el.checked ? 'on' : 'off';
           const state = await postForm('/sockets/toggle', 'id=' + encodeURIComponent(id) + '&action=' + action);
+          if (state === 'pending') {
+            updateSocketVisual(tile, desired);
+            return;
+          }
           const isOn = state === 'on' || state === '1' || state === 'true';
           el.checked = isOn;
           updateSocketVisual(tile, isOn);
         } catch (e) {
-          el.checked = !el.checked;
+          el.checked = !desired;
           updateSocketVisual(tile, el.checked);
         } finally {
           el.disabled = false;
@@ -422,7 +447,11 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         });
       });
       async function fetchState(id) {
-        const res = await fetch('/sockets/toggle?id=' + encodeURIComponent(id) + '&action=state', {
+        let url = '/sockets/toggle?id=' + encodeURIComponent(id) + '&action=state';
+        if (socketsUnit === 'stack' && socketsNodeId) {
+          url += '&node_id=' + encodeURIComponent(String(socketsNodeId));
+        }
+        const res = await fetch(url, {
           cache: 'no-store',
           credentials: 'same-origin'
         });
@@ -441,6 +470,9 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
           const tile = el.closest('.tile');
           try {
             const state = await fetchState(el.dataset.id);
+            if (state === 'unknown' || state === 'pending') {
+              continue;
+            }
             const isOn = state === 'on' || state === '1' || state === 'true';
             if (el.checked !== isOn) {
               el.checked = isOn;
@@ -462,6 +494,22 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       if (socketsForm) {
         socketsForm.addEventListener('submit', () => {
           sessionStorage.setItem(reloadKey, '1');
+        });
+      }
+      const deviceSelect = document.getElementById('sockets-device');
+      if (deviceSelect) {
+        deviceSelect.addEventListener('change', () => {
+          const val = deviceSelect.value || 'local';
+          const url = new URL(window.location.href);
+          if (val === 'local') {
+            url.searchParams.delete('node');
+            url.searchParams.delete('unit');
+          } else {
+            url.searchParams.set('unit', 'stack');
+            url.searchParams.set('node', val);
+          }
+          url.searchParams.delete('page');
+          window.location.href = url.toString();
         });
       }
     </script>

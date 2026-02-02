@@ -14,6 +14,7 @@
 #include <ArduinoJson.h>
 
 #include "controllers/meteo_controller.hpp"
+#include "controllers/ring_controller.hpp"
 #include "controllers/septic_controller.hpp"
 #include "controllers/security_controller.hpp"
 #include "controllers/socket_controller.hpp"
@@ -37,6 +38,7 @@ public:
           _tanks(gpio, logs, tgbot, tgmenu),
           _septic(gpio, logs, tgbot, tgmenu),
           _security(gpio, ow, logs, tgbot, tgmenu),
+          _ring(gpio, logs),
           _storage(storage),
           _logs(logs)
     {
@@ -82,6 +84,12 @@ public:
             _logs.error(F("CTRL"), F("Security init failed"));
             return false;
         }
+        _logs.info(F("CTRL"), F("Ring init"));
+        if (!_ring.begin())
+        {
+            _logs.error(F("CTRL"), F("Ring init failed"));
+            return false;
+        }
         loadFromStorage_();
         _logs.info(F("CTRL"), F("Init done"));
         return true;
@@ -95,6 +103,7 @@ public:
         _tanks.task();
         _septic.task();
         _security.task();
+        _ring.task();
         saveIfNeeded_();
     }
 
@@ -114,6 +123,8 @@ public:
             _septic.setControllerEnabled(cfg["septic_enabled"].as<bool>());
         if (cfg["security_enabled"].is<bool>())
             _security.setControllerEnabled(cfg["security_enabled"].as<bool>());
+        if (cfg["ring"].is<JsonObjectConst>())
+            _ring.applyConfig(cfg["ring"].as<JsonObjectConst>());
         const bool has_lights = cfg["lights"].is<JsonArrayConst>();
         if (cfg["sockets"].is<JsonArrayConst>())
             _sockets.applyConfig(cfg["sockets"].as<JsonArrayConst>(), !has_lights);
@@ -164,6 +175,8 @@ public:
         out["security_enabled"] = _security.controllerEnabled();
         JsonArray sec = out["security"].to<JsonArray>();
         _security.serialize(sec);
+        JsonObject ring = out["ring"].to<JsonObject>();
+        _ring.serialize(ring);
         JsonArray keys = out["security_keys"].to<JsonArray>();
         _security.serializeKeys(keys);
         JsonArray phones = out["security_phones"].to<JsonArray>();
@@ -184,6 +197,8 @@ public:
     const SepticController &septic() const { return _septic; }
     SecurityController &security() { return _security; }
     const SecurityController &security() const { return _security; }
+    RingController &ring() { return _ring; }
+    const RingController &ring() const { return _ring; }
     void setSaveIntervalMs(uint32_t ms) { _save_interval_ms = ms; }
 
 private:
@@ -193,6 +208,7 @@ private:
     TankController _tanks;
     SepticController _septic;
     SecurityController _security;
+    RingController _ring;
     EepromStorage &_storage;
     Logger &_logs;
     uint32_t _last_save_ms = 0;

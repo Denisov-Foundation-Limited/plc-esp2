@@ -55,6 +55,11 @@ public:
         bool is_detect = false;
     };
 
+    using ArmStateHandler = void (*)(void *ctx, bool armed);
+    using AlarmStateHandler = void (*)(void *ctx, bool alarm_on);
+    using ClearDetectHandler = void (*)(void *ctx);
+    using DetectHandler = void (*)(void *ctx, uint8_t sensor_id, const String &name, bool silent);
+
     SecurityController(Gpio &gpio, OneWireManager &ow, Logger &logs,
                        TelegramBot &bot, TelegramAllowedUsersProvider &users)
         : _gpio(gpio), _ow(ow), _logs(logs), _tgbot(bot), _tgusers(users)
@@ -66,10 +71,10 @@ public:
     {
         if (!_controller_enabled)
         {
-            _logs.info(F("SEC"), F("Controller disabled"));
+            _logs.info(F("SECURITY"), F("Controller disabled"));
             return true;
         }
-        _logs.info(F("SEC"), F("Init"));
+        _logs.info(F("SECURITY"), F("Init"));
         setupOutputs_();
         initIButton_();
         for (size_t i = 0; i < kSensorCount; ++i)
@@ -82,7 +87,7 @@ public:
             st.raw = readRaw_(cfg);
             st.is_detect = false;
         }
-        _logs.info(F("SEC"), F("Init done"));
+        _logs.info(F("SECURITY"), F("Init done"));
         return true;
     }
 
@@ -111,9 +116,12 @@ public:
                 st.is_detect = true;
                 if (!cfg.silent)
                 {
+                    const bool was_alarm = _alarm_on;
                     _alarm_on = true;
                     resetAlarmBuzzer_();
                     updateSiren_();
+                    if (!was_alarm)
+                        notifyAlarmState_(true);
                 }
                 logDetect_(cfg);
                 notifyDetect_(cfg);
@@ -349,6 +357,35 @@ public:
         applySnapshot_(armed != 0);
     }
 
+    void setArmStateHandler(ArmStateHandler cb, void *ctx)
+    {
+        _arm_state_cb = cb;
+        _arm_state_ctx = ctx;
+    }
+
+    void setAlarmStateHandler(AlarmStateHandler cb, void *ctx)
+    {
+        _alarm_state_cb = cb;
+        _alarm_state_ctx = ctx;
+    }
+
+    void setClearDetectHandler(ClearDetectHandler cb, void *ctx)
+    {
+        _clear_detect_cb = cb;
+        _clear_detect_ctx = ctx;
+    }
+
+    void setDetectHandler(DetectHandler cb, void *ctx)
+    {
+        _detect_cb = cb;
+        _detect_ctx = ctx;
+    }
+
+    void setNotifyEnabled(bool enabled)
+    {
+        _notify_enabled = enabled;
+    }
+
     bool takeDirty()
     {
         if (!_dirty)
@@ -370,7 +407,7 @@ public:
                 _state[i] = SensorState{};
             return;
         }
-        _logs.info(F("SEC"), F("controller: enabled"));
+        _logs.info(F("SECURITY"), F("controller: enabled"));
         setupOutputs_();
         initIButton_();
         for (size_t i = 0; i < kSensorCount; ++i)
@@ -431,6 +468,45 @@ public:
     void clearDetect()
     {
         clearDetect_();
+        notifyClearDetect_();
+    }
+
+    void notifyRemoteDetect(const String &source, uint8_t sensor_id, const String &name, bool silent)
+    {
+        if (!_notify_enabled)
+            return;
+        String msg = F("Охрана: тревога ");
+        if (source.length())
+        {
+            msg += F("<b>");
+            msg += escapeHtml_(source);
+            msg += F("</b>");
+            msg += F(", ");
+        }
+        msg += F("датчик ");
+        msg += String((unsigned)sensor_id);
+        if (name.length())
+        {
+            msg += F(" (");
+            msg += F("<b>");
+            msg += escapeHtml_(name);
+            msg += F("</b>");
+            msg += F(")");
+        }
+        if (silent)
+            msg += F(" [silent]");
+        sendTgNotify_(msg, F("HTML"));
+        sendSmsNotify_(sensor_id, name);
+    }
+
+    void setAlarmState(bool on)
+    {
+        if (_alarm_on == on)
+            return;
+        _alarm_on = on;
+        resetAlarmBuzzer_();
+        updateSiren_();
+        notifyAlarmState_(on);
     }
     bool setEnabled(size_t id, bool enabled)
     {
@@ -918,7 +994,7 @@ private:
         OneWireBus *bus = _ow.busPtrById(OneWireManager::OwBusType::iButton);
         if (!bus)
         {
-            _logs.warn(F("SEC"), F("iButton bus missing"));
+            _logs.warn(F("SECURITY"), F("iButton bus missing"));
             return;
         }
         _ibutton.begin(*bus);
@@ -936,11 +1012,11 @@ private:
             return;
         char hex[17] = {};
         IButton::toHex(addr, hex);
-        _logs.info(F("SEC"), F("Detected iButton key: %s"), hex);
+        _logs.info(F("SECURITY"), F("Detected iButton key: %s"), hex);
         String user;
         if (!matchKey_(addr, user))
         {
-            _logs.warn(F("SEC"), F("iButton key is not valid"));
+            _logs.warn(F("SECURITY"), F("iButton key is not valid"));
             return;
         }
         toggleArm_("ibutton", user);
@@ -1014,7 +1090,7 @@ private:
         String blocked_log;
         if (hasTriggeredBeforeArm_(blocked, &blocked_log))
         {
-            _logs.warn(F("SEC"), F("arm blocked, triggered: %s"), blocked_log.c_str());
+            _logs.warn(F("SECURITY"), F("arm blocked, triggered: %s"), blocked_log.c_str());
             const char *src = "local";
             const char *who = "unknown";
             String msg = F("Охрана: невозможно поставить, источник: <b>");
@@ -1028,6 +1104,7 @@ private:
             return;
         }
         _armed = true;
+        const bool was_alarm = _alarm_on;
         _alarm_on = false;
         clearDetect_();
         resetAlarmBuzzer_();
@@ -1036,11 +1113,15 @@ private:
         startBeep_(2, kBeepShortMs, kBeepGapMs);
         _dirty = true;
         logArmAction_(true, nullptr, String());
+        notifyArmState_(true);
+        if (was_alarm)
+            notifyAlarmState_(false);
     }
 
     void disarm_(bool silent)
     {
         _armed = false;
+        const bool was_alarm = _alarm_on;
         _alarm_on = false;
         clearDetect_();
         resetAlarmBuzzer_();
@@ -1050,6 +1131,9 @@ private:
             startBeep_(1, kBeepLongMs, 0);
         _dirty = true;
         logArmAction_(false, nullptr, String());
+        notifyArmState_(false);
+        if (was_alarm)
+            notifyAlarmState_(false);
     }
 
     void arm_(const char *src, const String &user)
@@ -1058,7 +1142,7 @@ private:
         String blocked_log;
         if (hasTriggeredBeforeArm_(blocked, &blocked_log))
         {
-            _logs.warn(F("SEC"), F("arm blocked, triggered: %s"), blocked_log.c_str());
+            _logs.warn(F("SECURITY"), F("arm blocked, triggered: %s"), blocked_log.c_str());
             const char *who = user.length() ? user.c_str() : "unknown";
             const char *from = src ? src : "local";
             String msg = F("Охрана: невозможно поставить, источник: <b>");
@@ -1072,6 +1156,7 @@ private:
             return;
         }
         _armed = true;
+        const bool was_alarm = _alarm_on;
         _alarm_on = false;
         clearDetect_();
         resetAlarmBuzzer_();
@@ -1080,11 +1165,15 @@ private:
         startBeep_(2, kBeepShortMs, kBeepGapMs);
         _dirty = true;
         logArmAction_(true, src, user);
+        notifyArmState_(true);
+        if (was_alarm)
+            notifyAlarmState_(false);
     }
 
     void disarm_(bool silent, const char *src, const String &user)
     {
         _armed = false;
+        const bool was_alarm = _alarm_on;
         _alarm_on = false;
         clearDetect_();
         resetAlarmBuzzer_();
@@ -1094,6 +1183,9 @@ private:
             startBeep_(1, kBeepLongMs, 0);
         _dirty = true;
         logArmAction_(false, src, user);
+        notifyArmState_(false);
+        if (was_alarm)
+            notifyAlarmState_(false);
     }
 
     void applySnapshot_(bool armed)
@@ -1255,12 +1347,15 @@ private:
 
     void logDetect_(const SensorConfig &cfg)
     {
-        _logs.warn(F("SEC"), F("detect id: %u type: %s"),
+        _logs.warn(F("SECURITY"), F("detect id: %u type: %s"),
                    (unsigned)cfg.id, typeName_(cfg.type));
     }
 
     void notifyDetect_(const SensorConfig &cfg)
     {
+        notifyDetectEvent_(cfg);
+        if (!_notify_enabled)
+            return;
         String msg = F("Охрана: тревога датчик ");
         msg += String((unsigned)cfg.id);
         if (cfg.name.length())
@@ -1277,6 +1372,8 @@ private:
 
     void notifyArmAction_(bool armed, const char *src, const String &user)
     {
+        if (!_notify_enabled)
+            return;
         String msg = armed ? F("Охрана: постановка") : F("Охрана: снятие");
         const char *who = user.length() ? user.c_str() : "неизвестен";
         const char *from = src ? src : "локально";
@@ -1398,6 +1495,36 @@ private:
         }
     }
 
+    void sendSmsNotify_(uint8_t sensor_id, const String &name)
+    {
+        if (!_gsm)
+            return;
+        String msg = F("ALARM sensor ");
+        msg += String((unsigned)sensor_id);
+        if (name.length())
+        {
+            msg += F(" (");
+            msg += name;
+            msg += F(")");
+        }
+        for (size_t i = 0; i < kPhoneCount; ++i)
+        {
+            if (!_phone_enabled[i] || !_phone_notify[i])
+                continue;
+            if (_phones[i].length() == 0)
+                continue;
+            _gsm->sendSms(_phones[i], msg);
+        }
+        for (size_t i = 0; i < kPhoneCount; ++i)
+        {
+            if (!_phone_enabled[i] || !_phone_call[i])
+                continue;
+            if (_phones[i].length() == 0)
+                continue;
+            _gsm->driver().dial(_phones[i]);
+        }
+    }
+
     bool matchKey_(const uint8_t addr[8], String &user) const
     {
         for (size_t i = 0; i < kKeyCount; ++i)
@@ -1416,14 +1543,38 @@ private:
     {
         if (!src && user.length() == 0)
         {
-            _logs.info(F("SEC"), F("%s"), armed ? "armed" : "disarmed");
+            _logs.info(F("SECURITY"), F("%s"), armed ? "armed" : "disarmed");
             notifyArmAction_(armed, "local", String());
             return;
         }
         const char *who = user.length() ? user.c_str() : "unknown";
         const char *from = src ? src : "unknown";
-        _logs.info(F("SEC"), F("%s by %s (%s)"), armed ? "armed" : "disarmed", who, from);
+        _logs.info(F("SECURITY"), F("%s by %s (%s)"), armed ? "armed" : "disarmed", who, from);
         notifyArmAction_(armed, src, user);
+    }
+
+    void notifyArmState_(bool armed)
+    {
+        if (_arm_state_cb)
+            _arm_state_cb(_arm_state_ctx, armed);
+    }
+
+    void notifyAlarmState_(bool alarm_on)
+    {
+        if (_alarm_state_cb)
+            _alarm_state_cb(_alarm_state_ctx, alarm_on);
+    }
+
+    void notifyClearDetect_()
+    {
+        if (_clear_detect_cb)
+            _clear_detect_cb(_clear_detect_ctx);
+    }
+
+    void notifyDetectEvent_(const SensorConfig &cfg)
+    {
+        if (_detect_cb)
+            _detect_cb(_detect_ctx, cfg.id, cfg.name, cfg.silent);
     }
 
     static int hexNibble_(char c)
@@ -1462,4 +1613,14 @@ private:
 
     bool _alarm_buzz_state = false;
     uint32_t _alarm_buzz_next_ms = 0;
+    ArmStateHandler _arm_state_cb = nullptr;
+    void *_arm_state_ctx = nullptr;
+    AlarmStateHandler _alarm_state_cb = nullptr;
+    void *_alarm_state_ctx = nullptr;
+    ClearDetectHandler _clear_detect_cb = nullptr;
+    void *_clear_detect_ctx = nullptr;
+    DetectHandler _detect_cb = nullptr;
+    void *_detect_ctx = nullptr;
+    bool _notify_enabled = true;
 };
+

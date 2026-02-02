@@ -96,6 +96,16 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
       border: 1px solid #1f2937;
       color: var(--text);
     }
+    button {
+      background: var(--accent);
+      color: #00111a;
+      border: none;
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 12px;
+    }
     .tile > span {
       display: block;
       margin-top: 6px;
@@ -116,7 +126,6 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Контроллеры</h1>
-      <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <div class="grid">
         <div class="tile">
           <form method="POST" action="/controllers" id="sockets-form">
@@ -209,6 +218,21 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">%SEPTIC_STATUS%</span>
         </div>
         <div class="tile">
+          <form method="POST" action="/controllers" id="ring-form">
+            <input type="hidden" name="ctrl" value="ring">
+            <div class="tile-head">
+              <a href="/ring">Звонок</a>
+              <label class="switch">
+                <input type="checkbox" id="ring-enabled" name="ring_enabled" %RING_ENABLED_CHECKED%>
+                <span class="track"><span class="knob"></span></span>
+              </label>
+            </div>
+          </form>
+          <span>Кнопка и импульс реле</span>
+          <span class="status">Звонок: <strong>%RING_ENABLED_LABEL%</strong></span>
+          <span class="status">%RING_STATUS%</span>
+        </div>
+        <div class="tile">
           <form method="POST" action="/controllers" id="security-form">
             <input type="hidden" name="ctrl" value="security">
             <div class="tile-head">
@@ -256,6 +280,11 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
     const septicForm = document.getElementById('septic-form');
     if (septicToggle && septicForm) {
       septicToggle.addEventListener('change', () => septicForm.submit());
+    }
+    const ringToggle = document.getElementById('ring-enabled');
+    const ringForm = document.getElementById('ring-form');
+    if (ringToggle && ringForm) {
+      ringToggle.addEventListener('change', () => ringForm.submit());
     }
     const securityToggle = document.getElementById('security-enabled');
     const securityForm = document.getElementById('security-form');

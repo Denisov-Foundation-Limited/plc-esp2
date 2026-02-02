@@ -41,7 +41,6 @@ static const char kWebInterfaceStatusHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h2>Статус</h2>
-      <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <pre><strong>%STATUS%</strong></pre>
       
     </div>

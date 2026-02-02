@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -48,6 +48,8 @@ public:
         bool last_warning = false;
         bool last_alarm = false;
     };
+
+    using DetectHandler = void (*)(void *ctx, uint8_t septic_id, const String &name, bool is_alarm);
 
     SepticController(Gpio &gpio, Logger &logs, TelegramBot &bot, TelegramAllowedUsersProvider &users)
         : _gpio(gpio), _logs(logs), _tgbot(bot), _tgusers(users)
@@ -103,9 +105,15 @@ public:
             logLevelChange_(cfg, prev, st);
             logRelayChange_(cfg, prev, st);
             if (!prev.warning && st.warning)
-                notifyLevel_(cfg, "WARNING");
+            {
+                notifyDetectEvent_(cfg, false);
+                notifyLevel_(cfg, false);
+            }
             if (!prev.alarm && st.alarm)
-                notifyLevel_(cfg, "ALARM");
+            {
+                notifyDetectEvent_(cfg, true);
+                notifyLevel_(cfg, true);
+            }
             st.last_warning = st.warning;
             st.last_alarm = st.alarm;
         }
@@ -205,7 +213,7 @@ public:
             }
             return;
         }
-        _logs.info(F("SEPT"), F("controller: enabled"));
+        _logs.info(F("SEPTIC"), F("controller: enabled"));
         begin();
     }
 
@@ -283,6 +291,43 @@ public:
         return setRelayPort_(id, port, &SepticConfig::relay_alarm);
     }
 
+    void setDetectHandler(DetectHandler cb, void *ctx)
+    {
+        _detect_cb = cb;
+        _detect_ctx = ctx;
+    }
+
+    void setNotifyEnabled(bool enabled)
+    {
+        _notify_enabled = enabled;
+    }
+
+    void notifyRemoteLevel(const String &source, uint8_t septic_id, const String &name, bool is_alarm)
+    {
+        if (!_notify_enabled)
+            return;
+        String msg = F("Септик: уровень ");
+        msg += is_alarm ? F("ALARM") : F("WARNING");
+        if (source.length())
+        {
+            msg += F(" [");
+            msg += source;
+            msg += F("]");
+        }
+        if (septic_id > 0)
+        {
+            msg += F(" #");
+            msg += String((unsigned)septic_id);
+        }
+        if (name.length())
+        {
+            msg += F(" (");
+            msg += name;
+            msg += F(")");
+        }
+        sendTgNotify_(msg);
+    }
+
     const SepticConfig *configByIndex(size_t idx) const
     {
         if (idx >= kSepticCount)
@@ -306,6 +351,9 @@ private:
     SepticConfig _cfg[kSepticCount]{};
     SepticState _state[kSepticCount]{};
     bool _controller_enabled = false;
+    bool _notify_enabled = true;
+    DetectHandler _detect_cb = nullptr;
+    void *_detect_ctx = nullptr;
 
     void reset_()
     {
@@ -424,7 +472,7 @@ private:
     {
         if (prev.warning == curr.warning && prev.alarm == curr.alarm)
             return;
-        _logs.info(F("SEPT"), F("id: %u warning: %u alarm: %u"),
+        _logs.info(F("SEPTIC"), F("id: %u warning: %u alarm: %u"),
                    (unsigned)cfg.id,
                    curr.warning ? 1u : 0u,
                    curr.alarm ? 1u : 0u);
@@ -433,26 +481,33 @@ private:
     void logRelayChange_(const SepticConfig &cfg, const SepticState &prev, const SepticState &curr)
     {
         if (prev.relay_warning != curr.relay_warning)
-            _logs.info(F("SEPT"), F("id: %u warning_lamp: %s"),
+            _logs.info(F("SEPTIC"), F("id: %u warning_lamp: %s"),
                        (unsigned)cfg.id, curr.relay_warning ? "on" : "off");
         if (prev.relay_alarm != curr.relay_alarm)
-            _logs.info(F("SEPT"), F("id: %u alarm_lamp: %s"),
+            _logs.info(F("SEPTIC"), F("id: %u alarm_lamp: %s"),
                        (unsigned)cfg.id, curr.relay_alarm ? "on" : "off");
     }
 
-    void notifyLevel_(const SepticConfig &cfg, const char *level)
+    void notifyLevel_(const SepticConfig &cfg, bool is_alarm)
     {
-        const auto users = _tgusers.allowedUsers();
-        if (users.empty())
+        if (!_notify_enabled)
             return;
         String msg = F("Септик: уровень ");
-        msg += level;
+        msg += is_alarm ? F("ALARM") : F("WARNING");
         if (cfg.name.length())
         {
             msg += F(" (");
             msg += cfg.name;
             msg += F(")");
         }
+        sendTgNotify_(msg);
+    }
+
+    void sendTgNotify_(const String &msg)
+    {
+        const auto users = _tgusers.allowedUsers();
+        if (users.empty())
+            return;
         for (size_t i = 0; i < users.size; ++i)
         {
             const auto &user = users[i];
@@ -460,6 +515,12 @@ private:
                 continue;
             _tgbot.sendText(user.chat_id, msg);
         }
+    }
+
+    void notifyDetectEvent_(const SepticConfig &cfg, bool is_alarm)
+    {
+        if (_detect_cb)
+            _detect_cb(_detect_ctx, cfg.id, cfg.name, is_alarm);
     }
 
     static bool parsePort_(JsonVariantConst v, uint8_t &out)
@@ -479,3 +540,5 @@ private:
     static constexpr bool kRelayInvert = false;
     static constexpr bool kLevelPullup = true;
 };
+
+

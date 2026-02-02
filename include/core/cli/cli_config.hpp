@@ -21,6 +21,7 @@
 #include "core/cli/modules/cli_tank.hpp"
 #include "core/cli/modules/cli_septic.hpp"
 #include "core/cli/modules/cli_security.hpp"
+#include "core/cli/modules/cli_ring.hpp"
 #include "utils/configs_manager_iface.hpp"
 
 template <typename ConsoleT>
@@ -29,7 +30,8 @@ class CLIConfigT
 public:
     CLIConfigT(ConsoleT &console, CLIWifiT<ConsoleT> &wifi, CLITgbotT<ConsoleT> &tgbot,
                CLISocketT<ConsoleT> &socket, CLIMeteoT<ConsoleT> &meteo, CLIThermoT<ConsoleT> &thermo,
-               CLITankT<ConsoleT> &tank, CLISepticT<ConsoleT> &septic, CLISecurityT<ConsoleT> &security)
+               CLITankT<ConsoleT> &tank, CLISepticT<ConsoleT> &septic, CLISecurityT<ConsoleT> &security,
+               CLIRingT<ConsoleT> &ring)
         : _c(console),
           _wifi(wifi),
           _tgbot(tgbot),
@@ -38,7 +40,8 @@ public:
           _thermo(thermo),
           _tank(tank),
           _septic(septic),
-          _security(security)
+          _security(security),
+          _ring(ring)
     {
     }
 
@@ -81,6 +84,7 @@ public:
             _tank.printHelpConfigLines();
             _septic.printHelpConfigLines();
             _security.printHelpConfigLines();
+            _ring.printHelpConfigLines();
             _c._io->println(F("  Session:"));
             _c._io->println(F("    exit                     - return to enable"));
             _c._io->println(F("    end                      - return to enable"));
@@ -135,6 +139,11 @@ public:
         if (lower == "security")
         {
             _c.enterConfigSecurity();
+            return;
+        }
+        if (lower == "ring")
+        {
+            _c.enterConfigRing();
             return;
         }
         if (lower.startsWith("stack "))
@@ -648,6 +657,48 @@ public:
         _c.printPrompt_();
     }
 
+    void handleRingContext(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String lower = cmd;
+        lower.toLowerCase();
+
+        if (lower.startsWith("help "))
+        {
+            String topic = cmd.substring(5);
+            topic.trim();
+            _c.showHelpTopic_(topic);
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "help" || lower == "?")
+        {
+            _c._io->println(F("Commands (config-ring):"));
+            _ring.printHelpContextLines();
+            _c._io->println(F("  Session:"));
+            _c._io->println(F("    exit                - return to config"));
+            _c._io->println(F("    end                 - return to enable"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "exit")
+        {
+            _c.enterConfig();
+            return;
+        }
+        if (lower == "end")
+        {
+            _c.enterEnable();
+            return;
+        }
+        if (_ring.handleContext(cmd))
+            return;
+
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
+    }
+
 private:
     bool handleAdminPassword_(const String &cmd, const String &lower)
     {
@@ -832,4 +883,5 @@ private:
     CLITankT<ConsoleT> &_tank;
     CLISepticT<ConsoleT> &_septic;
     CLISecurityT<ConsoleT> &_security;
+    CLIRingT<ConsoleT> &_ring;
 };

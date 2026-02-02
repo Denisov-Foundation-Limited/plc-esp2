@@ -51,6 +51,8 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     a { color: #7dd3fc; text-decoration: none; }
     .nav { margin-bottom: 12px; }
     .status { margin: 8px 0 16px; color: var(--accent); font-weight: 600; }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .muted { color: var(--muted); font-size: 12px; }
     .field {
       width: 100%;
       padding: 6px 8px;
@@ -79,7 +81,7 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     .status-err { background: #64748b; }
     .status-na { background: #64748b; }
     .actions { margin-top: 14px; }
-    .mini { width: 100%; }
+    .mini { width: 72px; }
     .addr { width: 100%; }
     .temp { width: 100%; }
     .hum { width: 100%; }
@@ -228,14 +230,14 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Метео</h1>
-      <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <div class="status">%METEO_STATUS%</div>
+      %METEO_DEVICE_SELECT%
       <form method="POST" action="/meteo" id="meteo-form">
         <div class="grid">
           %METEO_TILES%
         </div>
         <p class="actions">
-          <button class="btn" type="submit">Сохранить</button>
+          %METEO_SAVE_BTN%
         </p>
       </form>
     </div>
@@ -336,6 +338,21 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     window.addEventListener('scroll', () => {
       sessionStorage.setItem(scrollKey, String(window.scrollY));
     }, { passive: true });
+    const meteoDevice = document.getElementById('meteo-device');
+    if (meteoDevice) {
+      meteoDevice.addEventListener('change', () => {
+        const val = meteoDevice.value || 'local';
+        const url = new URL(window.location.href);
+        if (val === 'local') {
+          url.searchParams.delete('node');
+          url.searchParams.delete('unit');
+        } else {
+          url.searchParams.set('unit', 'stack');
+          url.searchParams.set('node', val);
+        }
+        window.location.href = url.toString();
+      });
+    }
   </script>
 </body>
 </html>

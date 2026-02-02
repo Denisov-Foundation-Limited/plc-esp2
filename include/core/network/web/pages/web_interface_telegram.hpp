@@ -85,7 +85,6 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Telegram</h1>
-      <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
       <p class="status">Клиент: <strong>%TGBOT_CLIENT%</strong></p>
       <form method="POST" action="/telegram" id="telegram-form">
         <div class="section">

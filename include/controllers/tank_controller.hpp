@@ -55,6 +55,8 @@ public:
         bool last_empty = false;
     };
 
+    using DetectHandler = void (*)(void *ctx, uint8_t tank_id, const String &name, bool empty);
+
     TankController(Gpio &gpio, Logger &logs, TelegramBot &bot, TelegramAllowedUsersProvider &users)
         : _gpio(gpio), _logs(logs), _tgbot(bot), _tgusers(users)
     {
@@ -120,7 +122,10 @@ public:
             logRelayChange_(cfg, prev, st);
             const bool empty = isEmpty_(st);
             if (empty && !st.last_empty)
+            {
+                notifyDetectEvent_(cfg, true);
                 notifyEmpty_(cfg);
+            }
             st.last_empty = empty;
         }
     }
@@ -420,6 +425,42 @@ public:
         return setRelayPort_(id, port, &TankConfig::relay_alarm, 2);
     }
 
+    void setDetectHandler(DetectHandler cb, void *ctx)
+    {
+        _detect_cb = cb;
+        _detect_ctx = ctx;
+    }
+
+    void setNotifyEnabled(bool enabled)
+    {
+        _notify_enabled = enabled;
+    }
+
+    void notifyRemoteEmpty(const String &source, uint8_t tank_id, const String &name)
+    {
+        if (!_notify_enabled)
+            return;
+        String msg = F("Бак пустой");
+        if (source.length())
+        {
+            msg += F(" [");
+            msg += source;
+            msg += F("]");
+        }
+        if (tank_id > 0)
+        {
+            msg += F(" #");
+            msg += String((unsigned)tank_id);
+        }
+        if (name.length())
+        {
+            msg += F(" (");
+            msg += name;
+            msg += F(")");
+        }
+        sendTgNotify_(msg);
+    }
+
 
     const TankConfig *config(size_t id) const
     {
@@ -459,7 +500,10 @@ private:
     TankConfig _cfg[kTankCount]{};
     TankState _state[kTankCount]{};
     bool _controller_enabled = false;
+    bool _notify_enabled = true;
     bool _dirty = false;
+    DetectHandler _detect_cb = nullptr;
+    void *_detect_ctx = nullptr;
 
     void reset_()
     {
@@ -674,8 +718,7 @@ private:
 
     void notifyEmpty_(const TankConfig &cfg)
     {
-        const auto users = _tgusers.allowedUsers();
-        if (users.empty())
+        if (!_notify_enabled)
             return;
         String msg = F("Бак пустой: ");
         msg += String((unsigned)cfg.id);
@@ -685,6 +728,14 @@ private:
             msg += cfg.name;
             msg += F(")");
         }
+        sendTgNotify_(msg);
+    }
+
+    void sendTgNotify_(const String &msg)
+    {
+        const auto users = _tgusers.allowedUsers();
+        if (users.empty())
+            return;
         for (size_t i = 0; i < users.size; ++i)
         {
             const auto &user = users[i];
@@ -692,6 +743,12 @@ private:
                 continue;
             _tgbot.sendText(user.chat_id, msg);
         }
+    }
+
+    void notifyDetectEvent_(const TankConfig &cfg, bool empty)
+    {
+        if (_detect_cb)
+            _detect_cb(_detect_ctx, cfg.id, cfg.name, empty);
     }
 
     static constexpr bool kLevelPullup = true;

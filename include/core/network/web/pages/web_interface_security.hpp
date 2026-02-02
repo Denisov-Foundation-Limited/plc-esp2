@@ -147,6 +147,8 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       width: 220px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .muted { color: var(--muted); font-size: 12px; }
     .status-dot {
       display: inline-block;
       width: 10px;
@@ -292,7 +294,6 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Охрана</h1>
-      <p>Плата: <strong>%BOARD_NAME%</strong></p>
       <form method="POST" action="/security" id="security-form">
         <div class="status">
           <span class="pill">Статус: <span class="status-dot" data-state="%SECURITY_ARMED_LABEL%" title="%SECURITY_ARMED_LABEL%"></span></span>
@@ -347,8 +348,9 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
           </tbody>
         </table>
         </div>
-        <h2>Датчики</h2>
-        <div class="pagination">
+        <h2>%SECURITY_SENSORS_TITLE%</h2>
+        %SECURITY_DEVICE_SELECT%
+        <div class="pagination" %SECURITY_SENSORS_PAGINATION_STYLE%>
           <button type="button" class="btn btn-sm" id="security-prev">Назад</button>
           <span class="page-info">Страница</span>
           <select id="security-page" class="field mini"></select>
@@ -359,7 +361,7 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
           %SECURITY_SENSORS%
         </div>
         <div class="buttons">
-          <button class="primary" name="action" value="save">Сохранить</button>
+          %SECURITY_SAVE_BTN%
         </div>
       </form>
     </div>
@@ -533,6 +535,22 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
           return;
         }
         sessionStorage.setItem(reloadKey, '1');
+      });
+    }
+    const securityDevice = document.getElementById('security-device');
+    if (securityDevice) {
+      securityDevice.addEventListener('change', () => {
+        const val = securityDevice.value || 'local';
+        const url = new URL(window.location.href);
+        if (val === 'local') {
+          url.searchParams.delete('node');
+          url.searchParams.delete('unit');
+        } else {
+          url.searchParams.set('unit', 'stack');
+          url.searchParams.set('node', val);
+        }
+        url.searchParams.delete('page');
+        window.location.href = url.toString();
       });
     }
   </script>
