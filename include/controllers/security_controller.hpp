@@ -335,6 +335,8 @@ public:
     {
         for (size_t i = 0; i < kPhoneCount; ++i)
         {
+            if (!_phone_enabled[i])
+                continue;
             JsonObject obj = out.add<JsonObject>();
             obj["id"] = (unsigned)(i + 1);
             obj["enabled"] = _phone_enabled[i];

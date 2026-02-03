@@ -22,6 +22,7 @@
 #include "core/cli/modules/cli_septic.hpp"
 #include "core/cli/modules/cli_security.hpp"
 #include "core/cli/modules/cli_ring.hpp"
+#include "core/cli/modules/cli_cloud.hpp"
 #include "utils/configs_manager_iface.hpp"
 
 template <typename ConsoleT>
@@ -31,7 +32,7 @@ public:
     CLIConfigT(ConsoleT &console, CLIWifiT<ConsoleT> &wifi, CLITgbotT<ConsoleT> &tgbot,
                CLISocketT<ConsoleT> &socket, CLIMeteoT<ConsoleT> &meteo, CLIThermoT<ConsoleT> &thermo,
                CLITankT<ConsoleT> &tank, CLISepticT<ConsoleT> &septic, CLISecurityT<ConsoleT> &security,
-               CLIRingT<ConsoleT> &ring)
+               CLIRingT<ConsoleT> &ring, CLICloudT<ConsoleT> &cloud)
         : _c(console),
           _wifi(wifi),
           _tgbot(tgbot),
@@ -41,7 +42,8 @@ public:
           _tank(tank),
           _septic(septic),
           _security(security),
-          _ring(ring)
+          _ring(ring),
+          _cloud(cloud)
     {
     }
 
@@ -78,6 +80,8 @@ public:
             _c._io->println(F("    time                     - enter Time context"));
             _c._io->println(F("  Telegram:"));
             _tgbot.printHelpConfigLines();
+            _c._io->println(F("  Cloud:"));
+            _cloud.printHelpConfigLines();
             _socket.printHelpConfigLines();
             _meteo.printHelpConfigLines();
             _thermo.printHelpConfigLines();
@@ -144,6 +148,11 @@ public:
         if (lower == "ring")
         {
             _c.enterConfigRing();
+            return;
+        }
+        if (lower == "cloud")
+        {
+            _c.enterConfigCloud();
             return;
         }
         if (lower.startsWith("stack "))
@@ -699,6 +708,49 @@ public:
         _c.printPrompt_();
     }
 
+    void handleCloudContext(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String lower = cmd;
+        lower.toLowerCase();
+
+        if (lower.startsWith("help "))
+        {
+            String topic = cmd.substring(5);
+            topic.trim();
+            _c.showHelpTopic_(topic);
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "help" || lower == "?")
+        {
+            _c._io->println(F("Commands (config-cloud):"));
+            _c._io->println(F("  Cloud:"));
+            _cloud.printHelpContextLines();
+            _c._io->println(F("  Session:"));
+            _c._io->println(F("    exit                - return to config"));
+            _c._io->println(F("    end                 - return to enable"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "exit")
+        {
+            _c.enterConfig();
+            return;
+        }
+        if (lower == "end")
+        {
+            _c.enterEnable();
+            return;
+        }
+        if (_cloud.handleContext(cmd))
+            return;
+
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
+    }
+
 private:
     bool handleAdminPassword_(const String &cmd, const String &lower)
     {
@@ -884,4 +936,5 @@ private:
     CLISepticT<ConsoleT> &_septic;
     CLISecurityT<ConsoleT> &_security;
     CLIRingT<ConsoleT> &_ring;
+    CLICloudT<ConsoleT> &_cloud;
 };

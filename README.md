@@ -85,6 +85,7 @@ plc#
 - `show ow` - список OneWire устройств
 - `show stack` - настройки stack роли
 - `show telegram` - настройки Telegram
+- `show cloud` - настройки облака
 - `show config` - содержимое конфигурационного файла
 - `show port <id>` - детали порта
 - `show ports` - список портов
@@ -129,7 +130,7 @@ plc#
 - `logout` - завершить сессию
 - `exit` - завершить сессию
 - `help` / `?` - список команд
-- `help <topic>` - справка (show, wifi, user, system, tgbot, socket, meteo, thermo, tank, septic, security)
+- `help <topic>` - справка (show, wifi, user, system, tgbot, cloud, socket, meteo, thermo, tank, septic, security)
 
 ### Config (`plc(config)#`)
 
@@ -139,6 +140,7 @@ plc#
 - `stack master <host>` - адрес мастера стека
 - `wifi` - вход в контекст Wi-Fi
 - `tgbot` - вход в контекст Telegram
+- `cloud` - вход в контекст Cloud
 - `time` - вход в контекст времени
 - `socket` - вход в контекст розеток
 - `meteo` - вход в контекст meteo
@@ -176,6 +178,22 @@ plc#
 - `allow clear` - очистить список
 - `send <text>` - отправить сообщение
 - `poll` - опрос команд
+- `show` - показать настройки
+- `exit` - выход в config
+- `end` - выход в enable
+- `help` / `?` - список команд
+- `help <topic>` - справка по теме
+
+### Cloud (`plc(config-cloud)#`)
+
+- `enable on|off` - включить/выключить облако
+- `host <value>` - host
+- `port <num>` - порт
+- `path <value>` - путь
+- `ssl on|off` - SSL
+- `reconnect <ms>` - интервал переподключения
+- `event <ms>` - интервал авто-ивентов
+- `api_key <value|clear>` - api_key
 - `show` - показать настройки
 - `exit` - выход в config
 - `end` - выход в enable

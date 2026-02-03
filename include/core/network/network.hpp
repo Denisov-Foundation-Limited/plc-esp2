@@ -23,8 +23,12 @@
 #include "core/network/wifi_manager.hpp"
 #include "core/network/web/web_interface.hpp"
 #include "core/network/gsm_modem.hpp"
+#include "core/rtc.hpp"
 #include "core/network/stack/stack_master.hpp"
 #include "core/network/stack/stack_node.hpp"
+#include "core/network/cloud/cloud_client.hpp"
+#include "controllers/controllers.hpp"
+#include "plc/plc_control.hpp"
 #include "utils/configs_manager_iface.hpp"
 
 class Network
@@ -40,20 +44,25 @@ public:
     };
 
     Network(Logger &logs, WifiManager &wifi, GsmModem &gsm, TelegramClient &tgbot, TelegramBot &bot,
-            TelegramMenu &menu, WebInterface &fw, AsyncWebServer &web, WiFiClientSecure &wifi_client)
+            TelegramMenu &menu, WebInterface &fw, AsyncWebServer &web, WiFiClientSecure &wifi_client,
+            Controllers &controllers, PlcControl &plc, RTC &rtc)
         : _logs(logs), _wifi(wifi), _gsm(gsm), _tgbot(tgbot), _bot(bot), _menu(menu),
           _fw_upgrade(fw), _web(web),
           _wifi_client(wifi_client),
           _stack_server(kStackPort),
           _stack_master(_stack_server, _logs),
-          _stack_node(_logs)
+          _stack_node(_logs),
+          _cloud(_logs, controllers, plc, wifi, rtc)
     {
+        _cloud.setGsm(&gsm);
+        _cloud.setStackMaster(&_stack_master);
     }
 
     void setStackConfig(ConfigsManagerIface &cfg)
     {
         _stack_cfg = &cfg;
         _stack_master.setConfigsManager(cfg);
+        _cloud.setConfigsManager(&cfg);
     }
     void setStackDeviceName(const String &name) { _stack_device_name = name; }
 
@@ -125,6 +134,9 @@ public:
         _tgbot.enableAutoPoll(true, 0);
         _logs.info(F("NET"), F("Init Stack"));
         beginStack_();
+        _started = true;
+        if (_cloud_cfg_set && _cloud.enabled())
+            _cloud.begin(_cloud_cfg);
         _logs.info(F("NET"), F("Init done"));
         return true;
     }
@@ -135,7 +147,30 @@ public:
     {
         _gsm.loop();
         _stack_node.loop();
+        _cloud.loop();
     }
+
+    void setCloudConfig(const CloudClient::Config &cfg)
+    {
+        _cloud_cfg = cfg;
+        _cloud_cfg_set = _cloud_cfg.host.length() > 0;
+        if (!_cloud_cfg_set)
+        {
+            _cloud.disconnect();
+            return;
+        }
+        if (_started && _cloud.enabled())
+            _cloud.begin(_cloud_cfg);
+    }
+    void setCloudEnabled(bool enabled)
+    {
+        _cloud.setEnabled(enabled);
+        if (_started && enabled && _cloud_cfg_set)
+            _cloud.begin(_cloud_cfg);
+    }
+    void setCloudApiKey(const String &key) { _cloud.setApiKey(key); }
+    void setCloudFirmwareVersion(const String &ver) { _cloud.setFirmwareVersion(ver); }
+    void setCloudEventIntervalMs(uint32_t ms) { _cloud.setAutoEventIntervalMs(ms); }
 
 private:
     Logger &_logs;
@@ -157,11 +192,15 @@ private:
     String _proxy_host;
     uint16_t _proxy_port = 0;
     String _proxy_path;
+    bool _started = false;
 
     static constexpr uint16_t kStackPort = 9010;
     AsyncServer _stack_server;
     StackMaster _stack_master;
     StackNode _stack_node;
+    CloudClient _cloud;
+    CloudClient::Config _cloud_cfg;
+    bool _cloud_cfg_set = false;
     ConfigsManagerIface::StackRole _stack_role = ConfigsManagerIface::StackRole::Master;
     String _stack_device_name;
 
@@ -233,5 +272,6 @@ private:
 public:
     StackNode &stackNode() { return _stack_node; }
     StackMaster &stackMaster() { return _stack_master; }
+    CloudClient &cloudClient() { return _cloud; }
     ConfigsManagerIface::StackRole stackRole() const { return _stack_role; }
 };

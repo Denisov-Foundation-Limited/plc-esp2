@@ -55,6 +55,7 @@
 #include "utils/configs.hpp"
 #include "utils/configs_manager.hpp"
 #include "utils/meteo_history.hpp"
+#include "utils/build_info.hpp"
 
 struct CoreContext
 {
@@ -185,7 +186,7 @@ struct NetworkContext
                      comms.telegram_bot, control.telegram_menu, core.logs, hw.ext, hw.i2c, hw.ow,
                      control.controllers),
           network(core.logs, comms.wifi, comms.gsm, comms.telegram, comms.telegram_bot, control.telegram_menu,
-                  fw_upgrade, web, comms.telegram_wifi_client),
+                  fw_upgrade, web, comms.telegram_wifi_client, control.controllers, hw.plc, hw.rtc),
           stack_slave(hw.io, hw.ds18b20, hw.ow, hw.i2c, hw.plc, hw.rtc, comms.telegram, core.logs, hw.ext,
                       control.controllers.sockets(), control.controllers.meteo(), control.controllers.thermo(),
                       control.controllers.septic(), control.controllers.security(), control.controllers.tanks(),
@@ -241,6 +242,7 @@ struct App
         net.fw_upgrade.setConfigsManager(cfg.configs_manager);
         net.fw_upgrade.setStackMaster(net.network.stackMaster());
         net.fw_upgrade.setGsmModem(comms.gsm);
+        net.fw_upgrade.setCloudClient(net.network.cloudClient());
         net.network.setStackConfig(cfg.configs_manager);
         control.controllers.security().setArmStateHandler(&App::onSecurityArmState_, this);
         control.controllers.security().setAlarmStateHandler(&App::onSecurityAlarmState_, this);
@@ -347,6 +349,8 @@ struct App
         updateSepticNotifyMode_();
         updateTanksNotifyMode_();
         net.network.setStackDeviceName(hw.plc.deviceName());
+        cfg.configs_manager.setCloudFirmwareVersion(BuildInfo::kFwVersion);
+        net.network.setCloudFirmwareVersion(BuildInfo::kFwVersion);
         if (comms.wifi.ap())
             core.logs.info(F("WIFI"), F("Mode: AP (SSID=%s)"), comms.wifi.apSsid().c_str());
         else
@@ -483,10 +487,7 @@ struct App
         control.plc_scan.tick();
         ui.console.loop();
         comms.gsm.loop();
-        const uint32_t budget_us = control.plc_scan.timeToNextUs();
-        core.tm.loop(budget_us);
-        if (budget_us > 200)
-            net.network.loop();
+        net.network.loop();
         flushPendingSecurityDetect_();
         flushPendingSepticDetect_();
         flushPendingTankEmpty_();

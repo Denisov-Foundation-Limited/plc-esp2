@@ -45,6 +45,7 @@
 #include "core/network/web/pages/web_interface_admin.hpp"
 #include "core/network/web/pages/web_interface_logs.hpp"
 #include "core/network/web/pages/web_interface_telegram.hpp"
+#include "core/network/web/pages/web_interface_cloud.hpp"
 #include "core/network/web/pages/web_interface_status.hpp"
 #include "core/network/web/pages/web_interface_sockets.hpp"
 #include "core/network/web/pages/web_interface_lights.hpp"
@@ -60,6 +61,7 @@
 #include "core/network/stack/stack_features.hpp"
 #include "core/network/stack/stack_protocol.hpp"
 #include "core/network/gsm_modem.hpp"
+#include "core/network/cloud/cloud_client.hpp"
 #include "hal/gpio/extender.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
@@ -159,6 +161,7 @@ public:
         _stack_master = &master;
         _stack_master->setFrameHandlerSecondary(&WebInterface::onStackFrame_, this);
     }
+    void setCloudClient(CloudClient &client) { _cloud = &client; }
 
     void registerRoutes()
     {
@@ -199,6 +202,8 @@ public:
         _server.on("/septic", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSepticSave_(request); });
         _server.on("/telegram", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTelegram_(request); });
         _server.on("/telegram", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTelegramSave_(request); });
+        _server.on("/cloud", HTTP_GET, [this](AsyncWebServerRequest *request) { handleCloud_(request); });
+        _server.on("/cloud", HTTP_POST, [this](AsyncWebServerRequest *request) { handleCloudSave_(request); });
         _server.on(
             "/upload", HTTP_POST,
             [this](AsyncWebServerRequest *request) { handleUploadDone_(request); },
@@ -2880,6 +2885,131 @@ private:
             _tgbot_status = "Saved";
 
         sendRedirect_(request, "/telegram", set_cookie);
+    }
+
+    void handleCloud_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        String page = FPSTR(kWebInterfaceCloudHtml);
+        page.reserve(page.length() + 1536);
+        page.replace("%NAV%", navHtml_());
+        const bool connected = cloudConnected_();
+        page.replace("%CLOUD_CONNECTED_CLASS%", connected ? "ok" : "bad");
+        page.replace("%CLOUD_CONNECTED_TEXT%", connected ? "Подключен" : "Отключен");
+        page.replace("%CLOUD_ENABLED_CHECKED%", cloudEnabled_() ? "checked" : "");
+        page.replace("%CLOUD_HOST%", cloudHost_());
+        page.replace("%CLOUD_PORT%", cloudPort_() ? String(cloudPort_()) : String(""));
+        page.replace("%CLOUD_PATH%", cloudPath_());
+        page.replace("%CLOUD_SSL_CHECKED%", cloudUseSsl_() ? "checked" : "");
+        page.replace("%CLOUD_RECONNECT_MS%", String(cloudReconnectMs_()));
+        page.replace("%CLOUD_EVENT_MS%", String(cloudEventMs_()));
+        page.replace("%CLOUD_API_KEY%", cloudApiKey_());
+        page.replace("%CLOUD_FW_VERSION%", cloudFwVersion_());
+        page.replace("%CLOUD_DEVICE_ID%", String(cloudDeviceId_()));
+        page.replace("%CLOUD_STATUS%", _cloud_status);
+        sendHtml_(request, page, set_cookie);
+    }
+
+    void handleCloudSave_(AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!_configs_manager)
+        {
+            _cloud_status = "Config manager missing";
+            sendRedirect_(request, "/cloud", set_cookie);
+            return;
+        }
+
+        bool changed = false;
+        const bool enabled = request->hasParam("cloud_enabled", true);
+        if (enabled != _configs_manager->cloudEnabled())
+        {
+            _configs_manager->setCloudEnabled(enabled);
+            changed = true;
+        }
+
+        String host = request->hasParam("host", true) ? request->getParam("host", true)->value() : String("");
+        host.trim();
+        if (host != _configs_manager->cloudHost())
+        {
+            _configs_manager->setCloudHost(host);
+            changed = true;
+        }
+
+        String port_str = request->hasParam("port", true) ? request->getParam("port", true)->value() : String("");
+        port_str.trim();
+        const uint16_t port = port_str.length() ? (uint16_t)strtoul(port_str.c_str(), nullptr, 10) : 0;
+        if (port != _configs_manager->cloudPort())
+        {
+            _configs_manager->setCloudPort(port);
+            changed = true;
+        }
+
+        String path = request->hasParam("path", true) ? request->getParam("path", true)->value() : String("");
+        path.trim();
+        if (path.length() == 0)
+            path = "/";
+        if (path != _configs_manager->cloudPath())
+        {
+            _configs_manager->setCloudPath(path);
+            changed = true;
+        }
+
+        const bool use_ssl = request->hasParam("ssl", true);
+        if (use_ssl != _configs_manager->cloudUseSsl())
+        {
+            _configs_manager->setCloudUseSsl(use_ssl);
+            changed = true;
+        }
+
+        String reconnect_str = request->hasParam("reconnect_ms", true)
+                                   ? request->getParam("reconnect_ms", true)->value()
+                                   : String("");
+        reconnect_str.trim();
+        const uint32_t reconnect_ms = reconnect_str.length()
+                                          ? (uint32_t)strtoul(reconnect_str.c_str(), nullptr, 10)
+                                          : _configs_manager->cloudReconnectMs();
+        if (reconnect_ms != _configs_manager->cloudReconnectMs())
+        {
+            _configs_manager->setCloudReconnectMs(reconnect_ms);
+            changed = true;
+        }
+
+        String event_str = request->hasParam("event_ms", true) ? request->getParam("event_ms", true)->value() : String("");
+        event_str.trim();
+        const uint32_t event_ms = event_str.length()
+                                      ? (uint32_t)strtoul(event_str.c_str(), nullptr, 10)
+                                      : _configs_manager->cloudEventIntervalMs();
+        if (event_ms != _configs_manager->cloudEventIntervalMs())
+        {
+            _configs_manager->setCloudEventIntervalMs(event_ms);
+            changed = true;
+        }
+
+        String api_key = request->hasParam("api_key", true) ? request->getParam("api_key", true)->value() : String("");
+        api_key.trim();
+        if (api_key != _configs_manager->cloudApiKey())
+        {
+            _configs_manager->setCloudApiKey(api_key);
+            changed = true;
+        }
+
+        bool save_ok = true;
+        if (changed)
+            save_ok = saveWifiConfig_();
+
+        if (!changed)
+            _cloud_status = "No changes";
+        else if (!save_ok)
+            _cloud_status = "Save failed";
+        else
+            _cloud_status = "Saved";
+
+        sendRedirect_(request, "/cloud", set_cookie);
     }
 
     String listFilesHtml_()
@@ -8617,7 +8747,7 @@ sendRedirect_(request, "/", set_cookie);
         String nav = F("<div class=\"nav\">");
         nav += F("<a href=\"/\">FCPLC</a> | <a href=\"/wifi\">Сеть</a> | ");
         nav += F("<a href=\"/manage\">Прошивка и файлы</a> | <a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a> | ");
-        nav += F("<a href=\"/stack\">Стек</a> | <a href=\"/controllers\">Контроллеры</a> | <a href=\"/telegram\">Telegram</a> | ");
+        nav += F("<a href=\"/stack\">Стек</a> | <a href=\"/controllers\">Контроллеры</a> | <a href=\"/telegram\">Telegram</a> | <a href=\"/cloud\">Облако</a> | ");
         nav += F("<a href=\"/admin\">Система</a> | <a href=\"/logs\">Logs</a>");
         nav += F("</div>");
         return nav;
@@ -8649,6 +8779,84 @@ sendRedirect_(request, "/", set_cookie);
         if (_configs_manager)
             return _configs_manager->stackApiKey();
         return "";
+    }
+
+    bool cloudEnabled_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->cloudEnabled();
+        return false;
+    }
+
+    String cloudHost_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->cloudHost();
+        return "";
+    }
+
+    uint16_t cloudPort_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->cloudPort();
+        return 0;
+    }
+
+    String cloudPath_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->cloudPath();
+        return "/";
+    }
+
+    bool cloudUseSsl_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->cloudUseSsl();
+        return false;
+    }
+
+    uint32_t cloudReconnectMs_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->cloudReconnectMs();
+        return 0;
+    }
+
+    uint32_t cloudEventMs_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->cloudEventIntervalMs();
+        return 0;
+    }
+
+    String cloudApiKey_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->cloudApiKey();
+        return "";
+    }
+
+    String cloudFwVersion_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->cloudFirmwareVersion();
+        return "";
+    }
+    uint32_t cloudDeviceId_() const
+    {
+#if defined(ESP32)
+        return (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFFu);
+#else
+        return 0;
+#endif
+    }
+
+    bool cloudConnected_() const
+    {
+        if (_cloud)
+            return _cloud->isConnected();
+        return false;
     }
 
     static const char *stackRoleName_(ConfigsManagerIface::StackRole role)
@@ -9591,6 +9799,7 @@ sendRedirect_(request, "/", set_cookie);
         hashAdd_(hash, _wifi_status);
         hashAdd_(hash, _gsm_status);
         hashAdd_(hash, _tgbot_status);
+        hashAdd_(hash, _cloud_status);
         hashAdd_(hash, _stack_status);
         hashAdd_(hash, _device_status);
         hashAdd_(hash, _sockets_status);
@@ -10184,6 +10393,21 @@ sendRedirect_(request, "/", set_cookie);
             hashAdd_(hash, allowedUsersRowsHtml_());
             return hash;
         }
+        if (path == "/cloud")
+        {
+            hashAdd_(hash, cloudEnabled_() ? 1u : 0u);
+            hashAdd_(hash, cloudHost_());
+            hashAdd_(hash, (uint32_t)cloudPort_());
+            hashAdd_(hash, cloudPath_());
+            hashAdd_(hash, cloudUseSsl_() ? 1u : 0u);
+            hashAdd_(hash, cloudReconnectMs_());
+            hashAdd_(hash, cloudEventMs_());
+            hashAdd_(hash, cloudApiKey_());
+            hashAdd_(hash, cloudFwVersion_());
+            hashAdd_(hash, cloudDeviceId_());
+            hashAdd_(hash, cloudConnected_() ? 1u : 0u);
+            return hash;
+        }
         return hash;
     }
 
@@ -10618,6 +10842,7 @@ sendRedirect_(request, "/", set_cookie);
     String _upload_name;
     String _ota_name;
     String _tgbot_status;
+    String _cloud_status;
     String _stack_status;
     String _device_status;
     String _sockets_status;
@@ -10636,6 +10861,7 @@ sendRedirect_(request, "/", set_cookie);
     Extender *_ext = nullptr;
     Logger *_log = nullptr;
     StackMaster *_stack_master = nullptr;
+    CloudClient *_cloud = nullptr;
     String _session_token;
     uint32_t _session_expire_ms = 0;
     uint32_t _session_ttl_ms = 10u * 60u * 1000u;

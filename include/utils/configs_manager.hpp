@@ -50,9 +50,81 @@ public:
     StackRole stackRole() const override { return _stack_role; }
     String stackMasterHost() const override { return _stack_master_host; }
     String stackApiKey() const override { return _stack_api_key; }
+    bool cloudEnabled() const override { return _cloud_enabled; }
+    String cloudHost() const override { return _cloud_host; }
+    uint16_t cloudPort() const override { return _cloud_port; }
+    String cloudPath() const override { return _cloud_path; }
+    bool cloudUseSsl() const override { return _cloud_use_ssl; }
+    uint32_t cloudReconnectMs() const override { return _cloud_reconnect_ms; }
+    uint32_t cloudEventIntervalMs() const override { return _cloud_event_ms; }
+    String cloudApiKey() const override { return _cloud_api_key; }
+    String cloudFirmwareVersion() const override { return _cloud_fw_version; }
     void setStackRole(StackRole role) override { _stack_role = role; }
     void setStackMasterHost(const String &host) override { _stack_master_host = host; }
     void setStackApiKey(const String &key) override { _stack_api_key = key; }
+    void setCloudEnabled(bool enabled) override
+    {
+        if (enabled == _cloud_enabled)
+            return;
+        _cloud_enabled = enabled;
+        _network.setCloudEnabled(enabled);
+    }
+    void setCloudHost(const String &host) override
+    {
+        if (host == _cloud_host)
+            return;
+        _cloud_host = host;
+        applyCloudConfig_();
+    }
+    void setCloudPort(uint16_t port) override
+    {
+        if (port == _cloud_port)
+            return;
+        _cloud_port = port;
+        applyCloudConfig_();
+    }
+    void setCloudPath(const String &path) override
+    {
+        if (path == _cloud_path)
+            return;
+        _cloud_path = path;
+        applyCloudConfig_();
+    }
+    void setCloudUseSsl(bool use_ssl) override
+    {
+        if (use_ssl == _cloud_use_ssl)
+            return;
+        _cloud_use_ssl = use_ssl;
+        applyCloudConfig_();
+    }
+    void setCloudReconnectMs(uint32_t ms) override
+    {
+        if (ms == _cloud_reconnect_ms)
+            return;
+        _cloud_reconnect_ms = ms;
+        applyCloudConfig_();
+    }
+    void setCloudEventIntervalMs(uint32_t ms) override
+    {
+        if (ms == _cloud_event_ms)
+            return;
+        _cloud_event_ms = ms;
+        _network.setCloudEventIntervalMs(ms);
+    }
+    void setCloudApiKey(const String &key) override
+    {
+        if (key == _cloud_api_key)
+            return;
+        _cloud_api_key = key;
+        _network.setCloudApiKey(key);
+    }
+    void setCloudFirmwareVersion(const String &ver) override
+    {
+        if (ver == _cloud_fw_version)
+            return;
+        _cloud_fw_version = ver;
+        _network.setCloudFirmwareVersion(ver);
+    }
 
     bool loadConfigs()
     {
@@ -125,6 +197,21 @@ public:
 
         JsonObject g = _doc["gsm"].to<JsonObject>();
         g["enabled"] = _gsm.enabled();
+
+        JsonObject c = _doc["cloud"].to<JsonObject>();
+        c["enabled"] = _cloud_enabled;
+        c["host"] = _cloud_host;
+        c["port"] = (unsigned)_cloud_port;
+        c["path"] = _cloud_path;
+        c["ssl"] = _cloud_use_ssl;
+        if (_cloud_reconnect_ms)
+            c["reconnect_ms"] = (unsigned)_cloud_reconnect_ms;
+        if (_cloud_api_key.length())
+            c["api_key"] = _cloud_api_key;
+        if (_cloud_fw_version.length())
+            c["fw_version"] = _cloud_fw_version;
+        if (_cloud_event_ms)
+            c["event_ms"] = (unsigned)_cloud_event_ms;
 
         return _configs.save(_doc);
     }
@@ -276,6 +363,28 @@ private:
             JsonObjectConst g = doc["gsm"].as<JsonObjectConst>();
             if (g["enabled"].is<bool>())
                 _gsm.setEnabled(g["enabled"].as<bool>());
+        }
+
+        if (doc["cloud"].is<JsonObjectConst>())
+        {
+            JsonObjectConst c = doc["cloud"].as<JsonObjectConst>();
+            if (c["enabled"].is<bool>())
+                _cloud_enabled = c["enabled"].as<bool>();
+            _cloud_host = c["host"] | "";
+            _cloud_port = (uint16_t)(c["port"] | 0u);
+            _cloud_path = c["path"] | "/";
+            _cloud_use_ssl = c["ssl"] | false;
+            _cloud_reconnect_ms = (uint32_t)(c["reconnect_ms"] | _cloud_reconnect_ms);
+            _cloud_api_key = c["api_key"] | "";
+            _cloud_fw_version = c["fw_version"] | "";
+            _cloud_event_ms = (uint32_t)(c["event_ms"] | _cloud_event_ms);
+
+            if (_cloud_host.length())
+                _network.setCloudConfig(buildCloudConfig_());
+            _network.setCloudApiKey(_cloud_api_key);
+            _network.setCloudFirmwareVersion(_cloud_fw_version);
+            _network.setCloudEventIntervalMs(_cloud_event_ms);
+            _network.setCloudEnabled(_cloud_enabled);
         }
 
         if (doc["admin"].is<JsonObjectConst>())
@@ -433,5 +542,30 @@ private:
     StackRole _stack_role = StackRole::Master;
     String _stack_master_host;
     String _stack_api_key;
+    String _cloud_host;
+    uint16_t _cloud_port = 0;
+    String _cloud_path = "/";
+    bool _cloud_use_ssl = false;
+    uint32_t _cloud_reconnect_ms = 5000;
+    String _cloud_api_key;
+    String _cloud_fw_version;
+    uint32_t _cloud_event_ms = 0;
+    bool _cloud_enabled = true;
     DynamicJsonDocument _doc{kConfigDocCapacity};
+
+    CloudClient::Config buildCloudConfig_() const
+    {
+        CloudClient::Config cfg;
+        cfg.host = _cloud_host;
+        cfg.port = _cloud_port;
+        cfg.path = _cloud_path;
+        cfg.use_ssl = _cloud_use_ssl;
+        cfg.reconnect_ms = _cloud_reconnect_ms;
+        return cfg;
+    }
+
+    void applyCloudConfig_()
+    {
+        _network.setCloudConfig(buildCloudConfig_());
+    }
 };

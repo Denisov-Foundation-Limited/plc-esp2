@@ -48,6 +48,7 @@ public:
             _c._io->println(F("    show ow         - OneWire device list"));
             _c._io->println(F("    show stack      - stack role settings"));
             _c._io->println(F("    show telegram   - Telegram settings"));
+            _c._io->println(F("    show cloud      - Cloud settings"));
             _c._io->println(F("    show config     - configuration file contents"));
             _c._io->println(F("    show port <id>  - port details"));
             _c._io->println(F("    show ports      - list ports"));

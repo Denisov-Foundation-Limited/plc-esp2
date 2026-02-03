@@ -40,6 +40,7 @@
 #include "core/cli/modules/cli_security.hpp"
 #include "core/cli/modules/cli_septic.hpp"
 #include "core/cli/modules/cli_ring.hpp"
+#include "core/cli/modules/cli_cloud.hpp"
 #include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
@@ -70,6 +71,7 @@ public:
     using CLISeptic = CLISepticT<CliConsole>;
     using CLISecurity = CLISecurityT<CliConsole>;
     using CLIRing = CLIRingT<CliConsole>;
+    using CLICloud = CLICloudT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
@@ -96,9 +98,10 @@ public:
           _septic_cli(*this, controllers.septic()),
           _security_cli(*this, controllers.security()),
           _ring_cli(*this, controllers.ring()),
+          _cloud_cli(*this),
           _enable(*this, _wifi_cli),
           _config(*this, _wifi_cli, _tgbot_cli, _socket_cli, _meteo_cli, _thermo_cli, _tank_cli, _septic_cli,
-                  _security_cli, _ring_cli)
+                  _security_cli, _ring_cli, _cloud_cli)
     {
         _stack_cli.bind(stack_master);
     }
@@ -218,6 +221,7 @@ public:
     void enterConfigSeptic() { _mode = Mode::ConfigSeptic; printPrompt_(); }
     void enterConfigSecurity() { _mode = Mode::ConfigSecurity; printPrompt_(); }
     void enterConfigRing() { _mode = Mode::ConfigRing; printPrompt_(); }
+    void enterConfigCloud() { _mode = Mode::ConfigCloud; printPrompt_(); }
     void logout()
     {
         _state = State::NeedUser;
@@ -333,6 +337,26 @@ public:
         printKeyValue_(F("proxy_host"), _tgbot.proxyHost(), key_w);
         printKeyValue_(F("proxy_port"), String((unsigned)_tgbot.proxyPort()), key_w);
         printKeyValue_(F("proxy_path"), _tgbot.proxyPath(), key_w);
+    }
+
+    void cmdShowCloud_()
+    {
+        if (!_configs_manager)
+        {
+            _io->println(F("Config manager missing"));
+            return;
+        }
+        _io->println(F("Cloud:"));
+        const size_t key_w = 12; // reconnect_ms
+        printKeyValue_(F("enabled"), _configs_manager->cloudEnabled() ? F("true") : F("false"), key_w);
+        printKeyValue_(F("host"), _configs_manager->cloudHost(), key_w);
+        printKeyValue_(F("port"), String((unsigned)_configs_manager->cloudPort()), key_w);
+        printKeyValue_(F("path"), _configs_manager->cloudPath(), key_w);
+        printKeyValue_(F("ssl"), _configs_manager->cloudUseSsl() ? F("true") : F("false"), key_w);
+        printKeyValue_(F("reconnect_ms"), String((unsigned)_configs_manager->cloudReconnectMs()), key_w);
+        printKeyValue_(F("event_ms"), String((unsigned)_configs_manager->cloudEventIntervalMs()), key_w);
+        printKeyValue_(F("api_key"), _configs_manager->cloudApiKey(), key_w);
+        printKeyValue_(F("fw_version"), _configs_manager->cloudFirmwareVersion(), key_w);
     }
 
     void cmdCopy_(const String &line)
@@ -717,7 +741,8 @@ private:
         ConfigTank,
         ConfigSeptic,
         ConfigSecurity,
-        ConfigRing
+        ConfigRing,
+        ConfigCloud
     };
 
     enum class State : uint8_t
@@ -743,6 +768,7 @@ private:
             _io->println(F("  show ow         - OneWire device list"));
             _io->println(F("  show stack      - stack role settings"));
             _io->println(F("  show telegram   - Telegram settings"));
+            _io->println(F("  show cloud      - Cloud settings"));
             _io->println(F("  show config     - configuration file contents"));
             _io->println(F("  show port <id>  - port details"));
             _io->println(F("  show ports      - list ports"));
@@ -788,6 +814,11 @@ private:
         if (t == "tgbot")
         {
             _tgbot_cli.printHelpTopic();
+            return;
+        }
+        if (t == "cloud")
+        {
+            _cloud_cli.printHelpTopic();
             return;
         }
         if (t == "socket")
@@ -842,7 +873,7 @@ private:
     {
         if (!_io || _state != State::LoggedIn)
             return;
-        static const std::array<const char *, 67> kEnableCmds = {{
+        static const std::array<const char *, 69> kEnableCmds = {{
             "show plc",
             "show board",
             "show wifi",
@@ -851,6 +882,7 @@ private:
             "show ow",
             "show stack",
             "show telegram",
+            "show cloud",
             "show config",
             "show ext",
             "show port <id>",
@@ -903,6 +935,7 @@ private:
             "help user",
             "help system",
             "help tgbot",
+            "help cloud",
             "help socket",
             "help meteo",
             "help thermo",
@@ -911,7 +944,7 @@ private:
             "help security",
             "help ring"}};
 
-        static const std::array<const char *, 32> kConfigCmds = {{
+        static const std::array<const char *, 34> kConfigCmds = {{
             "password <pass>",
             "admin password <pass>",
             "stack role <master|slave>",
@@ -921,6 +954,7 @@ private:
             "stack api_key gen",
             "wifi",
             "tgbot",
+            "cloud",
             "time",
             "socket",
             "meteo",
@@ -937,6 +971,7 @@ private:
             "help user",
             "help system",
             "help tgbot",
+            "help cloud",
             "help socket",
             "help meteo",
             "help thermo",
@@ -1107,6 +1142,23 @@ private:
             "end",
             "help"}};
 
+        static const std::array<const char *, 15> kConfigCloudCmds = {{
+            "enable on",
+            "enable off",
+            "host <value>",
+            "port <num>",
+            "path <value>",
+            "ssl on",
+            "ssl off",
+            "reconnect <ms>",
+            "event <ms>",
+            "api_key <value>",
+            "api_key clear",
+            "show",
+            "exit",
+            "end",
+            "help"}};
+
         const char *const *cmds = nullptr;
         size_t count = 0;
         switch (_mode)
@@ -1158,6 +1210,10 @@ private:
         case Mode::ConfigRing:
             cmds = kConfigRingCmds.data();
             count = kConfigRingCmds.size();
+            break;
+        case Mode::ConfigCloud:
+            cmds = kConfigCloudCmds.data();
+            count = kConfigCloudCmds.size();
             break;
         case Mode::User:
             cmds = kEnableCmds.data();
@@ -1382,6 +1438,8 @@ private:
             cmdShowStack_();
         else if (eq_(what, "telegram"))
             cmdShowTelegram_();
+        else if (eq_(what, "cloud"))
+            cmdShowCloud_();
         else if (eq_(what, "config"))
             cmdShowConfig_();
         else if (eq_(what, "sockets"))
@@ -1569,6 +1627,9 @@ private:
             break;
         case Mode::ConfigRing:
             _config.handleRingContext(line);
+            break;
+        case Mode::ConfigCloud:
+            _config.handleCloudContext(line);
             break;
         case Mode::User:
             _enable.handle(line);
@@ -1995,6 +2056,7 @@ private:
     CLISeptic _septic_cli;
     CLISecurity _security_cli;
     CLIRing _ring_cli;
+    CLICloud _cloud_cli;
     CLIEnable _enable;
     CLIConfig _config;
     uint32_t _tgbot_last_update_id = 0;
@@ -2496,6 +2558,8 @@ private:
     friend class CLISecurityT;
     template <typename>
     friend class CLIRingT;
+    template <typename>
+    friend class CLICloudT;
 
 public:
     void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }
