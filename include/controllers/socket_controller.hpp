@@ -168,7 +168,6 @@ public:
             _logs.info(F("SOCKET"), F("Controller disabled"));
             return true;
         }
-        _logs.info(F("SOCKET"), F("Init"));
         if (_controller_enabled)
         {
             for (size_t i = 0; i < kSocketCount; ++i)

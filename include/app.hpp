@@ -12,6 +12,8 @@
 
 #include "core/task_binder.hpp"
 #include "core/task_manager.hpp"
+#include "clients/rfid_reader.hpp"
+#include "clients/ring_client.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/network/gsm_modem.hpp"
 #include "core/rtc.hpp"
@@ -146,6 +148,8 @@ struct ControlContext
     TelegramMenu telegram_menu;
     Controllers controllers;
     MeteoHistory meteo_history;
+    RfidReader rfid_reader;
+    RingClient ring_client;
 
     TaskBinder<TASK_MGR_TSK_COUNT> task_binder;
     Ftest ftest;
@@ -155,7 +159,10 @@ struct ControlContext
         : telegram_menu(hw.plc, comms.wifi, hw.rtc, comms.telegram_bot, core.configs, core.logs),
           controllers(hw.gpio, hw.ow, hw.eeprom_storage, core.logs, comms.telegram_bot, telegram_menu, comms.gsm),
           meteo_history(hw.rtc, controllers.meteo()),
-          task_binder(core.tm, comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history),
+          rfid_reader(),
+          ring_client(hw.gpio, core.logs),
+          task_binder(core.tm, comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history, rfid_reader,
+                      ring_client, hw.display),
           ftest(core.logs, hw.io, hw.ow, hw.ibutton, hw.ds18b20, hw.i2c, hw.rtc, hw.ext, core.tm, task_binder),
           plc_scan(hw.io, hw.plc)
     {
@@ -184,7 +191,7 @@ struct NetworkContext
         : web(ActiveBoardProfile::WEB_PORT),
           fw_upgrade(web, ui.console, comms.wifi, core.configs, hw.plc, hw.rtc, comms.telegram,
                      comms.telegram_bot, control.telegram_menu, core.logs, hw.ext, hw.i2c, hw.ow,
-                     control.controllers),
+                     control.controllers, control.rfid_reader),
           network(core.logs, comms.wifi, comms.gsm, comms.telegram, comms.telegram_bot, control.telegram_menu,
                   fw_upgrade, web, comms.telegram_wifi_client, control.controllers, hw.plc, hw.rtc),
           stack_slave(hw.io, hw.ds18b20, hw.ow, hw.i2c, hw.plc, hw.rtc, comms.telegram, core.logs, hw.ext,
@@ -251,6 +258,9 @@ struct App
         control.controllers.septic().setDetectHandler(&App::onSepticDetect_, this);
         control.controllers.tanks().setDetectHandler(&App::onTankEmpty_, this);
         control.controllers.ring().setHoldHandler(&App::onRingHold_, this);
+        control.ring_client.setButtonHandler(&App::onRingClientButton_, this);
+        control.rfid_reader.setUidHandler(&App::onRfidUid_, this);
+        hw.display.setSlotProvider(&App::onDisplaySlot_, this);
         net.network.stackMaster().setEventHandler(&App::onStackNodeEvent_, this);
         net.network.stackMaster().setFrameHandlerTertiary(&App::onStackFrame_, this);
         net.stack_slave.setConfigsManager(cfg.configs_manager);
@@ -348,6 +358,10 @@ struct App
         updateSecurityNotifyMode_();
         updateSepticNotifyMode_();
         updateTanksNotifyMode_();
+        updateRfidMode_();
+        updateRingClientMode_();
+        updateRingClientConfig_();
+        updateDisplayLayout_();
         net.network.setStackDeviceName(hw.plc.deviceName());
         cfg.configs_manager.setCloudFirmwareVersion(BuildInfo::kFwVersion);
         net.network.setCloudFirmwareVersion(BuildInfo::kFwVersion);
@@ -364,6 +378,10 @@ struct App
             core.logs.error(F("APP"), F("HAL init failed: %s"), Hal::errorName(hw.hal.lastError()));
             ok = false;
         }
+
+        core.logs.info(F("APP"), F("Initializing RFID reader"));
+        if (!control.rfid_reader.begin(hw.i2c))
+            core.logs.warn(F("APP"), F("RFID reader init failed"));
 
         core.logs.info(F("APP"), F("Initializing EEPROM"));
         {
@@ -484,13 +502,21 @@ struct App
 
     void loop()
     {
+        updateRfidMode_();
+        updateRingClientMode_();
+        updateRingClientConfig_();
+        updateDisplayLayout_();
+        pollSecurityStatusFromMaster_();
         control.plc_scan.tick();
         ui.console.loop();
         comms.gsm.loop();
         net.network.loop();
+        core.tm.loop();
         flushPendingSecurityDetect_();
         flushPendingSepticDetect_();
         flushPendingTankEmpty_();
+        flushPendingRfid_();
+        flushPendingRingClient_();
     }
 
 private:
@@ -580,6 +606,27 @@ private:
         if (!ctx || node_id == 0)
             return;
         static_cast<App *>(ctx)->handleStackFrame_(node_id, frame);
+    }
+
+    static void onRingClientButton_(void *ctx, bool pressed)
+    {
+        if (!ctx)
+            return;
+        static_cast<App *>(ctx)->handleRingClientButton_(pressed);
+    }
+
+    static void onRfidUid_(void *ctx, const RfidReader::Uid &uid)
+    {
+        if (!ctx)
+            return;
+        static_cast<App *>(ctx)->handleRfidUid_(uid);
+    }
+
+    static bool onDisplaySlot_(void *ctx, const DisplaySlotConfig &slot, char out[5])
+    {
+        if (!ctx)
+            return false;
+        return static_cast<App *>(ctx)->renderDisplaySlot_(slot, out);
     }
 
     void broadcastSecurityState_(bool armed)
@@ -823,26 +870,59 @@ private:
         action.toLowerCase();
         if (feature == (uint8_t)StackFeature::Security)
         {
-            if (action != "alarm")
+            if (action == "alarm")
+            {
+                JsonObjectConst params = doc["params"];
+                const bool alarm = params["alarm"].is<bool>() ? params["alarm"].as<bool>()
+                                                              : (params["alarm"].as<int>() != 0);
+                if (!alarm)
+                    return;
+                const uint8_t sensor_id = (uint8_t)(params["sensor_id"] | 0);
+                const String name = params["name"] | "";
+                const bool silent = params["silent"] | false;
+                const String source = stackNodeLabel_(node_id);
+                core.logs.warn(F("SECURITY"), F("remote detect: node: %s id: %u name: %s silent: %u"),
+                               source.c_str(),
+                               (unsigned)sensor_id,
+                               name.length() ? name.c_str() : "",
+                               silent ? 1u : 0u);
+
+                control.controllers.security().setAlarmState(true);
+                broadcastSecurityAlarm_(true);
+                control.controllers.security().notifyRemoteDetect(source, sensor_id, name, silent);
+                return;
+            }
+            if (action == "rfid")
+            {
+                JsonObjectConst params = doc["params"];
+                const String uid = params["uid"] | "";
+                if (!uid.length())
+                    return;
+                const String source = params["name"] | stackNodeLabel_(node_id);
+                core.logs.info(F("SECURITY"), F("remote RFID: node: %s uid: %s"),
+                               source.c_str(), uid.c_str());
+                SecurityController &sec = control.controllers.security();
+                const bool was_armed = sec.armed();
+                const bool matched = sec.processRfidUidString(uid.c_str(), source.c_str());
+                const String result = matched ? (was_armed ? "disarm" : "arm") : "reject";
+                sendRfidResultToNode_(node_id, uid, matched, result, sec.armed());
+                return;
+            }
+            if (action == "status_req")
+            {
+                sendSecurityStateToNode_(node_id);
+                return;
+            }
+            return;
+        }
+        if (feature == (uint8_t)StackFeature::Ring)
+        {
+            if (action != "button")
                 return;
             JsonObjectConst params = doc["params"];
-            const bool alarm = params["alarm"].is<bool>() ? params["alarm"].as<bool>()
-                                                          : (params["alarm"].as<int>() != 0);
-            if (!alarm)
-                return;
-            const uint8_t sensor_id = (uint8_t)(params["sensor_id"] | 0);
-            const String name = params["name"] | "";
-            const bool silent = params["silent"] | false;
-            const String source = stackNodeLabel_(node_id);
-            core.logs.warn(F("SECURITY"), F("remote detect: node: %s id: %u name: %s silent: %u"),
-                           source.c_str(),
-                           (unsigned)sensor_id,
-                           name.length() ? name.c_str() : "",
-                           silent ? 1u : 0u);
-
-            control.controllers.security().setAlarmState(true);
-            broadcastSecurityAlarm_(true);
-            control.controllers.security().notifyRemoteDetect(source, sensor_id, name, silent);
+            const bool pressed = params["pressed"].is<bool>() ? params["pressed"].as<bool>()
+                                                              : (params["pressed"].as<int>() != 0);
+            control.controllers.ring().setHoldRelayWithSource(pressed, RingController::Source::Stack);
             return;
         }
         if (feature == (uint8_t)StackFeature::Septic)
@@ -921,6 +1001,56 @@ private:
         control.controllers.tanks().setNotifyEnabled(role == ConfigsManagerIface::StackRole::Master);
     }
 
+    void updateRfidMode_()
+    {
+        const auto role = cfg.configs_manager.stackRole();
+        const bool enable = (role == ConfigsManagerIface::StackRole::Slave) &&
+                            cfg.configs_manager.rfidEnabled();
+        if (_rfid_enabled != enable)
+        {
+            _rfid_enabled = enable;
+            control.rfid_reader.setEnabled(enable);
+        }
+    }
+
+    void updateRingClientMode_()
+    {
+        const auto role = cfg.configs_manager.stackRole();
+        const bool enable = (role == ConfigsManagerIface::StackRole::Slave) &&
+                            cfg.configs_manager.ringClientEnabled();
+        if (_ring_client_enabled != enable)
+        {
+            _ring_client_enabled = enable;
+            control.ring_client.setEnabled(enable);
+        }
+    }
+
+    void updateRingClientConfig_()
+    {
+        const uint8_t port = cfg.configs_manager.ringClientButtonPort();
+        if (_ring_client_button_port != port)
+        {
+            _ring_client_button_port = port;
+            control.ring_client.setButtonPort(port);
+        }
+    }
+
+    void updateDisplayLayout_()
+    {
+        const size_t count = cfg.configs_manager.displaySlotCount();
+        for (size_t i = 0; i < Display::kSlotCount && i < count; ++i)
+        {
+            DisplaySlotConfig slot{};
+            if (!cfg.configs_manager.displaySlot(i, slot))
+                continue;
+            if (!displaySlotEqual_(_display_slots[i], slot))
+            {
+                _display_slots[i] = slot;
+                hw.display.setSlot(i, slot);
+            }
+        }
+    }
+
     void flushPendingSecurityDetect_()
     {
         if (!_pending_detect)
@@ -958,6 +1088,300 @@ private:
             return;
         _pending_tank_empty = false;
         sendTankEmptyToMaster_(_pending_tank_id, _pending_tank_name);
+    }
+
+    void flushPendingRfid_()
+    {
+        if (!_pending_rfid)
+            return;
+        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+            return;
+        StackNode &node = net.network.stackNode();
+        if (!node.connected())
+            return;
+        _pending_rfid = false;
+        sendRfidToMaster_(_pending_rfid_uid, _pending_rfid_name);
+    }
+
+    void flushPendingRingClient_()
+    {
+        if (!_pending_ring_client)
+            return;
+        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+            return;
+        StackNode &node = net.network.stackNode();
+        if (!node.connected())
+            return;
+        _pending_ring_client = false;
+        sendRingClientToMaster_(_pending_ring_client_pressed);
+    }
+
+    void handleRfidUid_(const RfidReader::Uid &uid)
+    {
+        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+            return;
+        const String uid_str = RfidReader::uidToString(uid);
+        if (uid_str.length() == 0)
+            return;
+        const String name = hw.plc.deviceName();
+        StackNode &node = net.network.stackNode();
+        if (!node.connected())
+        {
+            _pending_rfid = true;
+            _pending_rfid_uid = uid_str;
+            _pending_rfid_name = name;
+            return;
+        }
+        if (!sendRfidToMaster_(uid_str, name))
+        {
+            _pending_rfid = true;
+            _pending_rfid_uid = uid_str;
+            _pending_rfid_name = name;
+        }
+    }
+
+    void handleRingClientButton_(bool pressed)
+    {
+        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+            return;
+        if (!cfg.configs_manager.ringClientEnabled())
+            return;
+        StackNode &node = net.network.stackNode();
+        if (!node.connected())
+        {
+            _pending_ring_client = true;
+            _pending_ring_client_pressed = pressed;
+            return;
+        }
+        if (!sendRingClientToMaster_(pressed))
+        {
+            _pending_ring_client = true;
+            _pending_ring_client_pressed = pressed;
+        }
+    }
+
+    bool sendRingClientToMaster_(bool pressed)
+    {
+        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+            return false;
+        StackNode &node = net.network.stackNode();
+        if (!node.connected())
+            return false;
+        StaticJsonDocument<128> doc;
+        doc["cmd_id"] = 0;
+        doc["feature"] = (uint8_t)StackFeature::Ring;
+        doc["action"] = "button";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["pressed"] = pressed;
+        char payload[128] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        return node.send((uint8_t)StackMsgType::CmdSet,
+                         reinterpret_cast<const uint8_t *>(payload), len);
+    }
+
+    bool renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5])
+    {
+        if (!out)
+            return false;
+        for (size_t i = 0; i < 4; ++i)
+            out[i] = ' ';
+        out[4] = '\0';
+        switch (slot.kind)
+        {
+        case DisplaySlotKind::Time:
+        {
+            Ds3231Mz::DateTime dt{};
+            if (!hw.rtc.Time(dt))
+                return false;
+            snprintf(out, 5, "%02u%02u", (unsigned)dt.hour, (unsigned)dt.minute);
+            return true;
+        }
+        case DisplaySlotKind::Security:
+        {
+            const bool armed = control.controllers.security().armed();
+            const char *txt = armed ? "ARM " : "DIS ";
+            memcpy(out, txt, 4);
+            return true;
+        }
+        case DisplaySlotKind::Socket:
+        {
+            if (slot.index == 0)
+                return false;
+            const SocketController::SocketState *st = control.controllers.sockets().state(slot.index);
+            if (!st)
+                return false;
+            const char *txt = st->relay_on ? "ON  " : "OFF ";
+            memcpy(out, txt, 4);
+            return true;
+        }
+        case DisplaySlotKind::Light:
+        {
+            if (slot.index == 0)
+                return false;
+            const SocketController::LightState *st = control.controllers.sockets().lightState(slot.index);
+            if (!st)
+                return false;
+            const char *txt = st->relay_on ? "ON  " : "OFF ";
+            memcpy(out, txt, 4);
+            return true;
+        }
+        case DisplaySlotKind::Meteo:
+        {
+            if (slot.index == 0)
+                return false;
+            const MeteoController::SensorState *st = control.controllers.meteo().state(slot.index);
+            if (!st || !st->ok)
+                return false;
+            if (slot.field == DisplaySlotField::MeteoHum)
+            {
+                if (!st->has_humidity)
+                    return false;
+                const int h = (int)roundf(st->humidity);
+                snprintf(out, 5, "%2d%%", h);
+            }
+            else
+            {
+                if (!st->has_temp)
+                    return false;
+                const int t = (int)roundf(st->temp_c);
+                snprintf(out, 5, "%2d%c", t, Display::kDegreeChar);
+            }
+            if (strlen(out) < 4)
+            {
+                size_t len = strlen(out);
+                while (len < 4)
+                    out[len++] = ' ';
+                out[4] = '\0';
+            }
+            return true;
+        }
+        case DisplaySlotKind::Tank:
+        {
+            if (slot.index == 0)
+                return false;
+            const TankController::TankState *st = control.controllers.tanks().state(slot.index);
+            if (!st || !st->levels_ok)
+                return false;
+            if (st->level_full)
+                memcpy(out, "FULL", 4);
+            else if (st->level_mid)
+                memcpy(out, "MID ", 4);
+            else if (st->level_low)
+                memcpy(out, "LOW ", 4);
+            else
+                memcpy(out, "EMP ", 4);
+            return true;
+        }
+        case DisplaySlotKind::Septic:
+        {
+            if (slot.index == 0)
+                return false;
+            const size_t idx = (size_t)(slot.index - 1);
+            const SepticController::SepticState *st = control.controllers.septic().stateByIndex(idx);
+            if (!st)
+                return false;
+            if (st->alarm)
+                memcpy(out, "ALRM", 4);
+            else if (st->warning)
+                memcpy(out, "WARN", 4);
+            else
+                memcpy(out, "OK  ", 4);
+            return true;
+        }
+        case DisplaySlotKind::Text:
+        {
+            if (!slot.text[0])
+                return false;
+            for (size_t i = 0; i < 4; ++i)
+                out[i] = slot.text[i] ? slot.text[i] : ' ';
+            out[4] = '\0';
+            return true;
+        }
+        case DisplaySlotKind::None:
+        default:
+            return false;
+        }
+    }
+
+    static bool displaySlotEqual_(const DisplaySlotConfig &a, const DisplaySlotConfig &b)
+    {
+        if (a.kind != b.kind || a.index != b.index || a.field != b.field)
+            return false;
+        return strncmp(a.text, b.text, sizeof(a.text)) == 0;
+    }
+
+    bool sendRfidToMaster_(const String &uid, const String &name)
+    {
+        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+            return false;
+        StackNode &node = net.network.stackNode();
+        if (!node.connected())
+            return false;
+        StaticJsonDocument<128> doc;
+        doc["cmd_id"] = 0;
+        doc["feature"] = (uint8_t)StackFeature::Security;
+        doc["action"] = "rfid";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["uid"] = uid;
+        if (name.length())
+            params["name"] = name;
+        char payload[128] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        return node.send((uint8_t)StackMsgType::CmdSet,
+                         reinterpret_cast<const uint8_t *>(payload), len);
+    }
+
+    void sendRfidResultToNode_(uint32_t node_id, const String &uid, bool matched,
+                               const String &result, bool armed)
+    {
+        if (node_id == 0)
+            return;
+        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Master)
+            return;
+        StackMaster &master = net.network.stackMaster();
+        StaticJsonDocument<160> doc;
+        doc["cmd_id"] = 0;
+        doc["feature"] = (uint8_t)StackFeature::Security;
+        doc["action"] = "rfid_result";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["uid"] = uid;
+        params["match"] = matched;
+        if (result.length())
+            params["result"] = result;
+        params["armed"] = armed;
+        char payload[160] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return;
+        master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                      reinterpret_cast<const uint8_t *>(payload), len);
+    }
+
+    void pollSecurityStatusFromMaster_()
+    {
+        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+            return;
+        StackNode &node = net.network.stackNode();
+        if (!node.connected())
+            return;
+        const uint32_t now = millis();
+        if ((uint32_t)(now - _last_rfid_status_ms) < 5000u)
+            return;
+        _last_rfid_status_ms = now;
+        StaticJsonDocument<128> doc;
+        doc["cmd_id"] = 0;
+        doc["feature"] = (uint8_t)StackFeature::Security;
+        doc["action"] = "status_req";
+        char payload[128] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return;
+        node.send((uint8_t)StackMsgType::CmdSet,
+                  reinterpret_cast<const uint8_t *>(payload), len);
     }
 
     String stackNodeLabel_(uint32_t node_id) const
@@ -1055,5 +1479,14 @@ private:
     bool _pending_tank_empty = false;
     uint8_t _pending_tank_id = 0;
     String _pending_tank_name;
+    bool _pending_rfid = false;
+    String _pending_rfid_uid;
+    String _pending_rfid_name;
+    bool _rfid_enabled = false;
+    uint32_t _last_rfid_status_ms = 0;
+    bool _ring_client_enabled = false;
+    uint8_t _ring_client_button_port = 0xFF;
+    bool _pending_ring_client = false;
+    bool _pending_ring_client_pressed = false;
+    DisplaySlotConfig _display_slots[Display::kSlotCount]{};
 };
-

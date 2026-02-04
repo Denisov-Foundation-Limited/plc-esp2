@@ -69,6 +69,7 @@ struct BoardProfileFCPLC_3v1 : BoardProfileCommon
         /*  0 */ { .bus_num = 0, .sda = 24, .scl = 25, .freq = 400000 },
         /*  1 */ { .bus_num = 1, .sda = 26, .scl = 27, .freq = 400000 }
     }};
+    static inline constexpr uint8_t RFID_I2C_INDEX = 1;
 
     // ---- SPI ----
     static inline constexpr uint8_t SPI_COUNT = 1;

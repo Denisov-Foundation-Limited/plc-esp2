@@ -1,4 +1,4 @@
-﻿/**********************************************************************/
+/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -56,6 +56,24 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
       color: var(--text);
       padding: 10px;
       border-radius: 8px;
+      box-shadow: none;
+    }
+    input[type=password]:focus,
+    input[type=date]:focus,
+    input[type=time]:focus,
+    input[type=text]:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+      background: #0b1220;
+    }
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus,
+    input:-webkit-autofill:active {
+      -webkit-text-fill-color: var(--text);
+      box-shadow: 0 0 0 1000px #0b1220 inset;
+      transition: background-color 9999s ease-out;
     }
     button {
       margin-top: 12px;
@@ -102,6 +120,12 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
             </div>
           </div>
           <button type="submit">Сохранить RTC</button>
+        </form>
+      </div>
+
+      <div class="section">
+        <form method="POST" action="/reboot">
+          <button type="submit">Перезагрузить</button>
         </form>
       </div>
     </div>

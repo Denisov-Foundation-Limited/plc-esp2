@@ -70,7 +70,6 @@ public:
             _logs.info(F("TANK"), F("Controller disabled"));
             return true;
         }
-        _logs.info(F("TANK"), F("Init"));
         for (size_t i = 0; i < kTankCount; ++i)
         {
             TankConfig &cfg = _cfg[i];

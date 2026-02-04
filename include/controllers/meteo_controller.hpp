@@ -60,7 +60,6 @@ public:
 
     bool begin()
     {
-        _logs.info(F("METEO"), F("Init"));
         _ds_bus = _ow.busPtrById(OneWireManager::OwBusType::Temp);
         if (_ds_bus)
         {

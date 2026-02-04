@@ -1,4 +1,4 @@
-﻿/**********************************************************************/
+/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -136,6 +136,7 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       border: 2px solid #1f2937;
       background: linear-gradient(180deg, #0a1220 0%, #0c1628 100%);
       overflow: hidden;
+      cursor: pointer;
     }
     .thermo-left {
       display: flex;
@@ -370,6 +371,15 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
         } else {
           el.dataset.busy = '0';
         }
+      });
+    });
+    document.querySelectorAll('.thermo-visual').forEach((el) => {
+      el.addEventListener('click', () => {
+        const tile = el.closest('.tile');
+        if (!tile) return;
+        const power = tile.querySelector('input.thermo-power');
+        if (!power || power.disabled) return;
+        power.click();
       });
     });
     const scrollKey = 'thermo_scroll_y';

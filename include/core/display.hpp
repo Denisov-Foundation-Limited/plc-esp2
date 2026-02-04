@@ -11,15 +11,22 @@
 
 #pragma once
 
+#include <Arduino.h>
 #include <stdint.h>
 
 #include "boards/board_profile.hpp"
+#include "core/display_slots.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/lcd1602_i2c.hpp"
 
 class Display
 {
 public:
+    static constexpr size_t kSlotCount = 8;
+    static constexpr char kDegreeChar = 1;
+
+    using SlotProvider = bool (*)(void *ctx, const DisplaySlotConfig &slot, char out[5]);
+
     enum class Error : uint8_t
     {
         Ok = 0,
@@ -53,11 +60,13 @@ public:
             return false;
         }
 
+        _lcd.createChar(kDegreeChar, kDegreeCharMap_);
         _err = Error::Ok;
+        _ready = true;
 
         clear();
-        showStr(0, F("      FCPLC     "));
-        showStr(1, F("Denisov Fnd Ltd."));
+        setText(F("      FCPLC     "), F("Denisov Fnd Ltd."));
+        task();
         return true;
     }
 
@@ -76,6 +85,64 @@ public:
         _lcd.clear();
     }
 
+    void task()
+    {
+        if (!_ready)
+            return;
+        if (_slot_provider)
+        {
+            char line0[17] = {};
+            char line1[17] = {};
+            renderSlots_(line0, line1);
+            writeLine_(0, line0);
+            writeLine_(1, line1);
+            return;
+        }
+        writeLine_(0, _line0);
+        writeLine_(1, _line1);
+    }
+
+    bool setLine(uint8_t line, const String &text)
+    {
+        if (line > 1 || text.length() > 16)
+            return false;
+        if (line == 0)
+            _line0 = text;
+        else
+            _line1 = text;
+        return true;
+    }
+
+    bool setText(const String &line0, const String &line1)
+    {
+        if (line0.length() > 16 || line1.length() > 16)
+            return false;
+        _line0 = line0;
+        _line1 = line1;
+        return true;
+    }
+
+    void setSlotProvider(SlotProvider cb, void *ctx)
+    {
+        _slot_provider = cb;
+        _slot_ctx = ctx;
+    }
+
+    bool setSlot(size_t idx, const DisplaySlotConfig &slot)
+    {
+        if (idx >= kSlotCount)
+            return false;
+        _slots[idx] = slot;
+        return true;
+    }
+
+    const DisplaySlotConfig *slot(size_t idx) const
+    {
+        if (idx >= kSlotCount)
+            return nullptr;
+        return &_slots[idx];
+    }
+
     Error lastError() const { return _err; }
 
 private:
@@ -92,4 +159,74 @@ private:
     I2CManager &_i2c;
     Lcd1602I2c &_lcd;
     Error _err = Error::Ok;
+    bool _ready = false;
+    String _line0;
+    String _line1;
+    DisplaySlotConfig _slots[kSlotCount]{};
+    SlotProvider _slot_provider = nullptr;
+    void *_slot_ctx = nullptr;
+    static constexpr uint8_t kDegreeCharMap_[8] = {
+        0b00111,
+        0b00101,
+        0b00111,
+        0b00000,
+        0b00000,
+        0b00000,
+        0b00000,
+        0b00000,
+    };
+
+    void writeLine_(uint8_t line, const String &text)
+    {
+        if (line > 1)
+            return;
+        char buf[17] = {};
+        const size_t n = text.length() > 16 ? 16 : text.length();
+        for (size_t i = 0; i < 16; ++i)
+            buf[i] = (i < n) ? text[i] : ' ';
+        buf[16] = '\0';
+        _lcd.setCursor(0, line);
+        _lcd.print(buf);
+    }
+
+    void writeLine_(uint8_t line, const char *text)
+    {
+        if (!text)
+            return;
+        writeLine_(line, String(text));
+    }
+
+    void renderSlots_(char out0[17], char out1[17])
+    {
+        for (size_t i = 0; i < 16; ++i)
+        {
+            out0[i] = ' ';
+            out1[i] = ' ';
+        }
+        out0[16] = '\0';
+        out1[16] = '\0';
+        for (size_t i = 0; i < kSlotCount; ++i)
+        {
+            char buf[5] = {};
+            if (_slot_provider)
+            {
+                if (!_slot_provider(_slot_ctx, _slots[i], buf))
+                {
+                    for (size_t k = 0; k < 4; ++k)
+                        buf[k] = ' ';
+                    buf[4] = '\0';
+                }
+            }
+            const uint8_t row = (i < 4) ? 0 : 1;
+            const uint8_t col = (uint8_t)((i % 4) * 4);
+            for (uint8_t k = 0; k < 4; ++k)
+            {
+                const char c = buf[k] ? buf[k] : ' ';
+                if (row == 0)
+                    out0[col + k] = c;
+                else
+                    out1[col + k] = c;
+            }
+        }
+    }
 };

@@ -1,4 +1,4 @@
-﻿/**********************************************************************/
+/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -327,6 +327,22 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
           </thead>
           <tbody>
             %SECURITY_KEYS_ROWS%
+          </tbody>
+        </table>
+        </div>
+        <h2> RFID</h2>
+        <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="right">ID</th>
+              <th>Вкл</th>
+              <th>Имя</th>
+              <th>Серийный</th>
+            </tr>
+          </thead>
+          <tbody>
+            %SECURITY_RFID_KEYS_ROWS%
           </tbody>
         </table>
         </div>

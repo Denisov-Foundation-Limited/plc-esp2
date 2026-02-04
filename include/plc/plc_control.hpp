@@ -159,7 +159,15 @@ private:
     static float readCpuTemp_()
     {
 #if defined(ESP32)
-        return temperatureRead();
+        const uint32_t now = millis();
+        static uint32_t last_read_ms = 0;
+        static float last_value = 0.0f;
+        if (timeDue_(now, last_read_ms + 5000u))
+        {
+            last_read_ms = now;
+            last_value = temperatureRead();
+        }
+        return last_value;
 #else
         return 0.0f;
 #endif
@@ -179,6 +187,7 @@ private:
     String _device_name;
     uint32_t _sample_interval_ms = 1000;
     uint32_t _next_sample_ms = 0;
+
 
     static bool timeDue_(uint32_t now, uint32_t at)
     {

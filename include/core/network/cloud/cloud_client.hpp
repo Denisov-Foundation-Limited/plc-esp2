@@ -308,8 +308,6 @@ private:
 
         String dbg;
         serializeJson(doc, dbg);
-        if (dbg.length())
-            Serial.printf( ("WS hello: %s"), dbg.c_str());
         sendJson_(doc);
     }
 

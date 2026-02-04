@@ -1,4 +1,4 @@
-﻿/**********************************************************************/
+/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -74,6 +74,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
     .nav { margin-bottom: 12px; }
     table.status-table { width: 100%; border-collapse: collapse; margin: 8px 0 18px; }
     table.status-table td { padding: 6px; border-bottom: 1px solid #1f2937; }
+    .is-disabled { opacity: 0.45; pointer-events: none; }
   </style>
 </head>
 <body>
@@ -81,7 +82,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Сеть</h1>
-      <table class="status-table">
+      <table id="gsm-table" class="status-table">
         <tbody>
           <tr><td>Режим</td><td><strong>%WIFI_MODE%</strong></td></tr>
           <tr><td>SSID</td><td><strong>%WIFI_CUR_SSID%</strong></td></tr>
@@ -119,7 +120,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
           <h2>GSM</h2>
           <div class="row" style="margin-bottom:10px;">
             <label style="margin-right:8px;">Включен</label>
-            <input type="checkbox" name="gsm_enabled" %GSM_ENABLED_CHECKED%>
+            <input id="gsm-enabled" type="checkbox" name="gsm_enabled" %GSM_ENABLED_CHECKED%>
             <span class="status">%GSM_ENABLED_LABEL%</span>
           </div>
           <table class="status-table">
@@ -173,6 +174,19 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
         sessionStorage.setItem(reloadKey, '1');
       });
     }
+
+    const gsmToggle = document.getElementById('gsm-enabled');
+    const gsmTable = document.getElementById('gsm-table');
+    function updateGsmTable() {
+      if (!gsmTable) return;
+      const disabled = !gsmToggle || !gsmToggle.checked;
+      gsmTable.classList.toggle('is-disabled', disabled);
+    }
+    if (gsmToggle) {
+      gsmToggle.addEventListener('change', updateGsmTable);
+    }
+    updateGsmTable();
+
   </script>
 </body>
 </html>

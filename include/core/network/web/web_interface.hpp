@@ -36,6 +36,10 @@
 #include "core/network/web/pages/web_interface_stack.hpp"
 #include "core/network/web/pages/web_interface_wifi.hpp"
 #include "core/network/web/pages/web_interface_controllers.hpp"
+#include "core/network/web/pages/web_interface_clients.hpp"
+#include "core/network/web/pages/web_interface_rfid.hpp"
+#include "core/network/web/pages/web_interface_display.hpp"
+#include "core/network/web/pages/web_interface_client_ring.hpp"
 #include "core/network/web/pages/web_interface_security.hpp"
 #include "core/network/web/pages/web_interface_ring.hpp"
 #include "core/network/web/pages/web_interface_septic.hpp"
@@ -49,6 +53,30 @@
 #include "core/network/web/pages/web_interface_status.hpp"
 #include "core/network/web/pages/web_interface_sockets.hpp"
 #include "core/network/web/pages/web_interface_lights.hpp"
+class ControllersHandler;
+class SocketsHandler;
+class LightsHandler;
+class ThermoHandler;
+class IndexHandler;
+class WifiHandler;
+class ManageHandler;
+class PortsHandler;
+class BusesHandler;
+class StackHandler;
+class ClientsHandler;
+class DisplayHandler;
+class AdminHandler;
+class LogsHandler;
+class StatusHandler;
+class SepticHandler;
+class RingHandler;
+class SecurityHandler;
+class TelegramHandler;
+class CloudHandler;
+class MeteoHandler;
+class TankHandler;
+class RfidHandler;
+class RingClientHandler;
 #include "core/rtc.hpp"
 #include "plc/plc_control.hpp"
 #include "core/network/telegram/telegram.hpp"
@@ -62,10 +90,12 @@
 #include "core/network/stack/stack_protocol.hpp"
 #include "core/network/gsm_modem.hpp"
 #include "core/network/cloud/cloud_client.hpp"
+#include "core/display_slots.hpp"
 #include "hal/gpio/extender.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
 #include "hal/ibutton.hpp"
+#include "clients/rfid_reader.hpp"
 #include "controllers/controllers.hpp"
 
 static const char kWebAutoRefreshScript[] PROGMEM = R"HTML(
@@ -114,7 +144,7 @@ public:
     WebInterface(AsyncWebServer &server, CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
                  RTC &rtc, TelegramClient &tgbot, TelegramBot &tgbot_bot, TelegramMenu &tgbot_menu, Logger &logs,
                  Extender &ext,
-                 I2CManager &i2c, OneWireManager &ow, Controllers &controllers)
+                 I2CManager &i2c, OneWireManager &ow, Controllers &controllers, RfidReader &rfid)
         : _server(server),
           _cli_auth(&cli),
           _wifi(wifi),
@@ -125,6 +155,7 @@ public:
           _tgbot_bot(&tgbot_bot),
           _tgbot_menu(&tgbot_menu),
           _controllers(&controllers),
+          _rfid(&rfid),
           _ext(&ext),
           _i2c(&i2c),
           _ow(&ow),
@@ -163,80 +194,33 @@ public:
     }
     void setCloudClient(CloudClient &client) { _cloud = &client; }
 
-    void registerRoutes()
-    {
-        _server.on("/", HTTP_GET, [this](AsyncWebServerRequest *request) { handleIndex_(request); });
-        _server.on("/wifi", HTTP_GET, [this](AsyncWebServerRequest *request) { handleWifi_(request); });
-        _server.on("/manage", HTTP_GET, [this](AsyncWebServerRequest *request) { handleManage_(request); });
-        _server.on("/controllers", HTTP_GET, [this](AsyncWebServerRequest *request) { handleControllers_(request); });
-        _server.on("/controllers", HTTP_POST, [this](AsyncWebServerRequest *request) { handleControllersSave_(request); });
-        _server.on("/ports", HTTP_GET, [this](AsyncWebServerRequest *request) { handlePorts_(request); });
-        _server.on("/buses", HTTP_GET, [this](AsyncWebServerRequest *request) { handleBuses_(request); });
-        _server.on("/stack/gen_key", HTTP_POST, [this](AsyncWebServerRequest *request) { handleStackGenKey_(request); });
-        _server.on("/stack", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStack_(request); });
-        _server.on("/sockets/toggle", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsToggle_(request); });
-        _server.on("/sockets/toggle", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSocketsToggle_(request); });
-        _server.on("/sockets/enable", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsEnable_(request); });
-        _server.on("/sockets/enable", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSocketsEnable_(request); });
-        _server.on("/sockets", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSockets_(request); });
-        _server.on("/sockets", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSocketsSave_(request, "/sockets"); });
-        _server.on("/lights/toggle", HTTP_POST, [this](AsyncWebServerRequest *request) { handleLightsToggle_(request); });
-        _server.on("/lights/toggle", HTTP_GET, [this](AsyncWebServerRequest *request) { handleLightsToggle_(request); });
-        _server.on("/lights/enable", HTTP_POST, [this](AsyncWebServerRequest *request) { handleLightsEnable_(request); });
-        _server.on("/lights/enable", HTTP_GET, [this](AsyncWebServerRequest *request) { handleLightsEnable_(request); });
-        _server.on("/lights", HTTP_GET, [this](AsyncWebServerRequest *request) { handleLights_(request); });
-        _server.on("/lights", HTTP_POST, [this](AsyncWebServerRequest *request) { handleLightsSave_(request, "/lights"); });
-        _server.on("/meteo", HTTP_GET, [this](AsyncWebServerRequest *request) { handleMeteo_(request); });
-        _server.on("/meteo", HTTP_POST, [this](AsyncWebServerRequest *request) { handleMeteoSave_(request); });
-        _server.on("/thermo", HTTP_GET, [this](AsyncWebServerRequest *request) { handleThermo_(request); });
-        _server.on("/thermo", HTTP_POST, [this](AsyncWebServerRequest *request) { handleThermoSave_(request); });
-        _server.on("/tanks", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTanks_(request); });
-        _server.on("/tanks", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTanksSave_(request); });
-        _server.on("/security", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSecurity_(request); });
-        _server.on("/security", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSecuritySave_(request); });
-        _server.on("/security/arm", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSecurityArm_(request); });
-        _server.on("/ring/trigger", HTTP_POST, [this](AsyncWebServerRequest *request) { handleRingTrigger_(request); });
-        _server.on("/ring", HTTP_POST, [this](AsyncWebServerRequest *request) { handleRingSave_(request); });
-        _server.on("/ring", HTTP_GET, [this](AsyncWebServerRequest *request) { handleRing_(request); });
-        _server.on("/septic", HTTP_GET, [this](AsyncWebServerRequest *request) { handleSeptic_(request); });
-        _server.on("/septic", HTTP_POST, [this](AsyncWebServerRequest *request) { handleSepticSave_(request); });
-        _server.on("/telegram", HTTP_GET, [this](AsyncWebServerRequest *request) { handleTelegram_(request); });
-        _server.on("/telegram", HTTP_POST, [this](AsyncWebServerRequest *request) { handleTelegramSave_(request); });
-        _server.on("/cloud", HTTP_GET, [this](AsyncWebServerRequest *request) { handleCloud_(request); });
-        _server.on("/cloud", HTTP_POST, [this](AsyncWebServerRequest *request) { handleCloudSave_(request); });
-        _server.on(
-            "/upload", HTTP_POST,
-            [this](AsyncWebServerRequest *request) { handleUploadDone_(request); },
-            [this](AsyncWebServerRequest *request, const String &filename, size_t index, uint8_t *data, size_t len,
-                   bool final) { handleUpload_(request, filename, index, data, len, final); });
-        _server.on(
-            "/ota", HTTP_POST,
-            [this](AsyncWebServerRequest *request) { handleOtaDone_(request); },
-            [this](AsyncWebServerRequest *request, const String &filename, size_t index, uint8_t *data, size_t len,
-                   bool final) { handleOta_(request, filename, index, data, len, final); });
-        _server.on("/wifi", HTTP_POST, [this](AsyncWebServerRequest *request) { handleWifiSave_(request); });
-        _server.on("/stack", HTTP_POST, [this](AsyncWebServerRequest *request) { handleStackSave_(request); });
-        _server.on("/device", HTTP_POST, [this](AsyncWebServerRequest *request) { handleDeviceSave_(request); });
-        _server.on("/admin", HTTP_GET, [this](AsyncWebServerRequest *request) { handleAdmin_(request); });
-        _server.on("/admin", HTTP_POST, [this](AsyncWebServerRequest *request) { handleAdminSave_(request); });
-        _server.on("/logs", HTTP_GET, [this](AsyncWebServerRequest *request) { handleLogs_(request); });
-        _server.on("/reboot", HTTP_POST, [this](AsyncWebServerRequest *request) { handleReboot_(request); });
-        _server.on("/files", HTTP_GET, [this](AsyncWebServerRequest *request) { handleFileDownload_(request); });
-        _server.on("/delete", HTTP_GET, [this](AsyncWebServerRequest *request) { handleDelete_(request); });
-        _server.on("/status", HTTP_GET, [this](AsyncWebServerRequest *request) { handleStatus_(request); });
-        _server.on("/ui/hash", HTTP_GET, [this](AsyncWebServerRequest *request) { handleUiHash_(request); });
-        _server.onNotFound([this](AsyncWebServerRequest *request) {
-            const String uri = request->url();
-            if (uri.startsWith("/files/"))
-            {
-                handleFileDownload_(request);
-                return;
-            }
-            request->send(404, "text/plain", String("Not found: ") + uri);
-        });
-    }
+    void registerRoutes();
 
 private:
+    friend class ControllersHandler;
+    friend class SocketsHandler;
+    friend class LightsHandler;
+    friend class ThermoHandler;
+    friend class IndexHandler;
+    friend class WifiHandler;
+    friend class ManageHandler;
+    friend class PortsHandler;
+    friend class BusesHandler;
+    friend class StackHandler;
+    friend class ClientsHandler;
+    friend class DisplayHandler;
+    friend class AdminHandler;
+    friend class LogsHandler;
+    friend class StatusHandler;
+    friend class SepticHandler;
+    friend class RingHandler;
+    friend class SecurityHandler;
+    friend class TelegramHandler;
+    friend class CloudHandler;
+    friend class MeteoHandler;
+    friend class TankHandler;
+    friend class RfidHandler;
+    friend class RingClientHandler;
     struct StackSocketItem;
     struct StackSocketsCache;
     struct StackLightItem;
@@ -260,242 +244,6 @@ private:
     struct StackTankItem;
     struct StackTankCache;
     struct StackNodeStatusCache;
-    void handleIndex_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceIndexHtml);
-        page.reserve(page.length() + 2048);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%DEVICE_NAME%", deviceName_());
-        page.replace("%DEVICE_STATUS%", _device_status);
-        const auto role = stackRole_();
-        page.replace("%STACK_ROLE%", stackRoleName_(role));
-        page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
-        page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
-        page.replace("%STACK_MASTER_HOST%", stackMasterHost_());
-        page.replace("%STACK_API_KEY%", stackApiKey_());
-        page.replace("%STACK_STATUS%", _stack_status);
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = node_id != 0 && _stack_master &&
-                                stackRole_() == ConfigsManagerIface::StackRole::Master;
-        page.replace("%INDEX_DEVICE_SELECT%", indexDeviceSelectHtml_(node_id, stack_view));
-        String status_device_name = deviceName_();
-        String rtc_date = rtcDateStr_();
-        String rtc_time = rtcTimeOnlyStr_();
-        String rtc_temp = formatTemp_(rtcTemp_());
-        String board_temp = formatTemp_(boardTemp_());
-        String cpu_temp = formatTemp_(cpuTemp_());
-        String fan_icon = fanStatusIcon_();
-        if (stack_view)
-        {
-            requestStackPlcStatus_(node_id);
-            requestStackRtcStatus_(node_id);
-            const StackNodeStatusCache *cache = findStackNodeStatusCache_(node_id, false);
-            if (cache)
-            {
-                const bool has_rtc = cache->has_rtc && cache->last_rtc_ok;
-                const bool has_plc = cache->has_plc && cache->last_plc_ok;
-                rtc_date = has_rtc ? cache->rtc_date : "n/a";
-                rtc_time = has_rtc ? cache->rtc_time : "n/a";
-                rtc_temp = has_rtc ? formatTemp_(cache->rtc_temp) : "n/a";
-                board_temp = has_plc ? formatTemp_(cache->board_temp) : "n/a";
-                cpu_temp = has_plc ? formatTemp_(cache->cpu_temp) : "n/a";
-                fan_icon = has_plc ? fanStatusIcon_(cache->fan_on) : "n/a";
-            }
-            else
-            {
-                rtc_date = "n/a";
-                rtc_time = "n/a";
-                rtc_temp = "n/a";
-                board_temp = "n/a";
-                cpu_temp = "n/a";
-                fan_icon = "n/a";
-            }
-            if (_stack_master)
-            {
-                const size_t count = _stack_master->nodeCount();
-                for (size_t i = 0; i < count; ++i)
-                {
-                    const uint32_t id = _stack_master->nodeIdAt(i);
-                    if (id != node_id)
-                        continue;
-                    String name = _stack_master->nodeNameAt(i);
-                    if (name.length() > 0)
-                        status_device_name = name;
-                    else
-                        status_device_name = stackNodeIdHex_(id);
-                    break;
-                }
-            }
-        }
-        page.replace("%STATUS_DEVICE_NAME%", status_device_name);
-        page.replace("%BOARD_TEMP%", board_temp);
-        page.replace("%CPU_TEMP%", cpu_temp);
-        page.replace("%RTC_DATE%", rtc_date);
-        page.replace("%RTC_TIME%", rtc_time);
-        page.replace("%RTC_TEMP%", rtc_temp);
-        page.replace("%FAN_STATUS_ICON%", fan_icon);
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        if (role == ConfigsManagerIface::StackRole::Master && _stack_master)
-        {
-            const size_t count = _stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t id = _stack_master->nodeIdAt(i);
-                if (id == 0)
-                    continue;
-                requestStackPlcStatus_(id);
-                requestStackRtcStatus_(id);
-            }
-        }
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleWifi_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceWifiHtml);
-        page.reserve(page.length() + 1536);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%WIFI_MODE%", _wifi.ap() ? "AP" : "STA");
-        page.replace("%WIFI_CUR_SSID%", _wifi.ap() ? _wifi.apSsid() : _wifi.ssid());
-        page.replace("%WIFI_IP%", wifiIp_());
-        if (_wifi.ap())
-        {
-            page.replace("%WIFI_STA_ROW%", "");
-        }
-        else
-        {
-            String row = "<tr><td>STA</td><td><strong>";
-            row += wifiStaStatus_();
-            row += "</strong></td></tr>";
-            page.replace("%WIFI_STA_ROW%", row);
-        }
-        page.replace("%WIFI_STA_SEL%", _wifi.ap() ? "" : "selected");
-        page.replace("%WIFI_AP_SEL%", _wifi.ap() ? "selected" : "");
-        page.replace("%WIFI_SSID%", _wifi.ssid());
-        page.replace("%WIFI_AP_SSID%", _wifi.apSsid());
-        page.replace("%WIFI_STATUS%", _wifi_status);
-        page.replace("%GSM_STATUS%", _gsm_status);
-        if (!_gsm)
-        {
-            page.replace("%GSM_ENABLED_CHECKED%", "");
-            page.replace("%GSM_ENABLED_LABEL%", "недоступно");
-            page.replace("%GSM_STARTED_LABEL%", "недоступно");
-            page.replace("%GSM_IMEI%", "n/a");
-            page.replace("%GSM_IMSI%", "n/a");
-            page.replace("%GSM_OPERATOR%", "n/a");
-            page.replace("%GSM_SIGNAL%", "n/a");
-            page.replace("%GSM_REG_STATUS%", "n/a");
-            page.replace("%GSM_LAST_ERROR%", "n/a");
-            page.replace("%GSM_LAST_URC%", "n/a");
-            page.replace("%GSM_LAST_SMS%", "n/a");
-            page.replace("%GSM_LAST_CALL%", "n/a");
-            page.replace("%GSM_LAST_USSD%", "n/a");
-            page.replace("%GSM_HTTP_STATUS%", "n/a");
-            page.replace("%GSM_HTTP_LEN%", "n/a");
-        }
-        else
-        {
-            const bool available = ActiveBoardProfile::GSM.enabled;
-            const bool enabled = available && _gsm->enabled();
-            page.replace("%GSM_ENABLED_CHECKED%", enabled ? "checked" : "");
-            page.replace("%GSM_ENABLED_LABEL%", available ? (enabled ? "включен" : "выключен") : "недоступен");
-            page.replace("%GSM_STARTED_LABEL%", _gsm->started() ? "инициализирован" : "не инициализирован");
-            page.replace("%GSM_IMEI%", safeHtmlValue_(_gsm->imei(), "n/a"));
-            page.replace("%GSM_IMSI%", safeHtmlValue_(_gsm->imsi(), "n/a"));
-            page.replace("%GSM_OPERATOR%", safeHtmlValue_(_gsm->operatorName(), "n/a"));
-            page.replace("%GSM_SIGNAL%", safeHtmlValue_(_gsm->signalQuality(), "n/a"));
-            page.replace("%GSM_REG_STATUS%", safeHtmlValue_(_gsm->regStatus(), "n/a"));
-            page.replace("%GSM_LAST_ERROR%", safeHtmlValue_(_gsm->lastError(), "n/a"));
-            page.replace("%GSM_LAST_URC%", safeHtmlValue_(_gsm->lastUrc(), "n/a"));
-            page.replace("%GSM_LAST_SMS%", _gsm->lastSmsIndex() ? String(_gsm->lastSmsIndex()) : String("n/a"));
-            page.replace("%GSM_LAST_CALL%", safeHtmlValue_(_gsm->lastCallNumber(), "n/a"));
-            page.replace("%GSM_LAST_USSD%", safeHtmlValue_(_gsm->lastUssd(), "n/a"));
-            page.replace("%GSM_HTTP_STATUS%", (_gsm->lastHttpStatus() >= 0) ? String(_gsm->lastHttpStatus()) : String("n/a"));
-            page.replace("%GSM_HTTP_LEN%", (_gsm->lastHttpLen() >= 0) ? String(_gsm->lastHttpLen()) : String("n/a"));
-        }
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleManage_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceManageHtml);
-        page.reserve(page.length() + 4096);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%FILES%", listFilesHtml_());
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleLogs_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceLogsHtml);
-        page.reserve(page.length() + 4096);
-        page.replace("%NAV%", navHtml_());
-        String lines;
-        if (_log)
-        {
-            const size_t count = _log->recentCount();
-            lines.reserve(count * 96 + 64);
-            if (count == 0)
-            {
-                lines = "No logs";
-            }
-            else
-            {
-                char buf[LOGGER_BUFFER_SIZE] = {};
-                for (size_t i = 0; i < count; ++i)
-                {
-                    if (_log->getRecentLine(i, buf, sizeof(buf)))
-                    {
-                        appendHtmlEscaped_(lines, buf);
-                        lines += "\n";
-                    }
-                }
-            }
-        }
-        else
-        {
-            lines = "Logger unavailable";
-        }
-        page.replace("%LOG_LINES%", lines);
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleAdmin_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (_cli_auth && _cli_auth->adminPasswordSet())
-        {
-            if (!checkAuth_(request, &set_cookie))
-                return;
-        }
-        String page = FPSTR(kWebInterfaceAdminHtml);
-        page.reserve(page.length() + 768);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%ADMIN_STATUS%", (_cli_auth && _cli_auth->adminPasswordSet()) ? "установлен" : "не установлен");
-        String rtc_date = rtcDateStr_();
-        String rtc_time = rtcTimeOnlyStr_();
-        String rtc_date_val = (rtc_date == "n/a") ? "" : rtc_date;
-        String rtc_time_val = (rtc_time == "n/a") ? "" : rtc_time;
-        page.replace("%RTC_DATE%", rtc_date);
-        page.replace("%RTC_TIME%", rtc_time);
-        page.replace("%RTC_DATE_VAL%", rtc_date_val);
-        page.replace("%RTC_TIME_VAL%", rtc_time_val);
-        sendHtml_(request, page, set_cookie);
-    }
-
     void handleAdminSave_(AsyncWebServerRequest *request)
     {
         bool set_cookie = false;
@@ -555,2461 +303,6 @@ private:
         }
 
         sendRedirect_(request, "/admin", set_cookie);
-    }
-
-    void handlePorts_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfacePortsHtml);
-        page.reserve(page.length() + 4096);
-        page.replace("%NAV%", navHtml_());
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = isStackPortsView_(node_id);
-        if (stack_view)
-        {
-            requestStackPorts_(node_id);
-            requestStackExtenders_(node_id);
-        }
-        page.replace("%PORTS%", stack_view ? listStackPortsHtml_(node_id) : listPortsHtml_());
-        page.replace("%EXTENDERS%", stack_view ? listStackExtendersHtml_(node_id) : listExtendersHtml_());
-        page.replace("%PORTS_DEVICE_SELECT%", portsDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%PORTS_STACK_STATUS%", stack_view ? stackPortsStatusText_(node_id) : "");
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleBuses_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceBusesHtml);
-        page.reserve(page.length() + 3072);
-        page.replace("%NAV%", navHtml_());
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = isStackBusesView_(node_id);
-        if (stack_view)
-        {
-            String scan = request->hasParam("scan") ? request->getParam("scan")->value() : "";
-            scan.toLowerCase();
-            const bool run_i2c = (scan == "i2c");
-            const bool run_ow = (scan == "ow");
-            if (run_i2c)
-                requestStackI2c_(node_id, true);
-            else
-                requestStackI2c_(node_id, false);
-            if (run_ow)
-                requestStackOw_(node_id, true);
-            else
-                requestStackOw_(node_id, false);
-        }
-        page.replace("%I2C%", stack_view ? listStackI2cHtml_(node_id) : listI2cHtml_());
-        page.replace("%OW%", stack_view ? listStackOwHtml_(node_id) : listOwHtml_());
-        page.replace("%BUS_DEVICE_SELECT%", busesDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%BUS_STACK_STATUS%", stack_view ? stackBusesStatusText_(node_id) : "");
-        page.replace("%BUS_I2C_SCAN_URL%", stack_view ? (String("/buses?node=") + String(node_id) + "&scan=i2c") : String("/buses"));
-        page.replace("%BUS_OW_SCAN_URL%", stack_view ? (String("/buses?node=") + String(node_id) + "&scan=ow") : String("/buses"));
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleStack_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceStackHtml);
-        page.reserve(page.length() + 4096);
-        page.replace("%NAV%", navHtml_());
-        const auto role = stackRole_();
-        page.replace("%STACK_ROLE%", stackRoleName_(role));
-        page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
-        page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
-        page.replace("%STACK_MASTER_HOST%", stackMasterHost_());
-        page.replace("%STACK_API_KEY%", stackApiKey_());
-        page.replace("%STACK_STATUS%", _stack_status);
-        if (role == ConfigsManagerIface::StackRole::Master)
-        {
-            String self = String("<p class=\"status\">Текущий контроллер: <strong>") + deviceName_() +
-                          "</strong> | IP: <strong>" + wifiIp_() + "</strong></p>";
-            page.replace("%STACK_SELF_BLOCK%", self);
-            page.replace("%STACK_NODES_BLOCK%", stackNodesBlockHtml_());
-        }
-        else
-        {
-            page.replace("%STACK_SELF_BLOCK%", "");
-            page.replace("%STACK_NODES_BLOCK%", "");
-        }
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleControllers_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceControllersHtml);
-        page.reserve(page.length() + 2048);
-        page.replace("%NAV%", navHtml_());
-        if (_controllers)
-        {
-            const bool enabled = _controllers->sockets().controllerEnabled();
-            page.replace("%SOCKETS_ENABLED_CHECKED%", enabled ? "checked" : "");
-            page.replace("%SOCKETS_ENABLED_LABEL%", enabled ? "включены" : "выключены");
-            const bool lights_enabled = _controllers->sockets().lightsEnabled();
-            page.replace("%LIGHTS_ENABLED_CHECKED%", lights_enabled ? "checked" : "");
-            page.replace("%LIGHTS_ENABLED_LABEL%", lights_enabled ? "включены" : "выключены");
-            const bool meteo_enabled = _controllers->meteo().controllerEnabled();
-            page.replace("%METEO_ENABLED_CHECKED%", meteo_enabled ? "checked" : "");
-            page.replace("%METEO_ENABLED_LABEL%", meteo_enabled ? "включено" : "выключено");
-            const bool thermo_enabled = _controllers->thermo().controllerEnabled();
-            page.replace("%THERMO_ENABLED_CHECKED%", thermo_enabled ? "checked" : "");
-            page.replace("%THERMO_ENABLED_LABEL%", thermo_enabled ? "включено" : "выключено");
-            const bool tanks_enabled = _controllers->tanks().controllerEnabled();
-            page.replace("%TANKS_ENABLED_CHECKED%", tanks_enabled ? "checked" : "");
-            page.replace("%TANKS_ENABLED_LABEL%", tanks_enabled ? "включены" : "выключены");
-            const bool septic_enabled = _controllers->septic().controllerEnabled();
-            page.replace("%SEPTIC_ENABLED_CHECKED%", septic_enabled ? "checked" : "");
-            page.replace("%SEPTIC_ENABLED_LABEL%", septic_enabled ? "включены" : "выключены");
-            const bool ring_enabled = _controllers->ring().controllerEnabled();
-            page.replace("%RING_ENABLED_CHECKED%", ring_enabled ? "checked" : "");
-            page.replace("%RING_ENABLED_LABEL%", ring_enabled ? "включен" : "выключен");
-            const bool security_enabled = _controllers->security().controllerEnabled();
-            page.replace("%SECURITY_ENABLED_CHECKED%", security_enabled ? "checked" : "");
-            page.replace("%SECURITY_ENABLED_LABEL%", security_enabled ? "включена" : "выключена");
-        }
-        else
-        {
-            page.replace("%SOCKETS_ENABLED_CHECKED%", "");
-            page.replace("%SOCKETS_ENABLED_LABEL%", "недоступно");
-            page.replace("%LIGHTS_ENABLED_CHECKED%", "");
-            page.replace("%LIGHTS_ENABLED_LABEL%", "недоступно");
-            page.replace("%METEO_ENABLED_CHECKED%", "");
-            page.replace("%METEO_ENABLED_LABEL%", "недоступно");
-            page.replace("%THERMO_ENABLED_CHECKED%", "");
-            page.replace("%THERMO_ENABLED_LABEL%", "недоступно");
-            page.replace("%TANKS_ENABLED_CHECKED%", "");
-            page.replace("%TANKS_ENABLED_LABEL%", "недоступно");
-            page.replace("%SEPTIC_ENABLED_CHECKED%", "");
-            page.replace("%SEPTIC_ENABLED_LABEL%", "недоступно");
-            page.replace("%RING_ENABLED_CHECKED%", "");
-            page.replace("%RING_ENABLED_LABEL%", "");
-            page.replace("%SECURITY_ENABLED_CHECKED%", "");
-            page.replace("%SECURITY_ENABLED_LABEL%", "недоступно");
-        }
-        page.replace("%SOCKETS_STATUS%", _sockets_status);
-        page.replace("%LIGHTS_STATUS%", _lights_status);
-        page.replace("%METEO_STATUS%", _meteo_status);
-        page.replace("%THERMO_STATUS%", _thermo_status);
-        page.replace("%TANKS_STATUS%", _tanks_status);
-        page.replace("%SEPTIC_STATUS%", _septic_status);
-        page.replace("%RING_STATUS%", _ring_status);
-        page.replace("%SECURITY_STATUS%", _security_status);
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleControllersSave_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        if (!_controllers)
-        {
-            _controllers_status = "Контроллеры недоступны";
-            sendRedirect_(request, "/controllers", set_cookie);
-            return;
-        }
-        const String ctrl = paramValue_(request, "ctrl");
-        bool changed = false;
-        bool power_changed = false;
-        if (ctrl.length() == 0 || ctrl == "sockets")
-        {
-            const bool enabled = request->hasParam("sockets_enabled", true);
-            if (_controllers->sockets().controllerEnabled() != enabled)
-            {
-                _controllers->sockets().setControllerEnabled(enabled);
-                changed = true;
-            }
-        }
-        if (ctrl.length() == 0 || ctrl == "lights")
-        {
-            const bool lights_enabled = request->hasParam("lights_enabled", true);
-            if (_controllers->sockets().lightsEnabled() != lights_enabled)
-            {
-                _controllers->sockets().setLightsEnabled(lights_enabled);
-                changed = true;
-            }
-        }
-        if (ctrl.length() == 0 || ctrl == "meteo")
-        {
-            const bool meteo_enabled = request->hasParam("meteo_enabled", true);
-            if (_controllers->meteo().controllerEnabled() != meteo_enabled)
-            {
-                _controllers->meteo().setControllerEnabled(meteo_enabled);
-                changed = true;
-            }
-        }
-        if (ctrl.length() == 0 || ctrl == "thermo")
-        {
-            const bool thermo_enabled = request->hasParam("thermo_enabled", true);
-            if (_controllers->thermo().controllerEnabled() != thermo_enabled)
-            {
-                _controllers->thermo().setControllerEnabled(thermo_enabled);
-                changed = true;
-            }
-        }
-        if (ctrl.length() == 0 || ctrl == "tanks")
-        {
-            const bool tanks_enabled = request->hasParam("tanks_enabled", true);
-            if (_controllers->tanks().controllerEnabled() != tanks_enabled)
-            {
-                _controllers->tanks().setControllerEnabled(tanks_enabled);
-                changed = true;
-            }
-        }
-        if (ctrl.length() == 0 || ctrl == "septic")
-        {
-            const bool septic_enabled = request->hasParam("septic_enabled", true);
-            if (_controllers->septic().controllerEnabled() != septic_enabled)
-            {
-                _controllers->septic().setControllerEnabled(septic_enabled);
-                changed = true;
-            }
-        }
-        if (ctrl.length() == 0 || ctrl == "ring")
-        {
-            const bool ring_enabled = request->hasParam("ring_enabled", true);
-            if (_controllers->ring().controllerEnabled() != ring_enabled)
-            {
-                _controllers->ring().setControllerEnabled(ring_enabled);
-                changed = true;
-            }
-        }
-        if (ctrl.length() == 0 || ctrl == "security")
-        {
-            const bool security_enabled = request->hasParam("security_enabled", true);
-            if (_controllers->security().controllerEnabled() != security_enabled)
-            {
-                _controllers->security().setControllerEnabled(security_enabled);
-                changed = true;
-            }
-        }
-        bool ok = true;
-        if (changed)
-        {
-            if (!_configs_manager)
-            {
-                ok = false;
-                _controllers_status = "Config manager missing";
-            }
-            else if (!_configs_manager->save())
-            {
-                ok = false;
-                _controllers_status = "Save failed";
-            }
-        }
-        if (ok)
-            _controllers_status = changed ? "Updated" : "No changes";
-        _sockets_status = _controllers_status;
-        _lights_status = _controllers_status;
-        _meteo_status = _controllers_status;
-        _thermo_status = _controllers_status;
-        _tanks_status = _controllers_status;
-        _septic_status = _controllers_status;
-        _ring_status = _controllers_status;
-        _security_status = _controllers_status;
-        sendRedirect_(request, "/controllers", set_cookie);
-    }
-
-    void handleSockets_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceSocketsHtml);
-        page.replace("%NAV%", navHtml_());
-        const uint8_t page_size = 8u;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = isStackSocketsView_(node_id);
-        if (stack_view)
-            requestStackSockets_(node_id);
-        const String page_str = paramValueAny_(request, "page");
-        uint8_t page_idx = 0;
-        if (page_str.length())
-        {
-            const int v = page_str.toInt();
-            if (v > 0)
-                page_idx = (uint8_t)(v - 1);
-        }
-        uint8_t max_pages = 1;
-        uint8_t start = 1;
-        uint8_t end = SocketController::kSocketCount;
-        if (!stack_view)
-        {
-            max_pages = (uint8_t)((SocketController::kSocketCount + page_size - 1) / page_size);
-            if (page_idx >= max_pages)
-                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
-            start = (uint8_t)(page_idx * page_size + 1);
-            end = (uint8_t)(start + page_size - 1);
-        }
-        else
-        {
-            page_idx = 0;
-        }
-        const size_t extra = 4096u + (size_t)page_size * 900u;
-        page.reserve(page.length() + extra);
-        page.replace("%SOCKETS%", stack_view ? listStackSocketsHtml_(node_id) : listSocketsHtml_(start, end));
-        page.replace("%SOCKETS_PAGE%", String((unsigned)(page_idx + 1)));
-        page.replace("%SOCKETS_PAGES%", String((unsigned)max_pages));
-        if (stack_view)
-        {
-            page.replace("%DINPUT_JSON%", "[]");
-            page.replace("%RELAY_JSON%", "[]");
-            page.replace("%DINPUT_USED_JSON%", "[]");
-            page.replace("%RELAY_USED_JSON%", "[]");
-            page.replace("%SOCKETS_STATUS%", stackSocketsStatusText_(node_id));
-            page.replace("%SOCKETS_PAGINATION_STYLE%", "style=\"display:none\"");
-            page.replace("%SOCKETS_SAVE_BTN%", "");
-            page.replace("%SOCKETS_UNIT%", "stack");
-            page.replace("%SOCKETS_NODE_ID%", String((unsigned long)node_id));
-        }
-        else
-        {
-            page.replace("%DINPUT_JSON%", socketPortOptionsJson_(PortIO::PinType::DInput));
-            page.replace("%RELAY_JSON%", socketPortOptionsJson_(PortIO::PinType::Relay));
-            page.replace("%DINPUT_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::DInput));
-            page.replace("%RELAY_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::Relay));
-            page.replace("%SOCKETS_STATUS%", _sockets_status);
-            page.replace("%SOCKETS_PAGINATION_STYLE%", "");
-            page.replace("%SOCKETS_SAVE_BTN%", "<button class=\"btn\" type=\"submit\">Сохранить</button>");
-            page.replace("%SOCKETS_UNIT%", "local");
-            page.replace("%SOCKETS_NODE_ID%", "0");
-        }
-        page.replace("%SOCKETS_DEVICE_SELECT%", socketsDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        sendHtmlRaw_(request, page, set_cookie);
-    }
-
-    void handleLights_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceLightsHtml);
-        const uint8_t page_size = 8u;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = isStackLightsView_(node_id);
-        if (stack_view)
-            requestStackLights_(node_id);
-        const String page_str = paramValueAny_(request, "page");
-        uint8_t page_idx = 0;
-        if (page_str.length())
-        {
-            const int v = page_str.toInt();
-            if (v > 0)
-                page_idx = (uint8_t)(v - 1);
-        }
-        uint8_t max_pages = 1;
-        uint8_t start = 1;
-        uint8_t end = SocketController::kLightCount;
-        if (!stack_view)
-        {
-            max_pages = (uint8_t)((SocketController::kLightCount + page_size - 1) / page_size);
-            if (page_idx >= max_pages)
-                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
-            start = (uint8_t)(page_idx * page_size + 1);
-            end = (uint8_t)(start + page_size - 1);
-        }
-        else
-        {
-            page_idx = 0;
-        }
-        const size_t extra = 4096u + (size_t)page_size * 900u;
-        page.reserve(page.length() + extra);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%LIGHTS%", stack_view ? listStackLightsHtml_(node_id) : listLightsHtml_(start, end));
-        page.replace("%LIGHTS_PAGE%", String((unsigned)(page_idx + 1)));
-        page.replace("%LIGHTS_PAGES%", String((unsigned)max_pages));
-        if (stack_view)
-        {
-            page.replace("%DINPUT_JSON%", "[]");
-            page.replace("%RELAY_JSON%", "[]");
-            page.replace("%DINPUT_USED_JSON%", "[]");
-            page.replace("%RELAY_USED_JSON%", "[]");
-            page.replace("%LIGHTS_STATUS%", stackLightsStatusText_(node_id));
-            page.replace("%LIGHTS_PAGINATION_STYLE%", "style=\"display:none\"");
-            page.replace("%LIGHTS_SAVE_BTN%", "");
-            page.replace("%LIGHTS_UNIT%", "stack");
-            page.replace("%LIGHTS_NODE_ID%", String((unsigned long)node_id));
-        }
-        else
-        {
-            page.replace("%DINPUT_JSON%", socketPortOptionsJson_(PortIO::PinType::DInput));
-            page.replace("%RELAY_JSON%", socketPortOptionsJson_(PortIO::PinType::Relay));
-            page.replace("%DINPUT_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::DInput));
-            page.replace("%RELAY_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::Relay));
-            page.replace("%LIGHTS_STATUS%", _lights_status);
-            page.replace("%LIGHTS_PAGINATION_STYLE%", "");
-            page.replace("%LIGHTS_SAVE_BTN%", "<button class=\"btn\" type=\"submit\">Сохранить</button>");
-            page.replace("%LIGHTS_UNIT%", "local");
-            page.replace("%LIGHTS_NODE_ID%", "0");
-        }
-        page.replace("%LIGHTS_DEVICE_SELECT%", lightsDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleMeteo_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = isStackMeteoView_(node_id);
-        if (stack_view)
-            requestStackMeteo_(node_id);
-        String page = FPSTR(kWebInterfaceMeteoHtml);
-        page.reserve(page.length() + 16384);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%METEO_TILES%", stack_view ? listStackMeteoHtml_(node_id) : listMeteoHtml_());
-        page.replace("%METEO_STATUS%", stack_view ? stackMeteoStatusText_(node_id) : _meteo_status);
-        page.replace("%SENSOR_JSON%", stack_view ? "[]" : meteoPortOptionsJson_());
-        page.replace("%SENSOR_USED_JSON%", stack_view ? "[]" : meteoUsedPinsJson_());
-        page.replace("%METEO_DEVICE_SELECT%", meteoDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%METEO_SAVE_BTN%", stack_view ? "" : "<button class=\"btn\" type=\"submit\">Сохранить</button>");
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleThermo_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = isStackThermoView_(node_id);
-        if (stack_view)
-        {
-            requestStackThermo_(node_id);
-            requestStackMeteo_(node_id);
-        }
-        String page = FPSTR(kWebInterfaceThermoHtml);
-        page.reserve(page.length() + 16384);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%THERMO_ROWS%", stack_view ? listStackThermoHtml_(node_id) : listThermoHtml_());
-        page.replace("%THERMO_STATUS%", stack_view ? stackThermoStatusText_(node_id) : _thermo_status);
-        page.replace("%THERMO_DINPUT_JSON%", stack_view ? "[]" : thermoPortOptionsJson_(PortIO::PinType::DInput));
-        page.replace("%THERMO_RELAY_JSON%", stack_view ? "[]" : thermoPortOptionsJson_(PortIO::PinType::Relay));
-        page.replace("%THERMO_DINPUT_USED_JSON%", stack_view ? "[]" : thermoUsedPortsJson_(PortIO::PinType::DInput));
-        page.replace("%THERMO_RELAY_USED_JSON%", stack_view ? "[]" : thermoUsedPortsJson_(PortIO::PinType::Relay));
-        page.replace("%THERMO_DEVICE_SELECT%", thermoDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%THERMO_SAVE_BTN%", stack_view ? "" : "<button type=\"submit\">Сохранить</button>");
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleTelegram_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceTelegramHtml);
-        page.reserve(page.length() + 4096);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%TGBOT_TOKEN%", _tgbot ? _tgbot->token() : String(""));
-        page.replace("%TGBOT_CHAT_ID%", _tgbot ? String((long long)_tgbot->chatId()) : String("0"));
-        page.replace("%TGBOT_LAST_CHAT_ID%", _tgbot ? String((long long)_tgbot->lastIncomingChatId()) : String("0"));
-        page.replace("%TGBOT_INSECURE_CHECKED%", _tgbot && _tgbot->insecure() ? "checked" : "");
-        page.replace("%TGBOT_CLIENT%", _tgbot ? _tgbot->clientKindName() : "none");
-        page.replace("%TGBOT_USE_PROXY_CHECKED%", _tgbot && _tgbot->useProxy() ? "checked" : "");
-        page.replace("%TGBOT_PROXY_HOST%", _tgbot ? _tgbot->proxyHost() : String(""));
-        page.replace("%TGBOT_PROXY_PORT%", _tgbot ? String((unsigned)_tgbot->proxyPort()) : String("0"));
-        page.replace("%TGBOT_PROXY_PATH%", _tgbot ? _tgbot->proxyPath() : String(""));
-        page.replace("%TGBOT_ALLOWED_USERS_ROWS%", allowedUsersRowsHtml_());
-        page.replace("%TGBOT_STATUS%", _tgbot_status);
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleSocketsSave_(AsyncWebServerRequest *request, const char *redirect)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        if (isStackSocketsView_(node_id))
-        {
-            _sockets_status = "Доступно только на локальном устройстве";
-            sendRedirect_(request, redirect ? redirect : "/sockets", set_cookie);
-            return;
-        }
-        if (!_controllers)
-        {
-            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
-            return;
-        }
-        SocketController &sockets = _controllers->sockets();
-        bool ok = true;
-        bool changed = false;
-        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
-        {
-            const auto *cfg = sockets.configByIndex(i);
-            if (!cfg)
-                continue;
-            const String idx = String((unsigned)cfg->id);
-            const String prefix = String("s") + idx + "_";
-            const String en_key = prefix + "en";
-            const String name_key = prefix + "name";
-            const String btn_key = prefix + "btn";
-            const String relay_key = prefix + "relay";
-            const String action_key = prefix + "action";
-            const bool has_any = request->hasParam(en_key, true) ||
-                                 request->hasParam(name_key, true) ||
-                                 request->hasParam(btn_key, true) ||
-                                 request->hasParam(relay_key, true) ||
-                                 request->hasParam(action_key, true);
-            if (!has_any)
-                continue;
-            const bool enabled = request->hasParam(en_key, true);
-            String name = paramValue_(request, name_key);
-            String btn = paramValue_(request, btn_key);
-            String relay = paramValue_(request, relay_key);
-            String action = paramValue_(request, action_key);
-            name.trim();
-            uint8_t btn_port = SocketController::kInvalidPort;
-            uint8_t relay_port = SocketController::kInvalidPort;
-            if (!parseSocketPort_(btn, btn_port) || !parseSocketPort_(relay, relay_port))
-            {
-                ok = false;
-                _sockets_status = String("Invalid port for socket ") + idx;
-                break;
-            }
-            if (cfg->name != name)
-                sockets.setName(cfg->id, name);
-            if (cfg->button_port != btn_port)
-                sockets.setButtonPort(cfg->id, btn_port);
-            if (cfg->relay_port != relay_port)
-                sockets.setRelayPort(cfg->id, relay_port);
-            if (cfg->enabled != enabled)
-                sockets.setEnabled(cfg->id, enabled);
-            if (action.length())
-            {
-                String act = action;
-                act.toLowerCase();
-                if (act == "on")
-                {
-                    sockets.setRelay(cfg->id, true);
-                    changed = true;
-                }
-                else if (act == "off")
-                {
-                    sockets.setRelay(cfg->id, false);
-                    changed = true;
-                }
-                else if (act == "toggle")
-                {
-                    sockets.toggleRelay(cfg->id);
-                    changed = true;
-                }
-            }
-        }
-        if (ok)
-        {
-            if (!_configs_manager)
-            {
-                ok = false;
-                _sockets_status = "Config manager missing";
-            }
-            else if (!_configs_manager->save())
-            {
-                ok = false;
-                _sockets_status = "Save failed";
-            }
-        }
-        if (ok)
-            _sockets_status = changed ? "Updated" : "Saved";
-        sendRedirect_(request, redirect ? redirect : "/sockets", set_cookie);
-    }
-
-    void handleLightsSave_(AsyncWebServerRequest *request, const char *redirect)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        if (isStackLightsView_(node_id))
-        {
-            _lights_status = "Доступно только на локальном устройстве";
-            sendRedirect_(request, redirect ? redirect : "/lights", set_cookie);
-            return;
-        }
-        if (!_controllers)
-        {
-            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
-            return;
-        }
-        SocketController &sockets = _controllers->sockets();
-        bool ok = true;
-        bool changed = false;
-        for (size_t i = 0; i < SocketController::kLightCount; ++i)
-        {
-            const auto *cfg = sockets.lightConfigByIndex(i);
-            if (!cfg)
-                continue;
-            const String idx = String((unsigned)cfg->id);
-            const String prefix = String("s") + idx + "_";
-            const String en_key = prefix + "en";
-            const String name_key = prefix + "name";
-            const String btn_key = prefix + "btn";
-            const String relay_key = prefix + "relay";
-            const String action_key = prefix + "action";
-            const bool has_any = request->hasParam(en_key, true) ||
-                                 request->hasParam(name_key, true) ||
-                                 request->hasParam(btn_key, true) ||
-                                 request->hasParam(relay_key, true) ||
-                                 request->hasParam(action_key, true);
-            if (!has_any)
-                continue;
-            const bool enabled = request->hasParam(en_key, true);
-            String name = paramValue_(request, name_key);
-            String btn = paramValue_(request, btn_key);
-            String relay = paramValue_(request, relay_key);
-            String action = paramValue_(request, action_key);
-            name.trim();
-            uint8_t btn_port = SocketController::kInvalidPort;
-            uint8_t relay_port = SocketController::kInvalidPort;
-            if (!parseSocketPort_(btn, btn_port) || !parseSocketPort_(relay, relay_port))
-            {
-                ok = false;
-                _lights_status = String("Invalid port for light ") + idx;
-                break;
-            }
-            if (cfg->name != name)
-                sockets.setLightName(cfg->id, name);
-            if (cfg->button_port != btn_port)
-                sockets.setLightButtonPort(cfg->id, btn_port);
-            if (cfg->relay_port != relay_port)
-                sockets.setLightRelayPort(cfg->id, relay_port);
-            if (cfg->enabled != enabled)
-                sockets.setLightEnabled(cfg->id, enabled);
-            if (action.length())
-            {
-                String act = action;
-                act.toLowerCase();
-                if (act == "on")
-                {
-                    sockets.setLightRelay(cfg->id, true);
-                    changed = true;
-                }
-                else if (act == "off")
-                {
-                    sockets.setLightRelay(cfg->id, false);
-                    changed = true;
-                }
-                else if (act == "toggle")
-                {
-                    sockets.toggleLightRelay(cfg->id);
-                    changed = true;
-                }
-            }
-        }
-        if (ok)
-        {
-            if (!_configs_manager)
-            {
-                ok = false;
-                _lights_status = "Config manager missing";
-            }
-            else if (!_configs_manager->save())
-            {
-                ok = false;
-                _lights_status = "Save failed";
-            }
-        }
-        if (ok)
-            _lights_status = changed ? "Updated" : "Saved";
-        sendRedirect_(request, redirect ? redirect : "/lights", set_cookie);
-    }
-
-    void handleSocketsToggle_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuthApi_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        if (isStackSocketsView_(node_id))
-        {
-            handleStackSocketsToggle_(request, node_id, set_cookie);
-            return;
-        }
-        if (!_controllers)
-        {
-            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
-            return;
-        }
-        const String id_str = paramValueAny_(request, "id");
-        if (!id_str.length())
-        {
-            String dbg = String("{\"ok\":false,\"err\":\"missing id\"");
-            dbg += ",\"id\":\"\"";
-            dbg += ",\"enabled\":\"\"";
-            dbg += "}";
-            sendText_(request, 400, "application/json", dbg, set_cookie);
-            return;
-        }
-        const uint16_t id = (uint16_t)id_str.toInt();
-        SocketController &sockets = _controllers->sockets();
-        if (id == 0 || !sockets.config(id))
-        {
-            sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
-            return;
-        }
-        String action = paramValueAny_(request, "action");
-        action.trim();
-        action.toLowerCase();
-        bool ok = false;
-        bool state = false;
-        if (action == "state")
-        {
-            ok = sockets.relayStateById(id, state);
-        }
-        else if (action.length() == 0 || action == "toggle")
-        {
-            ok = sockets.toggleRelayById(id);
-            if (ok)
-                ok = sockets.relayStateById(id, state);
-        }
-        else if (action == "on")
-        {
-            ok = sockets.setRelayById(id, true);
-            if (ok)
-                ok = sockets.relayStateById(id, state);
-        }
-        else if (action == "off")
-        {
-            ok = sockets.setRelayById(id, false);
-            if (ok)
-                ok = sockets.relayStateById(id, state);
-        }
-        if (!ok)
-        {
-            sendText_(request, 400, "text/plain", "Toggle failed", set_cookie);
-            return;
-        }
-        sendText_(request, 200, "text/plain", state ? "on" : "off", set_cookie);
-    }
-
-    void handleSocketsEnable_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuthApi_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        if (isStackSocketsView_(node_id))
-        {
-            sendText_(request, 400, "text/plain", "Read-only", set_cookie);
-            return;
-        }
-        if (!_controllers)
-        {
-            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
-            return;
-        }
-        const String id_str = paramValueAny_(request, "id");
-        if (!id_str.length())
-        {
-            sendText_(request, 400, "text/plain", "Missing id", set_cookie);
-            return;
-        }
-        const uint16_t id = (uint16_t)id_str.toInt();
-        SocketController &sockets = _controllers->sockets();
-        if (id == 0 || !sockets.config(id))
-        {
-            String dbg = String("{\"ok\":false,\"err\":\"invalid id\"");
-            dbg += ",\"id\":\"" + id_str + "\"";
-            dbg += ",\"enabled\":\"\"";
-            dbg += "}";
-            sendText_(request, 400, "application/json", dbg, set_cookie);
-            return;
-        }
-        const String enabled_str = paramValueAny_(request, "enabled");
-        const bool enable = enabled_str == "1" || enabled_str == "true" || enabled_str == "on";
-        if (!sockets.setEnabled(id, enable))
-        {
-            String dbg = String("{\"ok\":false,\"err\":\"enable failed\"");
-            dbg += ",\"id\":\"" + id_str + "\"";
-            dbg += ",\"enabled\":\"" + enabled_str + "\"";
-            dbg += ",\"parsed\":" + String(enable ? "true" : "false");
-            dbg += "}";
-            sendText_(request, 400, "application/json", dbg, set_cookie);
-            return;
-        }
-        if (!_configs_manager)
-        {
-            _sockets_status = "Config manager missing";
-        }
-        else if (!_configs_manager->save())
-        {
-            _sockets_status = "Save failed";
-        }
-        String dbg = String("{\"ok\":true");
-        dbg += ",\"id\":\"" + id_str + "\"";
-        dbg += ",\"enabled\":\"" + enabled_str + "\"";
-        dbg += ",\"parsed\":" + String(enable ? "true" : "false");
-        dbg += ",\"result\":\"" + String(enable ? "1" : "0") + "\"";
-        dbg += "}";
-        sendText_(request, 200, "application/json", dbg, set_cookie);
-    }
-
-    void handleLightsToggle_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuthApi_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        if (isStackLightsView_(node_id))
-        {
-            handleStackLightsToggle_(request, node_id, set_cookie);
-            return;
-        }
-        if (!_controllers)
-        {
-            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
-            return;
-        }
-        const String id_str = paramValueAny_(request, "id");
-        if (!id_str.length())
-        {
-            String dbg = String("{\"ok\":false,\"err\":\"missing id\"");
-            dbg += ",\"id\":\"\"";
-            dbg += ",\"enabled\":\"\"";
-            dbg += "}";
-            sendText_(request, 400, "application/json", dbg, set_cookie);
-            return;
-        }
-        const uint16_t id = (uint16_t)id_str.toInt();
-        SocketController &sockets = _controllers->sockets();
-        if (id == 0 || !sockets.lightConfig(id))
-        {
-            sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
-            return;
-        }
-        String action = paramValueAny_(request, "action");
-        action.trim();
-        action.toLowerCase();
-        bool ok = false;
-        bool state = false;
-        if (action == "state")
-        {
-            ok = sockets.lightRelayStateById(id, state);
-        }
-        else if (action.length() == 0 || action == "toggle")
-        {
-            ok = sockets.toggleLightRelayById(id);
-            if (ok)
-                ok = sockets.lightRelayStateById(id, state);
-        }
-        else if (action == "on")
-        {
-            ok = sockets.setLightRelayById(id, true);
-            if (ok)
-                ok = sockets.lightRelayStateById(id, state);
-        }
-        else if (action == "off")
-        {
-            ok = sockets.setLightRelayById(id, false);
-            if (ok)
-                ok = sockets.lightRelayStateById(id, state);
-        }
-        if (!ok)
-        {
-            sendText_(request, 400, "text/plain", "Toggle failed", set_cookie);
-            return;
-        }
-        sendText_(request, 200, "text/plain", state ? "on" : "off", set_cookie);
-    }
-
-    void handleLightsEnable_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuthApi_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        if (isStackLightsView_(node_id))
-        {
-            sendText_(request, 400, "text/plain", "Read-only", set_cookie);
-            return;
-        }
-        if (!_controllers)
-        {
-            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
-            return;
-        }
-        const String id_str = paramValueAny_(request, "id");
-        if (!id_str.length())
-        {
-            sendText_(request, 400, "text/plain", "Missing id", set_cookie);
-            return;
-        }
-        const uint16_t id = (uint16_t)id_str.toInt();
-        SocketController &sockets = _controllers->sockets();
-        if (id == 0 || !sockets.lightConfig(id))
-        {
-            String dbg = String("{\"ok\":false,\"err\":\"invalid id\"");
-            dbg += ",\"id\":\"" + id_str + "\"";
-            dbg += ",\"enabled\":\"\"";
-            dbg += "}";
-            sendText_(request, 400, "application/json", dbg, set_cookie);
-            return;
-        }
-        const String enabled_str = paramValueAny_(request, "enabled");
-        const bool enable = enabled_str == "1" || enabled_str == "true" || enabled_str == "on";
-        if (!sockets.setLightEnabled(id, enable))
-        {
-            String dbg = String("{\"ok\":false,\"err\":\"enable failed\"");
-            dbg += ",\"id\":\"" + id_str + "\"";
-            dbg += ",\"enabled\":\"" + enabled_str + "\"";
-            dbg += ",\"parsed\":" + String(enable ? "true" : "false");
-            dbg += "}";
-            sendText_(request, 400, "application/json", dbg, set_cookie);
-            return;
-        }
-        if (!_configs_manager)
-        {
-            _lights_status = "Config manager missing";
-        }
-        else if (!_configs_manager->save())
-        {
-            _lights_status = "Save failed";
-        }
-        String dbg = String("{\"ok\":true");
-        dbg += ",\"id\":\"" + id_str + "\"";
-        dbg += ",\"enabled\":\"" + enabled_str + "\"";
-        dbg += ",\"parsed\":" + String(enable ? "true" : "false");
-        dbg += ",\"result\":\"" + String(enable ? "1" : "0") + "\"";
-        dbg += "}";
-        sendText_(request, 200, "application/json", dbg, set_cookie);
-    }
-
-    void handleMeteoSave_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        if (isStackMeteoView_(node_id))
-        {
-            _meteo_status = "Доступно только на локальном устройстве";
-            sendRedirect_(request, "/meteo", set_cookie);
-            return;
-        }
-        if (!_controllers)
-        {
-            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
-            return;
-        }
-        MeteoController &meteo = _controllers->meteo();
-        bool ok = true;
-        bool changed = false;
-        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
-        {
-            const auto *cfg = meteo.configByIndex(i);
-            if (!cfg)
-                continue;
-            const String idx = String((unsigned)cfg->id);
-            const String prefix = String("m") + idx + "_";
-            const String en_key = prefix + "en";
-            const String name_key = prefix + "name";
-            const String type_key = prefix + "type";
-            const String pin_key = prefix + "pin";
-            const String addr_key = prefix + "addr";
-            const bool has_any = request->hasParam(en_key, true) ||
-                                 request->hasParam(name_key, true) ||
-                                 request->hasParam(type_key, true) ||
-                                 request->hasParam(pin_key, true) ||
-                                 request->hasParam(addr_key, true);
-            if (!has_any)
-                continue;
-
-            const bool enabled = request->hasParam(en_key, true);
-            String name = paramValue_(request, name_key);
-            name.trim();
-            const String type_str = paramValue_(request, type_key);
-            const String pin_str = paramValue_(request, pin_key);
-            const String addr_str = paramValue_(request, addr_key);
-
-            MeteoController::SensorType type = MeteoController::SensorType::None;
-            if (!parseMeteoType_(type_str, type))
-            {
-                ok = false;
-                _meteo_status = String("Invalid type for sensor ") + idx;
-                break;
-            }
-
-            uint8_t pin = MeteoController::kInvalidPin;
-            if (!parseMeteoPin_(pin_str, pin))
-            {
-                ok = false;
-                _meteo_status = String("Invalid pin for sensor ") + idx;
-                break;
-            }
-
-            uint8_t addr[MeteoController::kAddrLen] = {};
-            bool addr_set = false;
-            if (!parseMeteoAddr_(addr_str, addr, addr_set))
-            {
-                ok = false;
-                _meteo_status = String("Invalid addr for sensor ") + idx;
-                break;
-            }
-
-            if (cfg->enabled != enabled)
-            {
-                meteo.setEnabled(cfg->id, enabled);
-                changed = true;
-            }
-            if (cfg->name != name)
-            {
-                meteo.setName(cfg->id, name);
-                changed = true;
-            }
-            if (cfg->type != type)
-            {
-                meteo.setType(cfg->id, type);
-                changed = true;
-            }
-            if (type == MeteoController::SensorType::Dht22)
-            {
-                if (cfg->dht_pin != pin)
-                {
-                    meteo.setDht22Pin(cfg->id, pin);
-                    changed = true;
-                }
-            }
-            else if (type == MeteoController::SensorType::Ds18b20)
-            {
-                const bool addr_equal = (cfg->ds18_addr_set == addr_set) &&
-                                        (!addr_set || (memcmp(cfg->ds18_addr, addr, MeteoController::kAddrLen) == 0));
-                if (!addr_equal)
-                {
-                    meteo.setDs18b20Addr(cfg->id, addr, addr_set);
-                    changed = true;
-                }
-            }
-        }
-
-        if (ok)
-        {
-            if (!_configs_manager)
-            {
-                ok = false;
-                _meteo_status = "Config manager missing";
-            }
-            else if (changed && !_configs_manager->save())
-            {
-                ok = false;
-                _meteo_status = "Save failed";
-            }
-        }
-        if (ok)
-            _meteo_status = changed ? "Updated" : "Saved";
-        sendRedirect_(request, "/meteo", set_cookie);
-    }
-
-    void handleThermoSave_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        if (isStackThermoView_(node_id))
-        {
-            _thermo_status = "Доступно только на локальном устройстве";
-            sendRedirect_(request, "/thermo", set_cookie);
-            return;
-        }
-        if (!_controllers)
-        {
-            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
-            return;
-        }
-        ThermoController &thermo = _controllers->thermo();
-        uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
-        bool ok = true;
-        bool changed = false;
-        bool power_changed = false;
-        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
-        {
-            const auto *cfg = thermo.configByIndex(i);
-            if (!cfg)
-                continue;
-            const String idx = String((unsigned)cfg->id);
-            const String prefix = String("t") + idx + "_";
-            const String en_key = prefix + "en";
-            const String name_key = prefix + "name";
-            const String sensor_key = prefix + "sensor";
-            const String mode_key = prefix + "mode";
-            const String target_key = prefix + "target";
-            const String hyst_key = prefix + "hyst";
-            const String heat_key = prefix + "heat";
-            const String cool_key = prefix + "cool";
-            const String button_key = prefix + "button";
-            const String power_key = prefix + "power";
-            const String en_force_key = prefix + "en_force";
-            const bool has_any = request->hasParam(en_key, true) ||
-                                 request->hasParam(name_key, true) ||
-                                 request->hasParam(sensor_key, true) ||
-                                 request->hasParam(mode_key, true) ||
-                                 request->hasParam(target_key, true) ||
-                                 request->hasParam(hyst_key, true) ||
-                                 request->hasParam(heat_key, true) ||
-                                 request->hasParam(cool_key, true) ||
-                                 request->hasParam(button_key, true) ||
-                                 request->hasParam(power_key, true);
-            if (!has_any)
-                continue;
-
-            const String en_force_str = paramValue_(request, en_force_key);
-            const bool en_force_known = (en_force_str == "1" || en_force_str == "0" ||
-                                         en_force_str == "true" || en_force_str == "false" ||
-                                         en_force_str == "on" || en_force_str == "off");
-            const bool en_force_on = (en_force_str == "1" || en_force_str == "true" || en_force_str == "on");
-            const bool enabled = en_force_known ? en_force_on : request->hasParam(en_key, true);
-            const String sensor_str = paramValue_(request, sensor_key);
-            const String mode_str = paramValue_(request, mode_key);
-            const String target_str = paramValue_(request, target_key);
-            const String hyst_str = paramValue_(request, hyst_key);
-            const String heat_str = paramValue_(request, heat_key);
-            const String cool_str = paramValue_(request, cool_key);
-            const String button_str = paramValue_(request, button_key);
-            const String power_str = paramValue_(request, power_key);
-            String name = paramValue_(request, name_key);
-            name.trim();
-            const bool has_power = (power_str == "on" || power_str == "off" || power_str == "1" || power_str == "0" ||
-                                    power_str == "true" || power_str == "false");
-            const bool power_on = (power_str == "on" || power_str == "1" || power_str == "true");
-
-            uint8_t sensor_id = ThermoController::kInvalidSensor;
-            if (!parseThermoSensor_(sensor_str, sensor_id))
-            {
-                ok = false;
-                _thermo_status = String("Invalid sensor for device ") + idx;
-                break;
-            }
-            if (enabled && sensor_id != ThermoController::kInvalidSensor)
-            {
-                if (!isMeteoSensorActive_(sensor_id))
-                {
-                    ok = false;
-                    _thermo_status = String("Датчик не активен (") + idx + ")";
-                    break;
-                }
-                if (sensor_id <= MeteoController::kSensorCount && sensor_used[sensor_id])
-                {
-                    ok = false;
-                    _thermo_status = String("Датчик уже используется (") + idx + ")";
-                    break;
-                }
-                if (sensor_id <= MeteoController::kSensorCount)
-                    sensor_used[sensor_id] = 1;
-            }
-
-            ThermoController::Mode mode = ThermoController::Mode::Off;
-            if (!parseThermoMode_(mode_str, mode))
-            {
-                ok = false;
-                _thermo_status = String("Invalid mode for device ") + idx;
-                break;
-            }
-
-            float target = cfg->target_c;
-            if (!parseThermoFloat_(target_str, target))
-            {
-                ok = false;
-                _thermo_status = String("Invalid target for device ") + idx;
-                break;
-            }
-
-            float hyst = cfg->hysteresis;
-            if (!parseThermoFloat_(hyst_str, hyst))
-            {
-                ok = false;
-                _thermo_status = String("Invalid hyst for device ") + idx;
-                break;
-            }
-
-            uint8_t heat_port = ThermoController::kInvalidPort;
-            uint8_t cool_port = ThermoController::kInvalidPort;
-            uint8_t button_port = ThermoController::kInvalidPort;
-            if (!parseSocketPort_(heat_str, heat_port) ||
-                !parseSocketPort_(cool_str, cool_port) ||
-                !parseSocketPort_(button_str, button_port))
-            {
-                ok = false;
-                _thermo_status = String("Invalid port for device ") + idx;
-                break;
-            }
-
-            if (cfg->enabled != enabled)
-            {
-                thermo.setEnabled(cfg->id, enabled);
-                changed = true;
-            }
-            if (cfg->name != name)
-            {
-                thermo.setName(cfg->id, name);
-                changed = true;
-            }
-            if (cfg->sensor_id != sensor_id)
-            {
-                thermo.setSensor(cfg->id, sensor_id);
-                changed = true;
-            }
-            if (cfg->mode != mode)
-            {
-                thermo.setMode(cfg->id, mode);
-                changed = true;
-            }
-            if (cfg->target_c != target)
-            {
-                thermo.setTarget(cfg->id, target);
-                changed = true;
-            }
-            if (cfg->hysteresis != hyst)
-            {
-                thermo.setHysteresis(cfg->id, hyst);
-                changed = true;
-            }
-            if (cfg->heat_port != heat_port)
-            {
-                thermo.setHeatPort(cfg->id, heat_port);
-                changed = true;
-            }
-            if (cfg->cool_port != cool_port)
-            {
-                thermo.setCoolPort(cfg->id, cool_port);
-                changed = true;
-            }
-            if (cfg->button_port != button_port)
-            {
-                thermo.setButtonPort(cfg->id, button_port);
-                changed = true;
-            }
-            if (has_power)
-            {
-                const auto *st = thermo.state(cfg->id);
-                const bool cur_power = st ? st->power_on : true;
-                if (cur_power != power_on)
-                {
-                    thermo.setPower(cfg->id, power_on, "web");
-                    power_changed = true;
-                }
-            }
-        }
-
-        if (ok)
-        {
-            if (!_configs_manager)
-            {
-                ok = false;
-                _thermo_status = "Config manager missing";
-            }
-            else if (changed && !_configs_manager->save())
-            {
-                ok = false;
-                _thermo_status = "Save failed";
-            }
-        }
-        if (ok)
-            _thermo_status = (changed || power_changed) ? "Updated" : "Saved";
-        sendRedirect_(request, "/thermo", set_cookie);
-    }
-
-    void handleTanks_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = isStackTanksView_(node_id);
-        if (stack_view)
-            requestStackTanks_(node_id);
-        String page = FPSTR(kWebInterfaceTanksHtml);
-        page.reserve(page.length() + 16384);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%TANK_STATUS%", stack_view ? stackTanksStatusText_(node_id) : _tanks_status);
-        page.replace("%TANK_ITEMS%", stack_view ? listStackTanksHtml_(node_id) : listTanksHtml_());
-        page.replace("%TANK_DINPUT_JSON%", stack_view ? "[]" : tankPortOptionsJson_(PortIO::PinType::DInput));
-        page.replace("%TANK_RELAY_JSON%", stack_view ? "[]" : tankPortOptionsJson_(PortIO::PinType::Relay));
-        page.replace("%TANK_DINPUT_USED_JSON%", stack_view ? "[]" : tankUsedPortsJson_(PortIO::PinType::DInput));
-        page.replace("%TANK_RELAY_USED_JSON%", stack_view ? "[]" : tankUsedPortsJson_(PortIO::PinType::Relay));
-        page.replace("%TANK_DEVICE_SELECT%", tanksDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%TANK_SAVE_BTN%", stack_view ? "" : "<button type=\"submit\">Сохранить</button>");
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleTanksSave_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        if (isStackTanksView_(node_id))
-        {
-            _tanks_status = "Доступно только на локальном устройстве";
-            sendRedirect_(request, "/tanks", set_cookie);
-            return;
-        }
-        if (!_controllers)
-        {
-            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
-            return;
-        }
-        TankController &tanks = _controllers->tanks();
-        bool ok = true;
-        bool changed = false;
-        for (size_t i = 0; i < TankController::kTankCount; ++i)
-        {
-            const auto *cfg = tanks.configByIndex(i);
-            if (!cfg)
-                continue;
-            const String idx = String((unsigned)cfg->id);
-            const String prefix = String("k") + idx + "_";
-            const String en_key = prefix + "en";
-            const String power_key = prefix + "power";
-            const String name_key = prefix + "name";
-            const String low_key = prefix + "low";
-            const String mid_key = prefix + "mid";
-            const String full_key = prefix + "full";
-            const String valve_key = prefix + "valve";
-            const String pump_key = prefix + "pump";
-            const String alarm_key = prefix + "alarm";
-            const bool has_any = request->hasParam(en_key, true) ||
-                                 request->hasParam(power_key, true) ||
-                                 request->hasParam(name_key, true) ||
-                                 request->hasParam(low_key, true) ||
-                                 request->hasParam(mid_key, true) ||
-                                 request->hasParam(full_key, true) ||
-                                 request->hasParam(valve_key, true) ||
-                                 request->hasParam(pump_key, true) ||
-                                 request->hasParam(alarm_key, true);
-            if (!has_any)
-                continue;
-
-            const bool enabled = request->hasParam(en_key, true);
-            const String power_str = paramValue_(request, power_key);
-            const bool power_on = (power_str == "on" || power_str == "1" || power_str == "true");
-            String name = paramValue_(request, name_key);
-            name.trim();
-            const String low_str = paramValue_(request, low_key);
-            const String mid_str = paramValue_(request, mid_key);
-            const String full_str = paramValue_(request, full_key);
-            const String valve_str = paramValue_(request, valve_key);
-            const String pump_str = paramValue_(request, pump_key);
-            const String alarm_str = paramValue_(request, alarm_key);
-
-            uint8_t low_port = TankController::kInvalidPort;
-            uint8_t mid_port = TankController::kInvalidPort;
-            uint8_t full_port = TankController::kInvalidPort;
-            uint8_t valve_port = TankController::kInvalidPort;
-            uint8_t pump_port = TankController::kInvalidPort;
-            uint8_t alarm_port = TankController::kInvalidPort;
-            if (!parseSocketPort_(low_str, low_port) ||
-                !parseSocketPort_(mid_str, mid_port) ||
-                !parseSocketPort_(full_str, full_port) ||
-                !parseSocketPort_(valve_str, valve_port) ||
-                !parseSocketPort_(pump_str, pump_port) ||
-                !parseSocketPort_(alarm_str, alarm_port))
-            {
-                ok = false;
-                _tanks_status = String("Неверный порт для бака ") + idx;
-                break;
-            }
-
-            if (cfg->enabled != enabled)
-            {
-                tanks.setEnabled(cfg->id, enabled);
-                changed = true;
-            }
-            if (cfg->power_on != power_on)
-            {
-                tanks.setPower(cfg->id, power_on);
-                changed = true;
-            }
-            if (cfg->name != name)
-            {
-                tanks.setName(cfg->id, name);
-                changed = true;
-            }
-            if (cfg->level_low != low_port)
-            {
-                tanks.setLevelLow(cfg->id, low_port);
-                changed = true;
-            }
-            if (cfg->level_mid != mid_port)
-            {
-                tanks.setLevelMid(cfg->id, mid_port);
-                changed = true;
-            }
-            if (cfg->level_full != full_port)
-            {
-                tanks.setLevelFull(cfg->id, full_port);
-                changed = true;
-            }
-            if (cfg->relay_valve != valve_port)
-            {
-                tanks.setValveRelay(cfg->id, valve_port);
-                changed = true;
-            }
-            if (cfg->relay_pump != pump_port)
-            {
-                tanks.setPumpRelay(cfg->id, pump_port);
-                changed = true;
-            }
-            if (cfg->relay_alarm != alarm_port)
-            {
-                tanks.setAlarmRelay(cfg->id, alarm_port);
-                changed = true;
-            }
-        }
-
-        if (ok)
-        {
-            if (changed)
-            {
-                if (!_configs_manager)
-                {
-                    ok = false;
-                    _tanks_status = "Менеджер конфигурации недоступен";
-                }
-                else if (!_configs_manager->save())
-                {
-                    ok = false;
-                    _tanks_status = "Сохранение не удалось";
-                }
-            }
-        }
-        if (ok)
-            _tanks_status = changed ? "Обновлено" : "Сохранено";
-        sendRedirect_(request, "/tanks", set_cookie);
-    }
-
-    void handleSeptic_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = isStackSepticView_(node_id);
-        if (stack_view)
-            requestStackSeptic_(node_id);
-        String page = FPSTR(kWebInterfaceSepticHtml);
-        page.reserve(page.length() + 4096);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        page.replace("%SEPTIC_STATUS%", stack_view ? stackSepticStatusText_(node_id) : _septic_status);
-        page.replace("%SEPTIC_DEVICE_SELECT%", septicDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%SEPTIC_SAVE_BTN%", stack_view ? "" : "<button type=\"submit\">Сохранить</button>");
-        if (!_controllers)
-        {
-            page.replace("%SEPTIC_ITEMS%", stack_view ? listStackSepticHtml_(node_id) : "");
-            page.replace("%SEPTIC_DINPUT_JSON%", "[]");
-            page.replace("%SEPTIC_RELAY_JSON%", "[]");
-            page.replace("%SEPTIC_DINPUT_USED_JSON%", "[]");
-            page.replace("%SEPTIC_RELAY_USED_JSON%", "[]");
-            page.replace("%SEPTIC_WARN_CLASS%", "status-off");
-            page.replace("%SEPTIC_ALARM_CLASS%", "status-off");
-            page.replace("%SEPTIC_RELAY_WARN_CLASS%", "status-off");
-            page.replace("%SEPTIC_RELAY_ALARM_CLASS%", "status-off");
-            page.replace("%SEPTIC_WARN_LABEL%", "off");
-            page.replace("%SEPTIC_ALARM_LABEL%", "off");
-            page.replace("%SEPTIC_RELAY_WARN_LABEL%", "off");
-            page.replace("%SEPTIC_RELAY_ALARM_LABEL%", "off");
-            page.replace("%SEPTIC_WATER_CLASS%", "water-low");
-            page.replace("%SEPTIC_WATER_LEVEL%", "20%");
-            page.replace("%SEPTIC_WATER_LABEL%", "Уровень: 20%");
-            sendHtml_(request, page, set_cookie);
-            return;
-        }
-        page.replace("%SEPTIC_ITEMS%", stack_view ? listStackSepticHtml_(node_id) : listSepticHtml_());
-        page.replace("%SEPTIC_DINPUT_JSON%", stack_view ? "[]" : septicPortOptionsJson_(PortIO::PinType::DInput));
-        page.replace("%SEPTIC_RELAY_JSON%", stack_view ? "[]" : septicPortOptionsJson_(PortIO::PinType::Relay));
-        page.replace("%SEPTIC_DINPUT_USED_JSON%", stack_view ? "[]" : septicUsedPortsJson_(PortIO::PinType::DInput));
-        page.replace("%SEPTIC_RELAY_USED_JSON%", stack_view ? "[]" : septicUsedPortsJson_(PortIO::PinType::Relay));
-        if (!stack_view)
-        {
-            SepticController &septic = _controllers->septic();
-            const auto *cfg = septic.configByIndex(0);
-            const auto *st = septic.stateByIndex(0);
-            const bool warn = st ? st->warning : false;
-            const bool alarm = st ? st->alarm : false;
-            const bool relay_warn = st ? st->relay_warning : false;
-            const bool relay_alarm = st ? st->relay_alarm : false;
-            const char *water_class = "water-low";
-            const char *water_level = "20%";
-            const char *water_label = "Уровень: 20%";
-            if (alarm)
-            {
-                water_class = "water-alarm";
-                water_level = "100%";
-                water_label = "Уровень: 100%";
-            }
-            else if (warn)
-            {
-                water_class = "water-warn";
-                water_level = "80%";
-                water_label = "Уровень: 80%";
-            }
-            page.replace("%SEPTIC_WARN_CLASS%", warn ? "status-on" : "status-off");
-            page.replace("%SEPTIC_ALARM_CLASS%", alarm ? "status-on" : "status-off");
-            page.replace("%SEPTIC_RELAY_WARN_CLASS%", relay_warn ? "status-on" : "status-off");
-            page.replace("%SEPTIC_RELAY_ALARM_CLASS%", relay_alarm ? "status-on" : "status-off");
-            page.replace("%SEPTIC_WARN_LABEL%", warn ? "on" : "off");
-            page.replace("%SEPTIC_ALARM_LABEL%", alarm ? "on" : "off");
-            page.replace("%SEPTIC_RELAY_WARN_LABEL%", relay_warn ? "on" : "off");
-            page.replace("%SEPTIC_RELAY_ALARM_LABEL%", relay_alarm ? "on" : "off");
-            page.replace("%SEPTIC_WATER_CLASS%", water_class);
-            page.replace("%SEPTIC_WATER_LEVEL%", water_level);
-            page.replace("%SEPTIC_WATER_LABEL%", water_label);
-            if (!cfg || !cfg->enabled)
-                page.replace("%SEPTIC_STATUS%", "Септик выключен");
-        }
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleRing_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = isStackRingView_(node_id);
-        String page = FPSTR(kWebInterfaceRingHtml);
-        page.reserve(page.length() + 1024);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%RING_DEVICE_SELECT%", ringDeviceSelectHtml_(node_id, stack_view));
-        if (!_controllers)
-        {
-            page.replace("%RING_STATUS%", "Контроллеры недоступны");
-            page.replace("%RING_ENABLED_CHECKED%", "");
-            page.replace("%RING_ENABLED_LABEL%", "");
-            page.replace("%RING_BUTTON_SELECTED%", "");
-            page.replace("%RING_RELAY_SELECTED%", "");
-            page.replace("%RING_DINPUT_JSON%", "[]");
-            page.replace("%RING_RELAY_JSON%", "[]");
-            page.replace("%RING_DINPUT_USED_JSON%", "[]");
-            page.replace("%RING_RELAY_USED_JSON%", "[]");
-            page.replace("%RING_FORM_DISABLED%", "disabled");
-            page.replace("%RING_SAVE_DISABLED%", "disabled");
-            sendHtml_(request, page, set_cookie);
-            return;
-        }
-        const RingController &ring = _controllers->ring();
-        const auto &cfg = ring.config();
-        const String status = stack_view ? String("Стек: управление слейвом") : _ring_status;
-        page.replace("%RING_STATUS%", status);
-        if (stack_view)
-        {
-            page.replace("%RING_ENABLED_CHECKED%", "");
-            page.replace("%RING_ENABLED_LABEL%", "");
-            page.replace("%RING_BUTTON_SELECTED%", "");
-            page.replace("%RING_RELAY_SELECTED%", "");
-            page.replace("%RING_DINPUT_JSON%", "[]");
-            page.replace("%RING_RELAY_JSON%", "[]");
-            page.replace("%RING_DINPUT_USED_JSON%", "[]");
-            page.replace("%RING_RELAY_USED_JSON%", "[]");
-            page.replace("%RING_FORM_DISABLED%", "disabled");
-            page.replace("%RING_SAVE_DISABLED%", "disabled");
-        }
-        else
-        {
-            page.replace("%RING_ENABLED_CHECKED%", "");
-            page.replace("%RING_ENABLED_LABEL%", "");
-            page.replace("%RING_BUTTON_SELECTED%", cfg.button_port != RingController::kInvalidPort ? String(cfg.button_port) : String());
-            page.replace("%RING_RELAY_SELECTED%", cfg.relay_port != RingController::kInvalidPort ? String(cfg.relay_port) : String());
-            page.replace("%RING_DINPUT_JSON%", socketPortOptionsJson_(PortIO::PinType::DInput));
-            page.replace("%RING_RELAY_JSON%", socketPortOptionsJson_(PortIO::PinType::Relay));
-            page.replace("%RING_DINPUT_USED_JSON%", ringUsedPortsJson_(PortIO::PinType::DInput));
-            page.replace("%RING_RELAY_USED_JSON%", ringUsedPortsJson_(PortIO::PinType::Relay));
-            page.replace("%RING_FORM_DISABLED%", "");
-            page.replace("%RING_SAVE_DISABLED%", "");
-        }
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleRingSave_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        if (!request->hasParam("ring_save", true))
-        {
-            sendRedirect_(request, "/ring", set_cookie);
-            return;
-        }
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = isStackRingView_(node_id);
-        if (stack_view)
-        {
-            _ring_status = "Настройки доступны только локально";
-            const String path = String("/ring?node=") + String((unsigned long)node_id) + "&unit=stack";
-            sendRedirect_(request, path.c_str(), set_cookie);
-            return;
-        }
-        if (!_controllers)
-        {
-            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
-            return;
-        }
-        RingController &ring = _controllers->ring();
-        bool changed = false;
-        if (request->hasParam("ring_enabled", true))
-        {
-            const String enabled_str = request->getParam("ring_enabled", true)->value();
-            const bool enabled = enabled_str.length() == 0 || enabled_str == "1" || enabled_str == "true" || enabled_str == "on";
-            if (ring.controllerEnabled() != enabled)
-            {
-                ring.setControllerEnabled(enabled);
-                changed = true;
-            }
-        }
-        const String button_str = paramValue_(request, "ring_button");
-        const String relay_str = paramValue_(request, "ring_relay");
-        uint8_t button_port = RingController::kInvalidPort;
-        uint8_t relay_port = RingController::kInvalidPort;
-        if (!parseSocketPort_(button_str, button_port))
-        {
-            _ring_status = "Неверный порт кнопки";
-            sendRedirect_(request, "/ring", set_cookie);
-            return;
-        }
-        if (!parseSocketPort_(relay_str, relay_port))
-        {
-            _ring_status = "Неверный порт реле";
-            sendRedirect_(request, "/ring", set_cookie);
-            return;
-        }
-        if (ring.setButtonPort(button_port))
-            changed = true;
-        if (ring.setRelayPort(relay_port))
-            changed = true;
-        bool ok = true;
-        if (changed)
-        {
-            if (!_configs_manager)
-            {
-                ok = false;
-                _ring_status = "Config manager missing";
-            }
-            else if (!_configs_manager->save())
-            {
-                ok = false;
-                _ring_status = "Save failed";
-            }
-        }
-        if (ok)
-            _ring_status = changed ? "Сохранено" : "Нет изменений";
-        sendRedirect_(request, "/ring", set_cookie);
-    }
-
-    void handleRingTrigger_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = isStackRingView_(node_id);
-        if (!_controllers)
-        {
-            if (request->hasParam("state", true))
-            {
-                sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
-                return;
-            }
-            _ring_status = "Контроллеры недоступны";
-            sendRedirect_(request, "/ring", set_cookie);
-            return;
-        }
-        if (stack_view)
-        {
-            const bool has_state = request->hasParam("state", true);
-            if (has_state)
-            {
-                const String state = request->getParam("state", true)->value();
-                const bool on = state == "1" || state == "true" || state == "on";
-                bool ok = true;
-                if (!sendStackRingCmdAll_(true, on))
-                    ok = false;
-                if (ok && on)
-                    notifyRingPress_(true, node_id);
-                sendText_(request, ok ? 200 : 400, "text/plain", ok ? (on ? "on" : "off") : "Failed", set_cookie);
-                return;
-            }
-            sendText_(request, 400, "text/plain", "Missing state", set_cookie);
-            return;
-        }
-        RingController &ring = _controllers->ring();
-        const auto &cfg = ring.config();
-        const bool has_state = request->hasParam("state", true);
-        if (has_state)
-        {
-            const String state = request->getParam("state", true)->value();
-            const bool on = state == "1" || state == "true" || state == "on";
-            if (!cfg.enabled)
-            {
-                sendText_(request, 400, "text/plain", "Ring disabled", set_cookie);
-                return;
-            }
-            if (cfg.relay_port == RingController::kInvalidPort)
-            {
-                sendText_(request, 400, "text/plain", "Relay missing", set_cookie);
-                return;
-            }
-            if (!ring.setHoldRelayWithSource(on, RingController::Source::Web))
-            {
-                sendText_(request, 400, "text/plain", "Failed", set_cookie);
-                return;
-            }
-            sendText_(request, 200, "text/plain", on ? "on" : "off", set_cookie);
-            return;
-        }
-        sendText_(request, 400, "text/plain", "Missing state", set_cookie);
-    }
-
-    void handleSecurity_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceSecurityHtml);
-        const uint8_t page_size = 8u;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        const bool stack_view = isStackSecurityView_(node_id);
-        if (stack_view)
-            requestStackSecurity_(node_id);
-        const String page_str = paramValueAny_(request, "page");
-        uint8_t page_idx = 0;
-        if (page_str.length())
-        {
-            const int v = page_str.toInt();
-            if (v > 0)
-                page_idx = (uint8_t)(v - 1);
-        }
-        uint8_t max_pages = 1;
-        uint8_t start = 0;
-        uint8_t end = SecurityController::kSensorCount;
-        if (!stack_view)
-        {
-            max_pages = (uint8_t)((SecurityController::kSensorCount + page_size - 1) / page_size);
-            if (page_idx >= max_pages)
-                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
-            start = (uint8_t)(page_idx * page_size);
-            end = (uint8_t)(start + page_size - 1);
-        }
-        else
-        {
-            page_idx = 0;
-        }
-        page.reserve(page.length() + 16384);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        if (!_controllers)
-        {
-            page.replace("%SECURITY_ENABLED_CHECKED%", "");
-            page.replace("%SECURITY_ENABLED_LABEL%", "недоступно");
-            page.replace("%SECURITY_ARMED_LABEL%", "недоступно");
-            page.replace("%SECURITY_ARMED_CHECKED%", "");
-            page.replace("%SECURITY_ALARM_LABEL%", "недоступно");
-            page.replace("%SECURITY_GSM_LABEL%", gsmStatusLabel_());
-            page.replace("%SECURITY_SIREN%", "");
-            page.replace("%SECURITY_KEYS_ROWS%", "");
-            page.replace("%SECURITY_PHONES_ROWS%", "");
-            page.replace("%SECURITY_SENSORS%", "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>");
-            page.replace("%SECURITY_SENSORS_PAGE%", "1");
-            page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)(max_pages ? max_pages : 1)));
-            page.replace("%SECURITY_SENSOR_JSON%", "[]");
-            page.replace("%SECURITY_SENSOR_USED_JSON%", "[]");
-            page.replace("%SECURITY_SIREN_JSON%", "[]");
-            page.replace("%SECURITY_SIREN_USED_JSON%", "[]");
-            page.replace("%SECURITY_STATUS%", _security_status);
-            page.replace("%SECURITY_SENSORS_TITLE%", "Датчики");
-            page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", "");
-            page.replace("%SECURITY_SAVE_BTN%", "");
-            page.replace("%SECURITY_DEVICE_SELECT%", "");
-            sendHtml_(request, page, set_cookie);
-            return;
-        }
-
-        SecurityController &sec = _controllers->security();
-        page.replace("%SECURITY_ENABLED_CHECKED%", sec.controllerEnabled() ? "checked" : "");
-        page.replace("%SECURITY_ENABLED_LABEL%", sec.controllerEnabled() ? "включено" : "выключено");
-        page.replace("%SECURITY_ARMED_LABEL%", sec.armed() ? "под охраной" : "снято");
-        page.replace("%SECURITY_ARMED_CHECKED%", sec.armed() ? "checked" : "");
-        page.replace("%SECURITY_ALARM_LABEL%", sec.alarmOn() ? "on" : "off");
-        page.replace("%SECURITY_GSM_LABEL%", gsmStatusLabel_());
-        if (sec.sirenPort() != SecurityController::kInvalidPort)
-            page.replace("%SECURITY_SIREN%", String((unsigned)sec.sirenPort()));
-        else
-            page.replace("%SECURITY_SIREN%", "");
-        page.replace("%SECURITY_KEYS_ROWS%", listSecurityKeysHtml_());
-        page.replace("%SECURITY_PHONES_ROWS%", listSecurityPhonesHtml_());
-        page.replace("%SECURITY_SENSORS%",
-                     stack_view ? listStackSecuritySensorsTiles_(node_id) : listSecuritySensorsTiles_(start, end));
-        page.replace("%SECURITY_SENSORS_PAGE%", String((unsigned)(page_idx + 1)));
-        page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)max_pages));
-        page.replace("%SECURITY_SENSOR_JSON%", securityPortOptionsJson_());
-        page.replace("%SECURITY_SENSOR_USED_JSON%", securityUsedPinsJson_());
-        page.replace("%SECURITY_SIREN_JSON%", socketPortOptionsJson_(PortIO::PinType::Relay));
-        page.replace("%SECURITY_SIREN_USED_JSON%", socketUsedPortsJson_(PortIO::PinType::Relay));
-        page.replace("%SECURITY_STATUS%", stack_view ? stackSecurityStatusText_(node_id) : _security_status);
-        page.replace("%SECURITY_SENSORS_TITLE%", stack_view ? stackSecurityTitle_(node_id) : String("Датчики"));
-        page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", stack_view ? "style=\"display:none\"" : "");
-        page.replace("%SECURITY_SAVE_BTN%", stack_view ? "" : "<button class=\"primary\" name=\"action\" value=\"save\">Сохранить</button>");
-        page.replace("%SECURITY_DEVICE_SELECT%", securityDeviceSelectHtml_(node_id, stack_view));
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleSepticSave_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        if (isStackSepticView_(node_id))
-        {
-            _septic_status = "Доступно только на локальном устройстве";
-            sendRedirect_(request, "/septic", set_cookie);
-            return;
-        }
-        if (!_controllers)
-        {
-            sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
-            return;
-        }
-        SepticController &septic = _controllers->septic();
-        bool ok = true;
-        bool changed = false;
-        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
-        {
-            const auto *cfg = septic.configByIndex(i);
-            if (!cfg)
-                continue;
-            const String idx = String((unsigned)cfg->id);
-            const String prefix = String("sep") + idx + "_";
-            const String en_key = prefix + "en";
-            const String name_key = prefix + "name";
-            const String warn_key = prefix + "warn";
-            const String alarm_key = prefix + "alarm";
-            const String relay_warn_key = prefix + "relay_warn";
-            const String relay_alarm_key = prefix + "relay_alarm";
-            const String monitor_key = prefix + "mon";
-            const bool has_any = request->hasParam(en_key, true) ||
-                                 request->hasParam(name_key, true) ||
-                                 request->hasParam(warn_key, true) ||
-                                 request->hasParam(alarm_key, true) ||
-                                 request->hasParam(relay_warn_key, true) ||
-                                 request->hasParam(relay_alarm_key, true) ||
-                                 request->hasParam(monitor_key, true);
-            if (!has_any)
-                continue;
-            const bool enabled = request->hasParam(en_key, true);
-            const String monitor_val = paramValue_(request, monitor_key);
-            const bool monitoring = monitor_val == "on" || monitor_val == "1" || monitor_val == "true";
-            String name = paramValue_(request, name_key);
-            String warn = paramValue_(request, warn_key);
-            String alarm = paramValue_(request, alarm_key);
-            String relay_warn = paramValue_(request, relay_warn_key);
-            String relay_alarm = paramValue_(request, relay_alarm_key);
-            name.trim();
-            uint8_t warn_port = SepticController::kInvalidPort;
-            uint8_t alarm_port = SepticController::kInvalidPort;
-            uint8_t relay_warn_port = SepticController::kInvalidPort;
-            uint8_t relay_alarm_port = SepticController::kInvalidPort;
-            if (!parseSocketPort_(warn, warn_port) ||
-                !parseSocketPort_(alarm, alarm_port) ||
-                !parseSocketPort_(relay_warn, relay_warn_port) ||
-                !parseSocketPort_(relay_alarm, relay_alarm_port))
-            {
-                ok = false;
-                _septic_status = String("Invalid port for septic ") + idx;
-                break;
-            }
-            if (cfg->name != name)
-                septic.setName(cfg->id, name);
-            if (cfg->warning_port != warn_port)
-                septic.setWarningPort(cfg->id, warn_port);
-            if (cfg->alarm_port != alarm_port)
-                septic.setAlarmPort(cfg->id, alarm_port);
-            if (cfg->relay_warning != relay_warn_port)
-                septic.setWarningRelay(cfg->id, relay_warn_port);
-            if (cfg->relay_alarm != relay_alarm_port)
-                septic.setAlarmRelay(cfg->id, relay_alarm_port);
-            if (cfg->enabled != enabled)
-                septic.setEnabled(cfg->id, enabled);
-            if (cfg->monitoring_on != monitoring)
-                septic.setMonitoring(cfg->id, monitoring);
-            changed = true;
-        }
-        if (ok)
-        {
-            if (!_configs_manager)
-            {
-                ok = false;
-                _septic_status = "Config manager missing";
-            }
-            else if (changed && !_configs_manager->save())
-            {
-                ok = false;
-                _septic_status = "Save failed";
-            }
-        }
-        if (ok)
-            _septic_status = changed ? "Updated" : "Saved";
-        sendRedirect_(request, "/septic", set_cookie);
-    }
-
-    void handleSecuritySave_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        const uint32_t node_id = parseStackNodeIdParam_(request);
-        if (isStackSecurityView_(node_id))
-        {
-            _security_status = "Доступно только на локальном устройстве";
-            sendRedirect_(request, "/security", set_cookie);
-            return;
-        }
-        if (!_controllers)
-        {
-            _security_status = "Security unavailable";
-            sendRedirect_(request, "/security", set_cookie);
-            return;
-        }
-        SecurityController &sec = _controllers->security();
-        const String action = paramValue_(request, "action");
-        if (action == "arm")
-        {
-            if (sec.armFrom("web", "admin"))
-                _security_status = "Armed";
-            else
-                _security_status = "Security disabled";
-            sendRedirect_(request, "/security", set_cookie);
-            return;
-        }
-        if (action == "disarm")
-        {
-            sec.disarmFrom("web", "admin");
-            _security_status = "Disarmed";
-            sendRedirect_(request, "/security", set_cookie);
-            return;
-        }
-        if (action == "clear")
-        {
-            sec.clearDetect();
-            _security_status = "Detections cleared";
-            sendRedirect_(request, "/security", set_cookie);
-            return;
-        }
-
-        bool changed = false;
-        if (request->hasParam("security_enabled", true))
-        {
-            const bool enabled = request->hasParam("security_enabled", true);
-            if (sec.controllerEnabled() != enabled)
-            {
-                sec.setControllerEnabled(enabled);
-                changed = true;
-            }
-        }
-
-        String siren_str = paramValue_(request, "security_siren");
-        siren_str.trim();
-        if (siren_str.length() > 0)
-        {
-            uint8_t siren_port = sec.sirenPort();
-            bool set_siren = false;
-            if (siren_str == "none")
-            {
-                siren_port = SecurityController::kInvalidPort;
-                set_siren = true;
-            }
-            else
-            {
-                const int v = siren_str.toInt();
-                if (v >= 0 && v <= 255)
-                {
-                    siren_port = (uint8_t)v;
-                    set_siren = true;
-                }
-            }
-            if (set_siren && sec.sirenPort() != siren_port)
-            {
-                sec.setSirenPort(siren_port);
-                changed = true;
-            }
-        }
-
-
-        uint8_t new_keys[SecurityController::kKeyCount][8] = {};
-        bool new_set[SecurityController::kKeyCount] = {};
-        String new_key_names[SecurityController::kKeyCount];
-        for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
-        {
-            const String idx = String((unsigned)(i + 1));
-            const String en_key = String("k") + idx + "_en";
-            const String serial_key = String("k") + idx + "_serial";
-            const String name_key = String("k") + idx + "_name";
-            const bool enabled = request->hasParam(en_key, true);
-            String serial = paramValue_(request, serial_key);
-            serial.trim();
-            String name = paramValue_(request, name_key);
-            name.trim();
-            if (!enabled)
-            {
-                new_key_names[i] = name;
-                continue;
-            }
-            if (!parseSecurityKeyHex_(serial, new_keys[i]))
-            {
-                _security_status = String("Invalid key ") + idx;
-                sendRedirect_(request, "/security", set_cookie);
-                return;
-            }
-            new_set[i] = true;
-            new_key_names[i] = name;
-        }
-
-        bool keys_changed = false;
-        for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
-        {
-            uint8_t old_addr[8] = {};
-            bool old_enabled = false;
-            sec.keySlot(i, old_addr, old_enabled);
-            if (old_enabled != new_set[i])
-            {
-                keys_changed = true;
-                break;
-            }
-            if (old_enabled && memcmp(old_addr, new_keys[i], 8) != 0)
-            {
-                keys_changed = true;
-                break;
-            }
-            if (sec.keyNameByIndex(i) != new_key_names[i])
-            {
-                keys_changed = true;
-                break;
-            }
-        }
-        if (keys_changed)
-        {
-            for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
-                sec.setKeySlot(i, new_keys[i], new_set[i], new_key_names[i]);
-            changed = true;
-        }
-
-        auto normalizePhone = [](const String &number) -> String {
-            String out;
-            out.reserve(number.length());
-            for (size_t i = 0; i < number.length(); ++i)
-            {
-                const char c = number.charAt(i);
-                if (c >= '0' && c <= '9')
-                    out += c;
-            }
-            return out;
-        };
-        for (size_t i = 0; i < SecurityController::kPhoneCount; ++i)
-        {
-            const String idx = String((unsigned)(i + 1));
-            const String en_key = String("p") + idx + "_en";
-            const String num_key = String("p") + idx + "_num";
-            const String name_key = String("p") + idx + "_name";
-            const String notify_key = String("p") + idx + "_notify";
-            const String call_key = String("p") + idx + "_call";
-            const bool enabled = request->hasParam(en_key, true);
-            const bool notify = request->hasParam(notify_key, true);
-            const bool call = request->hasParam(call_key, true);
-            String number = paramValue_(request, num_key);
-            number.trim();
-            String name = paramValue_(request, name_key);
-            name.trim();
-            String norm = enabled ? normalizePhone(number) : String();
-            if (enabled && norm.length() == 0)
-            {
-                _security_status = String("Invalid phone ") + idx;
-                sendRedirect_(request, "/security", set_cookie);
-                return;
-            }
-            String old_number;
-            bool old_enabled = false;
-            sec.phoneSlot(i, old_number, old_enabled);
-            if (old_enabled != enabled || old_number != norm ||
-                sec.phoneNameByIndex(i) != name || sec.phoneNotifyByIndex(i) != notify ||
-                sec.phoneCallByIndex(i) != call)
-            {
-                sec.setPhone(i, norm);
-                sec.setPhoneEnabled(i, enabled);
-                sec.setPhoneName(i, name);
-                sec.setPhoneNotify(i, notify);
-                sec.setPhoneCall(i, call);
-                changed = true;
-            }
-        }
-
-        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
-        {
-            const auto *cfg = sec.configByIndex(i);
-            if (!cfg)
-                continue;
-            const String idx = String((unsigned)cfg->id);
-            const String prefix = String("sec") + idx + "_";
-            const String en_key = prefix + "en";
-            const String name_key = prefix + "name";
-            const String type_key = prefix + "type";
-            const String port_key = prefix + "port";
-            const String silent_key = prefix + "silent";
-            const bool has_any = request->hasParam(en_key, true) ||
-                                 request->hasParam(name_key, true) ||
-                                 request->hasParam(type_key, true) ||
-                                 request->hasParam(port_key, true) ||
-                                 request->hasParam(silent_key, true);
-            if (!has_any)
-                continue;
-            const bool enabled = request->hasParam(en_key, true);
-            const bool silent = request->hasParam(silent_key, true);
-            String name = paramValue_(request, name_key);
-            name.trim();
-            SecurityController::SensorType type = SecurityController::SensorType::Pir;
-            if (!parseSecurityType_(paramValue_(request, type_key), type))
-            {
-                _security_status = String("Invalid type for sensor ") + idx;
-                sendRedirect_(request, "/security", set_cookie);
-                return;
-            }
-            uint8_t port = SecurityController::kInvalidPort;
-            if (!parseSocketPort_(paramValue_(request, port_key), port))
-            {
-                _security_status = String("Invalid port for sensor ") + idx;
-                sendRedirect_(request, "/security", set_cookie);
-                return;
-            }
-            if (cfg->enabled != enabled)
-            {
-                sec.setEnabled(cfg->id, enabled);
-                changed = true;
-            }
-            if (cfg->name != name)
-            {
-                sec.setName(cfg->id, name);
-                changed = true;
-            }
-            if (cfg->type != type)
-            {
-                sec.setType(cfg->id, type);
-                changed = true;
-            }
-            if (cfg->port != port)
-            {
-                sec.setPort(cfg->id, port);
-                changed = true;
-            }
-            if (cfg->silent != silent)
-            {
-                sec.setSilent(cfg->id, silent);
-                changed = true;
-            }
-        }
-
-        bool ok = true;
-        if (changed)
-        {
-            if (!_configs_manager)
-            {
-                ok = false;
-                _security_status = "Config manager missing";
-            }
-            else if (!_configs_manager->save())
-            {
-                ok = false;
-                _security_status = "Save failed";
-            }
-        }
-        if (ok)
-            _security_status = changed ? "Updated" : "No changes";
-        sendRedirect_(request, "/security", set_cookie);
-    }
-
-    void handleSecurityArm_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        if (!_controllers)
-        {
-            sendText_(request, 500, "text/plain", "0", set_cookie);
-            return;
-        }
-        SecurityController &sec = _controllers->security();
-        const String armed_str = paramValueAny_(request, "armed");
-        if (armed_str.length() == 0)
-        {
-            _security_status = "Bad request";
-            sendText_(request, 400, "text/plain", "err", set_cookie);
-            return;
-        }
-        const bool desired = (armed_str == "1" || armed_str == "true" || armed_str == "on");
-        bool ok = true;
-        if (sec.armed() != desired)
-        {
-            if (desired)
-            {
-                if (!sec.controllerEnabled())
-                    sec.setControllerEnabled(true);
-                ok = sec.armFrom("web", "admin");
-            }
-            else
-            {
-                sec.disarmFrom("web", "admin");
-                ok = true;
-            }
-        }
-        if (!ok)
-            _security_status = "Security disabled";
-        if (desired && !sec.armed())
-        {
-            _security_status = "Arm blocked";
-            sendText_(request, 200, "text/plain", "blocked", set_cookie);
-        }
-        else
-        {
-            sendText_(request, 200, "text/plain", sec.armed() ? "1" : "0", set_cookie);
-        }
-    }
-
-    void handleTelegramSave_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        bool changed = false;
-
-        if (_tgbot && request->hasParam("token", true))
-        {
-            String token = request->getParam("token", true)->value();
-            token.trim();
-            if (token != _tgbot->token())
-            {
-                _tgbot->setToken(token);
-                changed = true;
-            }
-        }
-        if (_tgbot && request->hasParam("chat_id", true))
-        {
-            String chat = request->getParam("chat_id", true)->value();
-            chat.trim();
-            if (chat.length() > 0)
-            {
-                int64_t chat_id = (int64_t)strtoll(chat.c_str(), nullptr, 10);
-                if (chat_id != _tgbot->chatId())
-                {
-                    _tgbot->setChatId(chat_id);
-                    changed = true;
-                }
-            }
-        }
-        if (_tgbot)
-        {
-            const bool insecure = request->hasParam("insecure", true);
-            if (insecure != _tgbot->insecure())
-            {
-                _tgbot->setInsecure(insecure);
-                changed = true;
-            }
-        }
-
-        if (_tgbot)
-        {
-            const bool use_proxy = request->hasParam("use_proxy", true);
-            String host = request->hasParam("proxy_host", true) ? request->getParam("proxy_host", true)->value() : "";
-            String port_str = request->hasParam("proxy_port", true) ? request->getParam("proxy_port", true)->value() : "0";
-            String path = request->hasParam("proxy_path", true) ? request->getParam("proxy_path", true)->value() : "";
-            host.trim();
-            path.trim();
-            const uint16_t port = (uint16_t)strtoul(port_str.c_str(), nullptr, 10);
-
-            if (use_proxy)
-            {
-                if (host != _tgbot->proxyHost() || port != _tgbot->proxyPort() || path != _tgbot->proxyPath() || !_tgbot->useProxy())
-                {
-                    _tgbot->setProxy(host, port, path);
-                    changed = true;
-                }
-            }
-            else if (_tgbot->useProxy())
-            {
-                _tgbot->clearProxy();
-                changed = true;
-            }
-        }
-
-        if (_tgbot_menu)
-        {
-            std::vector<TelegramMenu::AllowedUser> users;
-            String err;
-            if (!parseAllowedUsers_(request, users, err))
-            {
-                _tgbot_status = err.length() ? err : "Invalid allowed users";
-                sendRedirect_(request, "/telegram", set_cookie);
-                return;
-            }
-            _tgbot_menu->setAllowedUsers(users);
-            changed = true;
-        }
-
-        bool save_ok = true;
-        if (changed)
-            save_ok = saveWifiConfig_();
-
-        if (!changed)
-            _tgbot_status = "No changes";
-        else if (!save_ok)
-            _tgbot_status = "Save failed";
-        else
-            _tgbot_status = "Saved";
-
-        sendRedirect_(request, "/telegram", set_cookie);
-    }
-
-    void handleCloud_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceCloudHtml);
-        page.reserve(page.length() + 1536);
-        page.replace("%NAV%", navHtml_());
-        const bool connected = cloudConnected_();
-        page.replace("%CLOUD_CONNECTED_CLASS%", connected ? "ok" : "bad");
-        page.replace("%CLOUD_CONNECTED_TEXT%", connected ? "Подключен" : "Отключен");
-        page.replace("%CLOUD_ENABLED_CHECKED%", cloudEnabled_() ? "checked" : "");
-        page.replace("%CLOUD_HOST%", cloudHost_());
-        page.replace("%CLOUD_PORT%", cloudPort_() ? String(cloudPort_()) : String(""));
-        page.replace("%CLOUD_PATH%", cloudPath_());
-        page.replace("%CLOUD_SSL_CHECKED%", cloudUseSsl_() ? "checked" : "");
-        page.replace("%CLOUD_RECONNECT_MS%", String(cloudReconnectMs_()));
-        page.replace("%CLOUD_EVENT_MS%", String(cloudEventMs_()));
-        page.replace("%CLOUD_API_KEY%", cloudApiKey_());
-        page.replace("%CLOUD_FW_VERSION%", cloudFwVersion_());
-        page.replace("%CLOUD_DEVICE_ID%", String(cloudDeviceId_()));
-        page.replace("%CLOUD_STATUS%", _cloud_status);
-        sendHtml_(request, page, set_cookie);
-    }
-
-    void handleCloudSave_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        if (!_configs_manager)
-        {
-            _cloud_status = "Config manager missing";
-            sendRedirect_(request, "/cloud", set_cookie);
-            return;
-        }
-
-        bool changed = false;
-        const bool enabled = request->hasParam("cloud_enabled", true);
-        if (enabled != _configs_manager->cloudEnabled())
-        {
-            _configs_manager->setCloudEnabled(enabled);
-            changed = true;
-        }
-
-        String host = request->hasParam("host", true) ? request->getParam("host", true)->value() : String("");
-        host.trim();
-        if (host != _configs_manager->cloudHost())
-        {
-            _configs_manager->setCloudHost(host);
-            changed = true;
-        }
-
-        String port_str = request->hasParam("port", true) ? request->getParam("port", true)->value() : String("");
-        port_str.trim();
-        const uint16_t port = port_str.length() ? (uint16_t)strtoul(port_str.c_str(), nullptr, 10) : 0;
-        if (port != _configs_manager->cloudPort())
-        {
-            _configs_manager->setCloudPort(port);
-            changed = true;
-        }
-
-        String path = request->hasParam("path", true) ? request->getParam("path", true)->value() : String("");
-        path.trim();
-        if (path.length() == 0)
-            path = "/";
-        if (path != _configs_manager->cloudPath())
-        {
-            _configs_manager->setCloudPath(path);
-            changed = true;
-        }
-
-        const bool use_ssl = request->hasParam("ssl", true);
-        if (use_ssl != _configs_manager->cloudUseSsl())
-        {
-            _configs_manager->setCloudUseSsl(use_ssl);
-            changed = true;
-        }
-
-        String reconnect_str = request->hasParam("reconnect_ms", true)
-                                   ? request->getParam("reconnect_ms", true)->value()
-                                   : String("");
-        reconnect_str.trim();
-        const uint32_t reconnect_ms = reconnect_str.length()
-                                          ? (uint32_t)strtoul(reconnect_str.c_str(), nullptr, 10)
-                                          : _configs_manager->cloudReconnectMs();
-        if (reconnect_ms != _configs_manager->cloudReconnectMs())
-        {
-            _configs_manager->setCloudReconnectMs(reconnect_ms);
-            changed = true;
-        }
-
-        String event_str = request->hasParam("event_ms", true) ? request->getParam("event_ms", true)->value() : String("");
-        event_str.trim();
-        const uint32_t event_ms = event_str.length()
-                                      ? (uint32_t)strtoul(event_str.c_str(), nullptr, 10)
-                                      : _configs_manager->cloudEventIntervalMs();
-        if (event_ms != _configs_manager->cloudEventIntervalMs())
-        {
-            _configs_manager->setCloudEventIntervalMs(event_ms);
-            changed = true;
-        }
-
-        String api_key = request->hasParam("api_key", true) ? request->getParam("api_key", true)->value() : String("");
-        api_key.trim();
-        if (api_key != _configs_manager->cloudApiKey())
-        {
-            _configs_manager->setCloudApiKey(api_key);
-            changed = true;
-        }
-
-        bool save_ok = true;
-        if (changed)
-            save_ok = saveWifiConfig_();
-
-        if (!changed)
-            _cloud_status = "No changes";
-        else if (!save_ok)
-            _cloud_status = "Save failed";
-        else
-            _cloud_status = "Saved";
-
-        sendRedirect_(request, "/cloud", set_cookie);
     }
 
     String listFilesHtml_()
@@ -5905,6 +3198,177 @@ private:
         return items;
     }
 
+    String listSecurityRfidKeysHtml_()
+    {
+        if (!_controllers)
+            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
+        String items;
+        items.reserve(1400);
+        SecurityController &sec = _controllers->security();
+        String last_serial;
+        const bool has_last = sec.lastRfidSerial(last_serial);
+        auto appendRow = [&](size_t idx, bool enabled, const char *serial, const String &name) {
+            items += "<tr><td class=\"right\"><strong>";
+            items += String((unsigned)(idx + 1));
+            items += "</strong></td><td><input type=\"checkbox\" name=\"rk";
+            items += String((unsigned)(idx + 1));
+            items += "_en\"";
+            if (enabled)
+                items += " checked";
+            items += "></td><td><input class=\"field name\" type=\"text\" name=\"rk";
+            items += String((unsigned)(idx + 1));
+            items += "_name\" value=\"";
+            if (name.length())
+                appendHtmlEscaped_(items, name.c_str());
+            items += "\"></td><td><input class=\"field serial\" type=\"text\" name=\"rk";
+            items += String((unsigned)(idx + 1));
+            items += "_serial\" list=\"rk";
+            items += String((unsigned)(idx + 1));
+            items += "_serial_list\" value=\"";
+            if (enabled && serial)
+                appendHtmlEscaped_(items, serial);
+            items += "\">";
+            if (has_last)
+            {
+                items += "<datalist id=\"rk";
+                items += String((unsigned)(idx + 1));
+                items += "_serial_list\"><option value=\"";
+                appendHtmlEscaped_(items, last_serial.c_str());
+                items += "\"></option></datalist>";
+            }
+            items += "</td></tr>";
+        };
+
+        int first_disabled = -1;
+        for (size_t i = 0; i < SecurityController::kRfidKeyCount; ++i)
+        {
+            bool enabled = false;
+            uint8_t bytes[10] = {};
+            uint8_t len = 0;
+            sec.rfidKeySlot(i, bytes, len, enabled);
+            if (enabled)
+            {
+                const String serial = SecurityController::rfidSerialToString(bytes, len);
+                appendRow(i, true, serial.c_str(), sec.rfidKeyNameByIndex(i));
+            }
+            else if (first_disabled < 0)
+            {
+                first_disabled = (int)i;
+            }
+        }
+        if (first_disabled >= 0)
+            appendRow((size_t)first_disabled, false, nullptr, "");
+        if (items.length() == 0)
+            items = "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Ключи отсутствуют</strong></td></tr>";
+        return items;
+    }
+
+    String listClientsTilesHtml_(uint8_t page_idx, uint8_t &out_pages)
+    {
+        const uint8_t page_size = 6;
+        const uint8_t total = 2;
+        out_pages = (uint8_t)((total + page_size - 1) / page_size);
+        if (out_pages == 0)
+            out_pages = 1;
+        if (page_idx >= out_pages)
+            page_idx = (uint8_t)(out_pages - 1);
+
+        String items;
+        items.reserve(512);
+        const uint8_t start = (uint8_t)(page_idx * page_size);
+        const uint8_t end = (uint8_t)(start + page_size);
+        if (start >= total)
+        {
+            items = "<div class=\"tile\"><strong>Клиенты отсутствуют</strong></div>";
+            return items;
+        }
+
+        if (start <= 0 && 0 < end)
+        {
+            const bool enabled = _configs_manager ? _configs_manager->rfidEnabled() : false;
+            const bool active = enabled && (stackRole_() == ConfigsManagerIface::StackRole::Slave);
+            items += "<div class=\"tile\"><form method=\"POST\" action=\"/clients\" id=\"rfid-form\">";
+            items += "<input type=\"hidden\" name=\"client\" value=\"rfid\">";
+            items += "<div class=\"tile-head\"><a href=\"/rfid\">RFID</a>";
+            items += "<label class=\"switch\"><input type=\"checkbox\" id=\"rfid-enabled\" name=\"rfid_enabled\"";
+            if (enabled)
+                items += " checked";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div></form>";
+            items += "<span>Тонкий клиент: RFID reader</span>";
+            items += "<span class=\"status\">RFID: <strong>";
+            items += enabled ? "включен" : "выключен";
+            items += "</strong></span>";
+            items += "<span class=\"status\">Состояние: <strong>";
+            items += active ? "active" : "inactive";
+            items += "</strong></span></div>";
+        }
+        if (start <= 1 && 1 < end)
+        {
+            const bool enabled = _configs_manager ? _configs_manager->ringClientEnabled() : false;
+            const bool active = enabled && (stackRole_() == ConfigsManagerIface::StackRole::Slave);
+            items += "<div class=\"tile\"><form method=\"POST\" action=\"/clients\" id=\"ring-client-form\">";
+            items += "<input type=\"hidden\" name=\"client\" value=\"ring\">";
+            items += "<div class=\"tile-head\"><a href=\"/client/ring\">Ring</a>";
+            items += "<label class=\"switch\"><input type=\"checkbox\" id=\"ring-client-enabled\" name=\"ring_client_enabled\"";
+            if (enabled)
+                items += " checked";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div></form>";
+            items += "<span>Тонкий клиент: Ring button</span>";
+            items += "<span class=\"status\">Ring: <strong>";
+            items += enabled ? "включен" : "выключен";
+            items += "</strong></span>";
+            items += "<span class=\"status\">Состояние: <strong>";
+            items += active ? "active" : "inactive";
+            items += "</strong></span></div>";
+        }
+        return items;
+    }
+
+    String displaySlotsHtml_() const
+    {
+        String html;
+        html.reserve(2048);
+        const size_t count = _configs_manager ? _configs_manager->displaySlotCount() : 8;
+        const size_t total = (count > 0) ? count : 8;
+        for (size_t i = 0; i < total && i < 8; ++i)
+        {
+            DisplaySlotConfig slot{};
+            if (_configs_manager)
+                _configs_manager->displaySlot(i, slot);
+            const uint8_t row = (uint8_t)(i / 4);
+            const uint8_t col = (uint8_t)(i % 4);
+            const String idx = String((unsigned)i);
+            html += "<div class=\"slot display-slot\" data-kind=\"";
+            html += displaySlotKindName_(slot.kind);
+            html += "\" data-index=\"";
+            html += String((unsigned)slot.index);
+            html += "\" data-field=\"";
+            html += displaySlotFieldName_(slot.field);
+            html += "\">";
+            html += "<div class=\"slot-head\">L";
+            html += String((unsigned)(row + 1));
+            html += "-";
+            html += String((unsigned)(col + 1));
+            html += "</div>";
+            html += "<label>Источник</label><select class=\"field slot-kind\" name=\"ds";
+            html += idx;
+            html += "_kind\"></select>";
+            html += "<label>Объект</label><select class=\"field slot-index\" name=\"ds";
+            html += idx;
+            html += "_index\"></select>";
+            html += "<label>Параметр</label><select class=\"field slot-field\" name=\"ds";
+            html += idx;
+            html += "_field\"></select>";
+            html += "<label>Текст</label><input class=\"field slot-text\" type=\"text\" name=\"ds";
+            html += idx;
+            html += "_text\" maxlength=\"4\" value=\"";
+            if (slot.text[0])
+                appendHtmlEscaped_(html, slot.text);
+            html += "\"></div>";
+        }
+        return html;
+    }
+
     String listSecurityPhonesHtml_()
     {
         if (!_controllers)
@@ -6276,7 +3740,7 @@ private:
             const char *hum = "--";
             if (cfg.has_temp)
             {
-                dtostrf(cfg.temp_c, 0, 2, temp_buf);
+                dtostrf(cfg.temp_c, 0, 1, temp_buf);
                 temp = temp_buf;
             }
             if (cfg.has_hum)
@@ -6403,22 +3867,24 @@ private:
                 state_class = "status-cool";
             }
 
+            bool show_heat = true;
+            bool show_cool = true;
             String heat_class = "icon heat ";
             String cool_class = "icon cool ";
             if (cfg.mode == "off")
             {
-                heat_class += "inactive";
-                cool_class += "inactive";
+                show_heat = false;
+                show_cool = false;
             }
             else if (cfg.mode == "heat")
             {
-                heat_class += "active";
-                cool_class += "inactive";
+                show_cool = false;
+                heat_class += cfg.heat_on ? "active" : "inactive";
             }
             else if (cfg.mode == "cool")
             {
-                heat_class += "inactive";
-                cool_class += "active";
+                show_heat = false;
+                cool_class += cfg.cool_on ? "active" : "inactive";
             }
             else
             {
@@ -6466,11 +3932,20 @@ private:
             items += sensor_suffix;
             items += "</span></div><div class=\"temp-pill target\">Цель: <span class=\"temp-value\">";
             items += String(cfg.target, 1);
-            items += "°C</span></div><svg class=\"";
-            items += heat_class;
-            items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"22\" y=\"30\" width=\"76\" height=\"60\" rx=\"10\"/><line x1=\"36\" y1=\"40\" x2=\"36\" y2=\"80\"/><line x1=\"52\" y1=\"40\" x2=\"52\" y2=\"80\"/><line x1=\"68\" y1=\"40\" x2=\"68\" y2=\"80\"/><line x1=\"84\" y1=\"40\" x2=\"84\" y2=\"80\"/></svg><svg class=\"";
-            items += cool_class;
-            items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"18\" y=\"28\" width=\"84\" height=\"46\" rx=\"10\"/><line x1=\"28\" y1=\"44\" x2=\"92\" y2=\"44\"/><line x1=\"28\" y1=\"56\" x2=\"92\" y2=\"56\"/><line x1=\"40\" y1=\"78\" x2=\"34\" y2=\"92\"/><line x1=\"60\" y1=\"78\" x2=\"60\" y2=\"94\"/><line x1=\"80\" y1=\"78\" x2=\"86\" y2=\"92\"/></svg></div>";
+            items += "&deg;C</span></div>";
+            if (show_heat)
+            {
+                items += "<svg class=\"";
+                items += heat_class;
+                items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"22\" y=\"30\" width=\"76\" height=\"60\" rx=\"10\"/><line x1=\"36\" y1=\"40\" x2=\"36\" y2=\"80\"/><line x1=\"52\" y1=\"40\" x2=\"52\" y2=\"80\"/><line x1=\"68\" y1=\"40\" x2=\"68\" y2=\"80\"/><line x1=\"84\" y1=\"40\" x2=\"84\" y2=\"80\"/></svg>";
+            }
+            if (show_cool)
+            {
+                items += "<svg class=\"";
+                items += cool_class;
+                items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"18\" y=\"28\" width=\"84\" height=\"46\" rx=\"10\"/><line x1=\"28\" y1=\"44\" x2=\"92\" y2=\"44\"/><line x1=\"28\" y1=\"56\" x2=\"92\" y2=\"56\"/><line x1=\"40\" y1=\"78\" x2=\"34\" y2=\"92\"/><line x1=\"60\" y1=\"78\" x2=\"60\" y2=\"94\"/><line x1=\"80\" y1=\"78\" x2=\"86\" y2=\"92\"/></svg>";
+            }
+            items += "</div>";
             items += "<div class=\"status-line\"><span class=\"status-dot ";
             items += state_class;
             items += "\"></span><span><span class=\"status-value ";
@@ -6712,7 +4187,7 @@ private:
 
             if (st.has_temp)
             {
-                dtostrf(st.temp_c, 0, 2, temp_buf);
+                dtostrf(st.temp_c, 0, 1, temp_buf);
                 temp = temp_buf;
             }
             if (st.has_humidity)
@@ -6793,11 +4268,11 @@ private:
             items += "\">";
             items += "<div class=\"status-line\">";
             items += ok;
-            items += "<span>Возраст: ";
+            items += "<span>Давность: ";
             items += age;
             items += "</span></div>";
             items += "<div class=\"form-grid\">";
-            items += "<div class=\"form-row\"><label>Тип</label><select class=\"field mini meteo-type\" name=\"m";
+            items += "<div class=\"form-row\"><label>Тип</label><select class=\"field meteo-type\" name=\"m";
             items += String((unsigned)cfg.id);
             items += "_type\">";
             appendTypeOption("none", "none", cfg.type == MeteoController::SensorType::None);
@@ -6952,22 +4427,24 @@ private:
                 state_class = "status-cool";
             }
 
+            bool show_heat = true;
+            bool show_cool = true;
             String heat_class = "icon heat ";
             String cool_class = "icon cool ";
             if (cfg.mode == ThermoController::Mode::Off)
             {
-                heat_class += "inactive";
-                cool_class += "inactive";
+                show_heat = false;
+                show_cool = false;
             }
             else if (cfg.mode == ThermoController::Mode::Heat)
             {
-                heat_class += "active";
-                cool_class += "inactive";
+                show_cool = false;
+                heat_class += st.heat_on ? "active" : "inactive";
             }
             else if (cfg.mode == ThermoController::Mode::Cool)
             {
-                heat_class += "inactive";
-                cool_class += "active";
+                show_heat = false;
+                cool_class += st.cool_on ? "active" : "inactive";
             }
             else
             {
@@ -6983,24 +4460,21 @@ private:
             items += sensor_suffix;
             items += "</span>";
             items += "</div><div class=\"temp-pill target\">Цель: <span class=\"temp-value\">";
-            items += String(cfg.target_c, 1);
-            items += "°C</span></div><svg class=\"";
-            items += heat_class;
-            items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"22\" y=\"30\" width=\"76\" height=\"60\" rx=\"10\"/><line x1=\"36\" y1=\"40\" x2=\"36\" y2=\"80\"/><line x1=\"52\" y1=\"40\" x2=\"52\" y2=\"80\"/><line x1=\"68\" y1=\"40\" x2=\"68\" y2=\"80\"/><line x1=\"84\" y1=\"40\" x2=\"84\" y2=\"80\"/></svg><svg class=\"";
-            items += cool_class;
-            items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"18\" y=\"28\" width=\"84\" height=\"46\" rx=\"10\"/><line x1=\"28\" y1=\"44\" x2=\"92\" y2=\"44\"/><line x1=\"28\" y1=\"56\" x2=\"92\" y2=\"56\"/><line x1=\"40\" y1=\"78\" x2=\"34\" y2=\"92\"/><line x1=\"60\" y1=\"78\" x2=\"60\" y2=\"94\"/><line x1=\"80\" y1=\"78\" x2=\"86\" y2=\"92\"/></svg></div>";
-            items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += state_class;
-            items += "\"></span><span><span class=\"status-value ";
-            if (strcmp(state_class, "status-heat") == 0)
-                items += "status-text-heat";
-            else if (strcmp(state_class, "status-cool") == 0)
-                items += "status-text-cool";
-            else
-                items += "status-text-idle";
-            items += "\">";
-            items += state_label;
-            items += "</span></span></div>";
+            items += String((int)(cfg.target_c + 0.5f));
+            items += "&deg;C</span></div>";
+            if (show_heat)
+            {
+                items += "<svg class=\"";
+                items += heat_class;
+                items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"22\" y=\"30\" width=\"76\" height=\"60\" rx=\"10\"/><line x1=\"36\" y1=\"40\" x2=\"36\" y2=\"80\"/><line x1=\"52\" y1=\"40\" x2=\"52\" y2=\"80\"/><line x1=\"68\" y1=\"40\" x2=\"68\" y2=\"80\"/><line x1=\"84\" y1=\"40\" x2=\"84\" y2=\"80\"/></svg>";
+            }
+            if (show_cool)
+            {
+                items += "<svg class=\"";
+                items += cool_class;
+                items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"18\" y=\"28\" width=\"84\" height=\"46\" rx=\"10\"/><line x1=\"28\" y1=\"44\" x2=\"92\" y2=\"44\"/><line x1=\"28\" y1=\"56\" x2=\"92\" y2=\"56\"/><line x1=\"40\" y1=\"78\" x2=\"34\" y2=\"92\"/><line x1=\"60\" y1=\"78\" x2=\"60\" y2=\"94\"/><line x1=\"80\" y1=\"78\" x2=\"86\" y2=\"92\"/></svg>";
+            }
+            items += "</div>";
             items += "</div><div><div class=\"tile-head\"><div><strong>Термо #";
             items += String((unsigned)cfg.id);
             items += "</strong> <span class=\"badge\">";
@@ -7025,7 +4499,19 @@ private:
                 items += " checked";
             if (!enabled)
                 items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div><input type=\"hidden\" name=\"t";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "<span class=\"status-dot ";
+            items += state_class;
+            items += "\"></span><span class=\"status-value ";
+            if (strcmp(state_class, "status-heat") == 0)
+                items += "status-text-heat";
+            else if (strcmp(state_class, "status-cool") == 0)
+                items += "status-text-cool";
+            else
+                items += "status-text-idle";
+            items += "\">";
+            items += state_label;
+            items += "</span></div><input type=\"hidden\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_en_force\" value=\"\">";
             items += "<div class=\"form-row full\"><label>Датчик</label><select class=\"field mini\" name=\"t";
@@ -7046,14 +4532,14 @@ private:
             items += ">cool only</option><option value=\"auto\"";
             if (cfg.mode == ThermoController::Mode::Auto)
                 items += " selected";
-            items += ">auto</option></select></div><div class=\"form-row\"><label>Цель</label><input class=\"field temp\" type=\"number\" step=\"0.1\" name=\"t";
+            items += ">auto</option></select></div><div class=\"form-row\"><label>Цель</label><input class=\"field temp\" type=\"number\" step=\"1\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_target\" value=\"";
-            items += String(cfg.target_c, 1);
-            items += "\"></div><div class=\"form-row\"><label>Гист.</label><input class=\"field temp\" type=\"number\" step=\"0.1\" name=\"t";
+            items += String((int)(cfg.target_c + 0.5f));
+            items += "\"></div><div class=\"form-row\"><label>Гист.</label><input class=\"field temp\" type=\"number\" step=\"1\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_hyst\" value=\"";
-            items += String(cfg.hysteresis, 1);
+            items += String((int)(cfg.hysteresis + 0.5f));
             items += "\"></div><div class=\"form-row\"><label>Нагрев</label><select class=\"field mini thermo-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.heat_port != ThermoController::kInvalidPort)
                 items += String((unsigned)cfg.heat_port);
@@ -7070,12 +4556,6 @@ private:
             items += "\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_button\"></select></div></div>";
-            if (sensor_cfg && sensor_cfg->name.length())
-            {
-                items += "<div class=\"status-line\"><span class=\"badge\">";
-                appendHtmlEscaped_(items, sensor_cfg->name.c_str());
-                items += "</span></div>";
-            }
             items += "<input type=\"hidden\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_power\" value=\"\">";
@@ -7200,7 +4680,7 @@ private:
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_full\"></select></div>";
-            items += "<div class=\"form-row\"><label>Вкл</label><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
+            items += "<div class=\"form-row\"><label>Клапан</label><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.relay_valve != TankController::kInvalidPort)
                 items += String((unsigned)cfg.relay_valve);
             items += "\" name=\"k";
@@ -7212,7 +4692,7 @@ private:
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_pump\"></select></div>";
-            items += "<div class=\"form-row\"><label>Сигнал</label><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
+            items += "<div class=\"form-row\"><label>Индикатор</label><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.relay_alarm != TankController::kInvalidPort)
                 items += String((unsigned)cfg.relay_alarm);
             items += "\" name=\"k";
@@ -7617,6 +5097,161 @@ private:
                 if (!first)
                     out += ",";
                 out += String((unsigned)i);
+                first = false;
+            }
+        }
+        out += "]";
+        return out;
+    }
+
+    String displaySocketOptionsJson_() const
+    {
+        String out;
+        out.reserve(256);
+        out += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            const SocketController &sockets = _controllers->sockets();
+            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+            {
+                const auto *cfg = sockets.configByIndex(i);
+                if (!cfg || !cfg->enabled)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += "{\"v\":";
+                out += String((unsigned)cfg->id);
+                out += ",\"l\":\"";
+                if (cfg->name.length())
+                    appendJsonEscaped_(out, cfg->name);
+                else
+                    out += String("Socket #") + String((unsigned)cfg->id);
+                out += "\"}";
+                first = false;
+            }
+        }
+        out += "]";
+        return out;
+    }
+
+    String displayLightOptionsJson_() const
+    {
+        String out;
+        out.reserve(256);
+        out += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            const SocketController &sockets = _controllers->sockets();
+            for (size_t i = 0; i < SocketController::kLightCount; ++i)
+            {
+                const auto *cfg = sockets.lightConfigByIndex(i);
+                if (!cfg || !cfg->enabled)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += "{\"v\":";
+                out += String((unsigned)cfg->id);
+                out += ",\"l\":\"";
+                if (cfg->name.length())
+                    appendJsonEscaped_(out, cfg->name);
+                else
+                    out += String("Light #") + String((unsigned)cfg->id);
+                out += "\"}";
+                first = false;
+            }
+        }
+        out += "]";
+        return out;
+    }
+
+    String displayMeteoOptionsJson_() const
+    {
+        String out;
+        out.reserve(256);
+        out += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            const MeteoController &meteo = _controllers->meteo();
+            for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+            {
+                const auto *cfg = meteo.configByIndex(i);
+                if (!cfg || !cfg->enabled)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += "{\"v\":";
+                out += String((unsigned)cfg->id);
+                out += ",\"l\":\"";
+                if (cfg->name.length())
+                    appendJsonEscaped_(out, cfg->name);
+                else
+                    out += String("Sensor #") + String((unsigned)cfg->id);
+                out += "\"}";
+                first = false;
+            }
+        }
+        out += "]";
+        return out;
+    }
+
+    String displayTankOptionsJson_() const
+    {
+        String out;
+        out.reserve(256);
+        out += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            const TankController &tanks = _controllers->tanks();
+            for (size_t i = 0; i < TankController::kTankCount; ++i)
+            {
+                const auto *cfg = tanks.configByIndex(i);
+                if (!cfg || !cfg->enabled)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += "{\"v\":";
+                out += String((unsigned)cfg->id);
+                out += ",\"l\":\"";
+                if (cfg->name.length())
+                    appendJsonEscaped_(out, cfg->name);
+                else
+                    out += String("Tank #") + String((unsigned)cfg->id);
+                out += "\"}";
+                first = false;
+            }
+        }
+        out += "]";
+        return out;
+    }
+
+    String displaySepticOptionsJson_() const
+    {
+        String out;
+        out.reserve(128);
+        out += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            const SepticController &septic = _controllers->septic();
+            for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+            {
+                const auto *cfg = septic.configByIndex(i);
+                if (!cfg || !cfg->enabled)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += "{\"v\":";
+                out += String((unsigned)cfg->id);
+                out += ",\"l\":\"";
+                if (cfg->name.length())
+                    appendJsonEscaped_(out, cfg->name);
+                else
+                    out += String("Septic #") + String((unsigned)cfg->id);
+                out += "\"}";
                 first = false;
             }
         }
@@ -8556,19 +6191,6 @@ sendRedirect_(request, "/", set_cookie);
         sendRedirect_(request, "/manage", set_cookie);
     }
 
-    void handleStatus_(AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!checkAuth_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceStatusHtml);
-        page.reserve(page.length() + 2048);
-        page.replace("%NAV%", navHtml_());
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        page.replace("%STATUS%", _last_status.length() ? _last_status : "No data");
-        sendHtml_(request, page, set_cookie);
-    }
-
     void handleUiHash_(AsyncWebServerRequest *request)
     {
         bool set_cookie = false;
@@ -8747,7 +6369,8 @@ sendRedirect_(request, "/", set_cookie);
         String nav = F("<div class=\"nav\">");
         nav += F("<a href=\"/\">FCPLC</a> | <a href=\"/wifi\">Сеть</a> | ");
         nav += F("<a href=\"/manage\">Прошивка и файлы</a> | <a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a> | ");
-        nav += F("<a href=\"/stack\">Стек</a> | <a href=\"/controllers\">Контроллеры</a> | <a href=\"/telegram\">Telegram</a> | <a href=\"/cloud\">Облако</a> | ");
+        nav += F("<a href=\"/stack\">Стек</a> | <a href=\"/controllers\">Контроллеры</a> | <a href=\"/clients\">Клиенты</a> | <a href=\"/display\">Дисплей</a> | ");
+        nav += F("<a href=\"/telegram\">Telegram</a> | <a href=\"/cloud\">Облако</a> | ");
         nav += F("<a href=\"/admin\">Система</a> | <a href=\"/logs\">Logs</a>");
         nav += F("</div>");
         return nav;
@@ -8913,6 +6536,120 @@ sendRedirect_(request, "/", set_cookie);
         if (v > 255)
             return false;
         out = (uint8_t)v;
+        return true;
+    }
+
+    static const char *displaySlotKindName_(DisplaySlotKind kind)
+    {
+        switch (kind)
+        {
+        case DisplaySlotKind::Time:
+            return "time";
+        case DisplaySlotKind::Socket:
+            return "socket";
+        case DisplaySlotKind::Light:
+            return "light";
+        case DisplaySlotKind::Meteo:
+            return "meteo";
+        case DisplaySlotKind::Tank:
+            return "tank";
+        case DisplaySlotKind::Septic:
+            return "septic";
+        case DisplaySlotKind::Security:
+            return "security";
+        case DisplaySlotKind::Text:
+            return "text";
+        case DisplaySlotKind::None:
+        default:
+            return "none";
+        }
+    }
+
+    static const char *displaySlotFieldName_(DisplaySlotField field)
+    {
+        switch (field)
+        {
+        case DisplaySlotField::TimeHm:
+            return "hm";
+        case DisplaySlotField::SocketState:
+            return "state";
+        case DisplaySlotField::LightState:
+            return "state";
+        case DisplaySlotField::MeteoTemp:
+            return "temp";
+        case DisplaySlotField::MeteoHum:
+            return "hum";
+        case DisplaySlotField::TankLevel:
+            return "level";
+        case DisplaySlotField::SepticLevel:
+            return "level";
+        case DisplaySlotField::SecurityArmed:
+            return "armed";
+        case DisplaySlotField::Text:
+            return "text";
+        case DisplaySlotField::None:
+        default:
+            return "none";
+        }
+    }
+
+    static bool parseDisplaySlotKind_(const String &input, DisplaySlotKind &out)
+    {
+        String t = input;
+        t.trim();
+        t.toLowerCase();
+        if (t.length() == 0 || t == "none")
+        {
+            out = DisplaySlotKind::None;
+            return true;
+        }
+        if (t == "time")
+            out = DisplaySlotKind::Time;
+        else if (t == "socket")
+            out = DisplaySlotKind::Socket;
+        else if (t == "light")
+            out = DisplaySlotKind::Light;
+        else if (t == "meteo")
+            out = DisplaySlotKind::Meteo;
+        else if (t == "tank")
+            out = DisplaySlotKind::Tank;
+        else if (t == "septic")
+            out = DisplaySlotKind::Septic;
+        else if (t == "security")
+            out = DisplaySlotKind::Security;
+        else if (t == "text")
+            out = DisplaySlotKind::Text;
+        else
+            return false;
+        return true;
+    }
+
+    static bool parseDisplaySlotField_(const String &input, DisplaySlotField &out)
+    {
+        String t = input;
+        t.trim();
+        t.toLowerCase();
+        if (t.length() == 0 || t == "none")
+        {
+            out = DisplaySlotField::None;
+            return true;
+        }
+        if (t == "hm")
+            out = DisplaySlotField::TimeHm;
+        else if (t == "state")
+            out = DisplaySlotField::SocketState;
+        else if (t == "temp")
+            out = DisplaySlotField::MeteoTemp;
+        else if (t == "hum")
+            out = DisplaySlotField::MeteoHum;
+        else if (t == "level")
+            out = DisplaySlotField::TankLevel;
+        else if (t == "armed")
+            out = DisplaySlotField::SecurityArmed;
+        else if (t == "text")
+            out = DisplaySlotField::Text;
+        else
+            return false;
         return true;
     }
 
@@ -9602,6 +7339,38 @@ sendRedirect_(request, "/", set_cookie);
             if (!user.enabled || !user.is_notify || user.chat_id == 0)
                 continue;
             _tgbot_bot->sendText(user.chat_id, msg);
+        }
+    }
+
+    static void appendJsonEscaped_(String &out, const String &value)
+    {
+        for (size_t i = 0; i < (size_t)value.length(); ++i)
+        {
+            const char c = value[i];
+            switch (c)
+            {
+            case '\\':
+                out += "\\\\";
+                break;
+            case '"':
+                out += "\\\"";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                out += "\\r";
+                break;
+            case '\t':
+                out += "\\t";
+                break;
+            default:
+                if ((unsigned char)c < 0x20)
+                    out += ' ';
+                else
+                    out += c;
+                break;
+            }
         }
     }
 
@@ -10536,6 +8305,7 @@ sendRedirect_(request, "/", set_cookie);
     TelegramBot *_tgbot_bot = nullptr;
     TelegramMenu *_tgbot_menu = nullptr;
     Controllers *_controllers = nullptr;
+    RfidReader *_rfid = nullptr;
     GsmModem *_gsm = nullptr;
     I2CManager *_i2c = nullptr;
     OneWireManager *_ow = nullptr;
@@ -10854,6 +8624,10 @@ sendRedirect_(request, "/", set_cookie);
     String _septic_status;
     String _ring_status;
     String _security_status;
+    String _rfid_status;
+    String _display_status;
+    String _ring_client_status;
+    String _clients_status;
     bool _auth_enabled = false;
     String _auth_user;
     String _auth_pass;
@@ -10869,6 +8643,87 @@ sendRedirect_(request, "/", set_cookie);
     bool _ota_set_cookie = false;
     bool _ota_in_progress = false;
 };
+
+#include "core/network/web/handlers/controllers_handler.hpp"
+#include "core/network/web/handlers/sockets_handler.hpp"
+#include "core/network/web/handlers/lights_handler.hpp"
+#include "core/network/web/handlers/thermo_handler.hpp"
+#include "core/network/web/handlers/index_handler.hpp"
+#include "core/network/web/handlers/wifi_handler.hpp"
+#include "core/network/web/handlers/manage_handler.hpp"
+#include "core/network/web/handlers/ports_handler.hpp"
+#include "core/network/web/handlers/buses_handler.hpp"
+#include "core/network/web/handlers/stack_handler.hpp"
+#include "core/network/web/handlers/clients_handler.hpp"
+#include "core/network/web/handlers/display_handler.hpp"
+#include "core/network/web/handlers/admin_handler.hpp"
+#include "core/network/web/handlers/logs_handler.hpp"
+#include "core/network/web/handlers/status_handler.hpp"
+#include "core/network/web/handlers/septic_handler.hpp"
+#include "core/network/web/handlers/ring_handler.hpp"
+#include "core/network/web/handlers/security_handler.hpp"
+#include "core/network/web/handlers/telegram_handler.hpp"
+#include "core/network/web/handlers/cloud_handler.hpp"
+#include "core/network/web/handlers/meteo_handler.hpp"
+#include "core/network/web/handlers/tank_handler.hpp"
+#include "core/network/web/handlers/rfid_handler.hpp"
+#include "core/network/web/handlers/ring_client_handler.hpp"
+
+inline void WebInterface::registerRoutes()
+{
+    IndexHandler::registerRoutes(*this, _server);
+    WifiHandler::registerRoutes(*this, _server);
+    ManageHandler::registerRoutes(*this, _server);
+    PortsHandler::registerRoutes(*this, _server);
+    BusesHandler::registerRoutes(*this, _server);
+    _server.on("/stack/gen_key", HTTP_POST, [this](AsyncWebServerRequest *request) { handleStackGenKey_(request); });
+    StackHandler::registerRoutes(*this, _server);
+    ControllersHandler::registerRoutes(*this, _server);
+    ClientsHandler::registerRoutes(*this, _server);
+    DisplayHandler::registerRoutes(*this, _server);
+    RfidHandler::registerRoutes(*this, _server);
+    RingClientHandler::registerRoutes(*this, _server);
+    SocketsHandler::registerRoutes(*this, _server);
+    LightsHandler::registerRoutes(*this, _server);
+    ThermoHandler::registerRoutes(*this, _server);
+    MeteoHandler::registerRoutes(*this, _server);
+    TankHandler::registerRoutes(*this, _server);
+    SepticHandler::registerRoutes(*this, _server);
+    RingHandler::registerRoutes(*this, _server);
+    SecurityHandler::registerRoutes(*this, _server);
+    TelegramHandler::registerRoutes(*this, _server);
+    CloudHandler::registerRoutes(*this, _server);
+    _server.on(
+        "/upload", HTTP_POST,
+        [this](AsyncWebServerRequest *request) { handleUploadDone_(request); },
+        [this](AsyncWebServerRequest *request, const String &filename, size_t index, uint8_t *data, size_t len,
+               bool final) { handleUpload_(request, filename, index, data, len, final); });
+    _server.on(
+        "/ota", HTTP_POST,
+        [this](AsyncWebServerRequest *request) { handleOtaDone_(request); },
+        [this](AsyncWebServerRequest *request, const String &filename, size_t index, uint8_t *data, size_t len,
+               bool final) { handleOta_(request, filename, index, data, len, final); });
+    _server.on("/wifi", HTTP_POST, [this](AsyncWebServerRequest *request) { handleWifiSave_(request); });
+    _server.on("/stack", HTTP_POST, [this](AsyncWebServerRequest *request) { handleStackSave_(request); });
+    _server.on("/device", HTTP_POST, [this](AsyncWebServerRequest *request) { handleDeviceSave_(request); });
+    AdminHandler::registerRoutes(*this, _server);
+    _server.on("/admin", HTTP_POST, [this](AsyncWebServerRequest *request) { handleAdminSave_(request); });
+    LogsHandler::registerRoutes(*this, _server);
+    _server.on("/reboot", HTTP_POST, [this](AsyncWebServerRequest *request) { handleReboot_(request); });
+    _server.on("/files", HTTP_GET, [this](AsyncWebServerRequest *request) { handleFileDownload_(request); });
+    _server.on("/delete", HTTP_GET, [this](AsyncWebServerRequest *request) { handleDelete_(request); });
+    StatusHandler::registerRoutes(*this, _server);
+    _server.on("/ui/hash", HTTP_GET, [this](AsyncWebServerRequest *request) { handleUiHash_(request); });
+    _server.onNotFound([this](AsyncWebServerRequest *request) {
+        const String uri = request->url();
+        if (uri.startsWith("/files/"))
+        {
+            handleFileDownload_(request);
+            return;
+        }
+        request->send(404, "text/plain", String("Not found: ") + uri);
+    });
+}
 
 
 

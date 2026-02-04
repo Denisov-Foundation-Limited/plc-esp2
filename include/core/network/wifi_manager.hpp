@@ -31,6 +31,8 @@ public:
 
         if (_ap)
         {
+            if (_log.ready())
+                _log.info(F("WIFI"), F("Mode: AP (SSID=%s)"), _ap_ssid.c_str());
             WiFi.mode(WIFI_AP);
             const bool ok = WiFi.softAP(_ap_ssid.c_str(), _ap_password.c_str());
             if (ok && _log.ready())
@@ -44,12 +46,23 @@ public:
         WiFi.persistent(false);
         WiFi.setAutoReconnect(true);
         WiFi.mode(WIFI_STA);
+        if (_log.ready())
+        {
+            if (_ssid.length() == 0)
+                _log.warn(F("WIFI"), F("STA begin: SSID is empty"));
+            else
+                _log.info(F("WIFI"), F("STA begin: SSID=%s"), _ssid.c_str());
+            if (_password.length() == 0)
+                _log.warn(F("WIFI"), F("STA begin: password is empty"));
+        }
         WiFi.begin(_ssid.c_str(), _password.c_str());
         return true;
     }
 
     bool restart()
     {
+        if (_log.ready())
+            _log.info(F("WIFI"), F("Restart"));
         WiFi.disconnect(true, true);
         WiFi.mode(WIFI_OFF);
         delay(200);

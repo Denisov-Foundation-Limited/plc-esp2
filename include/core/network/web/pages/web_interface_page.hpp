@@ -1,4 +1,4 @@
-﻿/**********************************************************************/
+/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -103,7 +103,16 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
       %NAV%
       <h1>FCPLC</h1>
       <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
-      <p>Управление контроллером FCPLC</p>
+      <div class="section">
+        <h2>Имя устройства</h2>
+        <form method="POST" action="/device" id="device-form">
+          <div class="row">
+            <input type="text" name="device_name" value="%DEVICE_NAME%" placeholder="FCPLC">
+            <button type="submit">Сохранить</button>
+          </div>
+          <div class="status">%DEVICE_STATUS%</div>
+        </form>
+      </div>
       <div class="section">
         <h2>Статус</h2>
         %INDEX_DEVICE_SELECT%
@@ -118,24 +127,6 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
             <tr><td>Вентилятор</td><td>%FAN_STATUS_ICON%</td></tr>
           </tbody>
         </table>
-      </div>
-      <div class="section">
-        <h2>Имя устройства</h2>
-        <form method="POST" action="/device" id="device-form">
-          <div class="row">
-            <input type="text" name="device_name" value="%DEVICE_NAME%" placeholder="FCPLC">
-            <button type="submit">Сохранить</button>
-          </div>
-          <div class="status">%DEVICE_STATUS%</div>
-        </form>
-      </div>
-      <div class="section">
-        <h2>Система</h2>
-        <form method="POST" action="/reboot">
-          <div class="row">
-            <button type="submit">Перезагрузить</button>
-          </div>
-        </form>
       </div>
     </div>
   </div>

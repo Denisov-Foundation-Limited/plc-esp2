@@ -64,7 +64,6 @@ public:
             _logs.info(F("SEPTIC"), F("Controller disabled"));
             return true;
         }
-        _logs.info(F("SEPTIC"), F("Init"));
         for (size_t i = 0; i < kSepticCount; ++i)
         {
             SepticConfig &cfg = _cfg[i];

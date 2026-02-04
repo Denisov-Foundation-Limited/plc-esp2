@@ -19,6 +19,7 @@
 #include "core/network/telegram/telegram_allowed_users.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
 #include "core/network/gsm_modem.hpp"
+#include "clients/rfid_reader.hpp"
 #include "hal/bus/onewire.hpp"
 #include "hal/gpio/gpio.hpp"
 #include "hal/gpio/portio.hpp"
@@ -30,6 +31,7 @@ class SecurityController
 public:
     static constexpr size_t kSensorCount = 72;
     static constexpr size_t kKeyCount = 10;
+    static constexpr size_t kRfidKeyCount = 10;
     static constexpr size_t kPhoneCount = 10;
     static constexpr uint8_t kInvalidPort = 0xFF;
 
@@ -74,7 +76,6 @@ public:
             _logs.info(F("SECURITY"), F("Controller disabled"));
             return true;
         }
-        _logs.info(F("SECURITY"), F("Init"));
         setupOutputs_();
         initIButton_();
         for (size_t i = 0; i < kSensorCount; ++i)
@@ -238,6 +239,58 @@ public:
         }
     }
 
+    void applyRfidKeys(JsonArrayConst keys)
+    {
+        clearRfidKeys_();
+        size_t idx = 0;
+        for (JsonVariantConst v : keys)
+        {
+            if (idx >= kRfidKeyCount)
+                break;
+            if (v.is<const char *>())
+            {
+                RfidReader::Uid uid;
+                if (parseRfidUid_(v.as<const char *>(), uid))
+                    setRfidKeySlot_(idx, uid, true, "");
+            }
+            else if (v.is<JsonObjectConst>())
+            {
+                JsonObjectConst obj = v.as<JsonObjectConst>();
+                uint16_t id = (uint16_t)(idx + 1);
+                bool enabled = true;
+                String name;
+                const char *uid_str = nullptr;
+                if (obj["id"].is<unsigned>())
+                    id = (uint16_t)obj["id"].as<unsigned>();
+                if (obj["enabled"].is<bool>())
+                    enabled = obj["enabled"].as<bool>();
+                if (obj["name"].is<const char *>())
+                    name = obj["name"].as<const char *>();
+                if (obj["serial"].is<const char *>())
+                    uid_str = obj["serial"].as<const char *>();
+                else if (obj["uid"].is<const char *>())
+                    uid_str = obj["uid"].as<const char *>();
+                if (id < 1 || id > kRfidKeyCount)
+                {
+                    ++idx;
+                    continue;
+                }
+                const size_t dst = (size_t)(id - 1);
+                if (uid_str && enabled)
+                {
+                    RfidReader::Uid uid;
+                    if (parseRfidUid_(uid_str, uid))
+                        setRfidKeySlot_(dst, uid, true, name);
+                }
+                else if (uid_str && !enabled)
+                {
+                    setRfidKeySlot_(dst, RfidReader::Uid{}, false, name);
+                }
+            }
+            ++idx;
+        }
+    }
+
     void applyPhones(JsonArrayConst phones)
     {
         clearPhones_();
@@ -331,6 +384,21 @@ public:
         }
     }
 
+    void serializeRfidKeys(JsonArray out) const
+    {
+        for (size_t i = 0; i < kRfidKeyCount; ++i)
+        {
+            if (!_rfid_key_set[i])
+                continue;
+            JsonObject obj = out.add<JsonObject>();
+            obj["id"] = (unsigned)(i + 1);
+            obj["enabled"] = true;
+            obj["serial"] = rfidUidToString_(_rfid_keys[i], _rfid_len[i]);
+            if (_rfid_key_names[i].length())
+                obj["name"] = _rfid_key_names[i];
+        }
+    }
+
     void serializePhones(JsonArray out) const
     {
         for (size_t i = 0; i < kPhoneCount; ++i)
@@ -381,6 +449,35 @@ public:
     {
         _detect_cb = cb;
         _detect_ctx = ctx;
+    }
+
+    bool processRfidUid(const RfidReader::Uid &uid, const char *src = "rfid")
+    {
+        if (!_controller_enabled)
+            return false;
+        if (uid.len == 0 || uid.len > sizeof(_last_rfid))
+            return false;
+        if (isRfidRepeat_(uid))
+            return false;
+        const String uid_str = rfidUidToString_(uid.bytes, uid.len);
+        _logs.info(F("SECURITY"), F("Detected RFID UID: %s"), uid_str.c_str());
+        String user;
+        if (!matchRfidKey_(uid, user))
+        {
+            _logs.warn(F("SECURITY"), F("RFID tag is not valid"));
+            startBeep_(kBeepRejectCount, kBeepRejectOnMs, kBeepRejectOffMs);
+            return false;
+        }
+        toggleArm_(src ? src : "rfid", user);
+        return true;
+    }
+
+    bool processRfidUidString(const char *uid_str, const char *src = "rfid")
+    {
+        RfidReader::Uid uid;
+        if (!parseRfidUid_(uid_str, uid))
+            return false;
+        return processRfidUid(uid, src);
     }
 
     void setNotifyEnabled(bool enabled)
@@ -763,6 +860,13 @@ public:
         IButton::toHex(_last_key, out);
         return true;
     }
+    bool lastRfidSerial(String &out) const
+    {
+        if (_last_rfid_ms == 0 || _last_rfid_len == 0)
+            return false;
+        out = rfidUidToString_(_last_rfid, _last_rfid_len);
+        return out.length() > 0;
+    }
     bool setKeySlot(size_t idx, const uint8_t addr[8], bool enabled, const String &name)
     {
         if (idx >= kKeyCount)
@@ -779,6 +883,52 @@ public:
         }
         _key_names[idx] = name;
         return true;
+    }
+    bool rfidKeySlot(size_t idx, uint8_t out[10], uint8_t &len, bool &enabled) const
+    {
+        if (idx >= kRfidKeyCount)
+            return false;
+        enabled = _rfid_key_set[idx];
+        len = _rfid_len[idx];
+        if (out)
+        {
+            if (enabled && len > 0)
+                memcpy(out, _rfid_keys[idx], len);
+            else
+                memset(out, 0, 10);
+        }
+        return true;
+    }
+    const String &rfidKeyNameByIndex(size_t idx) const
+    {
+        static const String empty;
+        if (idx >= kRfidKeyCount)
+            return empty;
+        return _rfid_key_names[idx];
+    }
+    bool setRfidKeySlot(size_t idx, const uint8_t *bytes, uint8_t len, bool enabled, const String &name)
+    {
+        if (idx >= kRfidKeyCount)
+            return false;
+        RfidReader::Uid uid;
+        uid.len = len;
+        if (bytes && len > 0)
+            memcpy(uid.bytes, bytes, len);
+        return setRfidKeySlot_(idx, uid, enabled, name);
+    }
+
+    static bool parseRfidSerial(const char *s, uint8_t out[10], uint8_t &len)
+    {
+        RfidReader::Uid uid;
+        if (!parseRfidUid_(s, uid))
+            return false;
+        len = uid.len;
+        memcpy(out, uid.bytes, uid.len);
+        return true;
+    }
+    static String rfidSerialToString(const uint8_t *bytes, uint8_t len)
+    {
+        return rfidUidToString_(bytes, len);
     }
     const SensorConfig *config(size_t id) const
     {
@@ -824,12 +974,19 @@ private:
     bool _key_set[kKeyCount]{};
     uint8_t _last_key[8]{};
     uint32_t _last_key_ms = 0;
+    uint8_t _rfid_keys[kRfidKeyCount][10]{};
+    uint8_t _rfid_len[kRfidKeyCount]{};
+    bool _rfid_key_set[kRfidKeyCount]{};
+    uint8_t _last_rfid[10]{};
+    uint8_t _last_rfid_len = 0;
+    uint32_t _last_rfid_ms = 0;
     String _phones[kPhoneCount]{};
     bool _phone_enabled[kPhoneCount]{};
     String _phone_names[kPhoneCount]{};
     bool _phone_notify[kPhoneCount]{};
     bool _phone_call[kPhoneCount]{};
     String _key_names[kKeyCount]{};
+    String _rfid_key_names[kRfidKeyCount]{};
 
     bool _controller_enabled = false;
     bool _armed = false;
@@ -856,6 +1013,7 @@ private:
             _state[i] = SensorState{};
         }
         clearKeys_();
+        clearRfidKeys_();
         clearPhones_();
         _siren_port = kInvalidPort;
         _armed = false;
@@ -871,6 +1029,40 @@ private:
         _last_key_ms = 0;
         for (size_t i = 0; i < kKeyCount; ++i)
             _key_names[i] = "";
+    }
+
+    void clearRfidKeys_()
+    {
+        memset(_rfid_keys, 0, sizeof(_rfid_keys));
+        memset(_rfid_len, 0, sizeof(_rfid_len));
+        memset(_rfid_key_set, 0, sizeof(_rfid_key_set));
+        memset(_last_rfid, 0, sizeof(_last_rfid));
+        _last_rfid_len = 0;
+        _last_rfid_ms = 0;
+        for (size_t i = 0; i < kRfidKeyCount; ++i)
+            _rfid_key_names[i] = "";
+    }
+
+    bool setRfidKeySlot_(size_t idx, const RfidReader::Uid &uid, bool enabled, const String &name)
+    {
+        if (idx >= kRfidKeyCount)
+            return false;
+        if (enabled)
+        {
+            if (uid.len == 0 || uid.len > sizeof(_rfid_keys[idx]))
+                return false;
+            memcpy(_rfid_keys[idx], uid.bytes, uid.len);
+            _rfid_len[idx] = uid.len;
+            _rfid_key_set[idx] = true;
+        }
+        else
+        {
+            memset(_rfid_keys[idx], 0, sizeof(_rfid_keys[idx]));
+            _rfid_len[idx] = 0;
+            _rfid_key_set[idx] = false;
+        }
+        _rfid_key_names[idx] = name;
+        return true;
     }
 
     void clearPhones_()
@@ -1046,6 +1238,21 @@ private:
         }
         memcpy(_last_key, addr, 8);
         _last_key_ms = now;
+        return false;
+    }
+
+    bool isRfidRepeat_(const RfidReader::Uid &uid)
+    {
+        const uint32_t now = millis();
+        if (uid.len == _last_rfid_len &&
+            memcmp(_last_rfid, uid.bytes, uid.len) == 0)
+        {
+            if ((uint32_t)(now - _last_rfid_ms) < kKeyRepeatMs)
+                return true;
+        }
+        _last_rfid_len = uid.len;
+        memcpy(_last_rfid, uid.bytes, uid.len);
+        _last_rfid_ms = now;
         return false;
     }
 
@@ -1541,6 +1748,24 @@ private:
         return false;
     }
 
+    bool matchRfidKey_(const RfidReader::Uid &uid, String &user) const
+    {
+        if (uid.len == 0 || uid.len > sizeof(_rfid_keys[0]))
+            return false;
+        for (size_t i = 0; i < kRfidKeyCount; ++i)
+        {
+            if (!_rfid_key_set[i])
+                continue;
+            if (_rfid_len[i] != uid.len)
+                continue;
+            if (memcmp(_rfid_keys[i], uid.bytes, uid.len) != 0)
+                continue;
+            user = _rfid_key_names[i];
+            return true;
+        }
+        return false;
+    }
+
     void logArmAction_(bool armed, const char *src, const String &user)
     {
         if (!src && user.length() == 0)
@@ -1605,12 +1830,62 @@ private:
         return true;
     }
 
+    static bool parseRfidUid_(const char *s, RfidReader::Uid &out)
+    {
+        if (!s)
+            return false;
+        uint8_t bytes[10] = {};
+        uint8_t len = 0;
+        int hi = -1;
+        for (size_t i = 0; s[i]; ++i)
+        {
+            const char c = s[i];
+            if (c == ':' || c == '-' || c == ' ')
+                continue;
+            const int n = hexNibble_(c);
+            if (n < 0)
+                return false;
+            if (hi < 0)
+            {
+                hi = n;
+                continue;
+            }
+            if (len >= sizeof(bytes))
+                return false;
+            bytes[len++] = (uint8_t)((hi << 4) | n);
+            hi = -1;
+        }
+        if (hi >= 0 || len == 0)
+            return false;
+        out.len = len;
+        memcpy(out.bytes, bytes, len);
+        return true;
+    }
+
+    static String rfidUidToString_(const uint8_t *bytes, uint8_t len)
+    {
+        static const char kHex[] = "0123456789ABCDEF";
+        if (!bytes || len == 0)
+            return String();
+        String out;
+        out.reserve(len * 2);
+        for (uint8_t i = 0; i < len; ++i)
+        {
+            out += kHex[(bytes[i] >> 4) & 0x0F];
+            out += kHex[bytes[i] & 0x0F];
+        }
+        return out;
+    }
+
     static constexpr uint32_t kKeyRepeatMs = 2000;
     static constexpr uint32_t kTgSendGapMs = 800;
     static constexpr uint16_t kTgBetweenUsersMs = 200;
     static constexpr uint16_t kBeepShortMs = 120;
     static constexpr uint16_t kBeepGapMs = 120;
     static constexpr uint16_t kBeepLongMs = 500;
+    static constexpr uint8_t kBeepRejectCount = 3;
+    static constexpr uint16_t kBeepRejectOnMs = 60;
+    static constexpr uint16_t kBeepRejectOffMs = 80;
     static constexpr uint16_t kAlarmBuzzMs = 500;
 
     bool _alarm_buzz_state = false;

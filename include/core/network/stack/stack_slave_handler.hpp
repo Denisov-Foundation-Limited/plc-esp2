@@ -115,6 +115,7 @@ private:
     DynamicJsonDocument _rx_doc{kDocCapacity};
     DynamicJsonDocument _tx_doc{kDocCapacity};
     DynamicJsonDocument _msg_doc{kDocCapacity};
+    bool _rfid_io_ready = false;
 
     static void onFrame_(void *ctx, const StackFrame &frame)
     {
@@ -958,6 +959,40 @@ private:
             }
             if (obj["clear"].is<bool>() && obj["clear"].as<bool>())
                 _security.clearDetect();
+            if (isSlave_())
+                updateRfidLeds_(_security.armed());
+            sendAck_(cmd_id);
+            return;
+        }
+        if (action == "rfid_result")
+        {
+            if (!params.is<JsonObjectConst>())
+            {
+                sendErr_(cmd_id, "missing params");
+                return;
+            }
+            JsonObjectConst obj = params.as<JsonObjectConst>();
+            const bool match = obj["match"].is<bool>() ? obj["match"].as<bool>()
+                                                       : (obj["match"].as<int>() != 0);
+            const String uid = obj["uid"] | "";
+            const String result = obj["result"] | "";
+            const bool armed = obj["armed"].is<bool>() ? obj["armed"].as<bool>()
+                                                       : (obj["armed"].as<int>() != 0);
+            if (match)
+                _logs.info(F("SECURITY"), F("RFID match: %s"), uid.length() ? uid.c_str() : "-");
+            else
+                _logs.warn(F("SECURITY"), F("RFID not match: %s"), uid.length() ? uid.c_str() : "-");
+            if (isSlave_())
+            {
+                if (result == "arm")
+                    beepArm_();
+                else if (result == "disarm")
+                    beepDisarm_();
+                else
+                    beepReject_();
+                updateRfidLeds_(armed);
+                requestSecurityStatus_();
+            }
             sendAck_(cmd_id);
             return;
         }
@@ -1450,6 +1485,61 @@ private:
         if (len == 0 || len > sizeof(payload))
             return;
         _node->send(type, payload, len);
+    }
+
+    bool isSlave_() const
+    {
+        if (!_configs)
+            return false;
+        return _configs->stackRole() == ConfigsManagerIface::StackRole::Slave;
+    }
+
+    void ensureRfidIo_()
+    {
+        if (_rfid_io_ready)
+            return;
+        _io.pinMode(ActiveBoardProfile::STATUS_PIN, PortIO::PortMode::Output);
+        _io.pinMode(ActiveBoardProfile::BUZZER_PIN, PortIO::PortMode::Output);
+        _rfid_io_ready = true;
+    }
+
+    void updateRfidLeds_(bool armed)
+    {
+        ensureRfidIo_();
+        _io.write(ActiveBoardProfile::STATUS_PIN, armed);
+    }
+
+    void buzzerOn_(bool on)
+    {
+        ensureRfidIo_();
+        _io.write(ActiveBoardProfile::BUZZER_PIN, on);
+    }
+
+    void beep_(uint8_t count, uint16_t on_ms, uint16_t off_ms)
+    {
+        for (uint8_t i = 0; i < count; ++i)
+        {
+            buzzerOn_(true);
+            delay(on_ms);
+            buzzerOn_(false);
+            if (off_ms)
+                delay(off_ms);
+        }
+    }
+
+    void beepArm_() { beep_(2, 120, 120); }
+    void beepDisarm_() { beep_(1, 420, 0); }
+    void beepReject_() { beep_(3, 60, 80); }
+
+    void requestSecurityStatus_()
+    {
+        if (!_node || !_node->connected())
+            return;
+        _msg_doc.clear();
+        _msg_doc["cmd_id"] = 0;
+        _msg_doc["feature"] = (uint8_t)StackFeature::Security;
+        _msg_doc["action"] = "status_req";
+        sendJson_((uint8_t)StackMsgType::CmdSet, _msg_doc);
     }
 };
 

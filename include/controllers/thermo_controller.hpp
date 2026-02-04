@@ -73,7 +73,6 @@ public:
             _logs.info(F("THERMO"), F("Controller disabled"));
             return true;
         }
-        _logs.info(F("THERMO"), F("Init"));
         for (size_t i = 0; i < kDeviceCount; ++i)
         {
             DeviceConfig &cfg = _cfg[i];
@@ -712,8 +711,9 @@ private:
                 status = "heat";
             else if (st.cool_on)
                 status = "cool";
-            _logs.info(F("THERMO"), F("id: %u mode: %s temp: %.2f status: %s"),
-                       (unsigned)cfg.id, modeName_(cfg.mode), t, status);
+            const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
+            _logs.info(F("THERMO"), F("id: %u name: %s mode: %s temp: %.2f status: %s"),
+                       (unsigned)cfg.id, name, modeName_(cfg.mode), t, status);
         }
     }
 

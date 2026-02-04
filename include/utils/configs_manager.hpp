@@ -25,12 +25,14 @@
 #include "controllers/controllers.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
+#include "core/display_slots.hpp"
 #include "plc/plc_control.hpp"
 
 class ConfigsManager : public ConfigsManagerIface
 {
 public:
     static constexpr size_t kConfigDocCapacity = 12288;
+    static constexpr size_t kDisplaySlotCount = 8;
 
     ConfigsManager(Configs &configs, WifiManager &wifi, TelegramClient &telegram,
                    Network &network, CliConsole &console, TelegramMenu &telegram_menu, PlcControl &plc,
@@ -45,6 +47,8 @@ public:
           _controllers(controllers),
           _gsm(gsm)
     {
+        _display_slots[0].kind = DisplaySlotKind::Time;
+        _display_slots[0].field = DisplaySlotField::TimeHm;
     }
 
     StackRole stackRole() const override { return _stack_role; }
@@ -59,6 +63,17 @@ public:
     uint32_t cloudEventIntervalMs() const override { return _cloud_event_ms; }
     String cloudApiKey() const override { return _cloud_api_key; }
     String cloudFirmwareVersion() const override { return _cloud_fw_version; }
+    bool rfidEnabled() const override { return _rfid_enabled; }
+    bool ringClientEnabled() const override { return _ring_client_enabled; }
+    uint8_t ringClientButtonPort() const override { return _ring_client_button_port; }
+    size_t displaySlotCount() const override { return kDisplaySlotCount; }
+    bool displaySlot(size_t idx, DisplaySlotConfig &out) const override
+    {
+        if (idx >= kDisplaySlotCount)
+            return false;
+        out = _display_slots[idx];
+        return true;
+    }
     void setStackRole(StackRole role) override { _stack_role = role; }
     void setStackMasterHost(const String &host) override { _stack_master_host = host; }
     void setStackApiKey(const String &key) override { _stack_api_key = key; }
@@ -124,6 +139,15 @@ public:
             return;
         _cloud_fw_version = ver;
         _network.setCloudFirmwareVersion(ver);
+    }
+    void setRfidEnabled(bool enabled) override { _rfid_enabled = enabled; }
+    void setRingClientEnabled(bool enabled) override { _ring_client_enabled = enabled; }
+    void setRingClientButtonPort(uint8_t port) override { _ring_client_button_port = port; }
+    void setDisplaySlot(size_t idx, const DisplaySlotConfig &slot) override
+    {
+        if (idx >= kDisplaySlotCount)
+            return;
+        _display_slots[idx] = slot;
     }
 
     bool loadConfigs()
@@ -197,6 +221,30 @@ public:
 
         JsonObject g = _doc["gsm"].to<JsonObject>();
         g["enabled"] = _gsm.enabled();
+
+        JsonObject r = _doc["rfid"].to<JsonObject>();
+        r["enabled"] = _rfid_enabled;
+
+        JsonObject clients = _doc["clients"].to<JsonObject>();
+        JsonObject ring = clients["ring"].to<JsonObject>();
+        ring["enabled"] = _ring_client_enabled;
+        if (_ring_client_button_port != 0xFF)
+            ring["button"] = (unsigned)_ring_client_button_port;
+
+        JsonObject disp = _doc["display"].to<JsonObject>();
+        JsonArray slots = disp["slots"].to<JsonArray>();
+        for (size_t i = 0; i < kDisplaySlotCount; ++i)
+        {
+            const DisplaySlotConfig &slot = _display_slots[i];
+            JsonObject obj = slots.add<JsonObject>();
+            obj["kind"] = displayKindName_(slot.kind);
+            if (slot.index)
+                obj["index"] = (unsigned)slot.index;
+            if (slot.field != DisplaySlotField::None)
+                obj["field"] = displayFieldName_(slot.field);
+            if (slot.kind == DisplaySlotKind::Text && slot.text[0])
+                obj["text"] = slot.text;
+        }
 
         JsonObject c = _doc["cloud"].to<JsonObject>();
         c["enabled"] = _cloud_enabled;
@@ -426,6 +474,63 @@ private:
                 _stack_api_key = s["api_key"].as<const char *>();
         }
 
+        if (doc["rfid"].is<JsonObjectConst>())
+        {
+            JsonObjectConst r = doc["rfid"].as<JsonObjectConst>();
+            if (r["enabled"].is<bool>())
+                _rfid_enabled = r["enabled"].as<bool>();
+        }
+
+        if (doc["clients"].is<JsonObjectConst>())
+        {
+            JsonObjectConst clients = doc["clients"].as<JsonObjectConst>();
+            if (clients["ring"].is<JsonObjectConst>())
+            {
+                JsonObjectConst ring = clients["ring"].as<JsonObjectConst>();
+                if (ring["enabled"].is<bool>())
+                    _ring_client_enabled = ring["enabled"].as<bool>();
+                if (ring["button"].is<unsigned>())
+                    _ring_client_button_port = (uint8_t)ring["button"].as<unsigned>();
+            }
+        }
+
+        if (doc["display"].is<JsonObjectConst>())
+        {
+            JsonObjectConst disp = doc["display"].as<JsonObjectConst>();
+            if (disp["slots"].is<JsonArrayConst>())
+            {
+                JsonArrayConst slots = disp["slots"].as<JsonArrayConst>();
+                size_t idx = 0;
+                for (JsonVariantConst v : slots)
+                {
+                    if (idx >= kDisplaySlotCount)
+                        break;
+                    if (!v.is<JsonObjectConst>())
+                    {
+                        ++idx;
+                        continue;
+                    }
+                    JsonObjectConst obj = v.as<JsonObjectConst>();
+                    DisplaySlotConfig slot{};
+                    slot.kind = parseDisplayKind_(obj["kind"]);
+                    slot.field = parseDisplayField_(obj["field"], slot.kind);
+                    if (obj["index"].is<unsigned>())
+                        slot.index = (uint8_t)obj["index"].as<unsigned>();
+                    if (obj["text"].is<const char *>())
+                    {
+                        const char *txt = obj["text"].as<const char *>();
+                        if (txt)
+                        {
+                            strncpy(slot.text, txt, sizeof(slot.text) - 1);
+                            slot.text[sizeof(slot.text) - 1] = '\0';
+                        }
+                    }
+                    _display_slots[idx] = slot;
+                    ++idx;
+                }
+            }
+        }
+
         if (doc["controllers"].is<JsonObjectConst>())
         {
             _controllers.applyConfig(doc["controllers"].as<JsonObjectConst>());
@@ -551,6 +656,10 @@ private:
     String _cloud_fw_version;
     uint32_t _cloud_event_ms = 0;
     bool _cloud_enabled = true;
+    bool _rfid_enabled = true;
+    bool _ring_client_enabled = true;
+    uint8_t _ring_client_button_port = 0xFF;
+    DisplaySlotConfig _display_slots[kDisplaySlotCount]{};
     DynamicJsonDocument _doc{kConfigDocCapacity};
 
     CloudClient::Config buildCloudConfig_() const
@@ -567,5 +676,153 @@ private:
     void applyCloudConfig_()
     {
         _network.setCloudConfig(buildCloudConfig_());
+    }
+
+    static const char *displayKindName_(DisplaySlotKind kind)
+    {
+        switch (kind)
+        {
+        case DisplaySlotKind::Time:
+            return "time";
+        case DisplaySlotKind::Socket:
+            return "socket";
+        case DisplaySlotKind::Light:
+            return "light";
+        case DisplaySlotKind::Meteo:
+            return "meteo";
+        case DisplaySlotKind::Tank:
+            return "tank";
+        case DisplaySlotKind::Septic:
+            return "septic";
+        case DisplaySlotKind::Security:
+            return "security";
+        case DisplaySlotKind::Text:
+            return "text";
+        case DisplaySlotKind::None:
+        default:
+            return "none";
+        }
+    }
+
+    static const char *displayFieldName_(DisplaySlotField field)
+    {
+        switch (field)
+        {
+        case DisplaySlotField::TimeHm:
+            return "hm";
+        case DisplaySlotField::SocketState:
+            return "state";
+        case DisplaySlotField::LightState:
+            return "state";
+        case DisplaySlotField::MeteoTemp:
+            return "temp";
+        case DisplaySlotField::MeteoHum:
+            return "hum";
+        case DisplaySlotField::TankLevel:
+            return "level";
+        case DisplaySlotField::SepticLevel:
+            return "level";
+        case DisplaySlotField::SecurityArmed:
+            return "armed";
+        case DisplaySlotField::Text:
+            return "text";
+        case DisplaySlotField::None:
+        default:
+            return "none";
+        }
+    }
+
+    static DisplaySlotKind parseDisplayKind_(JsonVariantConst v)
+    {
+        if (v.is<const char *>())
+        {
+            const char *raw = v.as<const char *>();
+            if (!raw)
+                return DisplaySlotKind::None;
+            String s = raw;
+            s.toLowerCase();
+            if (s == "time")
+                return DisplaySlotKind::Time;
+            if (s == "socket")
+                return DisplaySlotKind::Socket;
+            if (s == "light")
+                return DisplaySlotKind::Light;
+            if (s == "meteo")
+                return DisplaySlotKind::Meteo;
+            if (s == "tank")
+                return DisplaySlotKind::Tank;
+            if (s == "septic")
+                return DisplaySlotKind::Septic;
+            if (s == "security")
+                return DisplaySlotKind::Security;
+            if (s == "text")
+                return DisplaySlotKind::Text;
+            return DisplaySlotKind::None;
+        }
+        if (v.is<unsigned>())
+        {
+            const unsigned raw = v.as<unsigned>();
+            if (raw <= (unsigned)DisplaySlotKind::Text)
+                return (DisplaySlotKind)raw;
+        }
+        return DisplaySlotKind::None;
+    }
+
+    static DisplaySlotField parseDisplayField_(JsonVariantConst v, DisplaySlotKind kind)
+    {
+        if (v.is<const char *>())
+        {
+            const char *raw = v.as<const char *>();
+            if (!raw)
+                return DisplaySlotField::None;
+            String s = raw;
+            s.toLowerCase();
+            if (s == "hm")
+                return DisplaySlotField::TimeHm;
+            if (s == "state")
+            {
+                if (kind == DisplaySlotKind::Light)
+                    return DisplaySlotField::LightState;
+                return DisplaySlotField::SocketState;
+            }
+            if (s == "temp")
+                return DisplaySlotField::MeteoTemp;
+            if (s == "hum")
+                return DisplaySlotField::MeteoHum;
+            if (s == "level")
+            {
+                if (kind == DisplaySlotKind::Septic)
+                    return DisplaySlotField::SepticLevel;
+                return DisplaySlotField::TankLevel;
+            }
+            if (s == "armed")
+                return DisplaySlotField::SecurityArmed;
+            if (s == "text")
+                return DisplaySlotField::Text;
+            return DisplaySlotField::None;
+        }
+        if (v.is<unsigned>())
+        {
+            const unsigned raw = v.as<unsigned>();
+            if (raw <= (unsigned)DisplaySlotField::Text)
+                return (DisplaySlotField)raw;
+        }
+        if (kind == DisplaySlotKind::Text)
+            return DisplaySlotField::Text;
+        if (kind == DisplaySlotKind::Time)
+            return DisplaySlotField::TimeHm;
+        if (kind == DisplaySlotKind::Socket)
+            return DisplaySlotField::SocketState;
+        if (kind == DisplaySlotKind::Light)
+            return DisplaySlotField::LightState;
+        if (kind == DisplaySlotKind::Meteo)
+            return DisplaySlotField::MeteoTemp;
+        if (kind == DisplaySlotKind::Tank)
+            return DisplaySlotField::TankLevel;
+        if (kind == DisplaySlotKind::Septic)
+            return DisplaySlotField::SepticLevel;
+        if (kind == DisplaySlotKind::Security)
+            return DisplaySlotField::SecurityArmed;
+        return DisplaySlotField::None;
     }
 };
