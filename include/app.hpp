@@ -117,7 +117,7 @@ struct HardwareContext
           io(portio),
           gpio(io),
           hal(ow, i2c, spi, uart, gpio, logs),
-          plc(i2c, io)
+          plc(i2c, io, rtc)
     {
     }
 };
@@ -248,9 +248,12 @@ struct App
 
         net.fw_upgrade.setConfigsManager(cfg.configs_manager);
         net.fw_upgrade.setStackMaster(net.network.stackMaster());
+        net.fw_upgrade.setStackSlave(&net.stack_slave);
         net.fw_upgrade.setGsmModem(comms.gsm);
         net.fw_upgrade.setCloudClient(net.network.cloudClient());
         net.network.setStackConfig(cfg.configs_manager);
+        control.controllers.thermo().setRemoteMeteoProvider(&App::onRemoteMeteo_, this);
+        control.controllers.meteo().setRemoteMeteoProvider(&App::onRemoteMeteoProxy_, this);
         control.controllers.security().setArmStateHandler(&App::onSecurityArmState_, this);
         control.controllers.security().setAlarmStateHandler(&App::onSecurityAlarmState_, this);
         control.controllers.security().setClearDetectHandler(&App::onSecurityClearDetect_, this);
@@ -277,6 +280,10 @@ struct App
             core.logs.begin(Serial);
             core.logs.error(F("APP"), F("LOG Auto bind failed, fallback to USB"));
         }
+
+        net.stack_slave.initAllocations();
+        net.fw_upgrade.initStackCacheAllocations();
+        net.fw_upgrade.logStackCacheAllocations();
 
         delay(1000);
         ui.console.begin(Serial);
@@ -511,6 +518,7 @@ struct App
         ui.console.loop();
         comms.gsm.loop();
         net.network.loop();
+        net.stack_slave.loop();
         core.tm.loop();
         flushPendingSecurityDetect_();
         flushPendingSepticDetect_();
@@ -520,6 +528,65 @@ struct App
     }
 
 private:
+    static bool onRemoteMeteo_(void *ctx, uint32_t node_id, uint8_t sensor_id, float &temp_c, bool &has_temp)
+    {
+        if (!ctx || node_id == 0 || sensor_id == 0)
+            return false;
+        App *self = static_cast<App *>(ctx);
+        if (self->cfg.configs_manager.stackRole() == ConfigsManagerIface::StackRole::Master)
+        {
+            auto &stack_cache = self->net.fw_upgrade.stackCache();
+            const auto *cache = stack_cache.meteoCache(node_id);
+            if (!cache || !cache->has_data)
+            {
+                stack_cache.requestMeteo(node_id);
+                return false;
+            }
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                if (it.id != sensor_id)
+                    continue;
+                temp_c = it.temp_c;
+                has_temp = it.has_temp;
+                return true;
+            }
+            return false;
+        }
+        return self->net.stack_slave.remoteMeteoTemp(node_id, sensor_id, temp_c, has_temp);
+    }
+
+    static bool onRemoteMeteoProxy_(void *ctx, uint32_t node_id, uint8_t sensor_id,
+                                    float &temp_c, bool &has_temp, float &hum, bool &has_hum, bool &ok)
+    {
+        if (!ctx || node_id == 0 || sensor_id == 0)
+            return false;
+        App *self = static_cast<App *>(ctx);
+        if (self->cfg.configs_manager.stackRole() == ConfigsManagerIface::StackRole::Master)
+        {
+            const auto *cache = self->net.fw_upgrade.stackCache().meteoCache(node_id);
+            if (!cache || !cache->has_data)
+                return false;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                if (it.id != sensor_id)
+                    continue;
+                temp_c = it.temp_c;
+                hum = it.hum;
+                has_temp = it.has_temp;
+                has_hum = it.has_hum;
+                ok = it.ok;
+                return true;
+            }
+            return false;
+        }
+        if (self->net.stack_slave.remoteMeteoRead(node_id, sensor_id, temp_c, has_temp, hum, has_hum, ok))
+            return true;
+        self->net.stack_slave.requestRemoteMeteoAll();
+        return false;
+    }
+
     static void onSecurityArmState_(void *ctx, bool armed)
     {
         if (!ctx)

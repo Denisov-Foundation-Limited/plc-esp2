@@ -42,6 +42,7 @@ public:
         uint8_t id = 1;
         bool enabled = false;
         uint8_t sensor_id = kInvalidSensor;
+        uint32_t sensor_node_id = 0;
         uint8_t heat_port = kInvalidPort;
         uint8_t cool_port = kInvalidPort;
         uint8_t button_port = kInvalidPort;
@@ -143,6 +144,12 @@ public:
                 if (sid > 0 && sid <= MeteoController::kSensorCount)
                     cfg.sensor_id = (uint8_t)sid;
             }
+            if (obj["sensor_node"].is<unsigned>() || obj["sensor_node_id"].is<unsigned>())
+            {
+                const unsigned node = obj["sensor_node"].is<unsigned>() ? obj["sensor_node"].as<unsigned>()
+                                                                        : obj["sensor_node_id"].as<unsigned>();
+                cfg.sensor_node_id = (uint32_t)node;
+            }
             parsePort_(obj["heat"], cfg.heat_port);
             parsePort_(obj["cool"], cfg.cool_port);
             parsePort_(obj["button"], cfg.button_port);
@@ -172,6 +179,8 @@ public:
                 obj["name"] = cfg.name;
             if (cfg.sensor_id != kInvalidSensor)
                 obj["sensor"] = cfg.sensor_id;
+            if (cfg.sensor_node_id != 0)
+                obj["sensor_node"] = (unsigned long)cfg.sensor_node_id;
             obj["mode"] = modeName_(cfg.mode);
             obj["target"] = cfg.target_c;
             obj["hyst"] = cfg.hysteresis;
@@ -185,6 +194,12 @@ public:
     }
 
     bool controllerEnabled() const { return _controller_enabled; }
+    using RemoteMeteoProvider = bool (*)(void *ctx, uint32_t node_id, uint8_t sensor_id, float &temp_c, bool &has_temp);
+    void setRemoteMeteoProvider(RemoteMeteoProvider cb, void *ctx)
+    {
+        _remote_meteo_cb = cb;
+        _remote_meteo_ctx = ctx;
+    }
     void setControllerEnabled(bool enabled)
     {
         if (_controller_enabled == enabled)
@@ -351,6 +366,18 @@ public:
         if (sensor_id > MeteoController::kSensorCount)
             return false;
         _cfg[idx].sensor_id = sensor_id;
+        _cfg[idx].sensor_node_id = 0;
+        return true;
+    }
+    bool setSensorSource(size_t id, uint32_t node_id, uint8_t sensor_id)
+    {
+        size_t idx = 0;
+        if (!indexById_(id, idx))
+            return false;
+        if (sensor_id > MeteoController::kSensorCount)
+            return false;
+        _cfg[idx].sensor_id = sensor_id;
+        _cfg[idx].sensor_node_id = node_id;
         return true;
     }
 
@@ -478,6 +505,8 @@ private:
     Gpio &_gpio;
     MeteoController &_meteo;
     Logger &_logs;
+    RemoteMeteoProvider _remote_meteo_cb = nullptr;
+    void *_remote_meteo_ctx = nullptr;
     DeviceConfig _cfg[kDeviceCount];
     DeviceState _state[kDeviceCount];
     bool _controller_enabled = false;
@@ -652,16 +681,34 @@ private:
                            (unsigned)cfg.id, st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
             return;
         }
-        const auto *sensor = _meteo.state(cfg.sensor_id);
-        if (!sensor || !sensor->has_temp)
+        float t = 0.0f;
+        if (cfg.sensor_node_id != 0)
         {
-            const bool changed = writeOff_(cfg, st);
-            if (changed)
-                _logs.info(F("THERMO"), F("id: %u temp: na heat: %s cool: %s"),
-                           (unsigned)cfg.id, st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
-            return;
+            bool has_temp = false;
+            if (!_remote_meteo_cb || !_remote_meteo_cb(_remote_meteo_ctx, cfg.sensor_node_id,
+                                                      cfg.sensor_id, t, has_temp) ||
+                !has_temp)
+            {
+                const bool changed = writeOff_(cfg, st);
+                if (changed)
+                    _logs.info(F("THERMO"), F("id: %u temp: na heat: %s cool: %s"),
+                               (unsigned)cfg.id, st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
+                return;
+            }
         }
-        const float t = sensor->temp_c;
+        else
+        {
+            const auto *sensor = _meteo.state(cfg.sensor_id);
+            if (!sensor || !sensor->has_temp)
+            {
+                const bool changed = writeOff_(cfg, st);
+                if (changed)
+                    _logs.info(F("THERMO"), F("id: %u temp: na heat: %s cool: %s"),
+                               (unsigned)cfg.id, st.heat_on ? "on" : "off", st.cool_on ? "on" : "off");
+                return;
+            }
+            t = sensor->temp_c;
+        }
         const float lo = cfg.target_c - cfg.hysteresis;
         const float hi = cfg.target_c + cfg.hysteresis;
 

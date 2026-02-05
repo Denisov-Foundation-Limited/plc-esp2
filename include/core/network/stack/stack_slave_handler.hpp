@@ -14,11 +14,19 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
+#include <new>
 #include <stdint.h>
 #include <vector>
 
+#if defined(ARDUINO_ARCH_ESP32)
+#include "esp32-hal-psram.h"
+#include "esp_heap_caps.h"
+#include "soc/soc_memory_types.h"
+#endif
+
 #include "boards/board_profile.hpp"
 #include "core/network/stack/stack_features.hpp"
+#include "core/network/stack/stack_master.hpp"
 #include "core/network/stack/stack_node.hpp"
 #include "core/network/stack/stack_protocol.hpp"
 #include "core/network/stack/stack_types.hpp"
@@ -43,6 +51,54 @@
 class StackSlaveHandler
 {
 public:
+    struct RemoteMeteoItem
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        bool ok = false;
+        bool has_temp = false;
+        bool has_hum = false;
+        float temp_c = 0.0f;
+        float hum = 0.0f;
+        static constexpr size_t kNameLen = 64;
+        static constexpr size_t kTypeLen = 24;
+        static constexpr size_t kAddrLen = 24;
+        char name[kNameLen] = {};
+        char type[kTypeLen] = {};
+        char addr[kAddrLen] = {};
+        int pin = -1;
+    };
+    struct RemoteMeteoCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        String node_name;
+        RemoteMeteoItem *items = nullptr;
+        size_t capacity = MeteoController::kSensorCount;
+        size_t item_count = 0;
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            node_name = String();
+            item_count = 0;
+            if (!items)
+                return;
+            for (size_t i = 0; i < capacity; ++i)
+                items[i] = RemoteMeteoItem{};
+        }
+    };
+
     StackSlaveHandler(IoStack &io, Ds18b20 &ds18b20, OneWireManager &ow, I2CManager &i2c,
                       PlcControl &plc, RTC &rtc, TelegramClient &telegram, Logger &logs,
                       Extender &ext, SocketController &sockets, MeteoController &meteo,
@@ -66,6 +122,10 @@ public:
           _ring(ring)
     {
     }
+    ~StackSlaveHandler()
+    {
+        releaseRemoteMeteo_();
+    }
 
     void attach(StackNode &node)
     {
@@ -74,8 +134,72 @@ public:
         node.setStatusProvider(&StackSlaveHandler::onStatus_, this);
     }
     void setConfigsManager(ConfigsManagerIface &cfg) { _configs = &cfg; }
+    void initAllocations()
+    {
+        if (_alloc_ready)
+            return;
+        initRemoteMeteo_();
+        _alloc_ready = true;
+    }
+    void loop() { updateRemoteMeteo_(); }
+    const RemoteMeteoCache *remoteMeteoCache(uint32_t node_id) const { return findRemoteMeteoCache_(node_id, false); }
+    size_t remoteMeteoCacheSlots() const { return StackMaster::MAX_SESSIONS; }
+    const RemoteMeteoCache &remoteMeteoCacheAt(size_t idx) const { return _remote_meteo_cache[idx]; }
+    bool requestRemoteMeteoAll() { return requestRemoteMeteoAll_(); }
+    bool remoteMeteoTemp(uint32_t node_id, uint8_t sensor_id, float &temp_c, bool &has_temp) const
+    {
+        const RemoteMeteoCache *cache = findRemoteMeteoCache_(node_id, false);
+        if (!cache || !cache->has_data || !cache->items)
+            return false;
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const RemoteMeteoItem &it = cache->items[i];
+            if (it.id != sensor_id)
+                continue;
+            temp_c = it.temp_c;
+            has_temp = it.has_temp;
+            return true;
+        }
+        return false;
+    }
+
+    bool remoteMeteoRead(uint32_t node_id, uint8_t sensor_id, float &temp_c, bool &has_temp,
+                         float &hum, bool &has_hum, bool &ok) const
+    {
+        const RemoteMeteoCache *cache = findRemoteMeteoCache_(node_id, false);
+        if (!cache || !cache->has_data || !cache->items)
+            return false;
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const RemoteMeteoItem &it = cache->items[i];
+            if (it.id != sensor_id)
+                continue;
+            temp_c = it.temp_c;
+            hum = it.hum;
+            has_temp = it.has_temp;
+            has_hum = it.has_hum;
+            ok = it.ok;
+            return true;
+        }
+        return false;
+    }
 
 private:
+    static void copyStr_(char *dst, size_t size, const char *src)
+    {
+        if (!dst || size == 0)
+            return;
+        if (!src)
+        {
+            dst[0] = '\0';
+            return;
+        }
+        size_t i = 0;
+        for (; i + 1 < size && src[i]; ++i)
+            dst[i] = src[i];
+        dst[i] = '\0';
+    }
+
     struct I2cEntry
     {
         uint8_t bus = 0;
@@ -105,6 +229,7 @@ private:
     RingController &_ring;
     StackNode *_node = nullptr;
     ConfigsManagerIface *_configs = nullptr;
+    bool _alloc_ready = false;
     static constexpr uint8_t MAX_I2C_ADDRS = 127;
     static constexpr uint8_t MAX_OW_ADDRS = 64;
     static constexpr size_t kDocCapacity = 4096;
@@ -116,6 +241,71 @@ private:
     DynamicJsonDocument _tx_doc{kDocCapacity};
     DynamicJsonDocument _msg_doc{kDocCapacity};
     bool _rfid_io_ready = false;
+    RemoteMeteoCache _remote_meteo_cache[StackMaster::MAX_SESSIONS] = {};
+    uint16_t _remote_cmd_id = 0;
+    uint16_t _remote_all_cmd_id = 0;
+    uint32_t _remote_all_updated_ms = 0;
+
+    static void *allocMem_(size_t bytes)
+    {
+#if defined(ARDUINO_ARCH_ESP32)
+        if (psramFound())
+        {
+            void *ptr = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (ptr)
+                return ptr;
+        }
+#endif
+        return nullptr;
+    }
+
+    template <typename T>
+    static T *allocItems_(size_t count)
+    {
+        if (count == 0)
+            return nullptr;
+        void *mem = allocMem_(sizeof(T) * count);
+        if (!mem)
+            return nullptr;
+        T *items = static_cast<T *>(mem);
+        for (size_t i = 0; i < count; ++i)
+            new (&items[i]) T();
+        return items;
+    }
+
+    template <typename T>
+    static void releaseItems_(T *items, size_t count)
+    {
+        if (!items)
+            return;
+        for (size_t i = 0; i < count; ++i)
+            items[i].~T();
+        free(items);
+    }
+
+    void initRemoteMeteo_()
+    {
+        for (auto &cache : _remote_meteo_cache)
+        {
+            cache.items = allocItems_<RemoteMeteoItem>(cache.capacity);
+            if (!cache.items)
+            {
+                cache.capacity = 0;
+                _logs.error(F("STACK"), F("Remote meteo cache alloc failed"));
+            }
+            cache.reset();
+        }
+    }
+
+    void releaseRemoteMeteo_()
+    {
+        for (auto &cache : _remote_meteo_cache)
+        {
+            releaseItems_(cache.items, cache.capacity);
+            cache.items = nullptr;
+        }
+        _alloc_ready = false;
+    }
 
     static void onFrame_(void *ctx, const StackFrame &frame)
     {
@@ -135,6 +325,11 @@ private:
     {
         if (!_node)
             return;
+        if (frame.type == (uint8_t)StackMsgType::Ack || frame.type == (uint8_t)StackMsgType::Err)
+        {
+            handleRemoteMeteoReply_(frame);
+            return;
+        }
         if (frame.type != (uint8_t)StackMsgType::CmdGet && frame.type != (uint8_t)StackMsgType::CmdSet)
             return;
 
@@ -841,6 +1036,8 @@ private:
                 if (cfg->name.length())
                     o["name"] = cfg->name;
                 o["sensor"] = (unsigned)cfg->sensor_id;
+                if (cfg->sensor_node_id != 0)
+                    o["sensor_node"] = (unsigned long)cfg->sensor_node_id;
                 o["mode"] = ThermoController::modeName(cfg->mode);
                 o["target"] = cfg->target_c;
                 o["hyst"] = cfg->hysteresis;
@@ -1451,6 +1648,266 @@ private:
         return provided == key;
     }
 
+    ConfigsManagerIface::StackRole stackRole_() const
+    {
+        if (!_configs)
+            return ConfigsManagerIface::StackRole::Master;
+        return _configs->stackRole();
+    }
+
+    void updateRemoteMeteo_()
+    {
+        if (!_node || !_configs)
+            return;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Slave)
+            return;
+        uint32_t nodes[ThermoController::kDeviceCount] = {};
+        size_t node_count = 0;
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = _thermo.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            if (cfg->sensor_id == ThermoController::kInvalidSensor || cfg->sensor_node_id == 0)
+                continue;
+            bool known = false;
+            for (size_t j = 0; j < node_count; ++j)
+            {
+                if (nodes[j] == cfg->sensor_node_id)
+                {
+                    known = true;
+                    break;
+                }
+            }
+            if (!known && node_count < ThermoController::kDeviceCount)
+                nodes[node_count++] = cfg->sensor_node_id;
+        }
+        for (size_t i = 0; i < node_count; ++i)
+            requestRemoteMeteo_(nodes[i]);
+    }
+
+    bool requestRemoteMeteo_(uint32_t node_id)
+    {
+        if (!_node)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Slave)
+            return false;
+        RemoteMeteoCache *cache = findRemoteMeteoCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+            return false;
+        if ((uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        const uint16_t cmd_id = nextRemoteCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Meteo;
+        doc["action"] = "get";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["node"] = node_id;
+        if (_configs)
+        {
+            const String key = _configs->stackApiKey();
+            if (key.length())
+                doc["api_key"] = key;
+        }
+        char payload[StackCodec::kMaxPayload] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
+        return true;
+    }
+
+    bool requestRemoteMeteoAll_()
+    {
+        if (!_node)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Slave)
+            return false;
+        const uint32_t now = millis();
+        if (_remote_all_cmd_id != 0)
+            return false;
+        if (_remote_all_updated_ms && (uint32_t)(now - _remote_all_updated_ms) < 2000u)
+            return false;
+        const uint16_t cmd_id = nextRemoteCmdId_();
+        _remote_all_cmd_id = cmd_id;
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Meteo;
+        doc["action"] = "get";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["all"] = true;
+        if (_configs)
+        {
+            const String key = _configs->stackApiKey();
+            if (key.length())
+                doc["api_key"] = key;
+        }
+        char payload[StackCodec::kMaxPayload] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+        {
+            _remote_all_cmd_id = 0;
+            return false;
+        }
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+        {
+            _remote_all_cmd_id = 0;
+            return false;
+        }
+        return true;
+    }
+
+    RemoteMeteoCache *findRemoteMeteoCache_(uint32_t node_id, bool create)
+    {
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _remote_meteo_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _remote_meteo_cache)
+        {
+            if (c.node_id == 0)
+            {
+                c.reset();
+                c.node_id = node_id;
+                return &c;
+            }
+        }
+        return nullptr;
+    }
+
+    const RemoteMeteoCache *findRemoteMeteoCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackSlaveHandler *>(this)->findRemoteMeteoCache_(node_id, create);
+    }
+
+    RemoteMeteoCache *findRemoteMeteoCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _remote_meteo_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
+    void handleRemoteMeteoReply_(const StackFrame &frame)
+    {
+        _rx_doc.clear();
+        DeserializationError err = deserializeJson(_rx_doc, frame.payload, frame.payload_len);
+        if (err)
+            return;
+        const uint16_t cmd_id = _rx_doc["cmd_id"] | 0;
+        if (_remote_all_cmd_id != 0 && cmd_id == _remote_all_cmd_id)
+        {
+            _remote_all_cmd_id = 0;
+            _remote_all_updated_ms = millis();
+            const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
+            if (!ok)
+                return;
+            JsonArrayConst nodes = _rx_doc["data"]["nodes"].as<JsonArrayConst>();
+            if (nodes.isNull())
+                return;
+            for (JsonObjectConst node : nodes)
+            {
+                if (!node["node_id"].is<unsigned>())
+                    continue;
+                const uint32_t node_id = node["node_id"].as<unsigned>();
+                RemoteMeteoCache *cache = findRemoteMeteoCache_(node_id, true);
+                if (!cache || !cache->items)
+                    continue;
+                cache->pending = false;
+                cache->updated_ms = millis();
+                cache->last_ok = true;
+                cache->last_error = "";
+                cache->node_name = node["node_name"] | "";
+                JsonArrayConst items = node["items"].as<JsonArrayConst>();
+                if (items.isNull())
+                    continue;
+                cache->item_count = 0;
+                for (JsonObjectConst item : items)
+                {
+                    if (cache->item_count >= MeteoController::kSensorCount)
+                        break;
+                    if (!item["id"].is<unsigned>())
+                        continue;
+                    RemoteMeteoItem &dst = cache->items[cache->item_count++];
+                    dst.id = (uint8_t)item["id"].as<unsigned>();
+                    dst.enabled = item["enabled"] | false;
+                    dst.ok = item["ok"] | false;
+                    dst.has_temp = item["has_temp"] | false;
+                    dst.has_hum = item["has_hum"] | false;
+                    dst.temp_c = item["temp_c"] | 0.0f;
+                    dst.hum = item["hum"] | 0.0f;
+                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
+                    copyStr_(dst.addr, sizeof(dst.addr), item["addr"].as<const char *>());
+                    dst.pin = item["pin"] | -1;
+                }
+                cache->has_data = true;
+            }
+            return;
+        }
+        RemoteMeteoCache *cache = findRemoteMeteoCacheByCmd_(cmd_id);
+        if (!cache)
+            return;
+        if (!cache->items)
+            return;
+        const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
+        JsonArrayConst items = _rx_doc["data"]["items"].as<JsonArrayConst>();
+        cache->pending = false;
+        cache->updated_ms = millis();
+        cache->last_ok = false;
+        cache->last_error = "";
+        if (!ok)
+        {
+            cache->last_error = _rx_doc["error"] | "error";
+            return;
+        }
+        cache->node_name = _rx_doc["data"]["node_name"] | "";
+        if (items.isNull())
+            return;
+        cache->item_count = 0;
+        for (JsonObjectConst item : items)
+        {
+            if (cache->item_count >= MeteoController::kSensorCount)
+                break;
+            if (!item["id"].is<unsigned>())
+                continue;
+            RemoteMeteoItem &dst = cache->items[cache->item_count++];
+            dst.id = (uint8_t)item["id"].as<unsigned>();
+            dst.enabled = item["enabled"] | false;
+            dst.ok = item["ok"] | false;
+            dst.has_temp = item["has_temp"] | false;
+            dst.has_hum = item["has_hum"] | false;
+            dst.temp_c = item["temp_c"] | 0.0f;
+            dst.hum = item["hum"] | 0.0f;
+            copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+            copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
+            copyStr_(dst.addr, sizeof(dst.addr), item["addr"].as<const char *>());
+            dst.pin = item["pin"] | -1;
+        }
+        cache->has_data = true;
+        cache->last_ok = true;
+    }
+
+    uint16_t nextRemoteCmdId_()
+    {
+        ++_remote_cmd_id;
+        if (_remote_cmd_id == 0)
+            _remote_cmd_id = 1;
+        return _remote_cmd_id;
+    }
+
     void sendAck_(uint16_t cmd_id)
     {
         _msg_doc.clear();
@@ -1542,5 +1999,4 @@ private:
         sendJson_((uint8_t)StackMsgType::CmdSet, _msg_doc);
     }
 };
-
 

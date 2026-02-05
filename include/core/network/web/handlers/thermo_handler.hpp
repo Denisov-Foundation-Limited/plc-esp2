@@ -36,6 +36,21 @@ public:
             web.requestStackThermo_(node_id);
             web.requestStackMeteo_(node_id);
         }
+        else if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave)
+        {
+            if (web._stack_slave)
+                web._stack_slave->requestRemoteMeteoAll();
+        }
+        else if (web.stackRole_() == ConfigsManagerIface::StackRole::Master)
+        {
+            const size_t count = web._stack_master ? web._stack_master->nodeCount() : 0;
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t id = web._stack_master->nodeIdAt(i);
+                if (id != 0)
+                    web.stackCache().requestMeteo(id);
+            }
+        }
         String page = FPSTR(kWebInterfaceThermoHtml);
         page.reserve(page.length() + 16384);
         page.replace("%NAV%", web.navHtml_());
@@ -72,6 +87,8 @@ public:
         }
         ThermoController &thermo = web._controllers->thermo();
         uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
+        uint32_t remote_used[ThermoController::kDeviceCount] = {};
+        size_t remote_used_count = 0;
         bool ok = true;
         bool changed = false;
         bool power_changed = false;
@@ -127,7 +144,8 @@ public:
             const bool power_on = (power_str == "on" || power_str == "1" || power_str == "true");
 
             uint8_t sensor_id = ThermoController::kInvalidSensor;
-            if (!web.parseThermoSensor_(sensor_str, sensor_id))
+            uint32_t sensor_node_id = 0;
+            if (!web.parseThermoSensor_(sensor_str, sensor_id, sensor_node_id))
             {
                 ok = false;
                 web._thermo_status = String("Invalid sensor for device ") + idx;
@@ -135,20 +153,63 @@ public:
             }
             if (enabled && sensor_id != ThermoController::kInvalidSensor)
             {
-                if (!web.isMeteoSensorActive_(sensor_id))
+                if (sensor_node_id == 0)
                 {
-                    ok = false;
-                    web._thermo_status = String("Датчик не активен (") + idx + ")";
-                    break;
+                    if (!web.isMeteoSensorActive_(sensor_id))
+                    {
+                        ok = false;
+                        web._thermo_status = String("?????? ?? ??????? (") + idx + ")";
+                        break;
+                    }
+                    if (sensor_id <= MeteoController::kSensorCount && sensor_used[sensor_id])
+                    {
+                        ok = false;
+                        web._thermo_status = String("?????? ??? ???????????? (") + idx + ")";
+                        break;
+                    }
+                    if (sensor_id <= MeteoController::kSensorCount)
+                        sensor_used[sensor_id] = 1;
                 }
-                if (sensor_id <= MeteoController::kSensorCount && sensor_used[sensor_id])
+                else
                 {
-                    ok = false;
-                    web._thermo_status = String("Датчик уже используется (") + idx + ")";
-                    break;
+                    if (web.stackRole_() != ConfigsManagerIface::StackRole::Master &&
+                        web.stackRole_() != ConfigsManagerIface::StackRole::Slave)
+                    {
+                        ok = false;
+                        web._thermo_status = String("?????? ?????????? (") + idx + ")";
+                        break;
+                    }
+                    if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && !web._stack_slave)
+                    {
+                        ok = false;
+                        web._thermo_status = String("?????? ?????????? (") + idx + ")";
+                        break;
+                    }
+                    if (!web.isRemoteMeteoSensorActive_(sensor_node_id, sensor_id))
+                    {
+                        ok = false;
+                        web._thermo_status = String("?????? ?? ??????? (") + idx + ")";
+                        break;
+                    }
+                    const uint32_t key = (sensor_node_id << 8) | sensor_id;
+                    bool used = false;
+                    for (size_t k = 0; k < remote_used_count; ++k)
+                    {
+                        if (remote_used[k] == key)
+                        {
+                            used = true;
+                            break;
+                        }
+                    }
+                    if (used)
+                    {
+                        ok = false;
+                        web._thermo_status = String("?????? ??? ???????????? (") + idx + ")";
+                        break;
+                    }
+                    if (remote_used_count < ThermoController::kDeviceCount)
+                        remote_used[remote_used_count++] = key;
                 }
-                if (sensor_id <= MeteoController::kSensorCount)
-                    sensor_used[sensor_id] = 1;
             }
 
             ThermoController::Mode mode = ThermoController::Mode::Off;
@@ -197,9 +258,12 @@ public:
                 thermo.setName(cfg->id, name);
                 changed = true;
             }
-            if (cfg->sensor_id != sensor_id)
+            if (cfg->sensor_id != sensor_id || cfg->sensor_node_id != sensor_node_id)
             {
-                thermo.setSensor(cfg->id, sensor_id);
+                if (sensor_node_id != 0)
+                    thermo.setSensorSource(cfg->id, sensor_node_id, sensor_id);
+                else
+                    thermo.setSensor(cfg->id, sensor_id);
                 changed = true;
             }
             if (cfg->mode != mode)

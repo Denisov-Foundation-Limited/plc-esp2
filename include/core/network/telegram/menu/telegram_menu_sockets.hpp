@@ -121,7 +121,7 @@ public:
                     }
                     else
                     {
-                        label += F("РЎРІРµС‚ ");
+                        label += F("Свет ");
                         label += String((unsigned)cfg->id);
                     }
                     out.push_back(label);
@@ -143,23 +143,23 @@ public:
                     }
                     else
                     {
-                        label += F("Р РѕР·РµС‚РєР° ");
+                        label += F("Розетка ");
                         label += String((unsigned)cfg->id);
                     }
                     out.push_back(label);
                 }
             }
         }
-        out.push_back(F("РќР°Р·Р°Рґ"));
+        out.push_back(F("Назад"));
     }
 
     static String socketListTextHtml_(TelegramMenu &self, bool lights_only = false)
     {
-        String out = lights_only ? F("<b>РЎРІРµС‚:</b>") : F("<b>Р РѕР·РµС‚РєРё:</b>");
+        String out = lights_only ? F("<b>Свет:</b>") : F("<b>Розетки:</b>");
         out.reserve(512);
         if (!self._sockets)
         {
-            out += F("\n  РЅРµРґРѕСЃС‚СѓРїРЅС‹");
+            out += F("\n  недоступны");
             return out;
         }
         bool any = false;
@@ -173,7 +173,7 @@ public:
                     continue;
                 any = true;
                 out += "\n  ";
-                out += st->relay_on ? F("рџџў ") : F("вљЄ ");
+                out += st->relay_on ? F("🟢 ") : F("🔴 ");
                 out += String((unsigned)cfg->id);
                 out += ": ";
                 if (cfg->name.length())
@@ -198,7 +198,7 @@ public:
                     continue;
                 any = true;
                 out += "\n  ";
-                out += st->relay_on ? F("рџџў ") : F("вљЄ ");
+                out += st->relay_on ? F("🟢 ") : F("🔴 ");
                 out += String((unsigned)cfg->id);
                 out += ": ";
                 if (cfg->name.length())
@@ -214,7 +214,7 @@ public:
             }
         }
         if (!any)
-            out += F("\n  РїСѓСЃС‚Рѕ");
+            out += F("\n  пусто");
         return out;
     }
 

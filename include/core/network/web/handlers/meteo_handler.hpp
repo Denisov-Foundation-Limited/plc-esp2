@@ -31,6 +31,23 @@ public:
         const bool stack_view = web.isStackMeteoView_(node_id);
         if (stack_view)
             web.requestStackMeteo_(node_id);
+        if (!stack_view)
+        {
+            if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
+            {
+                web._stack_slave->requestRemoteMeteoAll();
+            }
+            else if (web.stackRole_() == ConfigsManagerIface::StackRole::Master)
+            {
+                const size_t count = web._stack_master ? web._stack_master->nodeCount() : 0;
+                for (size_t i = 0; i < count; ++i)
+                {
+                    const uint32_t id = web._stack_master->nodeIdAt(i);
+                    if (id != 0)
+                        web.requestStackMeteo_(id);
+                }
+            }
+        }
         String page = FPSTR(kWebInterfaceMeteoHtml);
         page.reserve(page.length() + 16384);
         page.replace("%NAV%", web.navHtml_());
@@ -76,11 +93,13 @@ public:
             const String type_key = prefix + "type";
             const String pin_key = prefix + "pin";
             const String addr_key = prefix + "addr";
+            const String src_key = prefix + "src";
             const bool has_any = request->hasParam(en_key, true) ||
                                  request->hasParam(name_key, true) ||
                                  request->hasParam(type_key, true) ||
                                  request->hasParam(pin_key, true) ||
-                                 request->hasParam(addr_key, true);
+                                 request->hasParam(addr_key, true) ||
+                                 request->hasParam(src_key, true);
             if (!has_any)
                 continue;
 
@@ -90,6 +109,7 @@ public:
             const String type_str = web.paramValue_(request, type_key);
             const String pin_str = web.paramValue_(request, pin_key);
             const String addr_str = web.paramValue_(request, addr_key);
+            const String src_str = web.paramValue_(request, src_key);
 
             MeteoController::SensorType type = MeteoController::SensorType::None;
             if (!web.parseMeteoType_(type_str, type))
@@ -113,6 +133,15 @@ public:
             {
                 ok = false;
                 web._meteo_status = String("Invalid addr for sensor ") + idx;
+                break;
+            }
+
+            uint8_t src_id = 0;
+            uint32_t src_node = 0;
+            if (src_str.length() > 0 && !web.parseThermoSensor_(src_str, src_id, src_node))
+            {
+                ok = false;
+                web._meteo_status = String("Invalid source for sensor ") + idx;
                 break;
             }
 
@@ -148,6 +177,11 @@ public:
                     meteo.setDs18b20Addr(cfg->id, addr, addr_set);
                     changed = true;
                 }
+            }
+            if (cfg->source_node_id != src_node || cfg->source_sensor_id != src_id)
+            {
+                meteo.setRemoteSource(cfg->id, src_node, src_id);
+                changed = true;
             }
         }
 

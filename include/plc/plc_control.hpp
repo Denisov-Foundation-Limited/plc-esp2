@@ -13,8 +13,10 @@
 
 #include <Arduino.h>
 #include <stdint.h>
+#include <math.h>
 
 #include "boards/board_profile.hpp"
+#include "core/rtc.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/io_stack.hpp"
 #include "hal/lm75ad.hpp"
@@ -30,8 +32,8 @@ public:
         I2c
     };
 
-    PlcControl(I2CManager &i2c, IoStack &io)
-        : _i2c(i2c), _io(io), _device_name(ActiveBoardProfile::UI_NAME)
+    PlcControl(I2CManager &i2c, IoStack &io, RTC &rtc)
+        : _i2c(i2c), _io(io), _rtc(rtc), _device_name(ActiveBoardProfile::UI_NAME)
     {
     }
 
@@ -66,18 +68,23 @@ public:
     void task()
     {
         const uint32_t now = millis();
-        float temp_c = _last_temp_c;
         if (timeDue_(now, _next_sample_ms))
         {
             _next_sample_ms = now + _sample_interval_ms;
             _last_cpu_temp_c = readCpuTemp_();
+            _cpu_temp_valid = isfinite(_last_cpu_temp_c);
             const auto cfg = ActiveBoardProfile::BOARD_TEMP;
             float sample = 0.0f;
             if (_lm75.readTempC(sample))
             {
                 _last_temp_c = sample;
-                temp_c = sample;
                 _temp_valid = true;
+            }
+            float rtc_sample = 0.0f;
+            if (_rtc.readTemp(rtc_sample))
+            {
+                _last_rtc_temp_c = rtc_sample;
+                _rtc_temp_valid = true;
             }
         }
 
@@ -86,7 +93,24 @@ public:
             setFans_(_fan_on);
             return;
         }
-        if (!_temp_valid)
+        float temp_c = 0.0f;
+        bool has_temp = false;
+        if (_temp_valid)
+        {
+            temp_c = _last_temp_c;
+            has_temp = true;
+        }
+        if (_cpu_temp_valid && (!has_temp || _last_cpu_temp_c > temp_c))
+        {
+            temp_c = _last_cpu_temp_c;
+            has_temp = true;
+        }
+        if (_rtc_temp_valid && (!has_temp || _last_rtc_temp_c > temp_c))
+        {
+            temp_c = _last_rtc_temp_c;
+            has_temp = true;
+        }
+        if (!has_temp)
             return;
         bool want = _fan_on;
         const float on_c = _fan_on_c;
@@ -176,6 +200,7 @@ private:
     Lm75ad _lm75;
     I2CManager &_i2c;
     IoStack &_io;
+    RTC &_rtc;
     Error _err = Error::Ok;
     bool _fan_on = false;
     bool _fan_manual = false;
@@ -183,7 +208,10 @@ private:
     float _fan_hyst_c = 0.0f;
     float _last_temp_c = 0.0f;
     float _last_cpu_temp_c = 0.0f;
+    float _last_rtc_temp_c = 0.0f;
     bool _temp_valid = false;
+    bool _cpu_temp_valid = false;
+    bool _rtc_temp_valid = false;
     String _device_name;
     uint32_t _sample_interval_ms = 1000;
     uint32_t _next_sample_ms = 0;

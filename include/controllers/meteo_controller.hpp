@@ -43,6 +43,8 @@ public:
         uint8_t dht_pin = kInvalidPin;
         uint8_t ds18_addr[kAddrLen] = {};
         bool ds18_addr_set = false;
+        uint32_t source_node_id = 0;
+        uint8_t source_sensor_id = 0;
         String name;
     };
 
@@ -57,6 +59,13 @@ public:
     };
 
     MeteoController(OneWireManager &ow, Logger &logs) : _ow(ow), _logs(logs) { reset_(); }
+    using RemoteMeteoProvider = bool (*)(void *ctx, uint32_t node_id, uint8_t sensor_id,
+                                         float &temp_c, bool &has_temp, float &hum, bool &has_hum, bool &ok);
+    void setRemoteMeteoProvider(RemoteMeteoProvider cb, void *ctx)
+    {
+        _remote_cb = cb;
+        _remote_ctx = ctx;
+    }
 
     bool begin()
     {
@@ -140,6 +149,19 @@ public:
                 cfg.ds18_addr_set = parseHexAddr(obj["addr"].as<const char *>(), cfg.ds18_addr);
             if (obj["name"].is<const char *>())
                 cfg.name = obj["name"].as<const char *>();
+            if (obj["src_node"].is<unsigned>())
+                cfg.source_node_id = (uint32_t)obj["src_node"].as<unsigned>();
+            if (obj["src_sensor"].is<unsigned>())
+            {
+                const unsigned src = obj["src_sensor"].as<unsigned>();
+                if (src > 0 && src <= kSensorCount)
+                    cfg.source_sensor_id = (uint8_t)src;
+            }
+            if (cfg.source_node_id == 0 || cfg.source_sensor_id == 0)
+            {
+                cfg.source_node_id = 0;
+                cfg.source_sensor_id = 0;
+            }
 
             if (!enabled_set)
                 cfg.enabled = true;
@@ -167,6 +189,11 @@ public:
                 char hex[17] = {};
                 formatHexAddr(cfg.ds18_addr, hex);
                 obj["addr"] = hex;
+            }
+            if (cfg.source_node_id && cfg.source_sensor_id)
+            {
+                obj["src_node"] = (unsigned long)cfg.source_node_id;
+                obj["src_sensor"] = (unsigned)cfg.source_sensor_id;
             }
         }
     }
@@ -205,6 +232,8 @@ public:
             return false;
         SensorConfig &cfg = _cfg[idx];
         cfg.type = type;
+        cfg.source_node_id = 0;
+        cfg.source_sensor_id = 0;
         if (type == SensorType::Dht22)
         {
             cfg.ds18_addr_set = false;
@@ -231,6 +260,8 @@ public:
             return false;
         SensorConfig &cfg = _cfg[idx];
         cfg.type = SensorType::Dht22;
+        cfg.source_node_id = 0;
+        cfg.source_sensor_id = 0;
         cfg.dht_pin = pin;
         cfg.ds18_addr_set = false;
         memset(cfg.ds18_addr, 0, sizeof(cfg.ds18_addr));
@@ -245,6 +276,8 @@ public:
             return false;
         SensorConfig &cfg = _cfg[idx];
         cfg.type = SensorType::Ds18b20;
+        cfg.source_node_id = 0;
+        cfg.source_sensor_id = 0;
         cfg.dht_pin = kInvalidPin;
         if (set)
         {
@@ -267,6 +300,26 @@ public:
         if (!indexById_(id, idx))
             return false;
         _cfg[idx].name = name;
+        return true;
+    }
+
+    bool setRemoteSource(size_t id, uint32_t node_id, uint8_t sensor_id)
+    {
+        size_t idx = 0;
+        if (!indexById_(id, idx))
+            return false;
+        SensorConfig &cfg = _cfg[idx];
+        if (node_id == 0 || sensor_id == 0)
+        {
+            cfg.source_node_id = 0;
+            cfg.source_sensor_id = 0;
+        }
+        else
+        {
+            cfg.source_node_id = node_id;
+            cfg.source_sensor_id = sensor_id;
+        }
+        _state[idx] = SensorState{};
         return true;
     }
 
@@ -346,6 +399,7 @@ public:
 private:
     static constexpr uint32_t kDht22IntervalMs = 2000;
     static constexpr uint32_t kDs18b20IntervalMs = 1000;
+    static constexpr uint32_t kRemoteIntervalMs = 2000;
 
     OneWireManager &_ow;
     Logger &_logs;
@@ -360,6 +414,8 @@ private:
     SensorState _state[kSensorCount];
     bool _controller_enabled = false;
     size_t _scan_index = 0;
+    RemoteMeteoProvider _remote_cb = nullptr;
+    void *_remote_ctx = nullptr;
 
     void reset_()
     {
@@ -387,7 +443,11 @@ private:
     {
         SensorConfig &cfg = _cfg[idx];
         SensorState &st = _state[idx];
-        if (!cfg.enabled || cfg.type == SensorType::None)
+        if (!cfg.enabled)
+            return false;
+        if (cfg.source_node_id && cfg.source_sensor_id)
+            return readRemoteIfDue_(cfg, st, now);
+        if (cfg.type == SensorType::None)
             return false;
         const uint32_t interval = (cfg.type == SensorType::Dht22) ? kDht22IntervalMs : kDs18b20IntervalMs;
         if (st.last_read_ms && (uint32_t)(now - st.last_read_ms) < interval)
@@ -395,6 +455,26 @@ private:
         if (cfg.type == SensorType::Ds18b20)
             return readDs18b20IfDue_(cfg, st, now);
         const bool ok = readDht22_(cfg, st);
+        st.ok = ok;
+        st.last_read_ms = now;
+        return true;
+    }
+
+    bool readRemoteIfDue_(const SensorConfig &cfg, SensorState &st, uint32_t now)
+    {
+        if (st.last_read_ms && (uint32_t)(now - st.last_read_ms) < kRemoteIntervalMs)
+            return false;
+        bool has_temp = false;
+        bool has_hum = false;
+        bool ok = false;
+        float temp_c = 0.0f;
+        float hum = 0.0f;
+        if (_remote_cb)
+            _remote_cb(_remote_ctx, cfg.source_node_id, cfg.source_sensor_id, temp_c, has_temp, hum, has_hum, ok);
+        st.temp_c = temp_c;
+        st.humidity = hum;
+        st.has_temp = has_temp;
+        st.has_humidity = has_hum;
         st.ok = ok;
         st.last_read_ms = now;
         return true;

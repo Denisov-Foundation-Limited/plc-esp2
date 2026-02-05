@@ -283,6 +283,27 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       }
     }
 
+    function filterRemoteOptions(select, nodeVal) {
+      if (!select) return;
+      const node = nodeVal || '';
+      const isLocal = (node === '' || node === 'local');
+      select.querySelectorAll('option').forEach((opt) => {
+        if (!opt.dataset || !opt.dataset.node) {
+          opt.hidden = false;
+          return;
+        }
+        opt.hidden = isLocal ? true : (opt.dataset.node !== node);
+      });
+      if (isLocal) {
+        select.value = '';
+      } else if (select.value) {
+        const selected = select.querySelector('option[value="' + select.value + '"]');
+        if (selected && selected.hidden) {
+          select.value = '';
+        }
+      }
+    }
+
     function updateRow(row) {
       const type = row.querySelector('select.meteo-type');
       const pinCell = row.querySelector('.pin-cell');
@@ -290,24 +311,51 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       const pinSelect = pinCell ? pinCell.querySelector('select') : null;
       const addrInput = addrCell ? addrCell.querySelector('input') : null;
       const addrSelect = addrCell ? addrCell.querySelector('select') : null;
+      const device = row.querySelector('select.meteo-device');
+      const source = row.querySelector('select.meteo-source');
+      const nameLocal = row.querySelector('.name-local');
+      const nameRemote = row.querySelector('.name-remote');
+      const nameInput = nameLocal ? nameLocal.querySelector('input') : null;
+      const isLocal = !device || device.value === 'local' || device.value === '';
+      if (nameLocal) nameLocal.style.display = isLocal ? '' : 'none';
+      if (nameRemote) nameRemote.style.display = isLocal ? 'none' : '';
+      setDisabled(nameInput, !isLocal);
+      setDisabled(source, false);
+      if (!isLocal) {
+        filterRemoteOptions(source, device ? device.value : '');
+      } else if (source) {
+        source.value = '';
+      }
       const val = type ? type.value : 'none';
       const showPin = (val === 'dht22');
       const showAddr = (val === 'ds18b20');
-      if (pinCell) {
-        pinCell.style.display = showPin ? '' : 'none';
+      if (!isLocal) {
+        if (pinCell) pinCell.style.display = 'none';
+        if (addrCell) addrCell.style.display = 'none';
+        setDisabled(type, true);
+        setDisabled(pinSelect, true);
+        setDisabled(addrInput, true);
+        setDisabled(addrSelect, true);
+      } else {
+        if (pinCell) pinCell.style.display = showPin ? '' : 'none';
+        if (addrCell) addrCell.style.display = showAddr ? '' : 'none';
+        setDisabled(type, false);
+        setDisabled(pinSelect, !showPin);
+        setDisabled(addrInput, !showAddr);
+        setDisabled(addrSelect, !showAddr);
       }
-      if (addrCell) {
-        addrCell.style.display = showAddr ? '' : 'none';
-      }
-      setDisabled(pinSelect, !showPin);
-      setDisabled(addrInput, !showAddr);
-      setDisabled(addrSelect, !showAddr);
     }
 
     document.querySelectorAll('select.meteo-type').forEach((el) => {
       const row = el.closest('.tile');
       if (row) {
         updateRow(row);
+        el.addEventListener('change', () => updateRow(row));
+      }
+    });
+    document.querySelectorAll('select.meteo-device').forEach((el) => {
+      const row = el.closest('.tile');
+      if (row) {
         el.addEventListener('change', () => updateRow(row));
       }
     });

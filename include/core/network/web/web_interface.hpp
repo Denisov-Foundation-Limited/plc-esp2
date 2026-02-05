@@ -28,7 +28,9 @@
 #include "boards/board_profile.hpp"
 #include "core/cli/cli_console.hpp"
 #include "core/network/wifi_manager.hpp"
+#include "core/network/stack/stack_cache.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
+#include "core/network/stack/stack_slave_handler.hpp"
 #include "core/network/web/pages/web_interface_page.hpp"
 #include "core/network/web/pages/web_interface_manage.hpp"
 #include "core/network/web/pages/web_interface_ports.hpp"
@@ -77,6 +79,7 @@ class MeteoHandler;
 class TankHandler;
 class RfidHandler;
 class RingClientHandler;
+class StackSlaveHandler;
 #include "core/rtc.hpp"
 #include "plc/plc_control.hpp"
 #include "core/network/telegram/telegram.hpp"
@@ -161,6 +164,7 @@ public:
           _ow(&ow),
           _log(&logs)
     {
+        _stack_cache.setLogger(&logs);
     }
 
     bool begin(bool format_on_fail = false)
@@ -186,13 +190,24 @@ public:
     }
 
     void setGsmModem(GsmModem &modem) { _gsm = &modem; }
-    void setConfigsManager(ConfigsManagerIface &mgr) { _configs_manager = &mgr; }
+    void setConfigsManager(ConfigsManagerIface &mgr)
+    {
+        _configs_manager = &mgr;
+        _stack_cache.setConfigsManager(&mgr);
+    }
     void setStackMaster(StackMaster &master)
     {
         _stack_master = &master;
+        _stack_cache.setStackMaster(&master);
         _stack_master->setFrameHandlerSecondary(&WebInterface::onStackFrame_, this);
     }
+    void setStackSlave(StackSlaveHandler *slave) { _stack_slave = slave; }
     void setCloudClient(CloudClient &client) { _cloud = &client; }
+
+    StackCache &stackCache() { return _stack_cache; }
+    const StackCache &stackCache() const { return _stack_cache; }
+    void initStackCacheAllocations() { _stack_cache.initAllocations(); }
+    void logStackCacheAllocations() { _stack_cache.logAllocations(); }
 
     void registerRoutes();
 
@@ -598,18 +613,18 @@ private:
             items += "<tr><td class=\"right\"><strong>";
             items += String((unsigned)it.id);
             items += "</strong></td><td><strong>";
-            if (it.backend.length())
-                appendHtmlEscaped_(items, it.backend.c_str());
+            if (it.backend[0])
+                appendHtmlEscaped_(items, it.backend);
             else
                 items += "n/a";
             items += "</strong></td><td><strong>";
-            if (it.loc.length())
-                appendHtmlEscaped_(items, it.loc.c_str());
+            if (it.loc[0])
+                appendHtmlEscaped_(items, it.loc);
             else
                 items += "n/a";
             items += "</strong></td><td><strong>";
-            if (it.type.length())
-                appendHtmlEscaped_(items, it.type.c_str());
+            if (it.type[0])
+                appendHtmlEscaped_(items, it.type);
             else
                 items += "n/a";
             items += "</strong></td><td><strong>";
@@ -625,8 +640,8 @@ private:
             else
                 items += "--";
             items += "</strong></td><td><strong>";
-            if (it.hw.length())
-                appendHtmlEscaped_(items, it.hw.c_str());
+            if (it.hw[0])
+                appendHtmlEscaped_(items, it.hw);
             else
                 items += "n/a";
             items += "</strong></td></tr>";
@@ -655,13 +670,13 @@ private:
             items += "</strong></td><td class=\"right\"><strong>";
             items += String((unsigned)it.bus);
             items += "</strong></td><td><strong>";
-            if (it.addr.length())
-                appendHtmlEscaped_(items, it.addr.c_str());
+            if (it.addr[0])
+                appendHtmlEscaped_(items, it.addr);
             else
                 items += "n/a";
             items += "</strong></td><td><strong>";
-            if (it.type.length())
-                appendHtmlEscaped_(items, it.type.c_str());
+            if (it.type[0])
+                appendHtmlEscaped_(items, it.type);
             else
                 items += "n/a";
             items += "</strong></td><td><strong>";
@@ -710,8 +725,8 @@ private:
             items += "<div>";
             items += "<div class=\"tile-head\">";
             items += "<strong>";
-            if (cfg.name.length())
-                appendHtmlEscaped_(items, cfg.name.c_str());
+            if (cfg.name[0])
+                appendHtmlEscaped_(items, cfg.name);
             else
                 items += "Розетка";
             items += "</strong>";
@@ -813,8 +828,8 @@ private:
             items += "</div>";
             items += "<div>";
             items += "<div class=\"tile-head\"><strong>";
-            if (cfg.name.length())
-                appendHtmlEscaped_(items, cfg.name.c_str());
+            if (cfg.name[0])
+                appendHtmlEscaped_(items, cfg.name);
             else
                 items += "Розетка";
             items += "</strong></div>";
@@ -1720,7 +1735,9 @@ private:
     {
         if (!ctx)
             return;
-        static_cast<WebInterface *>(ctx)->handleStackFrame_(node_id, frame);
+        WebInterface *self = static_cast<WebInterface *>(ctx);
+        self->handleStackFrame_(node_id, frame);
+        StackCache::onStackFrame_(&self->_stack_cache, node_id, frame);
     }
 
     void handleStackFrame_(uint32_t node_id, const StackFrame &frame)
@@ -1776,7 +1793,7 @@ private:
                     dst.id = (uint8_t)item["id"].as<unsigned>();
                     dst.enabled = item["enabled"] | false;
                     dst.state = item["state"] | false;
-                    dst.name = item["name"] | "";
+                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
                 }
                 sock_cache->has_data = true;
                 sock_cache->last_ok = true;
@@ -1807,7 +1824,7 @@ private:
                     dst.id = (uint8_t)item["id"].as<unsigned>();
                     dst.enabled = item["enabled"] | false;
                     dst.state = item["state"] | false;
-                    dst.name = item["name"] | "";
+                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
                 }
                 light_cache->has_data = true;
                 light_cache->last_ok = true;
@@ -1840,11 +1857,11 @@ private:
                         StackPortItem &dst = ports_cache->items[ports_cache->item_count++];
                         dst.id = (uint8_t)item["id"].as<unsigned>();
                         dst.ctrl = item["ctrl"] | false;
-                        dst.backend = item["backend"] | "";
-                        dst.loc = item["loc"] | "";
-                        dst.type = item["type"] | "";
-                        dst.hw = item["hw"] | "";
-                        dst.is_extender = (dst.backend == "Extender");
+                        copyStr_(dst.backend, sizeof(dst.backend), item["backend"].as<const char *>());
+                        copyStr_(dst.loc, sizeof(dst.loc), item["loc"].as<const char *>());
+                        copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
+                        copyStr_(dst.hw, sizeof(dst.hw), item["hw"].as<const char *>());
+                        dst.is_extender = (strcmp(dst.backend, "Extender") == 0);
                         if (item["dev"].is<int>() || item["dev"].is<unsigned>())
                             dst.dev = (int16_t)item["dev"].as<int>();
                         else
@@ -1883,8 +1900,8 @@ private:
                     StackExtenderItem &dst = ext_cache->items[ext_cache->item_count++];
                     dst.id = (uint8_t)item["id"].as<unsigned>();
                     dst.bus = (uint8_t)(item["bus"] | 0u);
-                    dst.addr = item["addr"] | "";
-                    dst.type = item["type"] | "";
+                    copyStr_(dst.addr, sizeof(dst.addr), item["addr"].as<const char *>());
+                    copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
                     dst.present = item["present"] | false;
                 }
                 ext_cache->has_data = true;
@@ -1917,8 +1934,8 @@ private:
                     dst.enabled = item["enabled"] | false;
                     dst.detect = item["detect"] | false;
                     dst.silent = item["silent"] | false;
-                    dst.name = item["name"] | "";
-                    dst.type = item["type"] | "";
+                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
                     dst.port = (uint8_t)(item["port"] | SecurityController::kInvalidPort);
                 }
                 sec_cache->has_data = true;
@@ -1954,9 +1971,9 @@ private:
                     dst.has_hum = item["has_hum"] | false;
                     dst.temp_c = item["temp_c"] | 0.0f;
                     dst.hum = item["hum"] | 0.0f;
-                    dst.name = item["name"] | "";
-                    dst.type = item["type"] | "";
-                    dst.addr = item["addr"] | "";
+                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
+                    copyStr_(dst.addr, sizeof(dst.addr), item["addr"].as<const char *>());
                     if (item["pin"].is<int>() || item["pin"].is<unsigned>())
                         dst.pin = item["pin"].as<int>();
                     else
@@ -1999,8 +2016,8 @@ private:
                     dst.heat = (uint8_t)(item["heat"] | ThermoController::kInvalidPort);
                     dst.cool = (uint8_t)(item["cool"] | ThermoController::kInvalidPort);
                     dst.button = (uint8_t)(item["button"] | ThermoController::kInvalidPort);
-                    dst.name = item["name"] | "";
-                    dst.mode = item["mode"] | "";
+                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    copyStr_(dst.mode, sizeof(dst.mode), item["mode"].as<const char *>());
                 }
                 thermo_cache->has_data = true;
                 thermo_cache->last_ok = true;
@@ -2080,7 +2097,7 @@ private:
                     dst.valve_on = item["valve_on"] | false;
                     dst.pump_on = item["pump_on"] | false;
                     dst.alarm_on = item["alarm_on"] | false;
-                    dst.name = item["name"] | "";
+                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
                 }
                 tanks_cache->has_data = true;
                 tanks_cache->last_ok = true;
@@ -3010,8 +3027,8 @@ private:
             items += "<div>";
             items += "<div class=\"tile-head\">";
             items += "<strong>";
-            if (cfg.name.length())
-                appendHtmlEscaped_(items, cfg.name.c_str());
+            if (cfg.name[0])
+                appendHtmlEscaped_(items, cfg.name);
             else
                 items += "Свет";
             items += "</strong>";
@@ -3110,8 +3127,8 @@ private:
             items += "</div>";
             items += "<div>";
             items += "<div class=\"tile-head\"><strong>";
-            if (cfg.name.length())
-                appendHtmlEscaped_(items, cfg.name.c_str());
+            if (cfg.name[0])
+                appendHtmlEscaped_(items, cfg.name);
             else
                 items += "Свет";
             items += "</strong></div>";
@@ -3576,8 +3593,8 @@ private:
             }
             items += "</svg></div><div>";
             items += "<div class=\"tile-head\"><strong>";
-            if (cfg.name.length())
-                appendHtmlEscaped_(items, cfg.name.c_str());
+            if (cfg.name[0])
+                appendHtmlEscaped_(items, cfg.name);
             else
                 items += String(F("Датчик #")) + String((unsigned)cfg.id);
             items += "</strong><label class=\"switch\"><input type=\"checkbox\" name=\"sec";
@@ -3672,7 +3689,7 @@ private:
             else
                 items += "off";
             items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
-            if (cfg.type == "reed")
+            if (strcmp(cfg.type, "reed") == 0)
             {
                 items += "<rect x=\"6\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
                 items += "<rect x=\"44\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
@@ -3689,8 +3706,8 @@ private:
             items += "</div>";
             items += "<div>";
             items += "<div class=\"tile-head\"><strong>";
-            if (cfg.name.length())
-                appendHtmlEscaped_(items, cfg.name.c_str());
+            if (cfg.name[0])
+                appendHtmlEscaped_(items, cfg.name);
             else
                 items += "Датчик";
             items += "</strong></div>";
@@ -3793,8 +3810,8 @@ private:
             items += "</div></div>";
             items += "<div>";
             items += "<div class=\"tile-head\"><strong>";
-            if (cfg.name.length())
-                appendHtmlEscaped_(items, cfg.name.c_str());
+            if (cfg.name[0])
+                appendHtmlEscaped_(items, cfg.name);
             else
                 items += "Датчик";
             items += "</strong></div>";
@@ -3819,8 +3836,8 @@ private:
                 items += "--";
             items += "</div></div>";
             items += "<div class=\"form-row full\"><label>Адрес</label><div class=\"field\">";
-            if (cfg.addr.length())
-                appendHtmlEscaped_(items, cfg.addr.c_str());
+            if (cfg.addr[0])
+                appendHtmlEscaped_(items, cfg.addr);
             else
                 items += "--";
             items += "</div></div>";
@@ -3846,12 +3863,15 @@ private:
         for (size_t i = 0; i < cache->item_count; ++i)
         {
             const StackThermoItem &cfg = cache->items[i];
+            const bool mode_off = strcmp(cfg.mode, "off") == 0;
+            const bool mode_heat = strcmp(cfg.mode, "heat") == 0;
+            const bool mode_cool = strcmp(cfg.mode, "cool") == 0;
             const char *mode_label = "авто";
-            if (cfg.mode == "off")
+            if (mode_off)
                 mode_label = "выкл";
-            else if (cfg.mode == "heat")
+            else if (mode_heat)
                 mode_label = "нагрев";
-            else if (cfg.mode == "cool")
+            else if (mode_cool)
                 mode_label = "охлаждение";
 
             const char *state_label = "ожидание";
@@ -3871,17 +3891,17 @@ private:
             bool show_cool = true;
             String heat_class = "icon heat ";
             String cool_class = "icon cool ";
-            if (cfg.mode == "off")
+            if (mode_off)
             {
                 show_heat = false;
                 show_cool = false;
             }
-            else if (cfg.mode == "heat")
+            else if (mode_heat)
             {
                 show_cool = false;
                 heat_class += cfg.heat_on ? "active" : "inactive";
             }
-            else if (cfg.mode == "cool")
+            else if (mode_cool)
             {
                 show_heat = false;
                 cool_class += cfg.cool_on ? "active" : "inactive";
@@ -3959,8 +3979,8 @@ private:
             items += state_label;
             items += "</span></span></div></div>";
             items += "<div><div class=\"tile-head\"><strong>";
-            if (cfg.name.length())
-                appendHtmlEscaped_(items, cfg.name.c_str());
+            if (cfg.name[0])
+                appendHtmlEscaped_(items, cfg.name);
             else
                 items += "Термо";
             items += "</strong><span class=\"badge\">ID ";
@@ -4104,8 +4124,8 @@ private:
             items += "</div></div>";
             items += "<div>";
             items += "<div class=\"tile-head\"><strong>";
-            if (cfg.name.length())
-                appendHtmlEscaped_(items, cfg.name.c_str());
+            if (cfg.name[0])
+                appendHtmlEscaped_(items, cfg.name);
             else
                 items += "Бак";
             items += "</strong></div>";
@@ -4216,7 +4236,16 @@ private:
                 addr = hex;
             }
 
-            const bool show_hum = (cfg.type == MeteoController::SensorType::Dht22);
+            const bool has_remote = (cfg.source_node_id != 0 && cfg.source_sensor_id != 0);
+            MeteoController::SensorType ui_type = cfg.type;
+            if (has_remote)
+            {
+                MeteoController::SensorType remote_type = MeteoController::SensorType::None;
+                if (meteoRemoteType_(cfg.source_node_id, cfg.source_sensor_id, remote_type) &&
+                    remote_type != MeteoController::SensorType::None)
+                    ui_type = remote_type;
+            }
+            const bool show_hum = (ui_type == MeteoController::SensorType::Dht22);
             const bool ok_on = has_read && st.ok;
 
             items += "<div class=\"tile";
@@ -4249,9 +4278,12 @@ private:
             items += "</div>";
             items += "</div>";
             items += "<div>";
+            String remote_label;
+            if (has_remote)
+                remote_label = meteoRemoteLabel_(cfg.source_node_id, cfg.source_sensor_id);
             items += "<div class=\"tile-head\"><strong>";
-            if (cfg.name.length())
-                appendHtmlEscaped_(items, cfg.name.c_str());
+            if (cfg.name[0])
+                appendHtmlEscaped_(items, cfg.name);
             else
                 items += "Датчик";
             items += "</strong>";
@@ -4261,11 +4293,25 @@ private:
             if (enabled)
                 items += " checked";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-            items += "<input class=\"field name\" type=\"text\" name=\"m";
+            items += "<div class=\"form-row full\" style=\"margin-bottom:8px;\"><label>Устройство</label><select class=\"field meteo-device\">";
+            items += meteoRemoteNodeOptionsHtml_(cfg.source_node_id);
+            items += "</select></div>";
+            items += "<div class=\"form-row name-local\"><label>Имя</label><input class=\"field name meteo-name\" type=\"text\" name=\"m";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
             appendHtmlEscaped_(items, cfg.name.c_str());
-            items += "\">";
+            items += "\"></div>";
+            items += "<div class=\"form-row name-remote\" style=\"display:none;\"><label>Имя</label><select class=\"field name meteo-source\" name=\"m";
+            items += String((unsigned)cfg.id);
+            items += "_src\">";
+            items += meteoRemoteSensorOptionsHtml_(cfg.source_sensor_id, cfg.source_node_id);
+            items += "</select></div>";
+            if (remote_label.length())
+            {
+                items += "<div class=\"muted\">";
+                appendHtmlEscaped_(items, remote_label.c_str());
+                items += "</div>";
+            }
             items += "<div class=\"status-line\">";
             items += ok;
             items += "<span>Давность: ";
@@ -4275,9 +4321,9 @@ private:
             items += "<div class=\"form-row\"><label>Тип</label><select class=\"field meteo-type\" name=\"m";
             items += String((unsigned)cfg.id);
             items += "_type\">";
-            appendTypeOption("none", "none", cfg.type == MeteoController::SensorType::None);
-            appendTypeOption("ds18b20", "ds18b20", cfg.type == MeteoController::SensorType::Ds18b20);
-            appendTypeOption("dht22", "dht22", cfg.type == MeteoController::SensorType::Dht22);
+            appendTypeOption("none", "none", ui_type == MeteoController::SensorType::None);
+            appendTypeOption("ds18b20", "ds18b20", ui_type == MeteoController::SensorType::Ds18b20);
+            appendTypeOption("dht22", "dht22", ui_type == MeteoController::SensorType::Dht22);
             items += "</select></div>";
             items += "<div class=\"form-row pin-cell\"><label>Пин</label><select class=\"field mini meteo-pin\" data-selected=\"";
             items += pin;
@@ -4361,30 +4407,80 @@ private:
         ThermoController &thermo = _controllers->thermo();
         MeteoController &meteo = _controllers->meteo();
         uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
+        uint32_t remote_used[ThermoController::kDeviceCount] = {};
+        size_t remote_used_count = 0;
 
         for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
         {
             const auto *cfg = thermo.configByIndex(i);
             if (!cfg || !cfg->enabled)
                 continue;
-            if (cfg->sensor_id && cfg->sensor_id <= MeteoController::kSensorCount)
+            if (cfg->sensor_id == 0 || cfg->sensor_id > MeteoController::kSensorCount)
+                continue;
+            if (cfg->sensor_node_id == 0)
+            {
                 sensor_used[cfg->sensor_id]++;
+            }
+            else if (remote_used_count < ThermoController::kDeviceCount)
+            {
+                remote_used[remote_used_count++] = (cfg->sensor_node_id << 8) | cfg->sensor_id;
+            }
         }
 
         auto appendTile = [&](const ThermoController::DeviceConfig &cfg, const ThermoController::DeviceState &st,
                               bool enabled) {
             const MeteoController::SensorState *sensor_st = nullptr;
-            const MeteoController::SensorConfig *sensor_cfg = nullptr;
+            bool remote_has_temp = false;
+            float remote_temp_c = 0.0f;
             if (cfg.sensor_id != ThermoController::kInvalidSensor)
             {
-                for (size_t s = 0; s < MeteoController::kSensorCount; ++s)
+                if (cfg.sensor_node_id != 0)
                 {
-                    const auto *scfg = meteo.configByIndex(s);
-                    if (scfg && scfg->id == cfg.sensor_id)
+                    if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
                     {
-                        sensor_cfg = scfg;
-                        sensor_st = meteo.stateByIndex(s);
-                        break;
+                        const auto *sc = _stack_slave->remoteMeteoCache(cfg.sensor_node_id);
+                        if (sc && sc->has_data)
+                        {
+                            for (size_t s = 0; s < sc->item_count; ++s)
+                            {
+                                const auto &it = sc->items[s];
+                                if (it.id == cfg.sensor_id)
+                                {
+                                    remote_has_temp = it.has_temp;
+                                    remote_temp_c = it.temp_c;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        const auto *remote_cache = _stack_cache.meteoCache(cfg.sensor_node_id);
+                        if (remote_cache && remote_cache->has_data)
+                        {
+                            for (size_t s = 0; s < remote_cache->item_count; ++s)
+                            {
+                                const auto &it = remote_cache->items[s];
+                                if (it.id == cfg.sensor_id)
+                                {
+                                    remote_has_temp = it.has_temp;
+                                    remote_temp_c = it.temp_c;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    for (size_t s = 0; s < MeteoController::kSensorCount; ++s)
+                    {
+                        const auto *scfg = meteo.configByIndex(s);
+                        if (scfg && scfg->id == cfg.sensor_id)
+                        {
+                            sensor_st = meteo.stateByIndex(s);
+                            break;
+                        }
                     }
                 }
             }
@@ -4394,15 +4490,31 @@ private:
             char sensor_buf[16] = {};
             if (cfg.sensor_id != ThermoController::kInvalidSensor)
             {
-                if (sensor_st && sensor_st->has_temp)
+                if (cfg.sensor_node_id != 0)
                 {
-                    dtostrf(sensor_st->temp_c, 0, 1, sensor_buf);
-                    sensor_label = sensor_buf;
-                      sensor_suffix = "°C";
+                    if (remote_has_temp)
+                    {
+                        dtostrf(remote_temp_c, 0, 1, sensor_buf);
+                        sensor_label = sensor_buf;
+                        sensor_suffix = "&deg;C";
+                    }
+                    else
+                    {
+                        sensor_label = "--";
+                    }
                 }
                 else
                 {
-                    sensor_label = "--";
+                    if (sensor_st && sensor_st->has_temp)
+                    {
+                        dtostrf(sensor_st->temp_c, 0, 1, sensor_buf);
+                        sensor_label = sensor_buf;
+                        sensor_suffix = "&deg;C";
+                    }
+                    else
+                    {
+                        sensor_label = "--";
+                    }
                 }
             }
 
@@ -4517,7 +4629,7 @@ private:
             items += "<div class=\"form-row full\"><label>Датчик</label><select class=\"field mini\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_sensor\">";
-            items += meteoSensorOptionsHtml_(cfg.sensor_id, sensor_used);
+            items += meteoSensorOptionsHtml_(cfg.sensor_id, cfg.sensor_node_id, sensor_used, remote_used, remote_used_count);
             items += "</select></div><div class=\"form-row\"><label>Режим</label><select class=\"field mini\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_mode\"><option value=\"off\"";
@@ -4644,8 +4756,8 @@ private:
             items += "<div>";
             items += "<div class=\"tile-head\">";
             items += "<strong>";
-            if (cfg.name.length())
-                appendHtmlEscaped_(items, cfg.name.c_str());
+            if (cfg.name[0])
+                appendHtmlEscaped_(items, cfg.name);
             else
                 items += "Бак";
             items += "</strong>";
@@ -6692,6 +6804,19 @@ sendRedirect_(request, "/", set_cookie);
         return false;
     }
 
+    static MeteoController::SensorType parseMeteoTypeName_(const char *input)
+    {
+        if (!input || !input[0])
+            return MeteoController::SensorType::None;
+        String t = input;
+        t.toLowerCase();
+        if (t == "dht22")
+            return MeteoController::SensorType::Dht22;
+        if (t == "ds18b20")
+            return MeteoController::SensorType::Ds18b20;
+        return MeteoController::SensorType::None;
+    }
+
     static bool parseSecurityType_(const String &input, SecurityController::SensorType &out)
     {
         String t = input;
@@ -6770,27 +6895,48 @@ sendRedirect_(request, "/", set_cookie);
         return true;
     }
 
-    static bool parseThermoSensor_(const String &input, uint8_t &out)
+    static bool parseThermoSensor_(const String &input, uint8_t &out, uint32_t &out_node)
     {
         String t = input;
         t.trim();
         t.toLowerCase();
+        out_node = 0;
         if (t.length() == 0 || t == "-" || t == "none")
         {
             out = ThermoController::kInvalidSensor;
             return true;
         }
-        for (size_t i = 0; i < t.length(); ++i)
-            if (t[i] < '0' || t[i] > '9')
+        int sep = t.indexOf(':');
+        String node_str;
+        String sensor_str;
+        if (sep >= 0)
+        {
+            node_str = t.substring(0, sep);
+            sensor_str = t.substring(sep + 1);
+        }
+        else
+        {
+            sensor_str = t;
+        }
+        if (node_str.length())
+        {
+            for (size_t i = 0; i < (size_t)node_str.length(); ++i)
+                if (node_str[i] < '0' || node_str[i] > '9')
+                    return false;
+            const unsigned long node_v = strtoul(node_str.c_str(), nullptr, 10);
+            out_node = (uint32_t)node_v;
+        }
+        for (size_t i = 0; i < (size_t)sensor_str.length(); ++i)
+            if (sensor_str[i] < '0' || sensor_str[i] > '9')
                 return false;
-        const unsigned long v = strtoul(t.c_str(), nullptr, 10);
+        const unsigned long v = strtoul(sensor_str.c_str(), nullptr, 10);
         if (v > MeteoController::kSensorCount)
             return false;
         out = (uint8_t)v;
         return true;
     }
 
-    static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
+static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
     {
         String t = input;
         t.trim();
@@ -6833,7 +6979,9 @@ sendRedirect_(request, "/", set_cookie);
         return true;
     }
 
-    String meteoSensorOptionsHtml_(uint8_t selected, const uint8_t used[MeteoController::kSensorCount + 1]) const
+    String meteoSensorOptionsHtml_(uint8_t selected_id, uint32_t selected_node_id,
+                                   const uint8_t used_local[MeteoController::kSensorCount + 1],
+                                   const uint32_t *used_remote, size_t used_remote_count) const
     {
         String out;
         out += "<option value=\"\">-</option>";
@@ -6845,13 +6993,14 @@ sendRedirect_(request, "/", set_cookie);
             const auto *cfg = meteo.config(id);
             if (!cfg || !cfg->enabled)
                 continue;
-            const bool is_used = (id <= MeteoController::kSensorCount) && (used[id] > 0) && (id != selected);
+            const bool is_selected = (selected_node_id == 0 && id == selected_id);
+            const bool is_used = (id <= MeteoController::kSensorCount) && (used_local[id] > 0) && !is_selected;
             if (is_used)
                 continue;
             out += "<option value=\"";
             out += String((unsigned)id);
             out += "\"";
-            if (id == selected)
+            if (is_selected)
                 out += " selected";
             out += ">";
             if (cfg->name.length())
@@ -6866,7 +7015,361 @@ sendRedirect_(request, "/", set_cookie);
             }
             out += "</option>";
         }
+
+        if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+        {
+            const size_t slots = _stack_slave->remoteMeteoCacheSlots();
+            if (slots > 0)
+                out += "<option disabled>— юниты —</option>";
+            for (size_t i = 0; i < slots; ++i)
+            {
+                const auto &cache = _stack_slave->remoteMeteoCacheAt(i);
+                if (cache.node_id == 0 || !cache.has_data || !cache.items)
+                    continue;
+                const String node_label = cache.node_name.length() ? cache.node_name : String("Node ") + String((unsigned long)cache.node_id);
+                for (size_t s = 0; s < cache.item_count; ++s)
+                {
+                    const auto &it = cache.items[s];
+                    if (!it.enabled)
+                        continue;
+                    const bool is_selected = (selected_node_id == cache.node_id && it.id == selected_id);
+                    const uint32_t key = (cache.node_id << 8) | it.id;
+                    bool is_used = false;
+                    for (size_t k = 0; k < used_remote_count; ++k)
+                    {
+                        if (used_remote[k] == key)
+                        {
+                            is_used = true;
+                            break;
+                        }
+                    }
+                    if (is_used && !is_selected)
+                        continue;
+                    out += "<option value=\"";
+                    out += String((unsigned long)cache.node_id);
+                    out += ":";
+                    out += String((unsigned)it.id);
+                    out += "\"";
+                    if (is_selected)
+                        out += " selected";
+                    out += ">";
+                    appendHtmlEscaped_(out, node_label.c_str());
+                    out += " / ";
+                    out += String((unsigned)it.id);
+                    if (it.name[0])
+                    {
+                        out += ": ";
+                        appendHtmlEscaped_(out, it.name);
+                    }
+                    out += "</option>";
+                }
+            }
+        }
+
+        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
+        {
+            const size_t count = _stack_master->nodeCount();
+            if (count > 0)
+                out += "<option disabled>— юниты —</option>";
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = _stack_master->nodeIdAt(i);
+                if (node_id == 0)
+                    continue;
+                const StackCache::StackMeteoCache *cache = _stack_cache.meteoCache(node_id);
+                if (!cache || !cache->has_data)
+                    continue;
+                String node_label;
+                if (_stack_master)
+                {
+                    String ip;
+                    uint16_t fw_ver = 0;
+                    _stack_master->nodeInfo(node_id, node_label, ip, fw_ver);
+                }
+                if (!node_label.length())
+                    node_label = String("Node ") + String((unsigned long)node_id);
+                for (size_t s = 0; s < cache->item_count; ++s)
+                {
+                    const auto &it = cache->items[s];
+                    if (!it.enabled)
+                        continue;
+                    const bool is_selected = (selected_node_id == node_id && it.id == selected_id);
+                    const uint32_t key = (node_id << 8) | it.id;
+                    bool is_used = false;
+                    for (size_t k = 0; k < used_remote_count; ++k)
+                    {
+                        if (used_remote[k] == key)
+                        {
+                            is_used = true;
+                            break;
+                        }
+                    }
+                    if (is_used && !is_selected)
+                        continue;
+                    out += "<option value=\"";
+                    out += String((unsigned long)node_id);
+                    out += ":";
+                    out += String((unsigned)it.id);
+                    out += "\"";
+                    if (is_selected)
+                        out += " selected";
+                    out += ">";
+                    appendHtmlEscaped_(out, node_label.c_str());
+                    out += " / ";
+                    out += String((unsigned)it.id);
+                    if (it.name[0])
+                    {
+                        out += ": ";
+                        appendHtmlEscaped_(out, it.name);
+                    }
+                    out += "</option>";
+                }
+            }
+        }
         return out;
+    }
+
+    String meteoRemoteSensorOptionsHtml_(uint8_t selected_id, uint32_t selected_node_id) const
+    {
+        String out;
+        out += "<option value=\"\">-</option>";
+        if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+        {
+            const size_t slots = _stack_slave->remoteMeteoCacheSlots();
+            for (size_t i = 0; i < slots; ++i)
+            {
+                const auto &cache = _stack_slave->remoteMeteoCacheAt(i);
+                if (cache.node_id == 0 || !cache.has_data || !cache.items)
+                    continue;
+                const String node_label = cache.node_name.length()
+                                              ? cache.node_name
+                                              : String("Node ") + String((unsigned long)cache.node_id);
+                for (size_t s = 0; s < cache.item_count; ++s)
+                {
+                    const auto &it = cache.items[s];
+                    if (!it.enabled)
+                        continue;
+                    const bool is_selected = (selected_node_id == cache.node_id && it.id == selected_id);
+                    out += "<option value=\"";
+                    out += String((unsigned long)cache.node_id);
+                    out += ":";
+                    out += String((unsigned)it.id);
+                    out += "\"";
+                    out += " data-node=\"";
+                    out += String((unsigned long)cache.node_id);
+                    out += "\"";
+                    if (is_selected)
+                        out += " selected";
+                    out += ">";
+                    appendHtmlEscaped_(out, node_label.c_str());
+                    out += ": ";
+                    if (it.name[0])
+                        appendHtmlEscaped_(out, it.name);
+                    else
+                        out += String((unsigned)it.id);
+                    out += "</option>";
+                }
+            }
+            return out;
+        }
+
+        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
+        {
+            const size_t count = _stack_master->nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = _stack_master->nodeIdAt(i);
+                if (node_id == 0)
+                    continue;
+                const StackCache::StackMeteoCache *cache = _stack_cache.meteoCache(node_id);
+                if (!cache || !cache->has_data)
+                    continue;
+                String node_label;
+                if (_stack_master)
+                {
+                    String ip;
+                    uint16_t fw_ver = 0;
+                    _stack_master->nodeInfo(node_id, node_label, ip, fw_ver);
+                }
+                if (!node_label.length())
+                    node_label = String("Node ") + String((unsigned long)node_id);
+                for (size_t s = 0; s < cache->item_count; ++s)
+                {
+                    const auto &it = cache->items[s];
+                    if (!it.enabled)
+                        continue;
+                    const bool is_selected = (selected_node_id == node_id && it.id == selected_id);
+                    out += "<option value=\"";
+                    out += String((unsigned long)node_id);
+                    out += ":";
+                    out += String((unsigned)it.id);
+                    out += "\"";
+                    out += " data-node=\"";
+                    out += String((unsigned long)node_id);
+                    out += "\"";
+                    if (is_selected)
+                        out += " selected";
+                    out += ">";
+                    appendHtmlEscaped_(out, node_label.c_str());
+                    out += ": ";
+                    if (it.name[0])
+                        appendHtmlEscaped_(out, it.name);
+                    else
+                        out += String((unsigned)it.id);
+                    out += "</option>";
+                }
+            }
+        }
+        return out;
+    }
+
+    String meteoRemoteNodeOptionsHtml_(uint32_t selected_node_id) const
+    {
+        String out;
+        out += "<option value=\"local\"";
+        if (selected_node_id == 0)
+            out += " selected";
+        out += ">local</option>";
+        if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+        {
+            const size_t slots = _stack_slave->remoteMeteoCacheSlots();
+            for (size_t i = 0; i < slots; ++i)
+            {
+                const auto &cache = _stack_slave->remoteMeteoCacheAt(i);
+                if (cache.node_id == 0 || !cache.has_data || !cache.items)
+                    continue;
+                const String node_label = cache.node_name.length()
+                                              ? cache.node_name
+                                              : String("Node ") + String((unsigned long)cache.node_id);
+                out += "<option value=\"";
+                out += String((unsigned long)cache.node_id);
+                out += "\"";
+                if (selected_node_id == cache.node_id)
+                    out += " selected";
+                out += ">";
+                appendHtmlEscaped_(out, node_label.c_str());
+                out += "</option>";
+            }
+            return out;
+        }
+        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
+        {
+            const size_t count = _stack_master->nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = _stack_master->nodeIdAt(i);
+                if (node_id == 0)
+                    continue;
+                String node_label;
+                String ip;
+                uint16_t fw_ver = 0;
+                _stack_master->nodeInfo(node_id, node_label, ip, fw_ver);
+                if (!node_label.length())
+                    node_label = String("Node ") + String((unsigned long)node_id);
+                out += "<option value=\"";
+                out += String((unsigned long)node_id);
+                out += "\"";
+                if (selected_node_id == node_id)
+                    out += " selected";
+                out += ">";
+                appendHtmlEscaped_(out, node_label.c_str());
+                out += "</option>";
+            }
+        }
+        return out;
+    }
+
+    String meteoRemoteLabel_(uint32_t node_id, uint8_t sensor_id) const
+    {
+        if (node_id == 0 || sensor_id == 0)
+            return "";
+        String node_label;
+        const char *sensor_name = nullptr;
+        if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+        {
+            const auto *cache = _stack_slave->remoteMeteoCache(node_id);
+            if (cache && cache->has_data && cache->items)
+            {
+                if (cache->node_name.length())
+                    node_label = cache->node_name;
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (it.id == sensor_id)
+                    {
+                        if (it.name[0])
+                            sensor_name = it.name;
+                        break;
+                    }
+                }
+            }
+        }
+        else if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
+        {
+            const auto *cache = _stack_cache.meteoCache(node_id);
+            if (cache && cache->has_data)
+            {
+                String ip;
+                uint16_t fw_ver = 0;
+                _stack_master->nodeInfo(node_id, node_label, ip, fw_ver);
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (it.id == sensor_id)
+                    {
+                        if (it.name[0])
+                            sensor_name = it.name;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!node_label.length())
+            node_label = String("Node ") + String((unsigned long)node_id);
+        String out = node_label;
+        out += ": ";
+        if (sensor_name && sensor_name[0])
+            out += sensor_name;
+        else
+            out += String((unsigned)sensor_id);
+        return out;
+    }
+
+    bool meteoRemoteType_(uint32_t node_id, uint8_t sensor_id, MeteoController::SensorType &out) const
+    {
+        out = MeteoController::SensorType::None;
+        if (node_id == 0 || sensor_id == 0)
+            return false;
+        if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+        {
+            const auto *cache = _stack_slave->remoteMeteoCache(node_id);
+            if (!cache || !cache->has_data || !cache->items)
+                return false;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                if (it.id != sensor_id)
+                    continue;
+                out = parseMeteoTypeName_(it.type);
+                return true;
+            }
+            return false;
+        }
+        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
+        {
+            const auto *cache = _stack_cache.meteoCache(node_id);
+            if (!cache || !cache->has_data)
+                return false;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                if (it.id != sensor_id)
+                    continue;
+                out = parseMeteoTypeName_(it.type);
+                return true;
+            }
+        }
+        return false;
     }
 
     bool isMeteoSensorActive_(uint8_t id) const
@@ -6875,6 +7378,37 @@ sendRedirect_(request, "/", set_cookie);
             return false;
         const auto *cfg = _controllers->meteo().config(id);
         return cfg && cfg->enabled;
+    }
+
+    bool isRemoteMeteoSensorActive_(uint32_t node_id, uint8_t id) const
+    {
+        if (stackRole_() == ConfigsManagerIface::StackRole::Slave)
+        {
+            if (!_stack_slave)
+                return false;
+            const auto *cache = _stack_slave->remoteMeteoCache(node_id);
+            if (!cache || !cache->has_data || !cache->items)
+                return false;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                if (it.id == id)
+                    return it.enabled;
+            }
+            return false;
+        }
+        if (!_stack_master || stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        const StackCache::StackMeteoCache *cache = _stack_cache.meteoCache(node_id);
+        if (!cache || !cache->has_data)
+            return false;
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const auto &it = cache->items[i];
+            if (it.id == id)
+                return it.enabled;
+        }
+        return false;
     }
 
     static String paramValue_(AsyncWebServerRequest *request, const String &name)
@@ -6926,6 +7460,23 @@ sendRedirect_(request, "/", set_cookie);
             }
             ++in;
         }
+    }
+
+    static void appendHtmlEscaped_(String &out, const String &in)
+    {
+        appendHtmlEscaped_(out, in.c_str());
+    }
+
+    static void copyStr_(char *dst, size_t size, const char *src)
+    {
+        if (!dst || size == 0)
+            return;
+        if (!src)
+        {
+            dst[0] = '\0';
+            return;
+        }
+        strlcpy(dst, src, size);
     }
 
     static String safeHtmlValue_(const String &value, const char *fallback)
@@ -8314,7 +8865,8 @@ sendRedirect_(request, "/", set_cookie);
         uint8_t id = 0;
         bool enabled = false;
         bool state = false;
-        String name;
+        static constexpr size_t kNameLen = 48;
+        char name[kNameLen] = {};
     };
     struct StackSocketsCache
     {
@@ -8334,7 +8886,8 @@ sendRedirect_(request, "/", set_cookie);
         uint8_t id = 0;
         bool enabled = false;
         bool state = false;
-        String name;
+        static constexpr size_t kNameLen = 48;
+        char name[kNameLen] = {};
     };
     struct StackLightsCache
     {
@@ -8356,10 +8909,14 @@ sendRedirect_(request, "/", set_cookie);
         bool is_extender = false;
         int16_t dev = -1;
         int16_t pin = -1;
-        String backend;
-        String loc;
-        String type;
-        String hw;
+        static constexpr size_t kBackendLen = 32;
+        static constexpr size_t kLocLen = 32;
+        static constexpr size_t kTypeLen = 32;
+        static constexpr size_t kHwLen = 32;
+        char backend[kBackendLen] = {};
+        char loc[kLocLen] = {};
+        char type[kTypeLen] = {};
+        char hw[kHwLen] = {};
     };
     struct StackPortsCache
     {
@@ -8379,8 +8936,10 @@ sendRedirect_(request, "/", set_cookie);
         uint8_t id = 0;
         uint8_t bus = 0;
         bool present = false;
-        String addr;
-        String type;
+        static constexpr size_t kAddrLen = 24;
+        static constexpr size_t kTypeLen = 24;
+        char addr[kAddrLen] = {};
+        char type[kTypeLen] = {};
     };
     struct StackExtendersCache
     {
@@ -8439,8 +8998,10 @@ sendRedirect_(request, "/", set_cookie);
         bool detect = false;
         bool silent = false;
         uint8_t port = SecurityController::kInvalidPort;
-        String type;
-        String name;
+        static constexpr size_t kTypeLen = 24;
+        static constexpr size_t kNameLen = 48;
+        char type[kTypeLen] = {};
+        char name[kNameLen] = {};
     };
     struct StackSecurityCache
     {
@@ -8464,9 +9025,12 @@ sendRedirect_(request, "/", set_cookie);
         bool has_hum = false;
         float temp_c = 0.0f;
         float hum = 0.0f;
-        String name;
-        String type;
-        String addr;
+        static constexpr size_t kNameLen = 48;
+        static constexpr size_t kTypeLen = 24;
+        static constexpr size_t kAddrLen = 24;
+        char name[kNameLen] = {};
+        char type[kTypeLen] = {};
+        char addr[kAddrLen] = {};
         int pin = -1;
     };
     struct StackMeteoCache
@@ -8495,8 +9059,10 @@ sendRedirect_(request, "/", set_cookie);
         uint8_t heat = ThermoController::kInvalidPort;
         uint8_t cool = ThermoController::kInvalidPort;
         uint8_t button = ThermoController::kInvalidPort;
-        String name;
-        String mode;
+        static constexpr size_t kNameLen = 48;
+        static constexpr size_t kModeLen = 24;
+        char name[kNameLen] = {};
+        char mode[kModeLen] = {};
     };
     struct StackThermoCache
     {
@@ -8554,7 +9120,8 @@ sendRedirect_(request, "/", set_cookie);
         bool valve_on = false;
         bool pump_on = false;
         bool alarm_on = false;
-        String name;
+        static constexpr size_t kNameLen = 48;
+        char name[kNameLen] = {};
     };
     struct StackTankCache
     {
@@ -8635,6 +9202,8 @@ sendRedirect_(request, "/", set_cookie);
     Extender *_ext = nullptr;
     Logger *_log = nullptr;
     StackMaster *_stack_master = nullptr;
+    StackSlaveHandler *_stack_slave = nullptr;
+    StackCache _stack_cache = {};
     CloudClient *_cloud = nullptr;
     String _session_token;
     uint32_t _session_expire_ms = 0;
@@ -8724,21 +9293,3 @@ inline void WebInterface::registerRoutes()
         request->send(404, "text/plain", String("Not found: ") + uri);
     });
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
