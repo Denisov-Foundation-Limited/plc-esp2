@@ -20,6 +20,7 @@
 #include "hal/gpio/extender.hpp"
 #include "controllers/controllers.hpp"
 #include "utils/meteo_history.hpp"
+#include "plc/plc_control.hpp"
 
 template <size_t N>
 class TaskBinder
@@ -27,7 +28,7 @@ class TaskBinder
 public:
     TaskBinder(TaskManager<N> &tm, WifiManager &wifi, TelegramBot &tgbot, Extender &ext,
                Controllers &controllers, MeteoHistory &meteo_history, RfidReader &rfid_reader,
-               RingClient &ring_client, Display &display)
+               RingClient &ring_client, Display &display, PlcControl &plc)
         : _tm(tm),
           _wifi(wifi),
           _tgbot(tgbot),
@@ -36,7 +37,8 @@ public:
           _meteo_history(meteo_history),
           _rfid_reader(rfid_reader),
           _ring_client(ring_client),
-          _display(display)
+          _display(display),
+          _plc(plc)
     {
     }
 
@@ -50,6 +52,7 @@ public:
         bindRingClient_();
         bindMeteoHistory_();
         bindDisplay_();
+        bindPlc_();
     }
 
     template <typename FtestT>
@@ -116,6 +119,7 @@ private:
     RfidReader &_rfid_reader;
     RingClient &_ring_client;
     Display &_display;
+    PlcControl &_plc;
     typename TaskManager<N>::Handle _ftest_task{};
     typename TaskManager<N>::Handle _ext_task{};
     typename TaskManager<N>::Handle _rfid_task{};
@@ -153,5 +157,13 @@ private:
         opt.priority = TaskManager<N>::Priority::Low;
         _display_task = _tm.template add<&Display::task>(_display, opt);
         return _display_task;
+    }
+
+    typename TaskManager<N>::Handle bindPlc_()
+    {
+        typename TaskManager<N>::Options opt;
+        opt.interval_ms = 100;
+        opt.priority = TaskManager<N>::Priority::Normal;
+        return _tm.template add<&PlcControl::task>(_plc, opt);
     }
 };

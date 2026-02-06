@@ -94,9 +94,14 @@ public:
     {
         if (_cfg.enabled == enabled)
             return false;
-        _cfg.enabled = enabled;
         if (!enabled)
+        {
             ensureRelayOff_();
+            _cfg = Config{};
+            _st = State{};
+            return true;
+        }
+        _cfg.enabled = true;
         return true;
     }
 

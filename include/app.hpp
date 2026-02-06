@@ -162,9 +162,9 @@ struct ControlContext
           rfid_reader(),
           ring_client(hw.gpio, core.logs),
           task_binder(core.tm, comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history, rfid_reader,
-                      ring_client, hw.display),
+                      ring_client, hw.display, hw.plc),
           ftest(core.logs, hw.io, hw.ow, hw.ibutton, hw.ds18b20, hw.i2c, hw.rtc, hw.ext, core.tm, task_binder),
-          plc_scan(hw.io, hw.plc)
+          plc_scan(hw.io)
     {
     }
 };
@@ -221,6 +221,7 @@ struct App
     CommsContext comms;
     ControlContext control;
     UiContext ui;
+    StackCache stack_cache;
     NetworkContext net;
     ConfigContext cfg;
 
@@ -230,6 +231,7 @@ struct App
           comms(core.logs, core.uart),
           control(core, hw, comms),
           ui(core, hw, comms, control),
+          stack_cache(),
           net(core, hw, comms, control, ui),
           cfg(core, hw, comms, control, ui, net)
     {
@@ -246,6 +248,8 @@ struct App
         control.telegram_menu.setSeptic(control.controllers.septic());
         control.telegram_menu.setSecurity(control.controllers.security());
 
+        stack_cache.setLogger(&core.logs);
+        net.fw_upgrade.setStackCache(stack_cache);
         net.fw_upgrade.setConfigsManager(cfg.configs_manager);
         net.fw_upgrade.setStackMaster(net.network.stackMaster());
         net.fw_upgrade.setStackSlave(&net.stack_slave);
@@ -254,6 +258,9 @@ struct App
         net.network.setStackConfig(cfg.configs_manager);
         control.controllers.thermo().setRemoteMeteoProvider(&App::onRemoteMeteo_, this);
         control.controllers.meteo().setRemoteMeteoProvider(&App::onRemoteMeteoProxy_, this);
+        control.controllers.meteo().setRemoteNodeNameProvider(&App::onRemoteNodeName_, this);
+        control.controllers.meteo().setRemoteSensorNameProvider(&App::onRemoteSensorName_, this);
+        control.controllers.meteo().setAlarmHandler(&App::onMeteoAlarm_, this);
         control.controllers.security().setArmStateHandler(&App::onSecurityArmState_, this);
         control.controllers.security().setAlarmStateHandler(&App::onSecurityAlarmState_, this);
         control.controllers.security().setClearDetectHandler(&App::onSecurityClearDetect_, this);
@@ -282,8 +289,8 @@ struct App
         }
 
         net.stack_slave.initAllocations();
-        net.fw_upgrade.initStackCacheAllocations();
-        net.fw_upgrade.logStackCacheAllocations();
+        stack_cache.initAllocations();
+        stack_cache.logAllocations();
 
         delay(1000);
         ui.console.begin(Serial);
@@ -373,9 +380,9 @@ struct App
         cfg.configs_manager.setCloudFirmwareVersion(BuildInfo::kFwVersion);
         net.network.setCloudFirmwareVersion(BuildInfo::kFwVersion);
         if (comms.wifi.ap())
-            core.logs.info(F("WIFI"), F("Mode: AP (SSID=%s)"), comms.wifi.apSsid().c_str());
+            core.logs.info(F("WIFI"), F("Mode: AP (SSID: %s)"), comms.wifi.apSsid().c_str());
         else
-            core.logs.info(F("WIFI"), F("Mode: STA (SSID=%s)"), comms.wifi.ssid().c_str());
+            core.logs.info(F("WIFI"), F("Mode: STA (SSID: %s)"), comms.wifi.ssid().c_str());
 
         bool ok = true;
 
@@ -429,6 +436,12 @@ struct App
         }
 
         core.logs.info(F("APP"), F("Initializing Display"));
+        const uint8_t bl_pin = ActiveBoardProfile::LCD_BACKLIGHT_PIN;
+        if (bl_pin != 0xFF)
+        {
+            hw.portio.pinMode(bl_pin, PortIO::PortMode::Output);
+            hw.portio.write(bl_pin, true);
+        }
         if (!hw.display.begin())
         {
             switch (hw.display.lastError())
@@ -513,11 +526,17 @@ struct App
         updateRingClientMode_();
         updateRingClientConfig_();
         updateDisplayLayout_();
+        updateTankAlarms_();
+        updateSepticAlarms_();
+        updateSecurityAlarms_();
+        updateMeteoAlarms_();
+        pollStackCaches_();
         pollSecurityStatusFromMaster_();
         control.plc_scan.tick();
         ui.console.loop();
         comms.gsm.loop();
         net.network.loop();
+        updateStackMasterMode_();
         net.stack_slave.loop();
         core.tm.loop();
         flushPendingSecurityDetect_();
@@ -528,14 +547,277 @@ struct App
     }
 
 private:
+    bool stackMasterActive_() const
+    {
+        return cfg.configs_manager.stackRole() == ConfigsManagerIface::StackRole::Master ||
+               net.network.stackFallbackActive();
+    }
+
+    bool stackSlaveActive_() const
+    {
+        return cfg.configs_manager.stackRole() == ConfigsManagerIface::StackRole::Slave &&
+               !net.network.stackFallbackActive();
+    }
+
+    void updateMasterLed_(bool master_active)
+    {
+        const uint8_t pin = ActiveBoardProfile::MASTER_LED_PIN;
+        if (pin == 0xFF)
+            return;
+        if (!_master_led_initialized)
+        {
+            hw.io.pinMode(pin, PortIO::PortMode::Output);
+            _master_led_initialized = true;
+        }
+        if (_master_led_state == master_active)
+            return;
+        hw.io.write(pin, master_active);
+        _master_led_state = master_active;
+    }
+
+    void updateStackMasterMode_()
+    {
+        const bool active = net.network.stackMasterActive();
+        if (_stack_master_effective != active)
+        {
+            _stack_master_effective = active;
+            stack_cache.setMasterOverride(active);
+            updateSecurityNotifyMode_();
+            updateSepticNotifyMode_();
+            updateTanksNotifyMode_();
+            if (active)
+                core.logs.warn(F("STACK"), F("Role switch: master"));
+            else
+                core.logs.warn(F("STACK"), F("Role switch: slave"));
+        }
+        updateMasterLed_(active);
+    }
+
+    void updateTankAlarms_()
+    {
+        TankController &tanks = control.controllers.tanks();
+        uint32_t detail_mask = 0;
+        uint32_t unit_mask = 0;
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = tanks.configByIndex(i);
+            const auto *st = tanks.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            if (cfg->id == 0 || cfg->id > 32)
+                continue;
+            const bool empty = !(st->level_low || st->level_mid || st->level_full);
+            if (!st->levels_ok || empty)
+                detail_mask |= (1u << (cfg->id - 1));
+        }
+        if (stackMasterActive_())
+        {
+            StackMaster &master = net.network.stackMaster();
+            const size_t count = master.nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = master.nodeIdAt(i);
+                if (node_id == 0)
+                    continue;
+                const auto *cache = stack_cache.tanksCache(node_id);
+                if (!cache || !cache->has_data || !cache->last_ok)
+                    continue;
+                for (size_t j = 0; j < cache->item_count; ++j)
+                {
+                    const auto &it = cache->items[j];
+                    if (!it.enabled)
+                        continue;
+                    if (it.id == 0 || it.id > 32)
+                        continue;
+                    const bool empty = !(it.level_low || it.level_mid || it.level_full);
+                    if (!it.levels_ok || empty)
+                    {
+                        detail_mask |= (1u << (it.id - 1));
+                        if (i < 32)
+                            unit_mask |= (1u << i);
+                    }
+                }
+            }
+        }
+        hw.plc.setAlarmDetailMask(PlcControl::AlarmModule::Tanks, detail_mask);
+        hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Tanks, unit_mask);
+    }
+
+    void updateSepticAlarms_()
+    {
+        SepticController &septic = control.controllers.septic();
+        uint32_t detail_mask = 0;
+        uint32_t unit_mask = 0;
+        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        {
+            const auto *cfg = septic.configByIndex(i);
+            const auto *st = septic.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            if (cfg->id == 0 || cfg->id > 32)
+                continue;
+            if (st->alarm)
+                detail_mask |= (1u << (cfg->id - 1));
+        }
+        if (stackMasterActive_())
+        {
+            StackMaster &master = net.network.stackMaster();
+            const size_t count = master.nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = master.nodeIdAt(i);
+                if (node_id == 0)
+                    continue;
+                const auto *cache = stack_cache.septicCache(node_id);
+                if (!cache || !cache->has_data || !cache->items || !cache->last_ok)
+                    continue;
+                for (size_t j = 0; j < cache->item_count; ++j)
+                {
+                    const auto &it = cache->items[j];
+                    if (!it.enabled)
+                        continue;
+                    if (it.id == 0 || it.id > 32)
+                        continue;
+                    if (it.alarm)
+                    {
+                        detail_mask |= (1u << (it.id - 1));
+                        if (i < 32)
+                            unit_mask |= (1u << i);
+                    }
+                }
+            }
+        }
+        hw.plc.setAlarmDetailMask(PlcControl::AlarmModule::Septic, detail_mask);
+        hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Septic, unit_mask);
+    }
+
+    void updateSecurityAlarms_()
+    {
+        SecurityController &sec = control.controllers.security();
+        uint32_t detail_mask = 0;
+        uint32_t unit_mask = 0;
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+            const auto *cfg = sec.configByIndex(i);
+            const auto *st = sec.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled || cfg->silent)
+                continue;
+            if (cfg->id == 0 || cfg->id > 32)
+                continue;
+            if (st->is_detect)
+                detail_mask |= (1u << (cfg->id - 1));
+        }
+        if (stackMasterActive_())
+        {
+            StackMaster &master = net.network.stackMaster();
+            const size_t count = master.nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = master.nodeIdAt(i);
+                if (node_id == 0)
+                    continue;
+                const auto *cache = stack_cache.securityCache(node_id);
+                if (!cache || !cache->has_data || !cache->items || !cache->last_ok)
+                    continue;
+                for (size_t j = 0; j < cache->item_count; ++j)
+                {
+                    const auto &it = cache->items[j];
+                    if (!it.enabled || it.silent)
+                        continue;
+                    if (it.id == 0 || it.id > 32)
+                        continue;
+                    if (it.detect)
+                    {
+                        detail_mask |= (1u << (it.id - 1));
+                        if (i < 32)
+                            unit_mask |= (1u << i);
+                    }
+                }
+            }
+        }
+        hw.plc.setAlarmDetailMask(PlcControl::AlarmModule::Security, detail_mask);
+        hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Security, unit_mask);
+    }
+
+    void updateMeteoAlarms_()
+    {
+        MeteoController &meteo = control.controllers.meteo();
+        uint32_t detail_mask = 0;
+        uint32_t unit_mask = 0;
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = meteo.configByIndex(i);
+            const auto *st = meteo.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            if (cfg->id == 0 || cfg->id > 32)
+                continue;
+            if (!st->ok)
+                detail_mask |= (1u << (cfg->id - 1));
+        }
+        if (stackMasterActive_())
+        {
+            StackMaster &master = net.network.stackMaster();
+            const size_t count = master.nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = master.nodeIdAt(i);
+                if (node_id == 0)
+                    continue;
+                const auto *cache = stack_cache.meteoCache(node_id);
+                if (!cache || !cache->has_data || !cache->items || !cache->last_ok)
+                    continue;
+                for (size_t j = 0; j < cache->item_count; ++j)
+                {
+                    const auto &it = cache->items[j];
+                    if (!it.enabled)
+                        continue;
+                    if (it.id == 0 || it.id > 32)
+                        continue;
+                    if (!it.ok)
+                    {
+                        detail_mask |= (1u << (it.id - 1));
+                        if (i < 32)
+                            unit_mask |= (1u << i);
+                    }
+                }
+            }
+        }
+        hw.plc.setAlarmDetailMask(PlcControl::AlarmModule::Meteo, detail_mask);
+        hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Meteo, unit_mask);
+    }
+
+    void pollStackCaches_()
+    {
+        if (!stackMasterActive_())
+            return;
+        StackMaster &master = net.network.stackMaster();
+        const size_t count = master.nodeCount();
+        if (count == 0)
+            return;
+        const uint32_t now = millis();
+        if ((uint32_t)(now - _last_stack_poll_ms) < kStackPollMs)
+            return;
+        _last_stack_poll_ms = now;
+        if (_stack_poll_index >= count)
+            _stack_poll_index = 0;
+        const uint32_t node_id = master.nodeIdAt(_stack_poll_index++);
+        if (node_id == 0)
+            return;
+        stack_cache.requestSecurity(node_id);
+        stack_cache.requestSeptic(node_id);
+        stack_cache.requestTanks(node_id);
+        stack_cache.requestMeteo(node_id);
+    }
+
     static bool onRemoteMeteo_(void *ctx, uint32_t node_id, uint8_t sensor_id, float &temp_c, bool &has_temp)
     {
         if (!ctx || node_id == 0 || sensor_id == 0)
             return false;
         App *self = static_cast<App *>(ctx);
-        if (self->cfg.configs_manager.stackRole() == ConfigsManagerIface::StackRole::Master)
+        if (self->stackMasterActive_())
         {
-            auto &stack_cache = self->net.fw_upgrade.stackCache();
+            auto &stack_cache = self->stack_cache;
             const auto *cache = stack_cache.meteoCache(node_id);
             if (!cache || !cache->has_data)
             {
@@ -553,7 +835,10 @@ private:
             }
             return false;
         }
-        return self->net.stack_slave.remoteMeteoTemp(node_id, sensor_id, temp_c, has_temp);
+        if (self->net.stack_slave.remoteMeteoTemp(node_id, sensor_id, temp_c, has_temp))
+            return true;
+        self->net.stack_slave.requestRemoteMeteoAll();
+        return false;
     }
 
     static bool onRemoteMeteoProxy_(void *ctx, uint32_t node_id, uint8_t sensor_id,
@@ -562,11 +847,14 @@ private:
         if (!ctx || node_id == 0 || sensor_id == 0)
             return false;
         App *self = static_cast<App *>(ctx);
-        if (self->cfg.configs_manager.stackRole() == ConfigsManagerIface::StackRole::Master)
+        if (self->stackMasterActive_())
         {
-            const auto *cache = self->net.fw_upgrade.stackCache().meteoCache(node_id);
+            const auto *cache = self->stack_cache.meteoCache(node_id);
             if (!cache || !cache->has_data)
+            {
+                self->stack_cache.requestMeteo(node_id);
                 return false;
+            }
             for (size_t i = 0; i < cache->item_count; ++i)
             {
                 const auto &it = cache->items[i];
@@ -585,6 +873,78 @@ private:
             return true;
         self->net.stack_slave.requestRemoteMeteoAll();
         return false;
+    }
+
+    static bool onRemoteNodeName_(void *ctx, uint32_t node_id, String &out)
+    {
+        if (!ctx || node_id == 0)
+            return false;
+        App *self = static_cast<App *>(ctx);
+        out = self->stackNodeLabel_(node_id);
+        return out.length() > 0;
+    }
+
+    static bool onRemoteSensorName_(void *ctx, uint32_t node_id, uint8_t sensor_id, String &out)
+    {
+        if (!ctx || node_id == 0 || sensor_id == 0)
+            return false;
+        App *self = static_cast<App *>(ctx);
+        if (self->stackMasterActive_())
+        {
+            const auto *cache = self->stack_cache.meteoCache(node_id);
+            if (!cache || !cache->has_data)
+            {
+                self->stack_cache.requestMeteo(node_id);
+                return false;
+            }
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                if (it.id != sensor_id)
+                    continue;
+                if (it.name[0])
+                {
+                    out = it.name;
+                    return true;
+                }
+                return false;
+            }
+            return false;
+        }
+        const auto *cache = self->net.stack_slave.remoteMeteoCache(node_id);
+        if (!cache || !cache->has_data || !cache->items)
+        {
+            self->net.stack_slave.requestRemoteMeteoAll();
+            return false;
+        }
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const auto &it = cache->items[i];
+            if (it.id != sensor_id)
+                continue;
+            if (it.name[0])
+            {
+                out = it.name;
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
+    static void onMeteoAlarm_(void *ctx, uint32_t node_id, uint8_t sensor_id, bool alarm)
+    {
+        if (!ctx || sensor_id == 0 || sensor_id > 32)
+            return;
+        App *self = static_cast<App *>(ctx);
+        if (node_id != 0 && self->stackSlaveActive_())
+            return;
+        self->hw.plc.setAlarmDetail(PlcControl::AlarmModule::Meteo, (uint8_t)(sensor_id - 1), alarm);
+        if (node_id == 0)
+            return;
+        const int unit_idx = self->stackNodeIndex_(node_id);
+        if (unit_idx >= 0 && unit_idx < 32)
+            self->hw.plc.setAlarmUnit(PlcControl::AlarmModule::Meteo, (uint8_t)unit_idx, alarm);
     }
 
     static void onSecurityArmState_(void *ctx, bool armed)
@@ -632,21 +992,30 @@ private:
     {
         if (!ctx)
             return;
-        static_cast<App *>(ctx)->broadcastSecurityClear_();
+        App *self = static_cast<App *>(ctx);
+        self->hw.plc.setAlarmDetailMask(PlcControl::AlarmModule::Security, 0);
+        self->hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Security, 0);
+        self->broadcastSecurityClear_();
     }
 
     static void onSecurityDetect_(void *ctx, uint8_t sensor_id, const String &name, bool silent)
     {
         if (!ctx)
             return;
-        static_cast<App *>(ctx)->sendSecurityDetectToMaster_(sensor_id, name, silent);
+        App *self = static_cast<App *>(ctx);
+        if (!silent && sensor_id > 0 && sensor_id <= 32)
+            self->hw.plc.setAlarmDetail(PlcControl::AlarmModule::Security, (uint8_t)(sensor_id - 1), true);
+        self->sendSecurityDetectToMaster_(sensor_id, name, silent);
     }
 
     static void onSepticDetect_(void *ctx, uint8_t septic_id, const String &name, bool is_alarm)
     {
         if (!ctx)
             return;
-        static_cast<App *>(ctx)->sendSepticDetectToMaster_(septic_id, name, is_alarm);
+        App *self = static_cast<App *>(ctx);
+        if (is_alarm && septic_id > 0 && septic_id <= 32)
+            self->hw.plc.setAlarmDetail(PlcControl::AlarmModule::Septic, (uint8_t)(septic_id - 1), true);
+        self->sendSepticDetectToMaster_(septic_id, name, is_alarm);
     }
 
     static void onTankEmpty_(void *ctx, uint8_t tank_id, const String &name, bool empty)
@@ -698,7 +1067,7 @@ private:
 
     void broadcastSecurityState_(bool armed)
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Master)
+        if (!stackMasterActive_())
             return;
         StackMaster &master = net.network.stackMaster();
         const size_t count = master.nodeCount();
@@ -715,7 +1084,7 @@ private:
     {
         if (node_id == 0)
             return;
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Master)
+        if (!stackMasterActive_())
             return;
         StackMaster &master = net.network.stackMaster();
 
@@ -737,7 +1106,7 @@ private:
 
     void sendSecurityDetectToMaster_(uint8_t sensor_id, const String &name, bool silent)
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return;
         StackNode &node = net.network.stackNode();
         if (!node.connected())
@@ -776,7 +1145,7 @@ private:
 
     void sendSepticDetectToMaster_(uint8_t septic_id, const String &name, bool is_alarm)
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return;
         StackNode &node = net.network.stackNode();
         if (!node.connected())
@@ -814,7 +1183,7 @@ private:
 
     void sendTankEmptyToMaster_(uint8_t tank_id, const String &name)
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return;
         StackNode &node = net.network.stackNode();
         if (!node.connected())
@@ -849,7 +1218,7 @@ private:
 
     void broadcastRingHold_(bool on)
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Master)
+        if (!stackMasterActive_())
             return;
         StackMaster &master = net.network.stackMaster();
         const size_t count = master.nodeCount();
@@ -924,7 +1293,7 @@ private:
 
     void handleStackFrame_(uint32_t node_id, const StackFrame &frame)
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Master)
+        if (!stackMasterActive_())
             return;
         if (frame.type != (uint8_t)StackMsgType::CmdSet)
             return;
@@ -953,6 +1322,12 @@ private:
                                (unsigned)sensor_id,
                                name.length() ? name.c_str() : "",
                                silent ? 1u : 0u);
+
+                if (!silent && sensor_id > 0 && sensor_id <= 32)
+                    hw.plc.setAlarmDetail(PlcControl::AlarmModule::Security, (uint8_t)(sensor_id - 1), true);
+                const int unit_idx = stackNodeIndex_(node_id);
+                if (unit_idx >= 0 && unit_idx < 32 && !silent)
+                    hw.plc.setAlarmUnit(PlcControl::AlarmModule::Security, (uint8_t)unit_idx, true);
 
                 control.controllers.security().setAlarmState(true);
                 broadcastSecurityAlarm_(true);
@@ -1029,6 +1404,11 @@ private:
                        source.c_str(),
                        (unsigned)septic_id,
                        name.length() ? name.c_str() : "");
+        if (septic_id > 0 && septic_id <= 32)
+            hw.plc.setAlarmDetail(PlcControl::AlarmModule::Septic, (uint8_t)(septic_id - 1), is_alarm);
+        const int unit_idx = stackNodeIndex_(node_id);
+        if (unit_idx >= 0 && unit_idx < 32)
+            hw.plc.setAlarmUnit(PlcControl::AlarmModule::Septic, (uint8_t)unit_idx, is_alarm);
         control.controllers.septic().notifyRemoteLevel(source, septic_id, name, is_alarm);
     }
 
@@ -1047,32 +1427,32 @@ private:
                        source.c_str(),
                        (unsigned)tank_id,
                        name.length() ? name.c_str() : "");
+        if (tank_id > 0 && tank_id <= 32)
+            hw.plc.setAlarmDetail(PlcControl::AlarmModule::Tanks, (uint8_t)(tank_id - 1), true);
+        const int unit_idx = stackNodeIndex_(node_id);
+        if (unit_idx >= 0 && unit_idx < 32)
+            hw.plc.setAlarmUnit(PlcControl::AlarmModule::Tanks, (uint8_t)unit_idx, true);
         control.controllers.tanks().notifyRemoteEmpty(source, tank_id, name);
     }
 
     void updateSecurityNotifyMode_()
     {
-        const auto role = cfg.configs_manager.stackRole();
-        control.controllers.security().setNotifyEnabled(role == ConfigsManagerIface::StackRole::Master);
+        control.controllers.security().setNotifyEnabled(stackMasterActive_());
     }
 
     void updateSepticNotifyMode_()
     {
-        const auto role = cfg.configs_manager.stackRole();
-        control.controllers.septic().setNotifyEnabled(role == ConfigsManagerIface::StackRole::Master);
+        control.controllers.septic().setNotifyEnabled(stackMasterActive_());
     }
 
     void updateTanksNotifyMode_()
     {
-        const auto role = cfg.configs_manager.stackRole();
-        control.controllers.tanks().setNotifyEnabled(role == ConfigsManagerIface::StackRole::Master);
+        control.controllers.tanks().setNotifyEnabled(stackMasterActive_());
     }
 
     void updateRfidMode_()
     {
-        const auto role = cfg.configs_manager.stackRole();
-        const bool enable = (role == ConfigsManagerIface::StackRole::Slave) &&
-                            cfg.configs_manager.rfidEnabled();
+        const bool enable = stackSlaveActive_() && cfg.configs_manager.rfidEnabled();
         if (_rfid_enabled != enable)
         {
             _rfid_enabled = enable;
@@ -1082,9 +1462,7 @@ private:
 
     void updateRingClientMode_()
     {
-        const auto role = cfg.configs_manager.stackRole();
-        const bool enable = (role == ConfigsManagerIface::StackRole::Slave) &&
-                            cfg.configs_manager.ringClientEnabled();
+        const bool enable = stackSlaveActive_() && cfg.configs_manager.ringClientEnabled();
         if (_ring_client_enabled != enable)
         {
             _ring_client_enabled = enable;
@@ -1122,7 +1500,7 @@ private:
     {
         if (!_pending_detect)
             return;
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return;
         StackNode &node = net.network.stackNode();
         if (!node.connected())
@@ -1135,7 +1513,7 @@ private:
     {
         if (!_pending_septic_detect)
             return;
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return;
         StackNode &node = net.network.stackNode();
         if (!node.connected())
@@ -1148,7 +1526,7 @@ private:
     {
         if (!_pending_tank_empty)
             return;
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return;
         StackNode &node = net.network.stackNode();
         if (!node.connected())
@@ -1161,7 +1539,7 @@ private:
     {
         if (!_pending_rfid)
             return;
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return;
         StackNode &node = net.network.stackNode();
         if (!node.connected())
@@ -1174,7 +1552,7 @@ private:
     {
         if (!_pending_ring_client)
             return;
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return;
         StackNode &node = net.network.stackNode();
         if (!node.connected())
@@ -1185,7 +1563,7 @@ private:
 
     void handleRfidUid_(const RfidReader::Uid &uid)
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return;
         const String uid_str = RfidReader::uidToString(uid);
         if (uid_str.length() == 0)
@@ -1209,7 +1587,7 @@ private:
 
     void handleRingClientButton_(bool pressed)
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return;
         if (!cfg.configs_manager.ringClientEnabled())
             return;
@@ -1229,7 +1607,7 @@ private:
 
     bool sendRingClientToMaster_(bool pressed)
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return false;
         StackNode &node = net.network.stackNode();
         if (!node.connected())
@@ -1252,6 +1630,10 @@ private:
     {
         if (!out)
             return false;
+        const uint32_t node_id = slot.node_id;
+        const bool local = (node_id == 0);
+        const bool is_master = stackMasterActive_();
+        const bool is_slave = stackSlaveActive_();
         for (size_t i = 0; i < 4; ++i)
             out[i] = ' ';
         out[4] = '\0';
@@ -1262,13 +1644,52 @@ private:
             Ds3231Mz::DateTime dt{};
             if (!hw.rtc.Time(dt))
                 return false;
-            snprintf(out, 5, "%02u%02u", (unsigned)dt.hour, (unsigned)dt.minute);
+            if (slot.field == DisplaySlotField::TimeMin)
+                snprintf(out, 5, "%02u ", (unsigned)dt.minute);
+            else
+                snprintf(out, 5, "%02u:", (unsigned)dt.hour);
             return true;
         }
         case DisplaySlotKind::Security:
         {
-            const bool armed = control.controllers.security().armed();
-            const char *txt = armed ? "ARM " : "DIS ";
+            if (local)
+            {
+                const bool armed = control.controllers.security().armed();
+                const char *txt = armed ? "ARM " : "DIS ";
+                memcpy(out, txt, 4);
+                return true;
+            }
+            if (is_master)
+            {
+                const auto *cache = stack_cache.securityCache(node_id);
+                if (!cache || !cache->has_data)
+                {
+                    stack_cache.requestSecurity(node_id);
+                    return false;
+                }
+                if (!cache->last_ok && cache->last_error.length())
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                const char *txt = cache->armed ? "ARM " : "DIS ";
+                memcpy(out, txt, 4);
+                return true;
+            }
+            if (!is_slave)
+                return false;
+            const auto *rcache = net.stack_slave.remoteSecurityCache(node_id);
+            if (!rcache || !rcache->has_data)
+            {
+                net.stack_slave.requestRemoteSecurity(node_id);
+                return false;
+            }
+            if (!rcache->last_ok && rcache->last_error.length())
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            const char *txt = rcache->armed ? "ARM " : "DIS ";
             memcpy(out, txt, 4);
             return true;
         }
@@ -1276,86 +1697,470 @@ private:
         {
             if (slot.index == 0)
                 return false;
-            const SocketController::SocketState *st = control.controllers.sockets().state(slot.index);
-            if (!st)
+            if (local)
+            {
+                const SocketController::SocketState *st = control.controllers.sockets().state(slot.index);
+                if (!st)
+                    return false;
+                const char *txt = st->relay_on ? "ON  " : "OFF ";
+                memcpy(out, txt, 4);
+                return true;
+            }
+            if (is_master)
+            {
+                const auto *cache = stack_cache.socketsCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    stack_cache.requestSockets(node_id);
+                    return false;
+                }
+                if (!cache->last_ok && cache->last_error.length())
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (it.id != slot.index || !it.enabled)
+                        continue;
+                    const char *txt = it.state ? "ON  " : "OFF ";
+                    memcpy(out, txt, 4);
+                    return true;
+                }
                 return false;
-            const char *txt = st->relay_on ? "ON  " : "OFF ";
-            memcpy(out, txt, 4);
-            return true;
+            }
+            if (!is_slave)
+                return false;
+            const auto *rcache = net.stack_slave.remoteSocketsCache(node_id);
+            if (!rcache || !rcache->has_data || !rcache->items)
+            {
+                net.stack_slave.requestRemoteSockets(node_id);
+                return false;
+            }
+            if (!rcache->last_ok && rcache->last_error.length())
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            for (size_t i = 0; i < rcache->item_count; ++i)
+            {
+                const auto &it = rcache->items[i];
+                if (it.id != slot.index || !it.enabled)
+                    continue;
+                const char *txt = it.state ? "ON  " : "OFF ";
+                memcpy(out, txt, 4);
+                return true;
+            }
+            return false;
         }
         case DisplaySlotKind::Light:
         {
             if (slot.index == 0)
                 return false;
-            const SocketController::LightState *st = control.controllers.sockets().lightState(slot.index);
-            if (!st)
+            if (local)
+            {
+                const SocketController::LightState *st = control.controllers.sockets().lightState(slot.index);
+                if (!st)
+                    return false;
+                const char *txt = st->relay_on ? "ON  " : "OFF ";
+                memcpy(out, txt, 4);
+                return true;
+            }
+            if (is_master)
+            {
+                const auto *cache = stack_cache.lightsCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    stack_cache.requestLights(node_id);
+                    return false;
+                }
+                if (!cache->last_ok && cache->last_error.length())
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (it.id != slot.index || !it.enabled)
+                        continue;
+                    const char *txt = it.state ? "ON  " : "OFF ";
+                    memcpy(out, txt, 4);
+                    return true;
+                }
                 return false;
-            const char *txt = st->relay_on ? "ON  " : "OFF ";
-            memcpy(out, txt, 4);
-            return true;
+            }
+            if (!is_slave)
+                return false;
+            const auto *rcache = net.stack_slave.remoteLightsCache(node_id);
+            if (!rcache || !rcache->has_data || !rcache->items)
+            {
+                net.stack_slave.requestRemoteLights(node_id);
+                return false;
+            }
+            if (!rcache->last_ok && rcache->last_error.length())
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            for (size_t i = 0; i < rcache->item_count; ++i)
+            {
+                const auto &it = rcache->items[i];
+                if (it.id != slot.index || !it.enabled)
+                    continue;
+                const char *txt = it.state ? "ON  " : "OFF ";
+                memcpy(out, txt, 4);
+                return true;
+            }
+            return false;
         }
         case DisplaySlotKind::Meteo:
         {
             if (slot.index == 0)
                 return false;
-            const MeteoController::SensorState *st = control.controllers.meteo().state(slot.index);
-            if (!st || !st->ok)
-                return false;
-            if (slot.field == DisplaySlotField::MeteoHum)
+            if (local)
             {
-                if (!st->has_humidity)
+                const MeteoController::SensorState *st = control.controllers.meteo().state(slot.index);
+                if (!st || !st->ok)
                     return false;
-                const int h = (int)roundf(st->humidity);
-                snprintf(out, 5, "%2d%%", h);
-            }
-            else
-            {
+                if (slot.field == DisplaySlotField::MeteoHum)
+                {
+                    if (!st->has_humidity)
+                        return false;
+                    const int h = (int)roundf(st->humidity);
+                    snprintf(out, 5, "%2d%%", h);
+                }
+                else
+                {
                 if (!st->has_temp)
                     return false;
                 const int t = (int)roundf(st->temp_c);
-                snprintf(out, 5, "%2d%c", t, Display::kDegreeChar);
+                formatTemp3_(out, t);
             }
-            if (strlen(out) < 4)
+        }
+            else if (is_master)
             {
-                size_t len = strlen(out);
+                const auto *cache = stack_cache.meteoCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    stack_cache.requestMeteo(node_id);
+                    return false;
+                }
+                if (!cache->last_ok && cache->last_error.length())
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                const StackCache::StackMeteoItem *found = nullptr;
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    if (cache->items[i].id == slot.index && cache->items[i].enabled)
+                    {
+                        found = &cache->items[i];
+                        break;
+                    }
+                }
+                if (!found || !found->ok)
+                    return false;
+                if (slot.field == DisplaySlotField::MeteoHum)
+                {
+                    if (!found->has_hum)
+                        return false;
+                    const int h = (int)roundf(found->hum);
+                    snprintf(out, 5, "%2d%%", h);
+                }
+                else
+                {
+                if (!found->has_temp)
+                    return false;
+                const int t = (int)roundf(found->temp_c);
+                formatTemp3_(out, t);
+            }
+        }
+            else
+            {
+                const auto *cache = net.stack_slave.remoteMeteoCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    net.stack_slave.requestRemoteMeteoAll();
+                    return false;
+                }
+                if (!cache->last_ok && cache->last_error.length())
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                const StackSlaveHandler::RemoteMeteoItem *found = nullptr;
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    if (cache->items[i].id == slot.index)
+                    {
+                        found = &cache->items[i];
+                        break;
+                    }
+                }
+                if (!found || !found->ok)
+                    return false;
+                if (slot.field == DisplaySlotField::MeteoHum)
+                {
+                    if (!found->has_hum)
+                        return false;
+                    const int h = (int)roundf(found->hum);
+                    snprintf(out, 5, "%2d%%", h);
+                }
+                else
+                {
+                if (!found->has_temp)
+                    return false;
+                const int t = (int)roundf(found->temp_c);
+                formatTemp3_(out, t);
+            }
+        }
+        if (strlen(out) < 4)
+        {
+            size_t len = strlen(out);
                 while (len < 4)
                     out[len++] = ' ';
                 out[4] = '\0';
             }
             return true;
         }
+        case DisplaySlotKind::Thermo:
+        {
+            if (slot.index == 0)
+                return false;
+            if (local)
+            {
+                const ThermoController::DeviceState *st = control.controllers.thermo().state(slot.index);
+                if (!st)
+                    return false;
+                if (!st->power_on)
+                    memcpy(out, "IDL ", 4);
+                else if (st->heat_on)
+                    memcpy(out, "HET ", 4);
+                else if (st->cool_on)
+                    memcpy(out, "COL ", 4);
+                else
+                    memcpy(out, "IDL ", 4);
+                return true;
+            }
+            if (is_master)
+            {
+                const auto *cache = stack_cache.thermoCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    stack_cache.requestThermo(node_id);
+                    return false;
+                }
+                if (!cache->last_ok && cache->last_error.length())
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (it.id != slot.index || !it.enabled)
+                        continue;
+                    if (!it.power_on)
+                        memcpy(out, "IDL ", 4);
+                    else if (it.heat_on)
+                        memcpy(out, "HET ", 4);
+                    else if (it.cool_on)
+                        memcpy(out, "COL ", 4);
+                    else
+                        memcpy(out, "IDL ", 4);
+                    return true;
+                }
+                return false;
+            }
+            if (!is_slave)
+                return false;
+            const auto *rcache = net.stack_slave.remoteThermoCache(node_id);
+            if (!rcache || !rcache->has_data || !rcache->items)
+            {
+                net.stack_slave.requestRemoteThermo(node_id);
+                return false;
+            }
+            if (!rcache->last_ok && rcache->last_error.length())
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            for (size_t i = 0; i < rcache->item_count; ++i)
+            {
+                const auto &it = rcache->items[i];
+                if (it.id != slot.index || !it.enabled)
+                    continue;
+                if (!it.power_on)
+                    memcpy(out, "IDL ", 4);
+                else if (it.heat_on)
+                    memcpy(out, "HET ", 4);
+                else if (it.cool_on)
+                    memcpy(out, "COL ", 4);
+                else
+                    memcpy(out, "IDL ", 4);
+                return true;
+            }
+            return false;
+        }
         case DisplaySlotKind::Tank:
         {
             if (slot.index == 0)
                 return false;
-            const TankController::TankState *st = control.controllers.tanks().state(slot.index);
-            if (!st || !st->levels_ok)
+            if (local)
+            {
+                const TankController::TankState *st = control.controllers.tanks().state(slot.index);
+                if (!st || !st->levels_ok)
+                    return false;
+                if (st->level_full)
+                    memcpy(out, "FULL", 4);
+                else if (st->level_mid)
+                    memcpy(out, "MID ", 4);
+                else if (st->level_low)
+                    memcpy(out, "LOW ", 4);
+                else
+                    memcpy(out, "EMP ", 4);
+                return true;
+            }
+            if (is_master)
+            {
+                const auto *cache = stack_cache.tanksCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    stack_cache.requestTanks(node_id);
+                    return false;
+                }
+                if (!cache->last_ok && cache->last_error.length())
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (it.id != slot.index || !it.enabled)
+                        continue;
+                    if (!it.levels_ok)
+                        return false;
+                    if (it.level_full)
+                        memcpy(out, "FULL", 4);
+                    else if (it.level_mid)
+                        memcpy(out, "MID ", 4);
+                    else if (it.level_low)
+                        memcpy(out, "LOW ", 4);
+                    else
+                        memcpy(out, "EMP ", 4);
+                    return true;
+                }
                 return false;
-            if (st->level_full)
-                memcpy(out, "FULL", 4);
-            else if (st->level_mid)
-                memcpy(out, "MID ", 4);
-            else if (st->level_low)
-                memcpy(out, "LOW ", 4);
-            else
-                memcpy(out, "EMP ", 4);
-            return true;
+            }
+            if (!is_slave)
+                return false;
+            const auto *rcache = net.stack_slave.remoteTanksCache(node_id);
+            if (!rcache || !rcache->has_data || !rcache->items)
+            {
+                net.stack_slave.requestRemoteTanks(node_id);
+                return false;
+            }
+            if (!rcache->last_ok && rcache->last_error.length())
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            for (size_t i = 0; i < rcache->item_count; ++i)
+            {
+                const auto &it = rcache->items[i];
+                if (it.id != slot.index || !it.enabled)
+                    continue;
+                if (!it.levels_ok)
+                    return false;
+                if (it.level_full)
+                    memcpy(out, "FULL", 4);
+                else if (it.level_mid)
+                    memcpy(out, "MID ", 4);
+                else if (it.level_low)
+                    memcpy(out, "LOW ", 4);
+                else
+                    memcpy(out, "EMP ", 4);
+                return true;
+            }
+            return false;
         }
         case DisplaySlotKind::Septic:
         {
             if (slot.index == 0)
                 return false;
-            const size_t idx = (size_t)(slot.index - 1);
-            const SepticController::SepticState *st = control.controllers.septic().stateByIndex(idx);
-            if (!st)
+            if (local)
+            {
+                const size_t idx = (size_t)(slot.index - 1);
+                const SepticController::SepticState *st = control.controllers.septic().stateByIndex(idx);
+                if (!st)
+                    return false;
+                if (st->alarm)
+                    memcpy(out, "ALM ", 4);
+                else if (st->warning)
+                    memcpy(out, "WRN ", 4);
+                else
+                    memcpy(out, "OK  ", 4);
+                return true;
+            }
+            if (is_master)
+            {
+                const auto *cache = stack_cache.septicCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    stack_cache.requestSeptic(node_id);
+                    return false;
+                }
+                if (!cache->last_ok && cache->last_error.length())
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (it.id != slot.index || !it.enabled)
+                        continue;
+                    if (it.alarm)
+                        memcpy(out, "ALM ", 4);
+                    else if (it.warning)
+                        memcpy(out, "WRN ", 4);
+                    else
+                        memcpy(out, "OK  ", 4);
+                    return true;
+                }
                 return false;
-            if (st->alarm)
-                memcpy(out, "ALRM", 4);
-            else if (st->warning)
-                memcpy(out, "WARN", 4);
-            else
-                memcpy(out, "OK  ", 4);
-            return true;
+            }
+            if (!is_slave)
+                return false;
+            const auto *rcache = net.stack_slave.remoteSepticCache(node_id);
+            if (!rcache || !rcache->has_data || !rcache->items)
+            {
+                net.stack_slave.requestRemoteSeptic(node_id);
+                return false;
+            }
+            if (!rcache->last_ok && rcache->last_error.length())
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            for (size_t i = 0; i < rcache->item_count; ++i)
+            {
+                    const auto &it = rcache->items[i];
+                    if (it.id != slot.index || !it.enabled)
+                        continue;
+                    if (it.alarm)
+                        memcpy(out, "ALM ", 4);
+                    else if (it.warning)
+                        memcpy(out, "WRN ", 4);
+                    else
+                        memcpy(out, "OK  ", 4);
+                    return true;
+            }
+            return false;
         }
         case DisplaySlotKind::Text:
         {
@@ -1372,16 +2177,26 @@ private:
         }
     }
 
+    static void formatTemp3_(char out[5], int t)
+    {
+        if (!out)
+            return;
+        if (t <= -10)
+            snprintf(out, 5, "%3d", t);
+        else
+            snprintf(out, 5, "%2d%c", t, Display::kDegreeChar);
+    }
+
     static bool displaySlotEqual_(const DisplaySlotConfig &a, const DisplaySlotConfig &b)
     {
-        if (a.kind != b.kind || a.index != b.index || a.field != b.field)
+        if (a.kind != b.kind || a.node_id != b.node_id || a.index != b.index || a.field != b.field)
             return false;
         return strncmp(a.text, b.text, sizeof(a.text)) == 0;
     }
 
     bool sendRfidToMaster_(const String &uid, const String &name)
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return false;
         StackNode &node = net.network.stackNode();
         if (!node.connected())
@@ -1407,7 +2222,7 @@ private:
     {
         if (node_id == 0)
             return;
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Master)
+        if (!stackMasterActive_())
             return;
         StackMaster &master = net.network.stackMaster();
         StaticJsonDocument<160> doc;
@@ -1430,7 +2245,7 @@ private:
 
     void pollSecurityStatusFromMaster_()
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Slave)
+        if (!stackSlaveActive_())
             return;
         StackNode &node = net.network.stackNode();
         if (!node.connected())
@@ -1469,9 +2284,21 @@ private:
         return String(buf);
     }
 
+    int stackNodeIndex_(uint32_t node_id) const
+    {
+        StackMaster &master = const_cast<App *>(this)->net.network.stackMaster();
+        const size_t count = master.nodeCount();
+        for (size_t i = 0; i < count; ++i)
+        {
+            if (master.nodeIdAt(i) == node_id)
+                return (int)i;
+        }
+        return -1;
+    }
+
     void broadcastSecurityAlarm_(bool alarm_on)
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Master)
+        if (!stackMasterActive_())
             return;
         StackMaster &master = net.network.stackMaster();
         const size_t count = master.nodeCount();
@@ -1483,7 +2310,7 @@ private:
     {
         if (node_id == 0)
             return;
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Master)
+        if (!stackMasterActive_())
             return;
         StackMaster &master = net.network.stackMaster();
 
@@ -1504,7 +2331,7 @@ private:
 
     void broadcastSecurityClear_()
     {
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Master)
+        if (!stackMasterActive_())
             return;
         StackMaster &master = net.network.stackMaster();
         const size_t count = master.nodeCount();
@@ -1516,7 +2343,7 @@ private:
     {
         if (node_id == 0)
             return;
-        if (cfg.configs_manager.stackRole() != ConfigsManagerIface::StackRole::Master)
+        if (!stackMasterActive_())
             return;
         StackMaster &master = net.network.stackMaster();
 
@@ -1534,6 +2361,8 @@ private:
         master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
                       reinterpret_cast<const uint8_t *>(payload), len);
     }
+
+    static constexpr uint32_t kStackPollMs = 5000;
 
     bool _pending_detect = false;
     uint8_t _pending_sensor_id = 0;
@@ -1555,5 +2384,10 @@ private:
     uint8_t _ring_client_button_port = 0xFF;
     bool _pending_ring_client = false;
     bool _pending_ring_client_pressed = false;
+    bool _stack_master_effective = false;
+    bool _master_led_initialized = false;
+    bool _master_led_state = false;
+    uint32_t _last_stack_poll_ms = 0;
+    size_t _stack_poll_index = 0;
     DisplaySlotConfig _display_slots[Display::kSlotCount]{};
 };

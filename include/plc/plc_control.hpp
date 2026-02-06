@@ -24,6 +24,19 @@
 class PlcControl
 {
 public:
+    enum class AlarmModule : uint8_t
+    {
+        Sockets = 0,
+        Lights,
+        Meteo,
+        Thermo,
+        Tanks,
+        Septic,
+        Security,
+        Ring
+    };
+    static constexpr size_t kAlarmModuleCount = 8;
+
     enum class Error : uint8_t
     {
         Ok = 0,
@@ -126,6 +139,8 @@ public:
             _fan_on = want;
             setFans_(_fan_on);
         }
+
+        updateAlarmLed_(now);
     }
 
     float boardTemp() const { return _last_temp_c; }
@@ -136,6 +151,17 @@ public:
     bool fanManualMode() const { return _fan_manual; }
     float fanOnC() const { return _fan_on_c; }
     float fanHysteresisC() const { return _fan_hyst_c; }
+
+    bool portState(uint8_t id, bool &out) const
+    {
+        if (id >= IoStack::PORT_COUNT)
+            return false;
+        const auto &p = _io.desc(id);
+        if (p.caps == Cap::None)
+            return false;
+        out = _io.read(id);
+        return true;
+    }
 
     void setFanAuto() { _fan_manual = false; }
 
@@ -150,6 +176,74 @@ public:
     {
         _fan_on_c = on_c;
         _fan_hyst_c = hyst_c;
+    }
+
+    void setAlarmMask(uint32_t mask) { _alarm_mask = mask; }
+    uint32_t alarmMask() const { return _alarm_mask; }
+    void setAlarmUnitMask(AlarmModule module, uint32_t mask)
+    {
+        const uint8_t idx = static_cast<uint8_t>(module);
+        if (idx >= kAlarmModuleCount)
+            return;
+        _alarm_unit_mask[idx] = mask;
+        setAlarmModule_(idx, (_alarm_detail_mask[idx] | _alarm_unit_mask[idx]) != 0);
+    }
+    uint32_t alarmUnitMask(AlarmModule module) const
+    {
+        const uint8_t idx = static_cast<uint8_t>(module);
+        if (idx >= kAlarmModuleCount)
+            return 0;
+        return _alarm_unit_mask[idx];
+    }
+    void setAlarmDetailMask(AlarmModule module, uint32_t mask)
+    {
+        const uint8_t idx = static_cast<uint8_t>(module);
+        if (idx >= kAlarmModuleCount)
+            return;
+        _alarm_detail_mask[idx] = mask;
+        setAlarmModule_(idx, (_alarm_detail_mask[idx] | _alarm_unit_mask[idx]) != 0);
+    }
+    uint32_t alarmDetailMask(AlarmModule module) const
+    {
+        const uint8_t idx = static_cast<uint8_t>(module);
+        if (idx >= kAlarmModuleCount)
+            return 0;
+        return _alarm_detail_mask[idx];
+    }
+
+    void setAlarmModule(AlarmModule module, bool has_alarm)
+    {
+        setAlarmModule_(static_cast<uint8_t>(module), has_alarm);
+    }
+
+    void setAlarm(AlarmModule module) { setAlarmModule(module, true); }
+    void clearAlarm(AlarmModule module) { setAlarmModule(module, false); }
+
+    void setAlarmModule(uint8_t module, bool has_alarm)
+    {
+        setAlarmModule_(module, has_alarm);
+    }
+
+    void setAlarmDetail(AlarmModule module, uint8_t bit, bool has_alarm)
+    {
+        setAlarmDetail_(module, bit, has_alarm);
+    }
+
+    void setAlarmDetailBit(AlarmModule module, uint8_t bit) { setAlarmDetail(module, bit, true); }
+    void clearAlarmDetailBit(AlarmModule module, uint8_t bit) { setAlarmDetail(module, bit, false); }
+    void setAlarmUnit(AlarmModule module, uint8_t unit_bit, bool has_alarm)
+    {
+        const uint8_t idx = static_cast<uint8_t>(module);
+        if (idx >= kAlarmModuleCount)
+            return;
+        if (unit_bit >= 32)
+            return;
+        const uint32_t bit = 1u << unit_bit;
+        if (has_alarm)
+            _alarm_unit_mask[idx] |= bit;
+        else
+            _alarm_unit_mask[idx] &= ~bit;
+        setAlarmModule_(idx, (_alarm_detail_mask[idx] | _alarm_unit_mask[idx]) != 0);
     }
 
     Error lastError() const { return _err; }
@@ -197,6 +291,78 @@ private:
 #endif
     }
 
+    void setAlarmModule_(uint8_t module, bool has_alarm)
+    {
+        if (module >= 32)
+            return;
+        const uint32_t bit = 1u << module;
+        if (has_alarm)
+            _alarm_mask |= bit;
+        else
+            _alarm_mask &= ~bit;
+    }
+
+    void setAlarmDetail_(AlarmModule module, uint8_t bit_index, bool has_alarm)
+    {
+        const uint8_t idx = static_cast<uint8_t>(module);
+        if (idx >= kAlarmModuleCount)
+            return;
+        if (bit_index >= 32)
+            return;
+        const uint32_t bit = 1u << bit_index;
+        if (has_alarm)
+            _alarm_detail_mask[idx] |= bit;
+        else
+            _alarm_detail_mask[idx] &= ~bit;
+        setAlarmModule_(idx, (_alarm_detail_mask[idx] | _alarm_unit_mask[idx]) != 0);
+    }
+
+    void ensureAlarmLed_()
+    {
+        if (_alarm_led_ready)
+            return;
+        const uint8_t pin = ActiveBoardProfile::ALARM_LED_PIN;
+        if (pin == 0xFF)
+            return;
+        _io.pinMode(pin, PortIO::PortMode::Output);
+        _io.write(pin, false);
+        _alarm_led_ready = true;
+        _alarm_led_state = false;
+    }
+
+    void setAlarmLed_(bool on)
+    {
+        const uint8_t pin = ActiveBoardProfile::ALARM_LED_PIN;
+        if (pin == 0xFF)
+            return;
+        _io.write(pin, on);
+        _alarm_led_state = on;
+    }
+
+    void updateAlarmLed_(uint32_t now)
+    {
+        uint32_t detail_any = 0;
+        for (size_t i = 0; i < kAlarmModuleCount; ++i)
+            detail_any |= _alarm_detail_mask[i];
+        uint32_t unit_any = 0;
+        for (size_t i = 0; i < kAlarmModuleCount; ++i)
+            unit_any |= _alarm_unit_mask[i];
+        if ((_alarm_mask | detail_any | unit_any) == 0)
+        {
+            if (_alarm_led_state)
+                setAlarmLed_(false);
+            return;
+        }
+        ensureAlarmLed_();
+        if (!_alarm_led_ready)
+            return;
+        if (timeDue_(now, _alarm_next_toggle_ms))
+        {
+            _alarm_next_toggle_ms = now + _alarm_blink_ms;
+            setAlarmLed_(!_alarm_led_state);
+        }
+    }
+
     Lm75ad _lm75;
     I2CManager &_i2c;
     IoStack &_io;
@@ -215,6 +381,13 @@ private:
     String _device_name;
     uint32_t _sample_interval_ms = 1000;
     uint32_t _next_sample_ms = 0;
+    uint32_t _alarm_mask = 0;
+    uint32_t _alarm_detail_mask[kAlarmModuleCount] = {};
+    uint32_t _alarm_unit_mask[kAlarmModuleCount] = {};
+    bool _alarm_led_ready = false;
+    bool _alarm_led_state = false;
+    uint32_t _alarm_blink_ms = 500;
+    uint32_t _alarm_next_toggle_ms = 0;
 
 
     static bool timeDue_(uint32_t now, uint32_t at)

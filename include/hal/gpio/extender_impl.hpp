@@ -23,6 +23,10 @@ inline void Extender::initState_()
     {
         _mcp_inited[i] = false;
         _pcf_inited[i] = false;
+        _mcp_cache[i] = 0;
+        _mcp_cache_valid[i] = 0;
+        _pcf_cache[i] = 0;
+        _pcf_cache_valid[i] = 0;
         _dev_failed[i] = false;
         _present[i] = false;
         _warned_missing[i] = false;
@@ -74,12 +78,16 @@ inline void Extender::setPresent_(uint8_t dev, bool present) const
     {
         _mcp_inited[dev] = false;
         _pcf_inited[dev] = false;
+        _mcp_cache_valid[dev] = 0;
+        _pcf_cache_valid[dev] = 0;
         _dev_failed[dev] = false;
         _warned_missing[dev] = false;
     }
     else
     {
         _dev_failed[dev] = false;
+        _mcp_cache_valid[dev] = 0;
+        _pcf_cache_valid[dev] = 0;
     }
 }
 
@@ -267,7 +275,22 @@ inline bool Extender::read(uint8_t dev, uint8_t pin) const
             return false;
         bool v = false;
         if (!mcp->readPin(pin, v))
+        {
+            const uint8_t bit = (uint8_t)(pin & 0x0F);
+            const uint16_t mask = (uint16_t)(1u << bit);
+            if (_mcp_cache_valid[dev] & mask)
+                return (_mcp_cache[dev] & mask) != 0;
             return false;
+        }
+        if (pin <= 15)
+        {
+            const uint16_t mask = (uint16_t)(1u << (uint8_t)(pin & 0x0F));
+            if (v)
+                _mcp_cache[dev] |= mask;
+            else
+                _mcp_cache[dev] &= (uint16_t)~mask;
+            _mcp_cache_valid[dev] |= mask;
+        }
         return v;
     }
     if (cfg.type == Type::PCF8574)
@@ -277,7 +300,22 @@ inline bool Extender::read(uint8_t dev, uint8_t pin) const
             return false;
         bool v = false;
         if (!pcf->readPin(pin, v))
+        {
+            const uint8_t bit = (uint8_t)(pin & 0x07);
+            const uint8_t mask = (uint8_t)(1u << bit);
+            if (_pcf_cache_valid[dev] & mask)
+                return (_pcf_cache[dev] & mask) != 0;
             return false;
+        }
+        if (pin <= 7)
+        {
+            const uint8_t mask = (uint8_t)(1u << (uint8_t)(pin & 0x07));
+            if (v)
+                _pcf_cache[dev] |= mask;
+            else
+                _pcf_cache[dev] &= (uint8_t)~mask;
+            _pcf_cache_valid[dev] |= mask;
+        }
         return v;
     }
     return false;

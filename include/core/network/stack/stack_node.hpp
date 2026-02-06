@@ -35,6 +35,7 @@ public:
 
     void setNodeId(uint32_t id) { _node_id = id; }
     void setDeviceName(const String &name) { _device_name = name; }
+    void setCaps(uint32_t caps) { _caps = caps; }
     void setServer(const String &host, uint16_t port)
     {
         _host = host;
@@ -50,6 +51,15 @@ public:
         _status_cb = cb;
         _status_ctx = ctx;
     }
+
+    void disconnect()
+    {
+        if (_client.connected())
+            _client.close(true);
+    }
+
+    const String &host() const { return _host; }
+    uint16_t port() const { return _port; }
 
     void begin()
     {
@@ -101,13 +111,13 @@ public:
 
     bool connected() const { return _client.connected(); }
 
-    bool sendHello(uint16_t fw_ver = 0, uint32_t caps = 0)
+    bool sendHello(uint16_t fw_ver = 0, uint32_t caps = 0xFFFFFFFFu)
     {
         StackHello hello{};
         hello.node_id = _node_id;
         hello.proto_ver = StackCodec::kVersion;
         hello.fw_ver = fw_ver;
-        hello.caps = caps;
+        hello.caps = (caps == 0xFFFFFFFFu) ? _caps : caps;
         hello.name = _device_name;
         uint8_t payload[StackCodec::kMaxPayload] = {};
         const size_t payload_len = StackHello::encode(hello, payload, sizeof(payload));
@@ -121,6 +131,7 @@ private:
     uint16_t _port = 0;
     uint32_t _node_id = 0;
     String _device_name;
+    uint32_t _caps = 0;
     uint32_t _reconnect_ms = 3000;
     uint32_t _last_connect_ms = 0;
     uint32_t _hello_interval_ms = 15000;

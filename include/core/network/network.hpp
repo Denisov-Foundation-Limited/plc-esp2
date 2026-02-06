@@ -147,6 +147,7 @@ public:
     {
         _gsm.loop();
         _stack_node.loop();
+        updateStackFallback_();
         _cloud.loop();
     }
 
@@ -195,6 +196,8 @@ private:
     bool _started = false;
 
     static constexpr uint16_t kStackPort = 9010;
+    static constexpr uint32_t kStackFallbackDelayMs = 10000;
+    static constexpr uint32_t kStackFallbackRetryPrimaryMs = 30000;
     AsyncServer _stack_server;
     StackMaster _stack_master;
     StackNode _stack_node;
@@ -203,6 +206,19 @@ private:
     bool _cloud_cfg_set = false;
     ConfigsManagerIface::StackRole _stack_role = ConfigsManagerIface::StackRole::Master;
     String _stack_device_name;
+    bool _stack_master_started = false;
+    bool _stack_fallback_enabled = false;
+    bool _stack_fallback_active = false;
+    String _stack_primary_host;
+    String _stack_fallback_host;
+    uint32_t _stack_disconnect_ms = 0;
+    uint32_t _stack_last_primary_try_ms = 0;
+    enum class StackTarget : uint8_t
+    {
+        Primary = 0,
+        Fallback
+    };
+    StackTarget _stack_target = StackTarget::Primary;
 
     bool configureTelegram_(const TelegramNetCfg &cfg)
     {
@@ -247,26 +263,109 @@ private:
     void beginStack_()
     {
         _stack_role = _stack_cfg ? _stack_cfg->stackRole() : ConfigsManagerIface::StackRole::Master;
+        _stack_fallback_enabled = _stack_cfg ? _stack_cfg->stackFallbackEnabled() : false;
+        _stack_fallback_host = _stack_cfg ? _stack_cfg->stackFallbackHost() : String();
+        _stack_primary_host = _stack_cfg ? _stack_cfg->stackMasterHost() : String();
+        _stack_fallback_active = false;
+        _stack_disconnect_ms = 0;
+        _stack_last_primary_try_ms = 0;
+        _stack_target = StackTarget::Primary;
         if (_stack_role == ConfigsManagerIface::StackRole::Master)
         {
             _logs.info(F("STACK"), F("Role: master"));
             _stack_master.begin();
+            _stack_master_started = true;
             return;
         }
 
-        const String host = _stack_cfg ? _stack_cfg->stackMasterHost() : String();
-        if (host.length() == 0)
+        if (_stack_primary_host.length() == 0)
         {
             _logs.warn(F("STACK"), F("Role: slave, master host missing"));
             return;
         }
-        _logs.info(F("STACK"), F("Role: slave, master=%s"), host.c_str());
+        _logs.info(F("STACK"), F("Role: slave, master: %s"), _stack_primary_host.c_str());
         uint64_t mac = ESP.getEfuseMac();
         _stack_node.setNodeId((uint32_t)(mac & 0xFFFFFFFFu));
-        _stack_node.setServer(host, kStackPort);
+        uint32_t caps = 0;
+        if (_stack_cfg && _stack_cfg->stackSlaveController())
+            caps |= StackCapController;
+        _stack_node.setCaps(caps);
+        _stack_node.setServer(_stack_primary_host, kStackPort);
         if (_stack_device_name.length() > 0)
             _stack_node.setDeviceName(_stack_device_name);
         _stack_node.begin();
+    }
+
+    void ensureStackMasterStarted_()
+    {
+        if (_stack_master_started)
+            return;
+        _stack_master.begin();
+        _stack_master_started = true;
+    }
+
+    void switchStackTarget_(StackTarget target)
+    {
+        if (target == _stack_target)
+            return;
+        const String host = (target == StackTarget::Primary) ? _stack_primary_host : _stack_fallback_host;
+        if (!host.length())
+            return;
+        _stack_target = target;
+        _stack_node.setServer(host, kStackPort);
+        _stack_node.disconnect();
+        if (target == StackTarget::Primary)
+            _logs.info(F("STACK"), F("Switch stack host to primary: %s"), host.c_str());
+        else
+            _logs.warn(F("STACK"), F("Switch stack host to fallback: %s"), host.c_str());
+    }
+
+    void updateStackFallback_()
+    {
+        if (_stack_role != ConfigsManagerIface::StackRole::Slave)
+            return;
+        const uint32_t now = millis();
+        const bool connected = _stack_node.connected();
+        if (connected)
+        {
+            _stack_disconnect_ms = 0;
+            if (_stack_target == StackTarget::Primary && _stack_fallback_active)
+            {
+                _stack_fallback_active = false;
+                _logs.info(F("STACK"), F("Master connection restored, fallback disabled"));
+            }
+            if (_stack_target == StackTarget::Primary)
+                return;
+        }
+
+        if (!connected && _stack_disconnect_ms == 0)
+            _stack_disconnect_ms = now;
+
+        const bool can_local_fallback = _stack_fallback_enabled && _stack_fallback_host.length() == 0;
+        if (!connected && can_local_fallback && !_stack_fallback_active &&
+            (now - _stack_disconnect_ms) >= kStackFallbackDelayMs)
+        {
+            _stack_fallback_active = true;
+            _logs.warn(F("STACK"), F("Master connection lost, fallback master enabled"));
+            ensureStackMasterStarted_();
+        }
+
+        if (_stack_fallback_enabled && _stack_fallback_host.length())
+        {
+            if (_stack_target == StackTarget::Primary)
+            {
+                if (!connected && (now - _stack_disconnect_ms) >= kStackFallbackDelayMs)
+                    switchStackTarget_(StackTarget::Fallback);
+            }
+            else
+            {
+                if ((now - _stack_last_primary_try_ms) >= kStackFallbackRetryPrimaryMs)
+                {
+                    _stack_last_primary_try_ms = now;
+                    switchStackTarget_(StackTarget::Primary);
+                }
+            }
+        }
     }
 
 public:
@@ -274,4 +373,9 @@ public:
     StackMaster &stackMaster() { return _stack_master; }
     CloudClient &cloudClient() { return _cloud; }
     ConfigsManagerIface::StackRole stackRole() const { return _stack_role; }
+    bool stackFallbackActive() const { return _stack_fallback_active; }
+    bool stackMasterActive() const
+    {
+        return _stack_role == ConfigsManagerIface::StackRole::Master || _stack_fallback_active;
+    }
 };

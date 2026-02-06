@@ -164,7 +164,6 @@ public:
           _ow(&ow),
           _log(&logs)
     {
-        _stack_cache.setLogger(&logs);
     }
 
     bool begin(bool format_on_fail = false)
@@ -190,24 +189,39 @@ public:
     }
 
     void setGsmModem(GsmModem &modem) { _gsm = &modem; }
+    void setStackCache(StackCache &cache)
+    {
+        _stack_cache = &cache;
+        if (_log)
+            _stack_cache->setLogger(_log);
+        if (_configs_manager)
+            _stack_cache->setConfigsManager(_configs_manager);
+        if (_stack_master)
+            _stack_cache->setStackMaster(_stack_master);
+    }
     void setConfigsManager(ConfigsManagerIface &mgr)
     {
         _configs_manager = &mgr;
-        _stack_cache.setConfigsManager(&mgr);
+        if (_stack_cache)
+            _stack_cache->setConfigsManager(&mgr);
     }
     void setStackMaster(StackMaster &master)
     {
         _stack_master = &master;
-        _stack_cache.setStackMaster(&master);
+        if (_stack_cache)
+            _stack_cache->setStackMaster(&master);
         _stack_master->setFrameHandlerSecondary(&WebInterface::onStackFrame_, this);
     }
     void setStackSlave(StackSlaveHandler *slave) { _stack_slave = slave; }
     void setCloudClient(CloudClient &client) { _cloud = &client; }
 
-    StackCache &stackCache() { return _stack_cache; }
-    const StackCache &stackCache() const { return _stack_cache; }
-    void initStackCacheAllocations() { _stack_cache.initAllocations(); }
-    void logStackCacheAllocations() { _stack_cache.logAllocations(); }
+    StackCache &stackCache() { return *_stack_cache; }
+    const StackCache &stackCache() const { return *_stack_cache; }
+    void logStackCacheAllocations()
+    {
+        if (_stack_cache)
+            _stack_cache->logAllocations();
+    }
 
     void registerRoutes();
 
@@ -542,11 +556,18 @@ private:
             items += p.allow_control ? "yes" : "no";
             items += "</strong></td><td class=\"right\"><strong>";
 
+            const char *state = "n/a";
+            bool state_value = false;
+            if (_plc && _plc->portState((uint8_t)i, state_value))
+                state = state_value ? "1" : "0";
+
             if (p.backend == PortIO::Backend::Extender)
             {
                 items += String(p.u.ext.dev);
                 items += "</strong></td><td class=\"right\"><strong>";
                 items += String(p.u.ext.pin);
+                items += "</strong></td><td><strong>";
+                items += state;
                 items += "</strong></td><td><strong>";
                 items += extDevTypeName_(p.u.ext.dev);
             }
@@ -554,28 +575,32 @@ private:
             {
                 items += "--</strong></td><td class=\"right\"><strong>";
                 items += String(p.u.esp.gpio);
+                items += "</strong></td><td><strong>";
+                items += state;
                 items += "</strong></td><td><strong>CPU";
             }
             items += "</strong></td></tr>";
         }
         if (items.length() == 0)
-            items = "<tr><td colspan=\"8\" style=\"color:#94a3b8\"><strong>No ports</strong></td></tr>";
+            items = "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>No ports</strong></td></tr>";
         return items;
     }
 
     String listExtendersHtml_()
     {
         if (!_ext)
-            return "<tr><td colspan=\"5\" style=\"color:#94a3b8\"><strong>Extenders unavailable</strong></td></tr>";
+            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Extenders unavailable</strong></td></tr>";
         const auto *devs = _ext->devs();
         if (!devs)
-            return "<tr><td colspan=\"5\" style=\"color:#94a3b8\"><strong>Extenders unavailable</strong></td></tr>";
+            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Extenders unavailable</strong></td></tr>";
         String items;
         items.reserve(512);
         for (uint8_t i = 0; i < _ext->devCount(); ++i)
         {
             const auto &d = devs[i];
             if (d.i2c_addr == 0 || d.type == Extender::Type::None)
+                continue;
+            if (!_ext->isPresent(i))
                 continue;
             char addr_buf[8] = {};
             snprintf(addr_buf, sizeof(addr_buf), "0x%02X", (unsigned)d.i2c_addr);
@@ -587,12 +612,10 @@ private:
             items += addr_buf;
             items += "</strong></td><td><strong>";
             items += extTypeName_(d.type);
-            items += "</strong></td><td><strong>";
-            items += _ext->isPresent(i) ? "yes" : "no";
             items += "</strong></td></tr>";
         }
         if (items.length() == 0)
-            items = "<tr><td colspan=\"5\" style=\"color:#94a3b8\"><strong>Extenders отсутствуют</strong></td></tr>";
+            items = "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Extenders отсутствуют</strong></td></tr>";
         return items;
     }
 
@@ -600,11 +623,11 @@ private:
     {
         const StackPortsCache *cache = findStackPortsCache_(node_id, false);
         if (!cache)
-            return "<tr><td colspan=\"8\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
+            return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
         if (cache->pending)
-            return "<tr><td colspan=\"8\" style=\"color:#94a3b8\"><strong>pending</strong></td></tr>";
+            return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>pending</strong></td></tr>";
         if (!cache->has_data)
-            return "<tr><td colspan=\"8\" style=\"color:#94a3b8\"><strong>no data</strong></td></tr>";
+            return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>no data</strong></td></tr>";
         String items;
         items.reserve(cache->item_count * 120 + 128);
         for (size_t i = 0; i < cache->item_count; ++i)
@@ -639,6 +662,7 @@ private:
                 items += String((int)it.pin);
             else
                 items += "--";
+            items += "</strong></td><td><strong>n/a";
             items += "</strong></td><td><strong>";
             if (it.hw[0])
                 appendHtmlEscaped_(items, it.hw);
@@ -647,7 +671,7 @@ private:
             items += "</strong></td></tr>";
         }
         if (items.length() == 0)
-            items = "<tr><td colspan=\"8\" style=\"color:#94a3b8\"><strong>No ports</strong></td></tr>";
+            items = "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>No ports</strong></td></tr>";
         return items;
     }
 
@@ -655,16 +679,18 @@ private:
     {
         const StackExtendersCache *cache = findStackExtendersCache_(node_id, false);
         if (!cache)
-            return "<tr><td colspan=\"5\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
+            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
         if (cache->pending)
-            return "<tr><td colspan=\"5\" style=\"color:#94a3b8\"><strong>pending</strong></td></tr>";
+            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>pending</strong></td></tr>";
         if (!cache->has_data)
-            return "<tr><td colspan=\"5\" style=\"color:#94a3b8\"><strong>no data</strong></td></tr>";
+            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>no data</strong></td></tr>";
         String items;
         items.reserve(cache->item_count * 64 + 96);
         for (size_t i = 0; i < cache->item_count; ++i)
         {
             const StackExtenderItem &it = cache->items[i];
+            if (!it.present)
+                continue;
             items += "<tr><td class=\"right\"><strong>";
             items += String((unsigned)it.id);
             items += "</strong></td><td class=\"right\"><strong>";
@@ -679,12 +705,10 @@ private:
                 appendHtmlEscaped_(items, it.type);
             else
                 items += "n/a";
-            items += "</strong></td><td><strong>";
-            items += it.present ? "yes" : "no";
             items += "</strong></td></tr>";
         }
         if (items.length() == 0)
-            items = "<tr><td colspan=\"5\" style=\"color:#94a3b8\"><strong>Extenders отсутствуют</strong></td></tr>";
+            items = "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Extenders отсутствуют</strong></td></tr>";
         return items;
     }
 
@@ -1737,7 +1761,8 @@ private:
             return;
         WebInterface *self = static_cast<WebInterface *>(ctx);
         self->handleStackFrame_(node_id, frame);
-        StackCache::onStackFrame_(&self->_stack_cache, node_id, frame);
+        if (self->_stack_cache)
+            StackCache::onStackFrame_(self->_stack_cache, node_id, frame);
     }
 
     void handleStackFrame_(uint32_t node_id, const StackFrame &frame)
@@ -3361,6 +3386,8 @@ private:
             html += String((unsigned)slot.index);
             html += "\" data-field=\"";
             html += displaySlotFieldName_(slot.field);
+            html += "\" data-node=\"";
+            html += String((unsigned long)slot.node_id);
             html += "\">";
             html += "<div class=\"slot-head\">L";
             html += String((unsigned)(row + 1));
@@ -3370,6 +3397,9 @@ private:
             html += "<label>Источник</label><select class=\"field slot-kind\" name=\"ds";
             html += idx;
             html += "_kind\"></select>";
+            html += "<label>Устройство</label><select class=\"field slot-node\" name=\"ds";
+            html += idx;
+            html += "_node\"></select>";
             html += "<label>Объект</label><select class=\"field slot-index\" name=\"ds";
             html += idx;
             html += "_index\"></select>";
@@ -4455,7 +4485,7 @@ private:
                     }
                     else
                     {
-                        const auto *remote_cache = _stack_cache.meteoCache(cfg.sensor_node_id);
+                        const auto *remote_cache = stackCache().meteoCache(cfg.sensor_node_id);
                         if (remote_cache && remote_cache->has_data)
                         {
                             for (size_t s = 0; s < remote_cache->item_count; ++s)
@@ -5026,7 +5056,7 @@ private:
         out += "<div class=\"section\">";
         out += "<h2>Контроллеры</h2>";
         out += "<table><thead><tr>";
-        out += "<th>Unit</th><th>DeviceName</th><th>NodeID</th><th>IP</th>";
+        out += "<th>Unit</th><th>DeviceName</th><th>NodeID</th><th>IP</th><th>Тип</th>";
         out += "</tr></thead><tbody>";
         out += listStackNodesHtml_();
         out += "</tbody></table>";
@@ -5113,6 +5143,8 @@ private:
                 appendHtmlEscaped_(items, ip.c_str());
             else
                 items += "-";
+            items += "</td><td>";
+            items += _stack_master->nodeIsControllerAt(i) ? "Контроллер" : "Модуль";
             items += "</td></tr>";
         }
         return items;
@@ -5216,11 +5248,57 @@ private:
         return out;
     }
 
-    String displaySocketOptionsJson_() const
+    String displayDeviceOptionsJson_() const
     {
         String out;
         out.reserve(256);
         out += "[";
+        bool first = true;
+        auto append = [&](const String &value, const String &label) {
+            if (!first)
+                out += ",";
+            out += "{\"v\":";
+            out += value;
+            out += ",\"l\":\"";
+            appendJsonEscaped_(out, label);
+            out += "\"}";
+            first = false;
+        };
+        append("0", "local");
+        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
+        {
+            const size_t count = _stack_master->nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t id = _stack_master->nodeIdAt(i);
+                String name = _stack_master->nodeNameAt(i);
+                const String label = name.length() ? name : stackNodeIdHex_(id);
+                append(String((unsigned long)id), label);
+            }
+        }
+        out += "]";
+        return out;
+    }
+
+    String displaySocketOptionsJson_() const
+    {
+        String out;
+        out.reserve(512);
+        out += "{";
+        bool first_node = true;
+        auto append_node = [&](const String &key, const String &list) {
+            if (!first_node)
+                out += ",";
+            out += "\"";
+            out += key;
+            out += "\":";
+            out += list;
+            first_node = false;
+        };
+
+        String local;
+        local.reserve(256);
+        local += "[";
         bool first = true;
         if (_controllers)
         {
@@ -5231,27 +5309,82 @@ private:
                 if (!cfg || !cfg->enabled)
                     continue;
                 if (!first)
-                    out += ",";
-                out += "{\"v\":";
-                out += String((unsigned)cfg->id);
-                out += ",\"l\":\"";
+                    local += ",";
+                local += "{\"v\":";
+                local += String((unsigned)cfg->id);
+                local += ",\"l\":\"";
                 if (cfg->name.length())
-                    appendJsonEscaped_(out, cfg->name);
+                    appendJsonEscaped_(local, cfg->name);
                 else
-                    out += String("Socket #") + String((unsigned)cfg->id);
-                out += "\"}";
+                    local += String("Socket #") + String((unsigned)cfg->id);
+                local += "\"}";
                 first = false;
             }
         }
-        out += "]";
+        local += "]";
+        append_node("0", local);
+
+        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master && _stack_cache)
+        {
+            const size_t count = _stack_master->nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = _stack_master->nodeIdAt(i);
+                const StackCache::StackSocketsCache *cache = stackCache().socketsCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    const_cast<StackCache *>(_stack_cache)->requestSockets(node_id);
+                    append_node(String((unsigned long)node_id), "[]");
+                    continue;
+                }
+                String list;
+                list.reserve(256);
+                list += "[";
+                bool first_item = true;
+                for (size_t k = 0; k < cache->item_count; ++k)
+                {
+                    const auto &it = cache->items[k];
+                    if (!it.enabled)
+                        continue;
+                    if (!first_item)
+                        list += ",";
+                    list += "{\"v\":";
+                    list += String((unsigned)it.id);
+                    list += ",\"l\":\"";
+                    if (it.name[0])
+                        appendJsonEscaped_(list, it.name);
+                    else
+                        list += String("Socket #") + String((unsigned)it.id);
+                    list += "\"}";
+                    first_item = false;
+                }
+                list += "]";
+                append_node(String((unsigned long)node_id), list);
+            }
+        }
+        out += "}";
         return out;
     }
 
     String displayLightOptionsJson_() const
     {
         String out;
-        out.reserve(256);
-        out += "[";
+        out.reserve(512);
+        out += "{";
+        bool first_node = true;
+        auto append_node = [&](const String &key, const String &list) {
+            if (!first_node)
+                out += ",";
+            out += "\"";
+            out += key;
+            out += "\":";
+            out += list;
+            first_node = false;
+        };
+
+        String local;
+        local.reserve(256);
+        local += "[";
         bool first = true;
         if (_controllers)
         {
@@ -5262,27 +5395,82 @@ private:
                 if (!cfg || !cfg->enabled)
                     continue;
                 if (!first)
-                    out += ",";
-                out += "{\"v\":";
-                out += String((unsigned)cfg->id);
-                out += ",\"l\":\"";
+                    local += ",";
+                local += "{\"v\":";
+                local += String((unsigned)cfg->id);
+                local += ",\"l\":\"";
                 if (cfg->name.length())
-                    appendJsonEscaped_(out, cfg->name);
+                    appendJsonEscaped_(local, cfg->name);
                 else
-                    out += String("Light #") + String((unsigned)cfg->id);
-                out += "\"}";
+                    local += String("Light #") + String((unsigned)cfg->id);
+                local += "\"}";
                 first = false;
             }
         }
-        out += "]";
+        local += "]";
+        append_node("0", local);
+
+        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master && _stack_cache)
+        {
+            const size_t count = _stack_master->nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = _stack_master->nodeIdAt(i);
+                const StackCache::StackLightsCache *cache = stackCache().lightsCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    const_cast<StackCache *>(_stack_cache)->requestLights(node_id);
+                    append_node(String((unsigned long)node_id), "[]");
+                    continue;
+                }
+                String list;
+                list.reserve(256);
+                list += "[";
+                bool first_item = true;
+                for (size_t k = 0; k < cache->item_count; ++k)
+                {
+                    const auto &it = cache->items[k];
+                    if (!it.enabled)
+                        continue;
+                    if (!first_item)
+                        list += ",";
+                    list += "{\"v\":";
+                    list += String((unsigned)it.id);
+                    list += ",\"l\":\"";
+                    if (it.name[0])
+                        appendJsonEscaped_(list, it.name);
+                    else
+                        list += String("Light #") + String((unsigned)it.id);
+                    list += "\"}";
+                    first_item = false;
+                }
+                list += "]";
+                append_node(String((unsigned long)node_id), list);
+            }
+        }
+        out += "}";
         return out;
     }
 
     String displayMeteoOptionsJson_() const
     {
         String out;
-        out.reserve(256);
-        out += "[";
+        out.reserve(512);
+        out += "{";
+        bool first_node = true;
+        auto append_node = [&](const String &key, const String &list) {
+            if (!first_node)
+                out += ",";
+            out += "\"";
+            out += key;
+            out += "\":";
+            out += list;
+            first_node = false;
+        };
+
+        String local;
+        local.reserve(256);
+        local += "[";
         bool first = true;
         if (_controllers)
         {
@@ -5293,27 +5481,168 @@ private:
                 if (!cfg || !cfg->enabled)
                     continue;
                 if (!first)
-                    out += ",";
-                out += "{\"v\":";
-                out += String((unsigned)cfg->id);
-                out += ",\"l\":\"";
+                    local += ",";
+                local += "{\"v\":";
+                local += String((unsigned)cfg->id);
+                local += ",\"l\":\"";
                 if (cfg->name.length())
-                    appendJsonEscaped_(out, cfg->name);
+                    appendJsonEscaped_(local, cfg->name);
                 else
-                    out += String("Sensor #") + String((unsigned)cfg->id);
-                out += "\"}";
+                    local += String("Sensor #") + String((unsigned)cfg->id);
+                local += "\"}";
                 first = false;
             }
         }
-        out += "]";
+        local += "]";
+        append_node("0", local);
+
+        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master && _stack_cache)
+        {
+            const size_t count = _stack_master->nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = _stack_master->nodeIdAt(i);
+                const StackCache::StackMeteoCache *cache = stackCache().meteoCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    const_cast<StackCache *>(_stack_cache)->requestMeteo(node_id);
+                    append_node(String((unsigned long)node_id), "[]");
+                    continue;
+                }
+                String list;
+                list.reserve(256);
+                list += "[";
+                bool first_item = true;
+                for (size_t k = 0; k < cache->item_count; ++k)
+                {
+                    const auto &it = cache->items[k];
+                    if (!it.enabled)
+                        continue;
+                    if (!first_item)
+                        list += ",";
+                    list += "{\"v\":";
+                    list += String((unsigned)it.id);
+                    list += ",\"l\":\"";
+                    if (it.name[0])
+                        appendJsonEscaped_(list, it.name);
+                    else
+                        list += String("Sensor #") + String((unsigned)it.id);
+                    list += "\"}";
+                    first_item = false;
+                }
+                list += "]";
+                append_node(String((unsigned long)node_id), list);
+            }
+        }
+        out += "}";
+        return out;
+    }
+
+    String displayThermoOptionsJson_() const
+    {
+        String out;
+        out.reserve(512);
+        out += "{";
+        bool first_node = true;
+        auto append_node = [&](const String &key, const String &list) {
+            if (!first_node)
+                out += ",";
+            out += "\"";
+            out += key;
+            out += "\":";
+            out += list;
+            first_node = false;
+        };
+
+        String local;
+        local.reserve(256);
+        local += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            const ThermoController &thermo = _controllers->thermo();
+            for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+            {
+                const auto *cfg = thermo.configByIndex(i);
+                if (!cfg || !cfg->enabled)
+                    continue;
+                if (!first)
+                    local += ",";
+                local += "{\"v\":";
+                local += String((unsigned)cfg->id);
+                local += ",\"l\":\"";
+                if (cfg->name.length())
+                    appendJsonEscaped_(local, cfg->name);
+                else
+                    local += String("Thermo #") + String((unsigned)cfg->id);
+                local += "\"}";
+                first = false;
+            }
+        }
+        local += "]";
+        append_node("0", local);
+
+        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master && _stack_cache)
+        {
+            const size_t count = _stack_master->nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = _stack_master->nodeIdAt(i);
+                const StackCache::StackThermoCache *cache = stackCache().thermoCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    const_cast<StackCache *>(_stack_cache)->requestThermo(node_id);
+                    append_node(String((unsigned long)node_id), "[]");
+                    continue;
+                }
+                String list;
+                list.reserve(256);
+                list += "[";
+                bool first_item = true;
+                for (size_t k = 0; k < cache->item_count; ++k)
+                {
+                    const auto &it = cache->items[k];
+                    if (!it.enabled)
+                        continue;
+                    if (!first_item)
+                        list += ",";
+                    list += "{\"v\":";
+                    list += String((unsigned)it.id);
+                    list += ",\"l\":\"";
+                    if (it.name[0])
+                        appendJsonEscaped_(list, it.name);
+                    else
+                        list += String("Thermo #") + String((unsigned)it.id);
+                    list += "\"}";
+                    first_item = false;
+                }
+                list += "]";
+                append_node(String((unsigned long)node_id), list);
+            }
+        }
+        out += "}";
         return out;
     }
 
     String displayTankOptionsJson_() const
     {
         String out;
-        out.reserve(256);
-        out += "[";
+        out.reserve(512);
+        out += "{";
+        bool first_node = true;
+        auto append_node = [&](const String &key, const String &list) {
+            if (!first_node)
+                out += ",";
+            out += "\"";
+            out += key;
+            out += "\":";
+            out += list;
+            first_node = false;
+        };
+
+        String local;
+        local.reserve(256);
+        local += "[";
         bool first = true;
         if (_controllers)
         {
@@ -5324,27 +5653,82 @@ private:
                 if (!cfg || !cfg->enabled)
                     continue;
                 if (!first)
-                    out += ",";
-                out += "{\"v\":";
-                out += String((unsigned)cfg->id);
-                out += ",\"l\":\"";
+                    local += ",";
+                local += "{\"v\":";
+                local += String((unsigned)cfg->id);
+                local += ",\"l\":\"";
                 if (cfg->name.length())
-                    appendJsonEscaped_(out, cfg->name);
+                    appendJsonEscaped_(local, cfg->name);
                 else
-                    out += String("Tank #") + String((unsigned)cfg->id);
-                out += "\"}";
+                    local += String("Tank #") + String((unsigned)cfg->id);
+                local += "\"}";
                 first = false;
             }
         }
-        out += "]";
+        local += "]";
+        append_node("0", local);
+
+        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master && _stack_cache)
+        {
+            const size_t count = _stack_master->nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = _stack_master->nodeIdAt(i);
+                const StackCache::StackTankCache *cache = stackCache().tanksCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    const_cast<StackCache *>(_stack_cache)->requestTanks(node_id);
+                    append_node(String((unsigned long)node_id), "[]");
+                    continue;
+                }
+                String list;
+                list.reserve(256);
+                list += "[";
+                bool first_item = true;
+                for (size_t k = 0; k < cache->item_count; ++k)
+                {
+                    const auto &it = cache->items[k];
+                    if (!it.enabled)
+                        continue;
+                    if (!first_item)
+                        list += ",";
+                    list += "{\"v\":";
+                    list += String((unsigned)it.id);
+                    list += ",\"l\":\"";
+                    if (it.name[0])
+                        appendJsonEscaped_(list, it.name);
+                    else
+                        list += String("Tank #") + String((unsigned)it.id);
+                    list += "\"}";
+                    first_item = false;
+                }
+                list += "]";
+                append_node(String((unsigned long)node_id), list);
+            }
+        }
+        out += "}";
         return out;
     }
 
     String displaySepticOptionsJson_() const
     {
         String out;
-        out.reserve(128);
-        out += "[";
+        out.reserve(512);
+        out += "{";
+        bool first_node = true;
+        auto append_node = [&](const String &key, const String &list) {
+            if (!first_node)
+                out += ",";
+            out += "\"";
+            out += key;
+            out += "\":";
+            out += list;
+            first_node = false;
+        };
+
+        String local;
+        local.reserve(256);
+        local += "[";
         bool first = true;
         if (_controllers)
         {
@@ -5355,19 +5739,60 @@ private:
                 if (!cfg || !cfg->enabled)
                     continue;
                 if (!first)
-                    out += ",";
-                out += "{\"v\":";
-                out += String((unsigned)cfg->id);
-                out += ",\"l\":\"";
+                    local += ",";
+                local += "{\"v\":";
+                local += String((unsigned)cfg->id);
+                local += ",\"l\":\"";
                 if (cfg->name.length())
-                    appendJsonEscaped_(out, cfg->name);
+                    appendJsonEscaped_(local, cfg->name);
                 else
-                    out += String("Septic #") + String((unsigned)cfg->id);
-                out += "\"}";
+                    local += String("Septic #") + String((unsigned)cfg->id);
+                local += "\"}";
                 first = false;
             }
         }
-        out += "]";
+        local += "]";
+        append_node("0", local);
+
+        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master && _stack_cache)
+        {
+            const size_t count = _stack_master->nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t node_id = _stack_master->nodeIdAt(i);
+                const StackCache::StackSepticCache *cache = stackCache().septicCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    const_cast<StackCache *>(_stack_cache)->requestSeptic(node_id);
+                    append_node(String((unsigned long)node_id), "[]");
+                    continue;
+                }
+                String list;
+                list.reserve(256);
+                list += "[";
+                bool first_item = true;
+                for (size_t k = 0; k < cache->item_count; ++k)
+                {
+                    const auto &it = cache->items[k];
+                    if (!it.enabled)
+                        continue;
+                    if (!first_item)
+                        list += ",";
+                    list += "{\"v\":";
+                    list += String((unsigned)it.id);
+                    list += ",\"l\":\"";
+                    if (it.id)
+                        list += String("Septic #") + String((unsigned)it.id);
+                    else
+                        list += String("Septic");
+                    list += "\"}";
+                    first_item = false;
+                }
+                list += "]";
+                append_node(String((unsigned long)node_id), list);
+            }
+        }
+        out += "}";
         return out;
     }
 
@@ -5662,20 +6087,22 @@ private:
         return out;
     }
 
-    String ringUsedPortsJson_(PortIO::PinType type) const
+    String ringUsedPortsJson_(PortIO::PinType type) const { return globalUsedPortsJson_(type); }
+
+    String globalUsedPortsJson_(PortIO::PinType type) const
     {
         String out;
         out.reserve(128);
         out += "[";
         bool first = true;
+        auto mark_used = [](bool used[], uint8_t port)
+        {
+            if (port < PortIO::PORT_COUNT)
+                used[port] = true;
+        };
+        bool used[PortIO::PORT_COUNT] = {};
         if (_controllers)
         {
-            auto mark_used = [](bool used[], uint8_t port)
-            {
-                if (port < PortIO::PORT_COUNT)
-                    used[port] = true;
-            };
-            bool used[PortIO::PORT_COUNT] = {};
             SocketController &sockets = _controllers->sockets();
             MeteoController &meteo = _controllers->meteo();
             ThermoController &thermo = _controllers->thermo();
@@ -5745,26 +6172,28 @@ private:
             for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
             {
                 const auto *cfg = security.configByIndex(i);
-                if (!cfg || !cfg->enabled)
+                if (!cfg)
                     continue;
                 mark_used(used, cfg->port);
             }
             const auto &rcfg = ring.config();
             mark_used(used, rcfg.button_port);
             mark_used(used, rcfg.relay_port);
+        }
+        if (_configs_manager)
+            mark_used(used, _configs_manager->ringClientButtonPort());
 
-            for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
-            {
-                if (!used[i])
-                    continue;
-                const auto &p = ActiveBoardProfile::PORTS[i];
-                if (p.caps == Cap::None || p.type != type)
-                    continue;
-                if (!first)
-                    out += ",";
-                out += String((unsigned)i);
-                first = false;
-            }
+        for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+        {
+            if (!used[i])
+                continue;
+            const auto &p = ActiveBoardProfile::PORTS[i];
+            if (p.caps == Cap::None || p.type != type)
+                continue;
+            if (!first)
+                out += ",";
+            out += String((unsigned)i);
+            first = false;
         }
         out += "]";
         return out;
@@ -6145,6 +6574,30 @@ sendRedirect_(request, "/", set_cookie);
             changed = true;
         }
 
+        const bool fallback_enabled = request->hasParam("fallback_enabled", true);
+        if (fallback_enabled != _configs_manager->stackFallbackEnabled())
+        {
+            _configs_manager->setStackFallbackEnabled(fallback_enabled);
+            changed = true;
+        }
+
+        String fallback_host = request->hasParam("fallback_host", true)
+                                   ? request->getParam("fallback_host", true)->value()
+                                   : String("");
+        fallback_host.trim();
+        if (fallback_host != _configs_manager->stackFallbackHost())
+        {
+            _configs_manager->setStackFallbackHost(fallback_host);
+            changed = true;
+        }
+
+        const bool slave_controller = request->hasParam("slave_controller", true);
+        if (slave_controller != _configs_manager->stackSlaveController())
+        {
+            _configs_manager->setStackSlaveController(slave_controller);
+            changed = true;
+        }
+
         String api_key = request->hasParam("api_key", true)
                              ? request->getParam("api_key", true)->value()
                              : String("");
@@ -6509,6 +6962,27 @@ sendRedirect_(request, "/", set_cookie);
         return "";
     }
 
+    bool stackFallbackEnabled_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->stackFallbackEnabled();
+        return false;
+    }
+
+    String stackFallbackHost_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->stackFallbackHost();
+        return "";
+    }
+
+    bool stackSlaveController_() const
+    {
+        if (_configs_manager)
+            return _configs_manager->stackSlaveController();
+        return true;
+    }
+
     String stackApiKey_() const
     {
         if (_configs_manager)
@@ -6663,6 +7137,8 @@ sendRedirect_(request, "/", set_cookie);
             return "light";
         case DisplaySlotKind::Meteo:
             return "meteo";
+        case DisplaySlotKind::Thermo:
+            return "thermo";
         case DisplaySlotKind::Tank:
             return "tank";
         case DisplaySlotKind::Septic:
@@ -6683,6 +7159,8 @@ sendRedirect_(request, "/", set_cookie);
         {
         case DisplaySlotField::TimeHm:
             return "hm";
+        case DisplaySlotField::TimeMin:
+            return "min";
         case DisplaySlotField::SocketState:
             return "state";
         case DisplaySlotField::LightState:
@@ -6691,6 +7169,8 @@ sendRedirect_(request, "/", set_cookie);
             return "temp";
         case DisplaySlotField::MeteoHum:
             return "hum";
+        case DisplaySlotField::ThermoState:
+            return "state";
         case DisplaySlotField::TankLevel:
             return "level";
         case DisplaySlotField::SepticLevel:
@@ -6723,6 +7203,8 @@ sendRedirect_(request, "/", set_cookie);
             out = DisplaySlotKind::Light;
         else if (t == "meteo")
             out = DisplaySlotKind::Meteo;
+        else if (t == "thermo")
+            out = DisplaySlotKind::Thermo;
         else if (t == "tank")
             out = DisplaySlotKind::Tank;
         else if (t == "septic")
@@ -6748,6 +7230,8 @@ sendRedirect_(request, "/", set_cookie);
         }
         if (t == "hm")
             out = DisplaySlotField::TimeHm;
+        else if (t == "min")
+            out = DisplaySlotField::TimeMin;
         else if (t == "state")
             out = DisplaySlotField::SocketState;
         else if (t == "temp")
@@ -6778,6 +7262,20 @@ sendRedirect_(request, "/", set_cookie);
         if (v > 0xFFFFu)
             return false;
         out = (uint16_t)v;
+        return true;
+    }
+
+    static bool parseUint_(const String &input, uint32_t &out)
+    {
+        String t = input;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        for (size_t i = 0; i < t.length(); ++i)
+            if (t[i] < '0' || t[i] > '9')
+                return false;
+        const unsigned long v = strtoul(t.c_str(), nullptr, 10);
+        out = (uint32_t)v;
         return true;
     }
 
@@ -7003,128 +7501,36 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
             if (is_selected)
                 out += " selected";
             out += ">";
+            String label_name;
             if (cfg->name.length())
             {
-                out += String((unsigned)id);
-                out += ": ";
-                appendHtmlEscaped_(out, cfg->name.c_str());
+                label_name = cfg->name;
             }
-            else
+            else if (cfg->source_node_id && cfg->source_sensor_id)
             {
-                out += String((unsigned)id);
+                label_name = meteoRemoteSensorName_(cfg->source_node_id, cfg->source_sensor_id);
+            }
+            out += String((unsigned)id);
+            if (label_name.length())
+            {
+                out += ": ";
+                appendHtmlEscaped_(out, label_name.c_str());
             }
             out += "</option>";
         }
-
-        if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+        if (selected_node_id != 0 && selected_id != 0)
         {
-            const size_t slots = _stack_slave->remoteMeteoCacheSlots();
-            if (slots > 0)
-                out += "<option disabled>— юниты —</option>";
-            for (size_t i = 0; i < slots; ++i)
-            {
-                const auto &cache = _stack_slave->remoteMeteoCacheAt(i);
-                if (cache.node_id == 0 || !cache.has_data || !cache.items)
-                    continue;
-                const String node_label = cache.node_name.length() ? cache.node_name : String("Node ") + String((unsigned long)cache.node_id);
-                for (size_t s = 0; s < cache.item_count; ++s)
-                {
-                    const auto &it = cache.items[s];
-                    if (!it.enabled)
-                        continue;
-                    const bool is_selected = (selected_node_id == cache.node_id && it.id == selected_id);
-                    const uint32_t key = (cache.node_id << 8) | it.id;
-                    bool is_used = false;
-                    for (size_t k = 0; k < used_remote_count; ++k)
-                    {
-                        if (used_remote[k] == key)
-                        {
-                            is_used = true;
-                            break;
-                        }
-                    }
-                    if (is_used && !is_selected)
-                        continue;
-                    out += "<option value=\"";
-                    out += String((unsigned long)cache.node_id);
-                    out += ":";
-                    out += String((unsigned)it.id);
-                    out += "\"";
-                    if (is_selected)
-                        out += " selected";
-                    out += ">";
-                    appendHtmlEscaped_(out, node_label.c_str());
-                    out += " / ";
-                    out += String((unsigned)it.id);
-                    if (it.name[0])
-                    {
-                        out += ": ";
-                        appendHtmlEscaped_(out, it.name);
-                    }
-                    out += "</option>";
-                }
-            }
-        }
-
-        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
-        {
-            const size_t count = _stack_master->nodeCount();
-            if (count > 0)
-                out += "<option disabled>— юниты —</option>";
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = _stack_master->nodeIdAt(i);
-                if (node_id == 0)
-                    continue;
-                const StackCache::StackMeteoCache *cache = _stack_cache.meteoCache(node_id);
-                if (!cache || !cache->has_data)
-                    continue;
-                String node_label;
-                if (_stack_master)
-                {
-                    String ip;
-                    uint16_t fw_ver = 0;
-                    _stack_master->nodeInfo(node_id, node_label, ip, fw_ver);
-                }
-                if (!node_label.length())
-                    node_label = String("Node ") + String((unsigned long)node_id);
-                for (size_t s = 0; s < cache->item_count; ++s)
-                {
-                    const auto &it = cache->items[s];
-                    if (!it.enabled)
-                        continue;
-                    const bool is_selected = (selected_node_id == node_id && it.id == selected_id);
-                    const uint32_t key = (node_id << 8) | it.id;
-                    bool is_used = false;
-                    for (size_t k = 0; k < used_remote_count; ++k)
-                    {
-                        if (used_remote[k] == key)
-                        {
-                            is_used = true;
-                            break;
-                        }
-                    }
-                    if (is_used && !is_selected)
-                        continue;
-                    out += "<option value=\"";
-                    out += String((unsigned long)node_id);
-                    out += ":";
-                    out += String((unsigned)it.id);
-                    out += "\"";
-                    if (is_selected)
-                        out += " selected";
-                    out += ">";
-                    appendHtmlEscaped_(out, node_label.c_str());
-                    out += " / ";
-                    out += String((unsigned)it.id);
-                    if (it.name[0])
-                    {
-                        out += ": ";
-                        appendHtmlEscaped_(out, it.name);
-                    }
-                    out += "</option>";
-                }
-            }
+            const String remote_name = meteoRemoteSensorName_(selected_node_id, selected_id);
+            out += "<option value=\"";
+            out += String((unsigned long)selected_node_id);
+            out += ":";
+            out += String((unsigned)selected_id);
+            out += "\" selected>";
+            if (remote_name.length())
+                appendHtmlEscaped_(out, remote_name.c_str());
+            else
+                out += String((unsigned)selected_id);
+            out += "</option>";
         }
         return out;
     }
@@ -7181,7 +7587,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
                 const uint32_t node_id = _stack_master->nodeIdAt(i);
                 if (node_id == 0)
                     continue;
-                const StackCache::StackMeteoCache *cache = _stack_cache.meteoCache(node_id);
+                const StackCache::StackMeteoCache *cache = stackCache().meteoCache(node_id);
                 if (!cache || !cache->has_data)
                     continue;
                 String node_label;
@@ -7306,7 +7712,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
         }
         else if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
         {
-            const auto *cache = _stack_cache.meteoCache(node_id);
+            const auto *cache = stackCache().meteoCache(node_id);
             if (cache && cache->has_data)
             {
                 String ip;
@@ -7335,6 +7741,46 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
         return out;
     }
 
+    String meteoRemoteSensorName_(uint32_t node_id, uint8_t sensor_id) const
+    {
+        if (node_id == 0 || sensor_id == 0)
+            return "";
+        if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+        {
+            const auto *cache = _stack_slave->remoteMeteoCache(node_id);
+            if (cache && cache->has_data && cache->items)
+            {
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (it.id != sensor_id)
+                        continue;
+                    if (it.name[0])
+                        return String(it.name);
+                    return String((unsigned)sensor_id);
+                }
+            }
+            return "";
+        }
+        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
+        {
+            const auto *cache = stackCache().meteoCache(node_id);
+            if (cache && cache->has_data)
+            {
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (it.id != sensor_id)
+                        continue;
+                    if (it.name[0])
+                        return String(it.name);
+                    return String((unsigned)sensor_id);
+                }
+            }
+        }
+        return "";
+    }
+
     bool meteoRemoteType_(uint32_t node_id, uint8_t sensor_id, MeteoController::SensorType &out) const
     {
         out = MeteoController::SensorType::None;
@@ -7357,7 +7803,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
         }
         if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
         {
-            const auto *cache = _stack_cache.meteoCache(node_id);
+            const auto *cache = stackCache().meteoCache(node_id);
             if (!cache || !cache->has_data)
                 return false;
             for (size_t i = 0; i < cache->item_count; ++i)
@@ -7399,7 +7845,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
         }
         if (!_stack_master || stackRole_() != ConfigsManagerIface::StackRole::Master)
             return false;
-        const StackCache::StackMeteoCache *cache = _stack_cache.meteoCache(node_id);
+        const StackCache::StackMeteoCache *cache = stackCache().meteoCache(node_id);
         if (!cache || !cache->has_data)
             return false;
         for (size_t i = 0; i < cache->item_count; ++i)
@@ -8671,6 +9117,9 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
         {
             hashAdd_(hash, stackRoleName_(stackRole_()));
             hashAdd_(hash, stackMasterHost_());
+            hashAdd_(hash, stackFallbackEnabled_() ? 1u : 0u);
+            hashAdd_(hash, stackFallbackHost_());
+            hashAdd_(hash, stackSlaveController_() ? 1u : 0u);
             hashAdd_(hash, stackApiKey_());
             hashAdd_(hash, listStackNodesHtml_());
             return hash;
@@ -9203,7 +9652,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
     Logger *_log = nullptr;
     StackMaster *_stack_master = nullptr;
     StackSlaveHandler *_stack_slave = nullptr;
-    StackCache _stack_cache = {};
+    StackCache *_stack_cache = nullptr;
     CloudClient *_cloud = nullptr;
     String _session_token;
     uint32_t _session_expire_ms = 0;
@@ -9293,3 +9742,6 @@ inline void WebInterface::registerRoutes()
         request->send(404, "text/plain", String("Not found: ") + uri);
     });
 }
+
+
+

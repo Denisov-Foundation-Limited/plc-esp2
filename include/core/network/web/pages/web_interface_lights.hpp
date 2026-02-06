@@ -297,24 +297,42 @@ static const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
       if (item && typeof item === 'object' && item.l) return item.l;
       return labelFor(type, optionValue(item));
     }
-    function buildOptions(list, selected, type) {
-      let html = '<option value="">-</option>';
-      const used = socketUsed[type] || [];
+    function buildOptions(list, selected, type, usedSet) {
+      const sel = String(selected || '');
+      let html = '<option value=""' + (sel === '' ? ' selected' : '') + '>-</option>';
+      const used = usedSet || new Set();
       for (let i = 0; i < list.length; i++) {
         const val = optionValue(list[i]);
-        if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
-          continue;
-        }
+        const num = parseInt(val, 10);
+        const isUsed = !Number.isNaN(num) && used.has(num) && val !== sel;
         const label = optionLabel(list[i], type);
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') +
+          (isUsed ? ' disabled' : '') + '>' + label + '</option>';
       }
       return html;
     }
+    function refreshLightSelects() {
+      const usedByType = {};
+      document.querySelectorAll('select.socket-select').forEach((el) => {
+        const type = el.dataset.type;
+        if (!usedByType[type]) {
+          const base = socketUsed[type] || [];
+          usedByType[type] = new Set(base.map((v) => parseInt(v, 10)).filter((v) => !Number.isNaN(v)));
+        }
+        const v = parseInt(el.value || el.dataset.selected || '', 10);
+        if (!Number.isNaN(v)) usedByType[type].add(v);
+      });
+      document.querySelectorAll('select.socket-select').forEach((el) => {
+        const type = el.dataset.type;
+        const selected = el.value || el.dataset.selected || '';
+        const list = socketOptions[type] || [];
+        el.innerHTML = buildOptions(list, selected, type, usedByType[type]);
+        el.value = selected || '';
+      });
+    }
+    refreshLightSelects();
     document.querySelectorAll('select.socket-select').forEach((el) => {
-      const type = el.dataset.type;
-      const selected = el.dataset.selected || '';
-      const list = socketOptions[type] || [];
-      el.innerHTML = buildOptions(list, selected, type);
+      el.addEventListener('change', refreshLightSelects);
     });
     const prevBtn = document.getElementById('lights-prev');
     const nextBtn = document.getElementById('lights-next');
@@ -388,6 +406,15 @@ static const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
       if (toggle) {
         toggle.disabled = !enabled;
       }
+      if (!enabled) {
+        const name = tile.querySelector('input[name$="_name"]');
+        if (name) name.value = '';
+        tile.querySelectorAll('select.socket-select').forEach((sel) => {
+          sel.value = '';
+          sel.dataset.selected = '';
+        });
+        refreshLightSelects();
+      }
     }
     function toggleFromVisual(visual) {
       const tile = visual.closest('.tile');
@@ -443,6 +470,7 @@ static const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
           }
           el.checked = isEnabled;
           updateSocketEnabled(tile, isEnabled);
+          refreshLightSelects();
         } catch (e) {
           el.checked = !el.checked;
         }

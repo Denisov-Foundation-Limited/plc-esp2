@@ -37,7 +37,7 @@ struct BoardProfileFCPLC_3v1 : BoardProfileCommon
 
     // ---- RTC ----
     static inline constexpr RtcCfg RTC = { .bus_num = 0, .addr = 0x68 };
-    static inline constexpr LcdCfg LCD = { .bus_num = 0, .addr = 0x3F };
+    static inline constexpr LcdCfg LCD = { .bus_num = 0, .addr = 0x22 };
     static inline constexpr BoardTempCfg BOARD_TEMP = { .bus_num = 0, .addr = 0x48, .hysteresis_c = 2.0f, .fan_on_c = 45.0f };
     static inline constexpr EepromCfg EEPROM = { .bus_num = 0, .addr = 0x50 };
     static inline constexpr TelegramNetCfg TELEGRAM_NET = {
@@ -56,6 +56,7 @@ struct BoardProfileFCPLC_3v1 : BoardProfileCommon
     static inline constexpr uint8_t BUZZER_PIN = 6;
     static inline constexpr uint8_t STATUS_PIN = 7;
     static inline constexpr uint8_t NET_LED_PIN = 36;
+    static inline constexpr uint8_t MASTER_LED_PIN = NET_LED_PIN;
     static inline constexpr uint8_t FAN_PIN = 37;
     static inline constexpr uint8_t ALARM_LED_PIN = 38;
     static inline constexpr uint8_t BTN_UP_PIN = 39;

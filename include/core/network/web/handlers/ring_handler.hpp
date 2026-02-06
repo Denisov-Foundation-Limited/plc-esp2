@@ -80,8 +80,8 @@ public:
                          cfg.relay_port != RingController::kInvalidPort ? String(cfg.relay_port) : String());
             page.replace("%RING_DINPUT_JSON%", web.socketPortOptionsJson_(PortIO::PinType::DInput));
             page.replace("%RING_RELAY_JSON%", web.socketPortOptionsJson_(PortIO::PinType::Relay));
-            page.replace("%RING_DINPUT_USED_JSON%", web.ringUsedPortsJson_(PortIO::PinType::DInput));
-            page.replace("%RING_RELAY_USED_JSON%", web.ringUsedPortsJson_(PortIO::PinType::Relay));
+            page.replace("%RING_DINPUT_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::DInput));
+            page.replace("%RING_RELAY_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
             page.replace("%RING_FORM_DISABLED%", "");
             page.replace("%RING_SAVE_DISABLED%", "");
         }

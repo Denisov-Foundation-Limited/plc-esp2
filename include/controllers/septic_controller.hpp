@@ -210,6 +210,7 @@ public:
                 writeRelay_(cfg.relay_warning, false);
                 writeRelay_(cfg.relay_alarm, false);
             }
+            reset_();
             return;
         }
         _logs.info(F("SEPTIC"), F("controller: enabled"));
@@ -223,7 +224,21 @@ public:
             return false;
         SepticConfig &cfg = _cfg[idx];
         SepticState &st = _state[idx];
-        cfg.enabled = enabled;
+        if (!enabled)
+        {
+            writeRelay_(cfg.relay_warning, false);
+            writeRelay_(cfg.relay_alarm, false);
+            const uint8_t saved_id = cfg.id;
+            String saved_name = cfg.name;
+            cfg = SepticConfig{};
+            cfg.id = saved_id;
+            cfg.enabled = false;
+            st = SepticState{};
+            const char *name = saved_name.length() ? saved_name.c_str() : "-";
+            _logs.info(F("SEPTIC"), F("id: %u name: %s enabled: false"), (unsigned)cfg.id, name);
+            return true;
+        }
+        cfg.enabled = true;
         st = SepticState{};
         if (_controller_enabled && cfg.enabled)
         {
@@ -232,6 +247,7 @@ public:
             readLevels_(cfg, st);
             updateRelays_(cfg, st);
         }
+        _logs.info(F("SEPTIC"), F("id: %u enabled: true"), (unsigned)cfg.id);
         return true;
     }
 

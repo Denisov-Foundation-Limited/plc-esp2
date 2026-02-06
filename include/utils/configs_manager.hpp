@@ -54,6 +54,9 @@ public:
     StackRole stackRole() const override { return _stack_role; }
     String stackMasterHost() const override { return _stack_master_host; }
     String stackApiKey() const override { return _stack_api_key; }
+    bool stackFallbackEnabled() const override { return _stack_fallback_enabled; }
+    String stackFallbackHost() const override { return _stack_fallback_host; }
+    bool stackSlaveController() const override { return _stack_slave_controller; }
     bool cloudEnabled() const override { return _cloud_enabled; }
     String cloudHost() const override { return _cloud_host; }
     uint16_t cloudPort() const override { return _cloud_port; }
@@ -77,6 +80,9 @@ public:
     void setStackRole(StackRole role) override { _stack_role = role; }
     void setStackMasterHost(const String &host) override { _stack_master_host = host; }
     void setStackApiKey(const String &key) override { _stack_api_key = key; }
+    void setStackFallbackEnabled(bool enabled) override { _stack_fallback_enabled = enabled; }
+    void setStackFallbackHost(const String &host) override { _stack_fallback_host = host; }
+    void setStackSlaveController(bool controller) override { _stack_slave_controller = controller; }
     void setCloudEnabled(bool enabled) override
     {
         if (enabled == _cloud_enabled)
@@ -215,6 +221,9 @@ public:
         s["role"] = (_stack_role == StackRole::Master) ? "master" : "slave";
         s["master_host"] = _stack_master_host;
         s["api_key"] = _stack_api_key;
+        s["fallback_enabled"] = _stack_fallback_enabled;
+        s["fallback_host"] = _stack_fallback_host;
+        s["slave_controller"] = _stack_slave_controller;
 
         JsonObject ctrl = _doc["controllers"].to<JsonObject>();
         _controllers.serialize(ctrl);
@@ -238,6 +247,8 @@ public:
             const DisplaySlotConfig &slot = _display_slots[i];
             JsonObject obj = slots.add<JsonObject>();
             obj["kind"] = displayKindName_(slot.kind);
+            if (slot.node_id)
+                obj["node_id"] = (unsigned long)slot.node_id;
             if (slot.index)
                 obj["index"] = (unsigned)slot.index;
             if (slot.field != DisplaySlotField::None)
@@ -472,6 +483,12 @@ private:
                 _stack_master_host = s["master_host"].as<const char *>();
             if (s["api_key"].is<const char *>())
                 _stack_api_key = s["api_key"].as<const char *>();
+            if (s["fallback_enabled"].is<bool>())
+                _stack_fallback_enabled = s["fallback_enabled"].as<bool>();
+            if (s["fallback_host"].is<const char *>())
+                _stack_fallback_host = s["fallback_host"].as<const char *>();
+            if (s["slave_controller"].is<bool>())
+                _stack_slave_controller = s["slave_controller"].as<bool>();
         }
 
         if (doc["rfid"].is<JsonObjectConst>())
@@ -514,6 +531,8 @@ private:
                     DisplaySlotConfig slot{};
                     slot.kind = parseDisplayKind_(obj["kind"]);
                     slot.field = parseDisplayField_(obj["field"], slot.kind);
+                    if (obj["node_id"].is<unsigned long>())
+                        slot.node_id = (uint32_t)obj["node_id"].as<unsigned long>();
                     if (obj["index"].is<unsigned>())
                         slot.index = (uint8_t)obj["index"].as<unsigned>();
                     if (obj["text"].is<const char *>())
@@ -647,6 +666,9 @@ private:
     StackRole _stack_role = StackRole::Master;
     String _stack_master_host;
     String _stack_api_key;
+    bool _stack_fallback_enabled = false;
+    String _stack_fallback_host;
+    bool _stack_slave_controller = true;
     String _cloud_host;
     uint16_t _cloud_port = 0;
     String _cloud_path = "/";
@@ -690,6 +712,8 @@ private:
             return "light";
         case DisplaySlotKind::Meteo:
             return "meteo";
+        case DisplaySlotKind::Thermo:
+            return "thermo";
         case DisplaySlotKind::Tank:
             return "tank";
         case DisplaySlotKind::Septic:
@@ -710,6 +734,8 @@ private:
         {
         case DisplaySlotField::TimeHm:
             return "hm";
+        case DisplaySlotField::TimeMin:
+            return "min";
         case DisplaySlotField::SocketState:
             return "state";
         case DisplaySlotField::LightState:
@@ -718,6 +744,8 @@ private:
             return "temp";
         case DisplaySlotField::MeteoHum:
             return "hum";
+        case DisplaySlotField::ThermoState:
+            return "state";
         case DisplaySlotField::TankLevel:
             return "level";
         case DisplaySlotField::SepticLevel:
@@ -749,6 +777,8 @@ private:
                 return DisplaySlotKind::Light;
             if (s == "meteo")
                 return DisplaySlotKind::Meteo;
+            if (s == "thermo")
+                return DisplaySlotKind::Thermo;
             if (s == "tank")
                 return DisplaySlotKind::Tank;
             if (s == "septic")
@@ -779,8 +809,12 @@ private:
             s.toLowerCase();
             if (s == "hm")
                 return DisplaySlotField::TimeHm;
+            if (s == "min")
+                return DisplaySlotField::TimeMin;
             if (s == "state")
             {
+                if (kind == DisplaySlotKind::Thermo)
+                    return DisplaySlotField::ThermoState;
                 if (kind == DisplaySlotKind::Light)
                     return DisplaySlotField::LightState;
                 return DisplaySlotField::SocketState;
@@ -804,7 +838,7 @@ private:
         if (v.is<unsigned>())
         {
             const unsigned raw = v.as<unsigned>();
-            if (raw <= (unsigned)DisplaySlotField::Text)
+            if (raw <= (unsigned)DisplaySlotField::TimeMin)
                 return (DisplaySlotField)raw;
         }
         if (kind == DisplaySlotKind::Text)
@@ -817,6 +851,8 @@ private:
             return DisplaySlotField::LightState;
         if (kind == DisplaySlotKind::Meteo)
             return DisplaySlotField::MeteoTemp;
+        if (kind == DisplaySlotKind::Thermo)
+            return DisplaySlotField::ThermoState;
         if (kind == DisplaySlotKind::Tank)
             return DisplaySlotField::TankLevel;
         if (kind == DisplaySlotKind::Septic)

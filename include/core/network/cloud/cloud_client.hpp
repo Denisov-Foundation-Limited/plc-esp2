@@ -298,6 +298,8 @@ private:
             const size_t count = _stack_master->nodeCount();
             for (size_t i = 0; i < count; ++i)
             {
+                if (!_stack_master->nodeIsControllerAt(i))
+                    continue;
                 JsonObject n = nodes.add<JsonObject>();
                 n["node_id"] = _stack_master->nodeIdAt(i);
                 n["name"] = _stack_master->nodeNameAt(i);
@@ -1171,6 +1173,8 @@ private:
         const size_t count = _stack_master->nodeCount();
         for (size_t i = 0; i < count; ++i)
         {
+            if (!_stack_master->nodeIsControllerAt(i))
+                continue;
             JsonObject n = nodes.add<JsonObject>();
             n["node_id"] = _stack_master->nodeIdAt(i);
             n["name"] = _stack_master->nodeNameAt(i);

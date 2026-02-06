@@ -20,6 +20,7 @@ enum class DisplaySlotKind : uint8_t
     Socket,
     Light,
     Meteo,
+    Thermo,
     Tank,
     Septic,
     Security,
@@ -34,15 +35,18 @@ enum class DisplaySlotField : uint8_t
     LightState,
     MeteoTemp,
     MeteoHum,
+    ThermoState,
     TankLevel,
     SepticLevel,
     SecurityArmed,
-    Text
+    Text,
+    TimeMin
 };
 
 struct DisplaySlotConfig
 {
     DisplaySlotKind kind = DisplaySlotKind::None;
+    uint32_t node_id = 0;
     uint8_t index = 0;
     DisplaySlotField field = DisplaySlotField::None;
     char text[5] = {};

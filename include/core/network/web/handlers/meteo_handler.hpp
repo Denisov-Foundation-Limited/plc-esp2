@@ -54,7 +54,8 @@ public:
         page.replace("%METEO_TILES%", stack_view ? web.listStackMeteoHtml_(node_id) : web.listMeteoHtml_());
         page.replace("%METEO_STATUS%", stack_view ? web.stackMeteoStatusText_(node_id) : web._meteo_status);
         page.replace("%SENSOR_JSON%", stack_view ? "[]" : web.meteoPortOptionsJson_());
-        page.replace("%SENSOR_USED_JSON%", stack_view ? "[]" : web.meteoUsedPinsJson_());
+        page.replace("%SENSOR_USED_JSON%",
+                     stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Sensor));
         page.replace("%METEO_DEVICE_SELECT%", web.meteoDeviceSelectHtml_(node_id, stack_view));
         page.replace("%METEO_SAVE_BTN%", stack_view ? "" : "<button class=\"btn\" type=\"submit\">Сохранить</button>");
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
@@ -112,6 +113,15 @@ public:
             const String src_str = web.paramValue_(request, src_key);
 
             MeteoController::SensorType type = MeteoController::SensorType::None;
+            if (!enabled)
+            {
+                if (cfg->enabled != enabled)
+                {
+                    meteo.setEnabled(cfg->id, enabled);
+                    changed = true;
+                }
+                continue;
+            }
             if (!web.parseMeteoType_(type_str, type))
             {
                 ok = false;
@@ -143,6 +153,12 @@ public:
                 ok = false;
                 web._meteo_status = String("Invalid source for sensor ") + idx;
                 break;
+            }
+            if (src_node != 0 && name.length() == 0)
+            {
+                const String remote_name = web.meteoRemoteSensorName_(src_node, src_id);
+                if (remote_name.length())
+                    name = remote_name;
             }
 
             if (cfg->enabled != enabled)

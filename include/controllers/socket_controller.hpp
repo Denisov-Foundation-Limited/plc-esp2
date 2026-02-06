@@ -39,6 +39,8 @@ public:
     {
         bool relay_on = false;
         bool last_button = false;
+        bool button_idle = false;
+        uint32_t cooldown_until_ms = 0;
         bool has_button = false;
     };
 
@@ -209,15 +211,22 @@ public:
                 if (!cfg.enabled || !st.has_button || cfg.relay_port == kInvalidPort)
                     continue;
 
+                const uint32_t now = millis();
                 bool raw = false;
                 if (!_gpio.readDyn(cfg.button_port, raw))
                     continue;
                 bool pressed = kButtonInvert ? !raw : raw;
-                if (pressed && !st.last_button)
+                if (st.cooldown_until_ms != 0 && (int32_t)(now - st.cooldown_until_ms) < 0)
+                {
+                    st.last_button = pressed;
+                    continue;
+                }
+                if (pressed != st.button_idle && st.last_button == st.button_idle)
                 {
                     st.relay_on = !st.relay_on;
                     writeRelay_(cfg, st.relay_on);
                     _dirty_sockets = true;
+                    st.cooldown_until_ms = now + kButtonCooldownMs;
                     _logs.info(F("SOCKET"), F("id: %u state: %s src: button"),
                                (unsigned)cfg.id, st.relay_on ? "on" : "off");
                 }
@@ -233,17 +242,25 @@ public:
                 if (!cfg.enabled || !st.has_button || cfg.relay_port == kInvalidPort)
                     continue;
 
+                const uint32_t now = millis();
                 bool raw = false;
                 if (!_gpio.readDyn(cfg.button_port, raw))
                     continue;
                 bool pressed = kButtonInvert ? !raw : raw;
-                if (pressed && !st.last_button)
+                if (st.cooldown_until_ms != 0 && (int32_t)(now - st.cooldown_until_ms) < 0)
+                {
+                    st.last_button = pressed;
+                    continue;
+                }
+                if (pressed != st.button_idle && st.last_button == st.button_idle)
                 {
                     st.relay_on = !st.relay_on;
                     writeRelay_(cfg, st.relay_on);
                     _dirty_lights = true;
-                    _logs.info(F("LIGHT"), F("id: %u state: %s src: button"),
-                               (unsigned)cfg.id, st.relay_on ? "on" : "off");
+                    st.cooldown_until_ms = now + kButtonCooldownMs;
+                    const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
+                    _logs.info(F("LIGHT"), F("id: %u name: %s state: %s src: button"),
+                               (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
                 }
                 st.last_button = pressed;
             }
@@ -328,8 +345,9 @@ public:
         writeRelay_(cfg, st.relay_on);
         syncButtonState_(cfg, st);
         _dirty_lights = true;
-        _logs.info(F("LIGHT"), F("id: %u state: %s"),
-                   (unsigned)cfg.id, st.relay_on ? "on" : "off");
+        const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
+        _logs.info(F("LIGHT"), F("id: %u name: %s state: %s"),
+                   (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
         return true;
     }
 
@@ -348,8 +366,9 @@ public:
         writeRelay_(cfg, st.relay_on);
         syncButtonState_(cfg, st);
         _dirty_lights = true;
-        _logs.info(F("LIGHT"), F("id: %u state: %s src: toggle"),
-                   (unsigned)cfg.id, st.relay_on ? "on" : "off");
+        const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
+        _logs.info(F("LIGHT"), F("id: %u name: %s state: %s src: toggle"),
+                   (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
         return true;
     }
 
@@ -379,17 +398,25 @@ public:
             return false;
         SocketConfig &cfg = _cfg[idx];
         SocketState &st = _state[idx];
-        cfg.enabled = enable;
         if (!enable)
         {
+            if (cfg.relay_port != kInvalidPort)
+                writeRelay_(cfg, false);
+            const uint8_t saved_id = cfg.id;
+            cfg = SocketConfig{};
+            cfg.id = saved_id;
+            cfg.enabled = false;
             st = SocketState{};
+            _dirty_sockets = true;
+            _logs.info(F("SOCKET"), F("id: %u enabled: false"), (unsigned)cfg.id);
             return true;
         }
+        cfg.enabled = true;
         st = SocketState{};
         st.has_button = setupButton_(cfg, st);
         setupRelay_(cfg, st);
         _dirty_sockets = true;
-        _logs.info(F("SOCKET"), F("id: %u enabled: 1"), (unsigned)cfg.id);
+        _logs.info(F("SOCKET"), F("id: %u enabled: true"), (unsigned)cfg.id);
         return true;
     }
 
@@ -440,17 +467,28 @@ public:
             return false;
         LightConfig &cfg = _light_cfg[idx];
         LightState &st = _light_state[idx];
-        cfg.enabled = enable;
         if (!enable)
         {
+            if (cfg.relay_port != kInvalidPort)
+                writeRelay_(cfg, false);
+            const uint8_t saved_id = cfg.id;
+            String saved_name = cfg.name;
+            cfg = LightConfig{};
+            cfg.id = saved_id;
+            cfg.enabled = false;
             st = LightState{};
+            _dirty_lights = true;
+            const char *name = saved_name.length() ? saved_name.c_str() : "-";
+            _logs.info(F("LIGHT"), F("id: %u name: %s enabled: false"), (unsigned)cfg.id, name);
             return true;
         }
+        cfg.enabled = true;
         st = LightState{};
         st.has_button = setupButton_(cfg, st);
         setupRelay_(cfg, st);
         _dirty_lights = true;
-        _logs.info(F("LIGHT"), F("id: %u enabled: 1"), (unsigned)cfg.id);
+        const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
+        _logs.info(F("LIGHT"), F("id: %u name: %s enabled: true"), (unsigned)cfg.id, name);
         return true;
     }
 
@@ -703,7 +741,11 @@ public:
             return;
         _controller_enabled = enabled;
         if (!_controller_enabled)
+        {
+            resetSockets_();
+            _dirty_sockets = true;
             return;
+        }
         for (size_t i = 0; i < kSocketCount; ++i)
         {
             SocketConfig &cfg = _cfg[i];
@@ -722,7 +764,11 @@ public:
             return;
         _lights_enabled = enabled;
         if (!_lights_enabled)
+        {
+            resetLights_();
+            _dirty_lights = true;
             return;
+        }
         for (size_t i = 0; i < kLightCount; ++i)
         {
             LightConfig &cfg = _light_cfg[i];
@@ -842,6 +888,7 @@ private:
         if (!_gpio.readDyn(cfg.button_port, raw))
             return false;
         st.last_button = kButtonInvert ? !raw : raw;
+        st.button_idle = st.last_button;
         return true;
     }
 
@@ -864,6 +911,7 @@ private:
         if (!_gpio.readDyn(cfg.button_port, raw))
             return false;
         st.last_button = kButtonInvert ? !raw : raw;
+        st.button_idle = st.last_button;
         return true;
     }
 
@@ -876,4 +924,5 @@ private:
     static constexpr bool kButtonInvert = true;
     static constexpr bool kRelayInvert = false;
     static constexpr bool kButtonPullup = true;
+    static constexpr uint32_t kButtonCooldownMs = 500;
 };

@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -17,7 +17,7 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>?????</title>
+  <title>Порты</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -92,7 +92,6 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
             <th class="right">Шина</th>
             <th>Адрес</th>
             <th>Тип</th>
-            <th>Наличие</th>
           </tr>
         </thead>
         <tbody>
@@ -110,6 +109,7 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
             <th>Контр.</th>
             <th class="right">Устр.</th>
             <th class="right">Пин</th>
+            <th>State</th>
             <th>HW</th>
           </tr>
         </thead>
@@ -122,3 +122,6 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+
+

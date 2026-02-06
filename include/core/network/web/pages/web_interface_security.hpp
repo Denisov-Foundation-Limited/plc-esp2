@@ -438,16 +438,17 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       if (item && typeof item === 'object' && item.l) return item.l;
       return labelFor(type, optionValue(item));
     }
-    function buildOptions(list, selected, type) {
-      let html = '<option value="">-</option>';
-      const used = sensorUsed[type] || [];
+    function buildOptions(list, selected, type, usedSet) {
+      const sel = String(selected || '');
+      let html = '<option value=""' + (sel === '' ? ' selected' : '') + '>-</option>';
+      const used = usedSet || new Set();
       for (let i = 0; i < list.length; i++) {
         const val = optionValue(list[i]);
-        if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
-          continue;
-        }
+        const num = parseInt(val, 10);
+        const isUsed = !Number.isNaN(num) && used.has(num) && val !== sel;
         const label = optionLabel(list[i], type);
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') +
+          (isUsed ? ' disabled' : '') + '>' + label + '</option>';
       }
       return html;
     }
@@ -497,29 +498,82 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       return (await res.text()).trim();
     }
     const securityStatus = document.getElementById('security-status');
-    document.querySelectorAll('select.security-port').forEach((el) => {
-      const type = el.dataset.type;
-      const selected = el.dataset.selected || '';
-      const list = sensorOptions[type] || [];
-      el.innerHTML = buildOptions(list, selected, type);
-    });
-    function buildSirenOptions(list, selected) {
+    function buildSirenOptions(list, selected, usedSet) {
       let html = '<option value="none">-</option>';
-      const used = sirenUsed.relay || [];
+      const used = usedSet || new Set();
       for (let i = 0; i < list.length; i++) {
         const val = optionValue(list[i]);
-        if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
-          continue;
-        }
+        const num = parseInt(val, 10);
+        const isUsed = !Number.isNaN(num) && used.has(num) && val !== selected;
         const label = optionLabel(list[i], 'relay');
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') +
+          (isUsed ? ' disabled' : '') + '>' + label + '</option>';
       }
       return html;
     }
+    function refreshSecuritySelects() {
+      const used = new Set((sensorUsed.dinput || []).map((v) => parseInt(v, 10)).filter((v) => !Number.isNaN(v)));
+      document.querySelectorAll('select.security-port').forEach((el) => {
+        const v = parseInt(el.value || el.dataset.selected || '', 10);
+        if (!Number.isNaN(v)) used.add(v);
+      });
+      document.querySelectorAll('select.security-port').forEach((el) => {
+        const type = el.dataset.type;
+        const selected = el.value || el.dataset.selected || '';
+        const list = sensorOptions[type] || [];
+        el.innerHTML = buildOptions(list, selected, type, used);
+        if (selected) el.value = selected;
+      });
+      const sirenBase = new Set((sirenUsed.relay || []).map((v) => parseInt(v, 10)).filter((v) => !Number.isNaN(v)));
+      document.querySelectorAll('select.siren-select').forEach((el) => {
+        const v = parseInt(el.value || el.dataset.selected || '', 10);
+        if (!Number.isNaN(v)) sirenBase.add(v);
+      });
+      document.querySelectorAll('select.siren-select').forEach((el) => {
+        const selected = el.value || el.dataset.selected || '';
+        const list = sirenOptions.relay || [];
+        el.innerHTML = buildSirenOptions(list, selected, sirenBase);
+        el.value = selected || '';
+      });
+    }
+    refreshSecuritySelects();
+    document.querySelectorAll('select.security-port').forEach((el) => {
+      el.addEventListener('change', refreshSecuritySelects);
+    });
     document.querySelectorAll('select.siren-select').forEach((el) => {
-      const selected = el.dataset.selected || '';
-      const list = sirenOptions.relay || [];
-      el.innerHTML = buildSirenOptions(list, selected);
+      el.addEventListener('change', refreshSecuritySelects);
+    });
+    function updateSecurityEnabled(container, enabled) {
+      if (!container) return;
+      const tile = container.classList && container.classList.contains('tile') ? container : container.closest('.tile');
+      if (tile) {
+        tile.classList.toggle('disabled', !enabled);
+      }
+      if (!enabled) {
+        const base = tile || container;
+        const name = base.querySelector('input[name$="_name"]');
+        if (name) name.value = '';
+        const type = base.querySelector('select[name$="_type"]');
+        if (type) type.value = 'pir';
+        const port = base.querySelector('select.security-port');
+        if (port) {
+          port.value = '';
+          port.dataset.selected = '';
+        }
+        const silent = base.querySelector('input[name$="_silent"]');
+        if (silent) silent.checked = false;
+        refreshSecuritySelects();
+      }
+    }
+    document.querySelectorAll('input[type="checkbox"][name^="sec"][name$="_en"]').forEach((el) => {
+      el.addEventListener('change', () => {
+        const container = el.closest('.tile') || el.closest('tr');
+        updateSecurityEnabled(container, el.checked);
+        if (!el.checked && securityForm) {
+          sessionStorage.setItem(reloadKey, '1');
+          securityForm.submit();
+        }
+      });
     });
     const securityPage = %SECURITY_SENSORS_PAGE%;
     const securityPages = %SECURITY_SENSORS_PAGES%;

@@ -296,6 +296,7 @@ public:
                 writeAllOff_(cfg, st);
                 logRelayChange_(cfg, prev, st);
             }
+            reset_();
             return;
         }
         _logs.info(F("TANK"), F("controller: enabled"));
@@ -325,18 +326,23 @@ public:
             return false;
         TankConfig &cfg = _cfg[idx];
         TankState &st = _state[idx];
-        cfg.enabled = enabled;
-        if (!_controller_enabled)
-            return true;
         if (!enabled)
         {
             const TankState prev = st;
             writeAllOff_(cfg, st);
             logRelayChange_(cfg, prev, st);
+            const uint8_t saved_id = cfg.id;
+            cfg = TankConfig{};
+            cfg.id = saved_id;
+            cfg.enabled = false;
+            cfg.power_on = false;
             st = TankState{};
-            _logs.info(F("TANK"), F("id: %u enabled: 0"), (unsigned)cfg.id);
+            _logs.info(F("TANK"), F("id: %u enabled: false"), (unsigned)cfg.id);
             return true;
         }
+        cfg.enabled = true;
+        if (!_controller_enabled)
+            return true;
         st = TankState{};
         setupInputs_(cfg);
         setupOutputs_(cfg, st);
@@ -347,7 +353,7 @@ public:
             writeAllOff_(cfg, st);
         if (st.levels_ok)
             st.last_empty = isEmpty_(st);
-        _logs.info(F("TANK"), F("id: %u enabled: 1"), (unsigned)cfg.id);
+        _logs.info(F("TANK"), F("id: %u enabled: true"), (unsigned)cfg.id);
         return true;
     }
 

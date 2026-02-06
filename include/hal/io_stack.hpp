@@ -30,6 +30,8 @@ public:
             _outputs[i] = false;
             _applied[i] = false;
             _dirty[i] = false;
+            _raw_inputs[i] = false;
+            _last_change_ms[i] = 0;
         }
     }
 
@@ -50,7 +52,12 @@ public:
             if (p.caps == Cap::None)
                 continue;
             if (has(p.caps, Cap::Input))
-                _inputs[i] = _portio.read(i);
+            {
+                const bool v = _portio.read(i);
+                _inputs[i] = v;
+                _raw_inputs[i] = v;
+                _last_change_ms[i] = 0;
+            }
             if (has(p.caps, Cap::Output) && !has(p.caps, Cap::InputOnly))
             {
                 bool v = false;
@@ -64,13 +71,25 @@ public:
 
     void scanInputs()
     {
+        const uint32_t now = millis_();
         for (uint8_t i = 0; i < PORT_COUNT; ++i)
         {
             const auto &p = _portio.desc(i);
             if (p.caps == Cap::None)
                 continue;
             if (has(p.caps, Cap::Input))
-                _inputs[i] = _portio.read(i);
+            {
+                const bool raw = _portio.read(i);
+                if (raw != _raw_inputs[i])
+                {
+                    _raw_inputs[i] = raw;
+                    _last_change_ms[i] = now;
+                }
+                if (_last_change_ms[i] == 0)
+                    _last_change_ms[i] = now;
+                if ((uint32_t)(now - _last_change_ms[i]) >= kDebounceMs)
+                    _inputs[i] = _raw_inputs[i];
+            }
         }
     }
 
@@ -134,9 +153,22 @@ public:
     }
 
 private:
+    static constexpr uint32_t kDebounceMs = 100;
+
+    static uint32_t millis_()
+    {
+#if defined(ARDUINO)
+        return (uint32_t)::millis();
+#else
+        return 0;
+#endif
+    }
+
     PortIO &_portio;
     bool _inputs[PORT_COUNT] = {};
     bool _outputs[PORT_COUNT] = {};
     bool _applied[PORT_COUNT] = {};
     bool _dirty[PORT_COUNT] = {};
+    bool _raw_inputs[PORT_COUNT] = {};
+    uint32_t _last_change_ms[PORT_COUNT] = {};
 };

@@ -256,22 +256,37 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       if (item && typeof item === 'object' && item.l) return item.l;
       return labelFor(optionValue(item));
     }
-    function buildOptions(list, selected) {
-      let html = '<option value="">-</option>';
+    function buildOptions(list, selected, usedSet) {
+      const sel = String(selected || '');
+      let html = '<option value=""' + (sel === '' ? ' selected' : '') + '>-</option>';
+      const used = usedSet || new Set();
       for (let i = 0; i < list.length; i++) {
         const val = optionValue(list[i]);
-        if (sensorUsed.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
-          continue;
-        }
+        const num = parseInt(val, 10);
+        const isUsed = !Number.isNaN(num) && used.has(num) && val !== sel;
         const label = optionLabel(list[i]);
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') +
+          (isUsed ? ' disabled' : '') + '>' + label + '</option>';
       }
       return html;
     }
 
+    function refreshMeteoPins() {
+      const used = new Set((sensorUsed || []).map((v) => parseInt(v, 10)).filter((v) => !Number.isNaN(v)));
+      document.querySelectorAll('select.meteo-pin').forEach((el) => {
+        const v = parseInt(el.value || el.dataset.selected || '', 10);
+        if (!Number.isNaN(v)) used.add(v);
+      });
+      document.querySelectorAll('select.meteo-pin').forEach((el) => {
+        const selected = el.value || el.dataset.selected || '';
+        el.innerHTML = buildOptions(sensorOptions || [], selected, used);
+        el.value = selected || '';
+      });
+    }
+
+    refreshMeteoPins();
     document.querySelectorAll('select.meteo-pin').forEach((el) => {
-      const selected = el.dataset.selected || '';
-      el.innerHTML = buildOptions(sensorOptions || [], selected);
+      el.addEventListener('change', refreshMeteoPins);
     });
 
     function setDisabled(el, disabled) {
@@ -346,6 +361,30 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       }
     }
 
+    function updateMeteoEnabled(tile, enabled) {
+      if (!tile) return;
+      tile.classList.toggle('disabled', !enabled);
+      if (!enabled) {
+        const name = tile.querySelector('input.meteo-name');
+        if (name) name.value = '';
+        const device = tile.querySelector('select.meteo-device');
+        if (device) device.value = 'local';
+        const source = tile.querySelector('select.meteo-source');
+        if (source) source.value = '';
+        const type = tile.querySelector('select.meteo-type');
+        if (type) type.value = 'none';
+        tile.querySelectorAll('select.meteo-pin').forEach((sel) => {
+          sel.value = '';
+          sel.dataset.selected = '';
+        });
+        tile.querySelectorAll('select.meteo-addr').forEach((sel) => {
+          sel.value = '';
+        });
+        refreshMeteoPins();
+        updateRow(tile);
+      }
+    }
+
     document.querySelectorAll('select.meteo-type').forEach((el) => {
       const row = el.closest('.tile');
       if (row) {
@@ -358,6 +397,16 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       if (row) {
         el.addEventListener('change', () => updateRow(row));
       }
+    });
+    document.querySelectorAll('input.meteo-enable').forEach((el) => {
+      el.addEventListener('change', () => {
+        const tile = el.closest('.tile');
+        updateMeteoEnabled(tile, el.checked);
+        if (!el.checked && meteoForm) {
+          sessionStorage.setItem(reloadKey, '1');
+          meteoForm.submit();
+        }
+      });
     });
     const meteoForm = document.getElementById('meteo-form');
     let meteoDirty = false;

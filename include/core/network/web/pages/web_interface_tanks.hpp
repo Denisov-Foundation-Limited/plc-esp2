@@ -267,24 +267,72 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       if (item && typeof item === 'object' && item.l) return item.l;
       return labelFor(type, optionValue(item));
     }
-    function buildOptions(list, selected, type) {
-      let html = '<option value="">-</option>';
-      const used = tankUsed[type] || [];
+    function buildOptions(list, selected, type, usedSet) {
+      const sel = String(selected || '');
+      let html = '<option value=""' + (sel === '' ? ' selected' : '') + '>-</option>';
+      const used = usedSet || new Set();
       for (let i = 0; i < list.length; i++) {
         const val = optionValue(list[i]);
-        if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
-          continue;
-        }
+        const num = parseInt(val, 10);
+        const isUsed = !Number.isNaN(num) && used.has(num) && val !== sel;
         const label = optionLabel(list[i], type);
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') +
+          (isUsed ? ' disabled' : '') + '>' + label + '</option>';
       }
       return html;
     }
+    function refreshTankSelects() {
+      const usedByType = {};
+      document.querySelectorAll('select.tank-select').forEach((el) => {
+        const type = el.dataset.type;
+        if (!usedByType[type]) {
+          const base = tankUsed[type] || [];
+          usedByType[type] = new Set(base.map((v) => parseInt(v, 10)).filter((v) => !Number.isNaN(v)));
+        }
+        const v = parseInt(el.value || el.dataset.selected || '', 10);
+        if (!Number.isNaN(v)) usedByType[type].add(v);
+      });
+      document.querySelectorAll('select.tank-select').forEach((el) => {
+        const type = el.dataset.type;
+        const selected = el.value || el.dataset.selected || '';
+        const list = tankOptions[type] || [];
+        el.innerHTML = buildOptions(list, selected, type, usedByType[type]);
+        el.value = selected || '';
+      });
+    }
+    refreshTankSelects();
     document.querySelectorAll('select.tank-select').forEach((el) => {
-      const type = el.dataset.type;
-      const selected = el.dataset.selected || '';
-      const list = tankOptions[type] || [];
-      el.innerHTML = buildOptions(list, selected, type);
+      el.addEventListener('change', refreshTankSelects);
+    });
+    function updateTankEnabled(tile, enabled) {
+      if (!tile) return;
+      tile.classList.toggle('disabled', !enabled);
+      if (!enabled) {
+        const name = tile.querySelector('input.field.name');
+        if (name) name.value = '';
+        tile.querySelectorAll('select.tank-select').forEach((sel) => {
+          sel.value = '';
+          sel.dataset.selected = '';
+        });
+        const power = tile.querySelector('input.tank-power');
+        if (power) {
+          power.checked = false;
+          power.disabled = true;
+        }
+        const powerHidden = tile.querySelector('input[type="hidden"][name$="_power"]');
+        if (powerHidden) powerHidden.value = 'off';
+        refreshTankSelects();
+      }
+    }
+    document.querySelectorAll('input[type="checkbox"][name^="k"][name$="_en"]').forEach((el) => {
+      el.addEventListener('change', () => {
+        const tile = el.closest('.tile');
+        updateTankEnabled(tile, el.checked);
+        if (!el.checked && tanksForm) {
+          sessionStorage.setItem(reloadKey, '1');
+          tanksForm.submit();
+        }
+      });
     });
     const tanksForm = document.getElementById('tanks-form');
     let tanksDirty = false;

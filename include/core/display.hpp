@@ -64,9 +64,11 @@ public:
         _err = Error::Ok;
         _ready = true;
 
+        _lcd.setBacklight(true);
+
         clear();
-        setText(F("      FCPLC     "), F("Denisov Fnd Ltd."));
-        task();
+        showStr(0, F("      FCPLC     "));
+        showStr(1, F("Denisov Fnd Ltd."));
         return true;
     }
 
@@ -218,10 +220,28 @@ private:
                 }
             }
             const uint8_t row = (i < 4) ? 0 : 1;
-            const uint8_t col = (uint8_t)((i % 4) * 4);
+            uint8_t col = (uint8_t)((i % 4) * 4);
+            const bool has_prev = (i % 4) != 0;
+            const bool has_next = (i % 4) != 3 && (i + 1) < kSlotCount;
+            const bool is_time = _slots[i].kind == DisplaySlotKind::Time;
+            const bool is_time_hm = is_time && _slots[i].field == DisplaySlotField::TimeHm;
+            const bool is_time_min = is_time && _slots[i].field == DisplaySlotField::TimeMin;
+            const bool prev_is_time_hm = has_prev &&
+                                         _slots[i - 1].kind == DisplaySlotKind::Time &&
+                                         _slots[i - 1].field == DisplaySlotField::TimeHm;
+            const bool next_is_time_min = has_next &&
+                                          _slots[i + 1].kind == DisplaySlotKind::Time &&
+                                          _slots[i + 1].field == DisplaySlotField::TimeMin;
+            const bool join_prev = is_time_min && prev_is_time_hm;
+            const bool join_next = is_time_hm && next_is_time_min;
+            if (join_prev)
+            {
+                col = (uint8_t)(col - 1);
+            }
             for (uint8_t k = 0; k < 4; ++k)
             {
-                const char c = buf[k] ? buf[k] : ' ';
+                const bool force_space = (k == 3) && !(join_prev || join_next);
+                const char c = force_space ? ' ' : (buf[k] ? buf[k] : ' ');
                 if (row == 0)
                     out0[col + k] = c;
                 else

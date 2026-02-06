@@ -53,7 +53,7 @@ public:
             page.replace("%RING_CLIENT_BUTTON_SELECTED%", "");
         }
         page.replace("%RING_CLIENT_BUTTON_JSON%", web.socketPortOptionsJson_(PortIO::PinType::DInput));
-        page.replace("%RING_CLIENT_DINPUT_USED_JSON%", web.ringUsedPortsJson_(PortIO::PinType::DInput));
+        page.replace("%RING_CLIENT_DINPUT_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::DInput));
         if (!web._configs_manager)
         {
             if (!web._ring_client_status.length())

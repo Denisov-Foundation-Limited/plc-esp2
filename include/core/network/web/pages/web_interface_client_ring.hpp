@@ -144,17 +144,31 @@ static const char kWebInterfaceClientRingHtml[] PROGMEM = R"HTML(
     const buttonUsed = %RING_CLIENT_DINPUT_USED_JSON%;
     const buttonSelected = "%RING_CLIENT_BUTTON_SELECTED%";
     const select = document.getElementById('ring-client-button');
-    if (select) {
+    function buildButtonOptions(list, selected, usedSet) {
       let html = '<option value="">-</option>';
-      for (let i = 0; i < buttonOptions.length; i++) {
-        const v = String(buttonOptions[i].v);
-        if (buttonUsed.indexOf(parseInt(v, 10)) !== -1 && v !== buttonSelected) {
-          continue;
-        }
-        const l = buttonOptions[i].l || v;
-        html += '<option value="' + v + '"' + (v === buttonSelected ? ' selected' : '') + '>' + l + '</option>';
+      const used = usedSet || new Set();
+      for (let i = 0; i < list.length; i++) {
+        const v = String(list[i].v);
+        const num = parseInt(v, 10);
+        const isUsed = !Number.isNaN(num) && used.has(num) && v !== selected;
+        const l = list[i].l || v;
+        html += '<option value="' + v + '"' + (v === selected ? ' selected' : '') +
+          (isUsed ? ' disabled' : '') + '>' + l + '</option>';
       }
-      select.innerHTML = html;
+      return html;
+    }
+    function refreshRingClientButton() {
+      if (!select) return;
+      const used = new Set((buttonUsed || []).map((v) => parseInt(v, 10)).filter((v) => !Number.isNaN(v)));
+      const selected = select.value || buttonSelected || '';
+      const selectedNum = parseInt(selected, 10);
+      if (!Number.isNaN(selectedNum)) used.add(selectedNum);
+      select.innerHTML = buildButtonOptions(buttonOptions || [], selected, used);
+      if (selected) select.value = selected;
+    }
+    refreshRingClientButton();
+    if (select) {
+      select.addEventListener('change', refreshRingClientButton);
     }
   </script>
 </body>

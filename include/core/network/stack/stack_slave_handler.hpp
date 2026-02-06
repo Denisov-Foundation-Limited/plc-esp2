@@ -98,6 +98,234 @@ public:
                 items[i] = RemoteMeteoItem{};
         }
     };
+    struct RemoteSocketItem
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        bool state = false;
+        static constexpr size_t kNameLen = 48;
+        char name[kNameLen] = {};
+    };
+    struct RemoteSocketsCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        RemoteSocketItem *items = nullptr;
+        size_t capacity = SocketController::kSocketCount;
+        size_t item_count = 0;
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            item_count = 0;
+            if (!items)
+                return;
+            for (size_t i = 0; i < capacity; ++i)
+                items[i] = RemoteSocketItem{};
+        }
+    };
+    struct RemoteLightItem
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        bool state = false;
+        static constexpr size_t kNameLen = 48;
+        char name[kNameLen] = {};
+    };
+    struct RemoteLightsCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        RemoteLightItem *items = nullptr;
+        size_t capacity = SocketController::kLightCount;
+        size_t item_count = 0;
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            item_count = 0;
+            if (!items)
+                return;
+            for (size_t i = 0; i < capacity; ++i)
+                items[i] = RemoteLightItem{};
+        }
+    };
+    struct RemoteSepticItem
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        bool warning = false;
+        bool alarm = false;
+    };
+    struct RemoteSepticCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        RemoteSepticItem *items = nullptr;
+        size_t capacity = SepticController::kSepticCount;
+        size_t item_count = 0;
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            item_count = 0;
+            if (!items)
+                return;
+            for (size_t i = 0; i < capacity; ++i)
+                items[i] = RemoteSepticItem{};
+        }
+    };
+    struct RemoteThermoItem
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        bool power_on = false;
+        bool heat_on = false;
+        bool cool_on = false;
+        static constexpr size_t kNameLen = 48;
+        char name[kNameLen] = {};
+    };
+    struct RemoteThermoCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        RemoteThermoItem *items = nullptr;
+        size_t capacity = ThermoController::kDeviceCount;
+        size_t item_count = 0;
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            item_count = 0;
+            if (!items)
+                return;
+            for (size_t i = 0; i < capacity; ++i)
+                items[i] = RemoteThermoItem{};
+        }
+    };
+    struct RemoteTankItem
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        bool levels_ok = false;
+        bool level_low = false;
+        bool level_mid = false;
+        bool level_full = false;
+    };
+    struct RemoteTanksCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        RemoteTankItem *items = nullptr;
+        size_t capacity = TankController::kTankCount;
+        size_t item_count = 0;
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            item_count = 0;
+            if (!items)
+                return;
+            for (size_t i = 0; i < capacity; ++i)
+                items[i] = RemoteTankItem{};
+        }
+    };
+    struct RemoteSecurityItem
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        bool detect = false;
+        bool silent = false;
+        uint8_t port = SecurityController::kInvalidPort;
+        static constexpr size_t kTypeLen = 24;
+        static constexpr size_t kNameLen = 48;
+        char type[kTypeLen] = {};
+        char name[kNameLen] = {};
+    };
+    struct RemoteSecurityCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        bool enabled = false;
+        bool armed = false;
+        bool alarm = false;
+        RemoteSecurityItem *items = nullptr;
+        size_t capacity = SecurityController::kSensorCount;
+        size_t item_count = 0;
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            enabled = false;
+            armed = false;
+            alarm = false;
+            item_count = 0;
+            if (!items)
+                return;
+            for (size_t i = 0; i < capacity; ++i)
+                items[i] = RemoteSecurityItem{};
+        }
+    };
 
     StackSlaveHandler(IoStack &io, Ds18b20 &ds18b20, OneWireManager &ow, I2CManager &i2c,
                       PlcControl &plc, RTC &rtc, TelegramClient &telegram, Logger &logs,
@@ -125,6 +353,7 @@ public:
     ~StackSlaveHandler()
     {
         releaseRemoteMeteo_();
+        releaseRemoteDevices_();
     }
 
     void attach(StackNode &node)
@@ -139,6 +368,7 @@ public:
         if (_alloc_ready)
             return;
         initRemoteMeteo_();
+        initRemoteDevices_();
         _alloc_ready = true;
     }
     void loop() { updateRemoteMeteo_(); }
@@ -146,6 +376,18 @@ public:
     size_t remoteMeteoCacheSlots() const { return StackMaster::MAX_SESSIONS; }
     const RemoteMeteoCache &remoteMeteoCacheAt(size_t idx) const { return _remote_meteo_cache[idx]; }
     bool requestRemoteMeteoAll() { return requestRemoteMeteoAll_(); }
+    const RemoteSocketsCache *remoteSocketsCache(uint32_t node_id) const { return findRemoteSocketsCache_(node_id, false); }
+    const RemoteLightsCache *remoteLightsCache(uint32_t node_id) const { return findRemoteLightsCache_(node_id, false); }
+    const RemoteSepticCache *remoteSepticCache(uint32_t node_id) const { return findRemoteSepticCache_(node_id, false); }
+    const RemoteThermoCache *remoteThermoCache(uint32_t node_id) const { return findRemoteThermoCache_(node_id, false); }
+    const RemoteTanksCache *remoteTanksCache(uint32_t node_id) const { return findRemoteTanksCache_(node_id, false); }
+    const RemoteSecurityCache *remoteSecurityCache(uint32_t node_id) const { return findRemoteSecurityCache_(node_id, false); }
+    bool requestRemoteSockets(uint32_t node_id) { return requestRemoteSockets_(node_id); }
+    bool requestRemoteLights(uint32_t node_id) { return requestRemoteLights_(node_id); }
+    bool requestRemoteSeptic(uint32_t node_id) { return requestRemoteSeptic_(node_id); }
+    bool requestRemoteThermo(uint32_t node_id) { return requestRemoteThermo_(node_id); }
+    bool requestRemoteTanks(uint32_t node_id) { return requestRemoteTanks_(node_id); }
+    bool requestRemoteSecurity(uint32_t node_id) { return requestRemoteSecurity_(node_id); }
     bool remoteMeteoTemp(uint32_t node_id, uint8_t sensor_id, float &temp_c, bool &has_temp) const
     {
         const RemoteMeteoCache *cache = findRemoteMeteoCache_(node_id, false);
@@ -242,6 +484,12 @@ private:
     DynamicJsonDocument _msg_doc{kDocCapacity};
     bool _rfid_io_ready = false;
     RemoteMeteoCache _remote_meteo_cache[StackMaster::MAX_SESSIONS] = {};
+    RemoteSocketsCache _remote_sockets_cache[StackMaster::MAX_SESSIONS] = {};
+    RemoteLightsCache _remote_lights_cache[StackMaster::MAX_SESSIONS] = {};
+    RemoteSepticCache _remote_septic_cache[StackMaster::MAX_SESSIONS] = {};
+    RemoteThermoCache _remote_thermo_cache[StackMaster::MAX_SESSIONS] = {};
+    RemoteTanksCache _remote_tanks_cache[StackMaster::MAX_SESSIONS] = {};
+    RemoteSecurityCache _remote_security_cache[StackMaster::MAX_SESSIONS] = {};
     uint16_t _remote_cmd_id = 0;
     uint16_t _remote_all_cmd_id = 0;
     uint32_t _remote_all_updated_ms = 0;
@@ -297,9 +545,108 @@ private:
         }
     }
 
+    void initRemoteDevices_()
+    {
+        for (auto &cache : _remote_sockets_cache)
+        {
+            cache.items = allocItems_<RemoteSocketItem>(cache.capacity);
+            if (!cache.items)
+            {
+                cache.capacity = 0;
+                _logs.error(F("STACK"), F("Remote sockets cache alloc failed"));
+            }
+            cache.reset();
+        }
+        for (auto &cache : _remote_lights_cache)
+        {
+            cache.items = allocItems_<RemoteLightItem>(cache.capacity);
+            if (!cache.items)
+            {
+                cache.capacity = 0;
+                _logs.error(F("STACK"), F("Remote lights cache alloc failed"));
+            }
+            cache.reset();
+        }
+        for (auto &cache : _remote_septic_cache)
+        {
+            cache.items = allocItems_<RemoteSepticItem>(cache.capacity);
+            if (!cache.items)
+            {
+                cache.capacity = 0;
+                _logs.error(F("STACK"), F("Remote septic cache alloc failed"));
+            }
+            cache.reset();
+        }
+        for (auto &cache : _remote_thermo_cache)
+        {
+            cache.items = allocItems_<RemoteThermoItem>(cache.capacity);
+            if (!cache.items)
+            {
+                cache.capacity = 0;
+                _logs.error(F("STACK"), F("Remote thermo cache alloc failed"));
+            }
+            cache.reset();
+        }
+        for (auto &cache : _remote_tanks_cache)
+        {
+            cache.items = allocItems_<RemoteTankItem>(cache.capacity);
+            if (!cache.items)
+            {
+                cache.capacity = 0;
+                _logs.error(F("STACK"), F("Remote tanks cache alloc failed"));
+            }
+            cache.reset();
+        }
+        for (auto &cache : _remote_security_cache)
+        {
+            cache.items = allocItems_<RemoteSecurityItem>(cache.capacity);
+            if (!cache.items)
+            {
+                cache.capacity = 0;
+                _logs.error(F("STACK"), F("Remote security cache alloc failed"));
+            }
+            cache.reset();
+        }
+    }
+
     void releaseRemoteMeteo_()
     {
         for (auto &cache : _remote_meteo_cache)
+        {
+            releaseItems_(cache.items, cache.capacity);
+            cache.items = nullptr;
+        }
+        _alloc_ready = false;
+    }
+
+    void releaseRemoteDevices_()
+    {
+        for (auto &cache : _remote_sockets_cache)
+        {
+            releaseItems_(cache.items, cache.capacity);
+            cache.items = nullptr;
+        }
+        for (auto &cache : _remote_lights_cache)
+        {
+            releaseItems_(cache.items, cache.capacity);
+            cache.items = nullptr;
+        }
+        for (auto &cache : _remote_septic_cache)
+        {
+            releaseItems_(cache.items, cache.capacity);
+            cache.items = nullptr;
+        }
+        for (auto &cache : _remote_thermo_cache)
+        {
+            releaseItems_(cache.items, cache.capacity);
+            cache.items = nullptr;
+        }
+        for (auto &cache : _remote_tanks_cache)
+        {
+            releaseItems_(cache.items, cache.capacity);
+            cache.items = nullptr;
+        }
+        for (auto &cache : _remote_security_cache)
         {
             releaseItems_(cache.items, cache.capacity);
             cache.items = nullptr;
@@ -328,6 +675,12 @@ private:
         if (frame.type == (uint8_t)StackMsgType::Ack || frame.type == (uint8_t)StackMsgType::Err)
         {
             handleRemoteMeteoReply_(frame);
+            handleRemoteSocketsReply_(frame);
+            handleRemoteLightsReply_(frame);
+            handleRemoteSepticReply_(frame);
+            handleRemoteThermoReply_(frame);
+            handleRemoteTanksReply_(frame);
+            handleRemoteSecurityReply_(frame);
             return;
         }
         if (frame.type != (uint8_t)StackMsgType::CmdGet && frame.type != (uint8_t)StackMsgType::CmdSet)
@@ -1113,6 +1466,9 @@ private:
         {
             _tx_doc.clear();
             JsonDocument &doc = _tx_doc;
+            doc["enabled"] = _security.controllerEnabled();
+            doc["armed"] = _security.armed();
+            doc["alarm"] = _security.alarmOn();
             JsonArray arr = doc["items"].to<JsonArray>();
             for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
             {
@@ -1126,6 +1482,9 @@ private:
                 o["type"] = (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
                 if (cfg->port != SecurityController::kInvalidPort)
                     o["port"] = cfg->port;
+                o["silent"] = cfg->silent;
+                if (cfg->name.length())
+                    o["name"] = cfg->name;
                 o["detect"] = st->is_detect;
             }
             sendAck_(cmd_id, doc);
@@ -1764,6 +2123,234 @@ private:
         return true;
     }
 
+    bool requestRemoteSockets_(uint32_t node_id)
+    {
+        if (!_node)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Slave)
+            return false;
+        RemoteSocketsCache *cache = findRemoteSocketsCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+            return false;
+        if ((uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        const uint16_t cmd_id = nextRemoteCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Sockets;
+        doc["action"] = "get";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["node"] = node_id;
+        if (_configs)
+        {
+            const String key = _configs->stackApiKey();
+            if (key.length())
+                doc["api_key"] = key;
+        }
+        char payload[StackCodec::kMaxPayload] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
+        return true;
+    }
+
+    bool requestRemoteLights_(uint32_t node_id)
+    {
+        if (!_node)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Slave)
+            return false;
+        RemoteLightsCache *cache = findRemoteLightsCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+            return false;
+        if ((uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        const uint16_t cmd_id = nextRemoteCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Sockets;
+        doc["action"] = "get_lights";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["node"] = node_id;
+        if (_configs)
+        {
+            const String key = _configs->stackApiKey();
+            if (key.length())
+                doc["api_key"] = key;
+        }
+        char payload[StackCodec::kMaxPayload] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
+        return true;
+    }
+
+    bool requestRemoteSeptic_(uint32_t node_id)
+    {
+        if (!_node)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Slave)
+            return false;
+        RemoteSepticCache *cache = findRemoteSepticCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+            return false;
+        if ((uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        const uint16_t cmd_id = nextRemoteCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Septic;
+        doc["action"] = "get";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["node"] = node_id;
+        if (_configs)
+        {
+            const String key = _configs->stackApiKey();
+            if (key.length())
+                doc["api_key"] = key;
+        }
+        char payload[StackCodec::kMaxPayload] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
+        return true;
+    }
+
+    bool requestRemoteThermo_(uint32_t node_id)
+    {
+        if (!_node)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Slave)
+            return false;
+        RemoteThermoCache *cache = findRemoteThermoCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+            return false;
+        if ((uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        const uint16_t cmd_id = nextRemoteCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Thermo;
+        doc["action"] = "get";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["node"] = node_id;
+        if (_configs)
+        {
+            const String key = _configs->stackApiKey();
+            if (key.length())
+                doc["api_key"] = key;
+        }
+        char payload[StackCodec::kMaxPayload] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
+        return true;
+    }
+
+    bool requestRemoteTanks_(uint32_t node_id)
+    {
+        if (!_node)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Slave)
+            return false;
+        RemoteTanksCache *cache = findRemoteTanksCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+            return false;
+        if ((uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        const uint16_t cmd_id = nextRemoteCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Tanks;
+        doc["action"] = "get";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["node"] = node_id;
+        if (_configs)
+        {
+            const String key = _configs->stackApiKey();
+            if (key.length())
+                doc["api_key"] = key;
+        }
+        char payload[StackCodec::kMaxPayload] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
+        return true;
+    }
+
+    bool requestRemoteSecurity_(uint32_t node_id)
+    {
+        if (!_node)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Slave)
+            return false;
+        RemoteSecurityCache *cache = findRemoteSecurityCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+            return false;
+        if ((uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        const uint16_t cmd_id = nextRemoteCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Security;
+        doc["action"] = "get";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["node"] = node_id;
+        if (_configs)
+        {
+            const String key = _configs->stackApiKey();
+            if (key.length())
+                doc["api_key"] = key;
+        }
+        char payload[StackCodec::kMaxPayload] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
+        return true;
+    }
+
     RemoteMeteoCache *findRemoteMeteoCache_(uint32_t node_id, bool create)
     {
         if (node_id == 0)
@@ -1795,6 +2382,220 @@ private:
         if (cmd_id == 0)
             return nullptr;
         for (auto &c : _remote_meteo_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
+    RemoteSocketsCache *findRemoteSocketsCache_(uint32_t node_id, bool create)
+    {
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _remote_sockets_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _remote_sockets_cache)
+        {
+            if (c.node_id == 0)
+            {
+                c.reset();
+                c.node_id = node_id;
+                return &c;
+            }
+        }
+        return nullptr;
+    }
+
+    const RemoteSocketsCache *findRemoteSocketsCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackSlaveHandler *>(this)->findRemoteSocketsCache_(node_id, create);
+    }
+
+    RemoteLightsCache *findRemoteLightsCache_(uint32_t node_id, bool create)
+    {
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _remote_lights_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _remote_lights_cache)
+        {
+            if (c.node_id == 0)
+            {
+                c.reset();
+                c.node_id = node_id;
+                return &c;
+            }
+        }
+        return nullptr;
+    }
+
+    const RemoteLightsCache *findRemoteLightsCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackSlaveHandler *>(this)->findRemoteLightsCache_(node_id, create);
+    }
+
+    RemoteSepticCache *findRemoteSepticCache_(uint32_t node_id, bool create)
+    {
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _remote_septic_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _remote_septic_cache)
+        {
+            if (c.node_id == 0)
+            {
+                c.reset();
+                c.node_id = node_id;
+                return &c;
+            }
+        }
+        return nullptr;
+    }
+
+    const RemoteSepticCache *findRemoteSepticCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackSlaveHandler *>(this)->findRemoteSepticCache_(node_id, create);
+    }
+
+    RemoteTanksCache *findRemoteTanksCache_(uint32_t node_id, bool create)
+    {
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _remote_tanks_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _remote_tanks_cache)
+        {
+            if (c.node_id == 0)
+            {
+                c.reset();
+                c.node_id = node_id;
+                return &c;
+            }
+        }
+        return nullptr;
+    }
+
+    RemoteThermoCache *findRemoteThermoCache_(uint32_t node_id, bool create)
+    {
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _remote_thermo_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _remote_thermo_cache)
+        {
+            if (c.node_id != 0)
+                continue;
+            c.reset();
+            c.node_id = node_id;
+            return &c;
+        }
+        return nullptr;
+    }
+
+    const RemoteThermoCache *findRemoteThermoCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackSlaveHandler *>(this)->findRemoteThermoCache_(node_id, create);
+    }
+
+    const RemoteTanksCache *findRemoteTanksCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackSlaveHandler *>(this)->findRemoteTanksCache_(node_id, create);
+    }
+
+    RemoteSecurityCache *findRemoteSecurityCache_(uint32_t node_id, bool create)
+    {
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _remote_security_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _remote_security_cache)
+        {
+            if (c.node_id != 0)
+                continue;
+            c.reset();
+            c.node_id = node_id;
+            return &c;
+        }
+        return nullptr;
+    }
+
+    const RemoteSecurityCache *findRemoteSecurityCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackSlaveHandler *>(this)->findRemoteSecurityCache_(node_id, create);
+    }
+
+    RemoteSocketsCache *findRemoteSocketsCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _remote_sockets_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
+    RemoteLightsCache *findRemoteLightsCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _remote_lights_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
+    RemoteSepticCache *findRemoteSepticCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _remote_septic_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
+    RemoteTanksCache *findRemoteTanksCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _remote_tanks_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
+    RemoteThermoCache *findRemoteThermoCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _remote_thermo_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
+    RemoteSecurityCache *findRemoteSecurityCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _remote_security_cache)
             if (c.pending && c.pending_cmd_id == cmd_id)
                 return &c;
         return nullptr;
@@ -1900,6 +2701,258 @@ private:
         cache->last_ok = true;
     }
 
+    void handleRemoteSocketsReply_(const StackFrame &frame)
+    {
+        _rx_doc.clear();
+        DeserializationError err = deserializeJson(_rx_doc, frame.payload, frame.payload_len);
+        if (err)
+            return;
+        const uint16_t cmd_id = _rx_doc["cmd_id"] | 0;
+        RemoteSocketsCache *cache = findRemoteSocketsCacheByCmd_(cmd_id);
+        if (!cache || !cache->items)
+            return;
+        const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
+        JsonArrayConst items = _rx_doc["data"]["items"].as<JsonArrayConst>();
+        cache->pending = false;
+        cache->updated_ms = millis();
+        cache->last_ok = false;
+        cache->last_error = "";
+        if (!ok)
+        {
+            cache->last_error = _rx_doc["error"] | "error";
+            return;
+        }
+        if (items.isNull())
+            return;
+        cache->item_count = 0;
+        for (JsonObjectConst item : items)
+        {
+            if (cache->item_count >= SocketController::kSocketCount)
+                break;
+            if (!item["id"].is<unsigned>())
+                continue;
+            RemoteSocketItem &dst = cache->items[cache->item_count++];
+            dst.id = (uint8_t)item["id"].as<unsigned>();
+            dst.enabled = item["enabled"] | false;
+            dst.state = item["state"] | false;
+            copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+        }
+        cache->has_data = true;
+        cache->last_ok = true;
+    }
+
+    void handleRemoteLightsReply_(const StackFrame &frame)
+    {
+        _rx_doc.clear();
+        DeserializationError err = deserializeJson(_rx_doc, frame.payload, frame.payload_len);
+        if (err)
+            return;
+        const uint16_t cmd_id = _rx_doc["cmd_id"] | 0;
+        RemoteLightsCache *cache = findRemoteLightsCacheByCmd_(cmd_id);
+        if (!cache || !cache->items)
+            return;
+        const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
+        JsonArrayConst items = _rx_doc["data"]["items"].as<JsonArrayConst>();
+        cache->pending = false;
+        cache->updated_ms = millis();
+        cache->last_ok = false;
+        cache->last_error = "";
+        if (!ok)
+        {
+            cache->last_error = _rx_doc["error"] | "error";
+            return;
+        }
+        if (items.isNull())
+            return;
+        cache->item_count = 0;
+        for (JsonObjectConst item : items)
+        {
+            if (cache->item_count >= SocketController::kLightCount)
+                break;
+            if (!item["id"].is<unsigned>())
+                continue;
+            RemoteLightItem &dst = cache->items[cache->item_count++];
+            dst.id = (uint8_t)item["id"].as<unsigned>();
+            dst.enabled = item["enabled"] | false;
+            dst.state = item["state"] | false;
+            copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+        }
+        cache->has_data = true;
+        cache->last_ok = true;
+    }
+
+    void handleRemoteSepticReply_(const StackFrame &frame)
+    {
+        _rx_doc.clear();
+        DeserializationError err = deserializeJson(_rx_doc, frame.payload, frame.payload_len);
+        if (err)
+            return;
+        const uint16_t cmd_id = _rx_doc["cmd_id"] | 0;
+        RemoteSepticCache *cache = findRemoteSepticCacheByCmd_(cmd_id);
+        if (!cache || !cache->items)
+            return;
+        const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
+        JsonArrayConst items = _rx_doc["data"]["items"].as<JsonArrayConst>();
+        cache->pending = false;
+        cache->updated_ms = millis();
+        cache->last_ok = false;
+        cache->last_error = "";
+        if (!ok)
+        {
+            cache->last_error = _rx_doc["error"] | "error";
+            return;
+        }
+        if (items.isNull())
+            return;
+        cache->item_count = 0;
+        for (JsonObjectConst item : items)
+        {
+            if (cache->item_count >= SepticController::kSepticCount)
+                break;
+            if (!item["id"].is<unsigned>())
+                continue;
+            RemoteSepticItem &dst = cache->items[cache->item_count++];
+            dst.id = (uint8_t)item["id"].as<unsigned>();
+            dst.enabled = item["enabled"] | false;
+            dst.warning = item["warning"] | false;
+            dst.alarm = item["alarm"] | false;
+        }
+        cache->has_data = true;
+        cache->last_ok = true;
+    }
+
+    void handleRemoteThermoReply_(const StackFrame &frame)
+    {
+        _rx_doc.clear();
+        DeserializationError err = deserializeJson(_rx_doc, frame.payload, frame.payload_len);
+        if (err)
+            return;
+        const uint16_t cmd_id = _rx_doc["cmd_id"] | 0;
+        RemoteThermoCache *cache = findRemoteThermoCacheByCmd_(cmd_id);
+        if (!cache || !cache->items)
+            return;
+        const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
+        JsonArrayConst items = _rx_doc["data"]["items"].as<JsonArrayConst>();
+        cache->pending = false;
+        cache->updated_ms = millis();
+        cache->last_ok = false;
+        cache->last_error = "";
+        if (!ok)
+        {
+            cache->last_error = _rx_doc["error"] | "error";
+            return;
+        }
+        if (items.isNull())
+            return;
+        cache->item_count = 0;
+        for (JsonObjectConst item : items)
+        {
+            if (cache->item_count >= ThermoController::kDeviceCount)
+                break;
+            if (!item["id"].is<unsigned>())
+                continue;
+            RemoteThermoItem &dst = cache->items[cache->item_count++];
+            dst.id = (uint8_t)item["id"].as<unsigned>();
+            dst.enabled = item["enabled"] | false;
+            dst.power_on = item["power_on"] | false;
+            dst.heat_on = item["heat_on"] | false;
+            dst.cool_on = item["cool_on"] | false;
+            copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+        }
+        cache->has_data = true;
+        cache->last_ok = true;
+    }
+
+    void handleRemoteTanksReply_(const StackFrame &frame)
+    {
+        _rx_doc.clear();
+        DeserializationError err = deserializeJson(_rx_doc, frame.payload, frame.payload_len);
+        if (err)
+            return;
+        const uint16_t cmd_id = _rx_doc["cmd_id"] | 0;
+        RemoteTanksCache *cache = findRemoteTanksCacheByCmd_(cmd_id);
+        if (!cache || !cache->items)
+            return;
+        const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
+        JsonArrayConst items = _rx_doc["data"]["items"].as<JsonArrayConst>();
+        cache->pending = false;
+        cache->updated_ms = millis();
+        cache->last_ok = false;
+        cache->last_error = "";
+        if (!ok)
+        {
+            cache->last_error = _rx_doc["error"] | "error";
+            return;
+        }
+        if (items.isNull())
+            return;
+        cache->item_count = 0;
+        for (JsonObjectConst item : items)
+        {
+            if (cache->item_count >= TankController::kTankCount)
+                break;
+            if (!item["id"].is<unsigned>())
+                continue;
+            RemoteTankItem &dst = cache->items[cache->item_count++];
+            dst.id = (uint8_t)item["id"].as<unsigned>();
+            dst.enabled = item["enabled"] | false;
+            dst.levels_ok = item["levels_ok"] | false;
+            dst.level_low = item["level_low"] | false;
+            dst.level_mid = item["level_mid"] | false;
+            dst.level_full = item["level_full"] | false;
+        }
+        cache->has_data = true;
+        cache->last_ok = true;
+    }
+
+    void handleRemoteSecurityReply_(const StackFrame &frame)
+    {
+        _rx_doc.clear();
+        DeserializationError err = deserializeJson(_rx_doc, frame.payload, frame.payload_len);
+        if (err)
+            return;
+        const uint16_t cmd_id = _rx_doc["cmd_id"] | 0;
+        RemoteSecurityCache *cache = findRemoteSecurityCacheByCmd_(cmd_id);
+        if (!cache || !cache->items)
+            return;
+        const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
+        JsonObjectConst data = _rx_doc["data"];
+        JsonArrayConst items = data["items"].as<JsonArrayConst>();
+        cache->pending = false;
+        cache->updated_ms = millis();
+        cache->last_ok = false;
+        cache->last_error = "";
+        if (!ok)
+        {
+            cache->last_error = _rx_doc["error"] | "error";
+            return;
+        }
+        cache->enabled = data["enabled"] | false;
+        cache->armed = data["armed"] | false;
+        cache->alarm = data["alarm"] | false;
+        if (!items.isNull())
+        {
+            cache->item_count = 0;
+            for (JsonObjectConst item : items)
+            {
+                if (cache->item_count >= SecurityController::kSensorCount)
+                    break;
+                if (!item["id"].is<unsigned>())
+                    continue;
+                RemoteSecurityItem &dst = cache->items[cache->item_count++];
+                dst.id = (uint8_t)item["id"].as<unsigned>();
+                dst.enabled = item["enabled"] | false;
+                dst.detect = item["detect"] | false;
+                dst.silent = item["silent"] | false;
+                dst.port = (uint8_t)(item["port"] | SecurityController::kInvalidPort);
+                copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
+                copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+            }
+        }
+        cache->has_data = true;
+        cache->last_ok = true;
+    }
+
     uint16_t nextRemoteCmdId_()
     {
         ++_remote_cmd_id;
@@ -1999,4 +3052,3 @@ private:
         sendJson_((uint8_t)StackMsgType::CmdSet, _msg_doc);
     }
 };
-

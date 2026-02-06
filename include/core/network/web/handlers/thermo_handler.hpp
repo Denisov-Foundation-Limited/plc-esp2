@@ -59,9 +59,9 @@ public:
         page.replace("%THERMO_DINPUT_JSON%", stack_view ? "[]" : web.thermoPortOptionsJson_(PortIO::PinType::DInput));
         page.replace("%THERMO_RELAY_JSON%", stack_view ? "[]" : web.thermoPortOptionsJson_(PortIO::PinType::Relay));
         page.replace("%THERMO_DINPUT_USED_JSON%",
-                     stack_view ? "[]" : web.thermoUsedPortsJson_(PortIO::PinType::DInput));
+                     stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::DInput));
         page.replace("%THERMO_RELAY_USED_JSON%",
-                     stack_view ? "[]" : web.thermoUsedPortsJson_(PortIO::PinType::Relay));
+                     stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%THERMO_DEVICE_SELECT%", web.thermoDeviceSelectHtml_(node_id, stack_view));
         page.replace("%THERMO_SAVE_BTN%", stack_view ? "" : "<button type=\"submit\">Сохранить</button>");
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
@@ -129,6 +129,15 @@ public:
                                          en_force_str == "on" || en_force_str == "off");
             const bool en_force_on = (en_force_str == "1" || en_force_str == "true" || en_force_str == "on");
             const bool enabled = en_force_known ? en_force_on : request->hasParam(en_key, true);
+            if (!enabled)
+            {
+                if (cfg->enabled != enabled)
+                {
+                    thermo.setEnabled(cfg->id, enabled);
+                    changed = true;
+                }
+                continue;
+            }
             const String sensor_str = web.paramValue_(request, sensor_key);
             const String mode_str = web.paramValue_(request, mode_key);
             const String target_str = web.paramValue_(request, target_key);

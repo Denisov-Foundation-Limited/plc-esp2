@@ -111,6 +111,37 @@ public:
         return "";
     }
 
+    uint32_t nodeCapsAt(size_t idx) const
+    {
+        size_t pos = 0;
+        for (const auto &s : _sessions)
+        {
+            if (!s.used || !s.data.has_id || !s.data.client)
+                continue;
+            if (pos == idx)
+                return s.data.caps;
+            ++pos;
+        }
+        return 0;
+    }
+
+    bool nodeIsControllerAt(size_t idx) const
+    {
+        return stackCapsHas(nodeCapsAt(idx), StackCapController);
+    }
+
+    bool nodeIsController(uint32_t node_id) const
+    {
+        for (const auto &s : _sessions)
+        {
+            if (!s.used || !s.data.has_id || !s.data.client)
+                continue;
+            if (s.data.node_id == node_id)
+                return stackCapsHas(s.data.caps, StackCapController);
+        }
+        return false;
+    }
+
     String nodeIpAt(size_t idx) const
     {
         size_t pos = 0;
@@ -199,6 +230,7 @@ private:
         String name;
         String ip;
         uint16_t fw_ver = 0;
+        uint32_t caps = 0;
         uint32_t last_seen_ms = 0;
     };
 
@@ -335,12 +367,15 @@ private:
                 }
                 if (s)
                 {
+                    const bool first_online = (!s->has_id) || (s->node_id != hello.node_id);
                     s->node_id = hello.node_id;
                     s->has_id = true;
                     s->name = hello.name;
                     s->fw_ver = hello.fw_ver;
+                    s->caps = hello.caps;
+                    if (first_online)
+                        notifyEvent_(hello.node_id, true);
                 }
-                notifyEvent_(hello.node_id, true);
             }
         }
         if (_frame_cb)

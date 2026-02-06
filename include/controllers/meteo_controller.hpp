@@ -55,16 +55,35 @@ public:
         bool has_temp = false;
         bool has_humidity = false;
         bool ok = false;
+        uint8_t fail_count = 0;
         uint32_t last_read_ms = 0;
     };
 
     MeteoController(OneWireManager &ow, Logger &logs) : _ow(ow), _logs(logs) { reset_(); }
     using RemoteMeteoProvider = bool (*)(void *ctx, uint32_t node_id, uint8_t sensor_id,
                                          float &temp_c, bool &has_temp, float &hum, bool &has_hum, bool &ok);
+    using RemoteNodeNameProvider = bool (*)(void *ctx, uint32_t node_id, String &out);
+    using RemoteSensorNameProvider = bool (*)(void *ctx, uint32_t node_id, uint8_t sensor_id, String &out);
+    using AlarmHandler = void (*)(void *ctx, uint32_t node_id, uint8_t sensor_id, bool alarm);
     void setRemoteMeteoProvider(RemoteMeteoProvider cb, void *ctx)
     {
         _remote_cb = cb;
         _remote_ctx = ctx;
+    }
+    void setRemoteNodeNameProvider(RemoteNodeNameProvider cb, void *ctx)
+    {
+        _remote_name_cb = cb;
+        _remote_name_ctx = ctx;
+    }
+    void setRemoteSensorNameProvider(RemoteSensorNameProvider cb, void *ctx)
+    {
+        _remote_sensor_name_cb = cb;
+        _remote_sensor_name_ctx = ctx;
+    }
+    void setAlarmHandler(AlarmHandler cb, void *ctx)
+    {
+        _alarm_cb = cb;
+        _alarm_ctx = ctx;
     }
 
     bool begin()
@@ -208,7 +227,10 @@ public:
         _ds_conv_ready = false;
         _ds_last_conv_ms = 0;
         if (!_controller_enabled)
+        {
+            reset_();
             return;
+        }
         _dht22_pin = kInvalidPin;
         for (size_t i = 0; i < kSensorCount; ++i)
             _state[i] = SensorState{};
@@ -219,9 +241,19 @@ public:
         size_t idx = 0;
         if (!indexById_(id, idx))
             return false;
-        _cfg[idx].enabled = enable;
         if (!enable)
+        {
+            SensorConfig &cfg = _cfg[idx];
+            const uint8_t saved_id = cfg.id;
+            cfg = SensorConfig{};
+            cfg.id = saved_id;
+            cfg.enabled = false;
             _state[idx] = SensorState{};
+            _logs.info(F("METEO"), F("id: %u enabled: false"), (unsigned)cfg.id);
+            return true;
+        }
+        _cfg[idx].enabled = true;
+        _logs.info(F("METEO"), F("id: %u enabled: true"), (unsigned)_cfg[idx].id);
         return true;
     }
 
@@ -331,6 +363,35 @@ public:
         return &_cfg[idx];
     }
 
+    bool displayName(uint8_t id, String &out) const
+    {
+        const SensorConfig *cfg = config(id);
+        if (!cfg)
+            return false;
+        if (cfg->name.length())
+        {
+            out = cfg->name;
+            return true;
+        }
+        if (cfg->source_node_id && cfg->source_sensor_id)
+        {
+            String sensor;
+            if (_remote_sensor_name_cb &&
+                _remote_sensor_name_cb(_remote_sensor_name_ctx, cfg->source_node_id, cfg->source_sensor_id, sensor) &&
+                sensor.length())
+            {
+                out = sensor;
+            }
+            else
+            {
+                out = String("Sensor ") + String((unsigned)cfg->source_sensor_id);
+            }
+            return true;
+        }
+        out = String("Sensor ") + String((unsigned)cfg->id);
+        return true;
+    }
+
     const SensorState *state(size_t id) const
     {
         size_t idx = 0;
@@ -400,6 +461,7 @@ private:
     static constexpr uint32_t kDht22IntervalMs = 2000;
     static constexpr uint32_t kDs18b20IntervalMs = 1000;
     static constexpr uint32_t kRemoteIntervalMs = 2000;
+    static constexpr uint8_t kFailThreshold = 10;
 
     OneWireManager &_ow;
     Logger &_logs;
@@ -416,6 +478,12 @@ private:
     size_t _scan_index = 0;
     RemoteMeteoProvider _remote_cb = nullptr;
     void *_remote_ctx = nullptr;
+    RemoteNodeNameProvider _remote_name_cb = nullptr;
+    void *_remote_name_ctx = nullptr;
+    RemoteSensorNameProvider _remote_sensor_name_cb = nullptr;
+    void *_remote_sensor_name_ctx = nullptr;
+    AlarmHandler _alarm_cb = nullptr;
+    void *_alarm_ctx = nullptr;
 
     void reset_()
     {
@@ -454,8 +522,12 @@ private:
             return false;
         if (cfg.type == SensorType::Ds18b20)
             return readDs18b20IfDue_(cfg, st, now);
-        const bool ok = readDht22_(cfg, st);
-        st.ok = ok;
+        float t = 0.0f;
+        float h = 0.0f;
+        bool has_temp = false;
+        bool has_hum = false;
+        const bool ok = readDht22_(cfg, t, has_temp, h, has_hum);
+        applyReadResult_(cfg, st, ok, has_temp, t, has_hum, h);
         st.last_read_ms = now;
         return true;
     }
@@ -471,11 +543,7 @@ private:
         float hum = 0.0f;
         if (_remote_cb)
             _remote_cb(_remote_ctx, cfg.source_node_id, cfg.source_sensor_id, temp_c, has_temp, hum, has_hum, ok);
-        st.temp_c = temp_c;
-        st.humidity = hum;
-        st.has_temp = has_temp;
-        st.has_humidity = has_hum;
-        st.ok = ok;
+        applyReadResult_(cfg, st, ok, has_temp, temp_c, has_hum, hum);
         st.last_read_ms = now;
         return true;
     }
@@ -484,8 +552,7 @@ private:
     {
         if (!_ds_bus || !cfg.ds18_addr_set)
         {
-            st.ok = false;
-            st.has_temp = false;
+            applyReadResult_(cfg, st, false, false, 0.0f, false, 0.0f);
             st.last_read_ms = now;
             return true;
         }
@@ -497,35 +564,20 @@ private:
         for (uint8_t i = 0; i < kAddrLen; ++i)
             addr[i] = cfg.ds18_addr[i];
         const bool ok = _ds18b20.readTempCNoWait(addr, t);
-        if (ok)
-        {
-            st.temp_c = t;
-            st.has_temp = true;
-        }
-        else
-        {
-            st.has_temp = false;
-        }
-        st.ok = ok;
+        applyReadResult_(cfg, st, ok, ok, t, false, 0.0f);
         st.last_read_ms = now;
         return true;
     }
 
-    bool readDht22_(const SensorConfig &cfg, SensorState &st)
+    bool readDht22_(const SensorConfig &cfg, float &out_temp, bool &out_has_temp, float &out_hum, bool &out_has_hum)
     {
         if (cfg.dht_pin == kInvalidPin)
         {
-            st.has_temp = false;
-            st.has_humidity = false;
-            st.humidity = 0.0f;
             return false;
         }
         uint8_t gpio = 0xFF;
         if (!mapDhtPinToGpio_(cfg.dht_pin, gpio))
         {
-            st.has_temp = false;
-            st.has_humidity = false;
-            st.humidity = 0.0f;
             return false;
         }
         float t = 0.0f;
@@ -537,15 +589,12 @@ private:
         }
         if (!_dht22.read(t, h))
         {
-            st.has_temp = false;
-            st.has_humidity = false;
-            st.humidity = 0.0f;
             return false;
         }
-        st.temp_c = t;
-        st.humidity = h;
-        st.has_temp = true;
-        st.has_humidity = true;
+        out_temp = t;
+        out_hum = h;
+        out_has_temp = true;
+        out_has_hum = true;
         return true;
     }
 
@@ -645,5 +694,70 @@ private:
             else
                 _ds_conv_ready = false;
         }
+    }
+
+    void logMeteoStateChange_(const SensorConfig &cfg, const SensorState &st, bool prev_ok)
+    {
+        if (prev_ok == st.ok)
+            return;
+        String name = cfg.name.length() ? cfg.name : String((unsigned)cfg.id);
+        if (cfg.source_node_id)
+        {
+            String remote;
+            if (_remote_name_cb && _remote_name_cb(_remote_name_ctx, cfg.source_node_id, remote) &&
+                remote.length())
+            {
+                name += " @";
+                name += remote;
+            }
+            else
+            {
+                char buf[12] = {};
+                snprintf(buf, sizeof(buf), "0x%08lX", (unsigned long)cfg.source_node_id);
+                name += " @";
+                name += buf;
+            }
+        }
+        const char *type = typeName_(cfg.type);
+        if (st.ok)
+            _logs.info(F("METEO"), F("sensor ok: id: %u name: %s type: %s"),
+                       (unsigned)cfg.id, name.c_str(), type);
+        else
+            _logs.warn(F("METEO"), F("sensor error: id: %u name: %s type: %s"),
+                       (unsigned)cfg.id, name.c_str(), type);
+        if (_alarm_cb)
+            _alarm_cb(_alarm_ctx, cfg.source_node_id, cfg.id, !st.ok);
+    }
+
+    void applyReadResult_(const SensorConfig &cfg, SensorState &st, bool ok, bool has_temp, float temp_c, bool has_hum,
+                          float hum)
+    {
+        const bool was_error = (st.fail_count >= kFailThreshold);
+        if (ok)
+        {
+            st.temp_c = temp_c;
+            st.humidity = hum;
+            st.has_temp = has_temp;
+            st.has_humidity = has_hum;
+            st.fail_count = 0;
+            st.ok = true;
+            if (was_error)
+                logMeteoStateChange_(cfg, st, false);
+            return;
+        }
+
+        if (st.fail_count < 0xFF)
+            ++st.fail_count;
+        if (st.fail_count >= kFailThreshold)
+        {
+            st.ok = false;
+            st.has_temp = false;
+            st.has_humidity = false;
+            if (!was_error)
+                logMeteoStateChange_(cfg, st, true);
+            return;
+        }
+
+        st.ok = true;
     }
 };

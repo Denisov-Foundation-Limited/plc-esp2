@@ -504,6 +504,7 @@ public:
             disarm_(true);
             for (size_t i = 0; i < kSensorCount; ++i)
                 _state[i] = SensorState{};
+            reset_();
             return;
         }
         _logs.info(F("SECURITY"), F("controller: enabled"));
@@ -614,13 +615,26 @@ public:
             return false;
         SensorConfig &cfg = _cfg[idx];
         SensorState &st = _state[idx];
-        cfg.enabled = enabled;
+        if (!enabled)
+        {
+            const uint8_t saved_id = cfg.id;
+            String saved_name = cfg.name;
+            cfg = SensorConfig{};
+            cfg.id = saved_id;
+            cfg.enabled = false;
+            st = SensorState{};
+            const char *name = saved_name.length() ? saved_name.c_str() : "-";
+            _logs.info(F("SECURITY"), F("id: %u name: %s enabled: false"), (unsigned)cfg.id, name);
+            return true;
+        }
+        cfg.enabled = true;
         st = SensorState{};
         if (_controller_enabled && cfg.enabled)
         {
             setupSensorInput_(cfg);
             st.raw = readRaw_(cfg);
         }
+        _logs.info(F("SECURITY"), F("id: %u enabled: true"), (unsigned)cfg.id);
         return true;
     }
     bool setType(size_t id, SensorType type)

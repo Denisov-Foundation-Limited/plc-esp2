@@ -263,6 +263,9 @@ public:
         bool has_data = false;
         bool last_ok = false;
         String last_error;
+        bool enabled = false;
+        bool armed = false;
+        bool alarm = false;
         StackSecuritySensorItem *items = nullptr;
         size_t capacity = SecurityController::kSensorCount;
         size_t item_count = 0;
@@ -275,6 +278,9 @@ public:
             has_data = false;
             last_ok = false;
             last_error = String();
+            enabled = false;
+            armed = false;
+            alarm = false;
             item_count = 0;
             if (!items)
                 return;
@@ -501,6 +507,7 @@ public:
     void setStackMaster(StackMaster *master) { _stack_master = master; }
     void setConfigsManager(ConfigsManagerIface *cfg) { _configs = cfg; }
     void setLogger(Logger *log) { _log = log; }
+    void setMasterOverride(bool enabled) { _force_master = enabled; }
     void initAllocations()
     {
         if (_alloc_ready)
@@ -904,54 +911,26 @@ private:
             String action = req["action"] | "";
             action.toLowerCase();
             JsonVariantConst params = req["params"];
-            if ((StackFeature)feature != StackFeature::Meteo || action != "get")
-                return;
             const bool all = params["all"] | false;
             uint32_t target = params["node"] | 0u;
             if (target == 0)
                 target = params["node_id"] | 0u;
             if (target == 0)
                 target = node_id;
-            if (all)
-            {
-                DynamicJsonDocument data(4096);
-                JsonArray nodes = data["nodes"].to<JsonArray>();
-                for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
-                {
-                    const StackMeteoCache &cache = _stack_meteo_cache[i];
-                    if (cache.node_id == 0 || !cache.has_data)
-                        continue;
-                    String node_name;
-                    if (_stack_master)
-                    {
-                        String ip;
-                        uint16_t fw_ver = 0;
-                        if (_stack_master->nodeInfo(cache.node_id, node_name, ip, fw_ver))
-                        {
-                        }
-                    }
-                    JsonObject n = nodes.add<JsonObject>();
-                    n["node_id"] = (unsigned long)cache.node_id;
-                    if (node_name.length())
-                        n["node_name"] = node_name;
-                    JsonArray items = n["items"].to<JsonArray>();
-                    for (size_t j = 0; j < cache.item_count; ++j)
-                    {
-                        const StackMeteoItem &it = cache.items[j];
-                        JsonObject o = items.add<JsonObject>();
-                        o["id"] = (unsigned)it.id;
-                        o["enabled"] = it.enabled;
-                        if (it.name[0])
-                            o["name"] = it.name;
-                        if (it.has_temp)
-                            o["temp_c"] = it.temp_c;
-                        if (it.has_hum)
-                            o["hum"] = it.hum;
-                        o["has_temp"] = it.has_temp;
-                        o["has_hum"] = it.has_hum;
-                        o["ok"] = it.ok;
-                    }
-                }
+
+            auto send_err = [&](const char *err_text) {
+                StaticJsonDocument<192> err_doc;
+                err_doc["cmd_id"] = cmd_id;
+                err_doc["ok"] = false;
+                err_doc["error"] = err_text;
+                char payload[128] = {};
+                const size_t len = serializeJson(err_doc, payload, sizeof(payload));
+                if (len > 0)
+                    _stack_master->sendTo(node_id, (uint8_t)StackMsgType::Err,
+                                          (const uint8_t *)payload, len);
+            };
+
+            auto send_ok = [&](JsonDocument &data) {
                 DynamicJsonDocument out(4096);
                 out["cmd_id"] = cmd_id;
                 out["ok"] = true;
@@ -961,61 +940,222 @@ private:
                 if (len > 0)
                     _stack_master->sendTo(node_id, (uint8_t)StackMsgType::Ack,
                                           (const uint8_t *)payload, len);
-                return;
-            }
-            StackMeteoCache *cache = findStackMeteoCache_(target, false);
-            if (!cache || !cache->has_data)
+            };
+
+            if ((StackFeature)feature == StackFeature::Meteo && action == "get")
             {
-                requestStackMeteo_(target);
-                StaticJsonDocument<192> err_doc;
-                err_doc["cmd_id"] = cmd_id;
-                err_doc["ok"] = false;
-                err_doc["error"] = "no_data";
-                char payload[128] = {};
-                const size_t len = serializeJson(err_doc, payload, sizeof(payload));
-                if (len > 0)
-                    _stack_master->sendTo(node_id, (uint8_t)StackMsgType::Err,
-                                          (const uint8_t *)payload, len);
-                return;
-            }
-            String node_name;
-            if (_stack_master)
-            {
-                String ip;
-                uint16_t fw_ver = 0;
-                if (_stack_master->nodeInfo(target, node_name, ip, fw_ver))
+                if (all)
                 {
+                    DynamicJsonDocument data(4096);
+                    JsonArray nodes = data["nodes"].to<JsonArray>();
+                    for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
+                    {
+                        const StackMeteoCache &cache = _stack_meteo_cache[i];
+                        if (cache.node_id == 0 || !cache.has_data || !cache.items)
+                            continue;
+                        String node_name;
+                        if (_stack_master)
+                        {
+                            String ip;
+                            uint16_t fw_ver = 0;
+                            if (_stack_master->nodeInfo(cache.node_id, node_name, ip, fw_ver))
+                            {
+                            }
+                        }
+                        JsonObject n = nodes.add<JsonObject>();
+                        n["node_id"] = (unsigned long)cache.node_id;
+                        if (node_name.length())
+                            n["node_name"] = node_name;
+                        JsonArray items = n["items"].to<JsonArray>();
+                        for (size_t j = 0; j < cache.item_count; ++j)
+                        {
+                            const StackMeteoItem &it = cache.items[j];
+                            JsonObject o = items.add<JsonObject>();
+                            o["id"] = (unsigned)it.id;
+                            o["enabled"] = it.enabled;
+                            if (it.name[0])
+                                o["name"] = it.name;
+                            if (it.has_temp)
+                                o["temp_c"] = it.temp_c;
+                            if (it.has_hum)
+                                o["hum"] = it.hum;
+                            o["has_temp"] = it.has_temp;
+                            o["has_hum"] = it.has_hum;
+                            o["ok"] = it.ok;
+                        }
+                    }
+                    send_ok(data);
+                    return;
                 }
+                StackMeteoCache *cache = findStackMeteoCache_(target, false);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    requestStackMeteo_(target);
+                    send_err("no_data");
+                    return;
+                }
+                String node_name;
+                if (_stack_master)
+                {
+                    String ip;
+                    uint16_t fw_ver = 0;
+                    if (_stack_master->nodeInfo(target, node_name, ip, fw_ver))
+                    {
+                    }
+                }
+                DynamicJsonDocument data(4096);
+                if (node_name.length())
+                    data["node_name"] = node_name;
+                JsonArray items = data["items"].to<JsonArray>();
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const StackMeteoItem &it = cache->items[i];
+                    JsonObject o = items.add<JsonObject>();
+                    o["id"] = (unsigned)it.id;
+                    o["enabled"] = it.enabled;
+                    if (it.name[0])
+                        o["name"] = it.name;
+                    if (it.has_temp)
+                        o["temp_c"] = it.temp_c;
+                    if (it.has_hum)
+                        o["hum"] = it.hum;
+                    o["has_temp"] = it.has_temp;
+                    o["has_hum"] = it.has_hum;
+                    o["ok"] = it.ok;
+                }
+                send_ok(data);
+                return;
             }
-            DynamicJsonDocument data(4096);
-            if (node_name.length())
-                data["node_name"] = node_name;
-            JsonArray items = data["items"].to<JsonArray>();
-            for (size_t i = 0; i < cache->item_count; ++i)
+            if ((StackFeature)feature == StackFeature::Security && action == "get")
             {
-                const StackMeteoItem &it = cache->items[i];
-                JsonObject o = items.add<JsonObject>();
-                o["id"] = (unsigned)it.id;
-                o["enabled"] = it.enabled;
-                if (it.name[0])
-                    o["name"] = it.name;
-                if (it.has_temp)
-                    o["temp_c"] = it.temp_c;
-                if (it.has_hum)
-                    o["hum"] = it.hum;
-                o["has_temp"] = it.has_temp;
-                o["has_hum"] = it.has_hum;
-                o["ok"] = it.ok;
+                StackSecurityCache *cache = findStackSecurityCache_(target, false);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    requestStackSecurity_(target);
+                    send_err("no_data");
+                    return;
+                }
+                DynamicJsonDocument data(2048);
+                data["enabled"] = cache->enabled;
+                data["armed"] = cache->armed;
+                data["alarm"] = cache->alarm;
+                JsonArray items = data["items"].to<JsonArray>();
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const StackSecuritySensorItem &it = cache->items[i];
+                    JsonObject o = items.add<JsonObject>();
+                    o["id"] = (unsigned)it.id;
+                    o["enabled"] = it.enabled;
+                    o["detect"] = it.detect;
+                    o["silent"] = it.silent;
+                    if (it.port != SecurityController::kInvalidPort)
+                        o["port"] = it.port;
+                    if (it.type[0])
+                        o["type"] = it.type;
+                    if (it.name[0])
+                        o["name"] = it.name;
+                }
+                send_ok(data);
+                return;
             }
-            DynamicJsonDocument out(4096);
-            out["cmd_id"] = cmd_id;
-            out["ok"] = true;
-            out["data"] = data.as<JsonVariantConst>();
-            char payload[StackCodec::kMaxPayload] = {};
-            const size_t len = serializeJson(out, payload, sizeof(payload));
-            if (len > 0)
-                _stack_master->sendTo(node_id, (uint8_t)StackMsgType::Ack,
-                                      (const uint8_t *)payload, len);
+            if ((StackFeature)feature == StackFeature::Sockets &&
+                (action == "get" || action == "get_lights"))
+            {
+                const bool lights = (action == "get_lights");
+                if (lights)
+                {
+                    StackLightsCache *cache = findStackLightsCache_(target, false);
+                    if (!cache || !cache->has_data || !cache->items)
+                    {
+                        requestStackLights_(target);
+                        send_err("no_data");
+                        return;
+                    }
+                    DynamicJsonDocument data(2048);
+                    JsonArray items = data["items"].to<JsonArray>();
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const StackLightItem &it = cache->items[i];
+                        JsonObject o = items.add<JsonObject>();
+                        o["id"] = (unsigned)it.id;
+                        o["enabled"] = it.enabled;
+                        o["state"] = it.state;
+                        if (it.name[0])
+                            o["name"] = it.name;
+                    }
+                    send_ok(data);
+                    return;
+                }
+                StackSocketsCache *cache = findStackSocketsCache_(target, false);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    requestStackSockets_(target);
+                    send_err("no_data");
+                    return;
+                }
+                DynamicJsonDocument data(2048);
+                JsonArray items = data["items"].to<JsonArray>();
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const StackSocketItem &it = cache->items[i];
+                    JsonObject o = items.add<JsonObject>();
+                    o["id"] = (unsigned)it.id;
+                    o["enabled"] = it.enabled;
+                    o["state"] = it.state;
+                    if (it.name[0])
+                        o["name"] = it.name;
+                }
+                send_ok(data);
+                return;
+            }
+            if ((StackFeature)feature == StackFeature::Septic && action == "get")
+            {
+                StackSepticCache *cache = findStackSepticCache_(target, false);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    requestStackSeptic_(target);
+                    send_err("no_data");
+                    return;
+                }
+                DynamicJsonDocument data(2048);
+                JsonArray items = data["items"].to<JsonArray>();
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const StackSepticItem &it = cache->items[i];
+                    JsonObject o = items.add<JsonObject>();
+                    o["id"] = (unsigned)it.id;
+                    o["enabled"] = it.enabled;
+                    o["warning"] = it.warning;
+                    o["alarm"] = it.alarm;
+                }
+                send_ok(data);
+                return;
+            }
+            if ((StackFeature)feature == StackFeature::Tanks && action == "get")
+            {
+                StackTankCache *cache = findStackTanksCache_(target, false);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    requestStackTanks_(target);
+                    send_err("no_data");
+                    return;
+                }
+                DynamicJsonDocument data(2048);
+                JsonArray items = data["items"].to<JsonArray>();
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const StackTankItem &it = cache->items[i];
+                    JsonObject o = items.add<JsonObject>();
+                    o["id"] = (unsigned)it.id;
+                    o["enabled"] = it.enabled;
+                    o["levels_ok"] = it.levels_ok;
+                    o["level_low"] = it.level_low;
+                    o["level_mid"] = it.level_mid;
+                    o["level_full"] = it.level_full;
+                }
+                send_ok(data);
+                return;
+            }
             return;
         }
         if (frame.type != (uint8_t)StackMsgType::Ack &&
@@ -1186,23 +1326,30 @@ private:
             {
                 sec_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                sec_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                JsonObjectConst data = doc["data"];
+                sec_cache->enabled = data["enabled"] | false;
+                sec_cache->armed = data["armed"] | false;
+                sec_cache->alarm = data["alarm"] | false;
+                if (!items.isNull())
                 {
-                    if (sec_cache->item_count >= SecurityController::kSensorCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackSecuritySensorItem &dst = sec_cache->items[sec_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.detect = item["detect"] | false;
-                    dst.silent = item["silent"] | false;
-                    dst.port = (uint8_t)(item["port"] | SecurityController::kInvalidPort);
-                    copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    sec_cache->item_count = 0;
+                    for (JsonObjectConst item : items)
+                    {
+                        if (sec_cache->item_count >= SecurityController::kSensorCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackSecuritySensorItem &dst = sec_cache->items[sec_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.detect = item["detect"] | false;
+                        dst.silent = item["silent"] | false;
+                        dst.port = (uint8_t)(item["port"] | SecurityController::kInvalidPort);
+                        copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    }
                 }
                 sec_cache->has_data = true;
                 sec_cache->last_ok = true;
@@ -2408,6 +2555,8 @@ private:
 private:
     ConfigsManagerIface::StackRole stackRole_() const
     {
+        if (_force_master)
+            return ConfigsManagerIface::StackRole::Master;
         if (!_configs)
             return ConfigsManagerIface::StackRole::Master;
         return _configs->stackRole();
@@ -2416,6 +2565,7 @@ private:
     StackMaster *_stack_master = nullptr;
     ConfigsManagerIface *_configs = nullptr;
     Logger *_log = nullptr;
+    bool _force_master = false;
     bool _alloc_ready = false;
     bool _alloc_logged = false;
     StackSocketsCache _stack_sockets_cache[StackMaster::MAX_SESSIONS] = {};

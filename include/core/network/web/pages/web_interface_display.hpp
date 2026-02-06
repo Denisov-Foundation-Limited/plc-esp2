@@ -123,24 +123,28 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
       { v: 'socket', l: 'Розетка' },
       { v: 'light', l: 'Свет' },
       { v: 'meteo', l: 'Метео' },
+      { v: 'thermo', l: 'Термо' },
       { v: 'tank', l: 'Бак' },
       { v: 'septic', l: 'Септик' },
       { v: 'security', l: 'Охрана' },
       { v: 'text', l: 'Текст' }
     ];
     const fieldOptions = {
-      time: [{ v: 'hm', l: 'HHMM' }],
+      time: [{ v: 'hm', l: 'HH:' }, { v: 'min', l: 'MM' }],
       socket: [{ v: 'state', l: 'Состояние' }],
       light: [{ v: 'state', l: 'Состояние' }],
       meteo: [{ v: 'temp', l: 'Темп' }, { v: 'hum', l: 'Влажн' }],
+      thermo: [{ v: 'state', l: 'Статус' }],
       tank: [{ v: 'level', l: 'Уровень' }],
       septic: [{ v: 'level', l: 'Уровень' }],
       security: [{ v: 'armed', l: 'ARM/DIS' }],
       text: [{ v: 'text', l: 'Текст' }]
     };
+    const deviceOptions = %DISPLAY_DEVICE_JSON%;
     const socketOptions = %DISPLAY_SOCKET_JSON%;
     const lightOptions = %DISPLAY_LIGHT_JSON%;
     const meteoOptions = %DISPLAY_METEO_JSON%;
+    const thermoOptions = %DISPLAY_THERMO_JSON%;
     const tankOptions = %DISPLAY_TANK_JSON%;
     const septicOptions = %DISPLAY_SEPTIC_JSON%;
 
@@ -175,12 +179,14 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
       return html;
     }
 
-    function slotOptionsFor(kind) {
-      if (kind === 'socket') return socketOptions;
-      if (kind === 'light') return lightOptions;
-      if (kind === 'meteo') return meteoOptions;
-      if (kind === 'tank') return tankOptions;
-      if (kind === 'septic') return septicOptions;
+    function slotOptionsFor(kind, nodeId) {
+      const key = String(nodeId || '0');
+      if (kind === 'socket') return socketOptions[key] || socketOptions['0'] || [];
+      if (kind === 'light') return lightOptions[key] || lightOptions['0'] || [];
+      if (kind === 'meteo') return meteoOptions[key] || meteoOptions['0'] || [];
+      if (kind === 'thermo') return thermoOptions[key] || thermoOptions['0'] || [];
+      if (kind === 'tank') return tankOptions[key] || tankOptions['0'] || [];
+      if (kind === 'septic') return septicOptions[key] || septicOptions['0'] || [];
       return [];
     }
 
@@ -188,26 +194,33 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
       const kind = slot.dataset.kind || 'none';
       const idx = slot.dataset.index || '';
       const field = slot.dataset.field || '';
+      const node = slot.dataset.node || '0';
       const kindSelect = slot.querySelector('select.slot-kind');
+      const nodeSelect = slot.querySelector('select.slot-node');
       const idxSelect = slot.querySelector('select.slot-index');
       const fieldSelect = slot.querySelector('select.slot-field');
       const textInput = slot.querySelector('input.slot-text');
 
       if (kindSelect) kindSelect.innerHTML = buildSourceOptions(kind);
-      if (idxSelect) idxSelect.innerHTML = buildOptions(slotOptionsFor(kind), idx);
+      if (nodeSelect) nodeSelect.innerHTML = buildOptions(deviceOptions, node);
+      if (idxSelect) idxSelect.innerHTML = buildOptions(slotOptionsFor(kind, node), idx);
       if (fieldSelect) fieldSelect.innerHTML = buildFieldOptions(kind, field);
 
       function updateVisibility() {
         const curr = kindSelect ? kindSelect.value : kind;
-        if (idxSelect) idxSelect.style.display = (curr === 'socket' || curr === 'light' || curr === 'meteo' || curr === 'tank' || curr === 'septic') ? '' : 'none';
+        const dev = nodeSelect ? nodeSelect.value : node;
+        if (idxSelect) idxSelect.style.display = (curr === 'socket' || curr === 'light' || curr === 'meteo' || curr === 'thermo' || curr === 'tank' || curr === 'septic') ? '' : 'none';
         if (fieldSelect) fieldSelect.style.display = (curr === 'none') ? 'none' : '';
         if (textInput) textInput.style.display = (curr === 'text') ? '' : 'none';
-        if (idxSelect) idxSelect.innerHTML = buildOptions(slotOptionsFor(curr), idxSelect.value || '');
+        if (idxSelect) idxSelect.innerHTML = buildOptions(slotOptionsFor(curr, dev), idxSelect.value || '');
         if (fieldSelect) fieldSelect.innerHTML = buildFieldOptions(curr, fieldSelect.value || '');
       }
 
       if (kindSelect) {
         kindSelect.addEventListener('change', () => updateVisibility());
+      }
+      if (nodeSelect) {
+        nodeSelect.addEventListener('change', () => updateVisibility());
       }
       updateVisibility();
     });
@@ -219,28 +232,43 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
       return t;
     }
     function sampleFor(kind, field, text) {
-      if (kind === 'time') return '1234';
+      if (kind === 'time') return field === 'min' ? '22 ' : '12:';
       if (kind === 'socket' || kind === 'light') return 'ON  ';
       if (kind === 'meteo') return field === 'hum' ? '45%' : '23C ';
+      if (kind === 'thermo') return 'IDL ';
       if (kind === 'tank') return 'MID ';
-      if (kind === 'septic') return 'ALRM';
+      if (kind === 'septic') return 'ALM ';
       if (kind === 'security') return 'ARM ';
       if (kind === 'text') return pad4(text || '');
       return '    ';
     }
     function updatePreview() {
       if (!preview) return;
-      let line0 = '';
-      let line1 = '';
-      document.querySelectorAll('.display-slot').forEach((slot, idx) => {
+      const slots = Array.from(document.querySelectorAll('.display-slot')).map((slot) => {
         const kind = slot.querySelector('select.slot-kind')?.value || 'none';
         const field = slot.querySelector('select.slot-field')?.value || '';
         const text = slot.querySelector('input.slot-text')?.value || '';
-        const sample = pad4(sampleFor(kind, field, text));
-        if (idx < 4) line0 += sample;
-        else line1 += sample;
+        return { kind, field, text };
       });
-      preview.textContent = line0 + '\n' + line1;
+      const line0 = Array(16).fill(' ');
+      const line1 = Array(16).fill(' ');
+      slots.forEach((slot, idx) => {
+        const sample = pad4(sampleFor(slot.kind, slot.field, slot.text));
+        const row = idx < 4 ? 0 : 1;
+        let col = (idx % 4) * 4;
+        const prev = (idx % 4) !== 0 ? slots[idx - 1] : null;
+        if (slot.kind === 'time' && slot.field === 'min' && prev && prev.kind === 'time' && prev.field === 'hm') {
+          col -= 1;
+        }
+        for (let k = 0; k < 4; k++) {
+          const pos = col + k;
+          if (pos < 0 || pos >= 16) continue;
+          const ch = sample[k] || ' ';
+          if (row === 0) line0[pos] = ch;
+          else line1[pos] = ch;
+        }
+      });
+      preview.textContent = line0.join('') + '\n' + line1.join('');
     }
     document.getElementById('display-form')?.addEventListener('input', updatePreview);
     updatePreview();  </script>

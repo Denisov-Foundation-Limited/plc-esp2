@@ -64,8 +64,10 @@ public:
         page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id) : web.listSepticHtml_());
         page.replace("%SEPTIC_DINPUT_JSON%", stack_view ? "[]" : web.septicPortOptionsJson_(PortIO::PinType::DInput));
         page.replace("%SEPTIC_RELAY_JSON%", stack_view ? "[]" : web.septicPortOptionsJson_(PortIO::PinType::Relay));
-        page.replace("%SEPTIC_DINPUT_USED_JSON%", stack_view ? "[]" : web.septicUsedPortsJson_(PortIO::PinType::DInput));
-        page.replace("%SEPTIC_RELAY_USED_JSON%", stack_view ? "[]" : web.septicUsedPortsJson_(PortIO::PinType::Relay));
+        page.replace("%SEPTIC_DINPUT_USED_JSON%",
+                     stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::DInput));
+        page.replace("%SEPTIC_RELAY_USED_JSON%",
+                     stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         if (!stack_view)
         {
             SepticController &septic = web._controllers->septic();
@@ -151,6 +153,15 @@ public:
             if (!has_any)
                 continue;
             const bool enabled = request->hasParam(en_key, true);
+            if (!enabled)
+            {
+                if (cfg->enabled != enabled)
+                {
+                    septic.setEnabled(cfg->id, enabled);
+                    changed = true;
+                }
+                continue;
+            }
             const String monitor_val = web.paramValue_(request, monitor_key);
             const bool monitoring = monitor_val == "on" || monitor_val == "1" || monitor_val == "true";
             String name = web.paramValue_(request, name_key);

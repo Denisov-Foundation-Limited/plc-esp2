@@ -89,8 +89,8 @@ public:
         {
             page.replace("%DINPUT_JSON%", web.socketPortOptionsJson_(PortIO::PinType::DInput));
             page.replace("%RELAY_JSON%", web.socketPortOptionsJson_(PortIO::PinType::Relay));
-            page.replace("%DINPUT_USED_JSON%", web.socketUsedPortsJson_(PortIO::PinType::DInput));
-            page.replace("%RELAY_USED_JSON%", web.socketUsedPortsJson_(PortIO::PinType::Relay));
+            page.replace("%DINPUT_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::DInput));
+            page.replace("%RELAY_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
             page.replace("%LIGHTS_STATUS%", web._lights_status);
             page.replace("%LIGHTS_PAGINATION_STYLE%", "");
             page.replace("%LIGHTS_SAVE_BTN%", "<button class=\"btn\" type=\"submit\">Сохранить</button>");

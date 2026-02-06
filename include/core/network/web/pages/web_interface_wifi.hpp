@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -74,7 +74,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
     .nav { margin-bottom: 12px; }
     table.status-table { width: 100%; border-collapse: collapse; margin: 8px 0 18px; }
     table.status-table td { padding: 6px; border-bottom: 1px solid #1f2937; }
-    .is-disabled { opacity: 0.45; pointer-events: none; }
+    .is-hidden { display: none; }
   </style>
 </head>
 <body>
@@ -82,7 +82,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Сеть</h1>
-      <table id="gsm-table" class="status-table">
+      <table id="wifi-table" class="status-table">
         <tbody>
           <tr><td>Режим</td><td><strong>%WIFI_MODE%</strong></td></tr>
           <tr><td>SSID</td><td><strong>%WIFI_CUR_SSID%</strong></td></tr>
@@ -123,7 +123,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
             <input id="gsm-enabled" type="checkbox" name="gsm_enabled" %GSM_ENABLED_CHECKED%>
             <span class="status">%GSM_ENABLED_LABEL%</span>
           </div>
-          <table class="status-table">
+          <table id="gsm-table" class="status-table">
             <tbody>
               <tr><td>Состояние</td><td><strong>%GSM_STARTED_LABEL%</strong></td></tr>
               <tr><td>IMEI</td><td><strong>%GSM_IMEI%</strong></td></tr>
@@ -180,7 +180,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
     function updateGsmTable() {
       if (!gsmTable) return;
       const disabled = !gsmToggle || !gsmToggle.checked;
-      gsmTable.classList.toggle('is-disabled', disabled);
+      gsmTable.classList.toggle('is-hidden', disabled);
     }
     if (gsmToggle) {
       gsmToggle.addEventListener('change', updateGsmTable);
@@ -191,3 +191,8 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+
+
+
+

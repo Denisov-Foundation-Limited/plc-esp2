@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -308,7 +308,11 @@ private:
             return true;
         }
         const size_t count = _self->_stack_master->nodeCount();
-        if (count == 0)
+        size_t ctrl_count = 0;
+        for (size_t i = 0; i < count; ++i)
+            if (_self->_stack_master->nodeIsControllerAt(i))
+                ++ctrl_count;
+        if (ctrl_count == 0)
         {
             reply = "Контроллеры: нет активных";
             return true;
@@ -316,6 +320,8 @@ private:
         String out = F("Контроллеры:");
         for (size_t i = 0; i < count; ++i)
         {
+            if (!_self->_stack_master->nodeIsControllerAt(i))
+                continue;
             const uint32_t node_id = _self->_stack_master->nodeIdAt(i);
             String name = _self->_stack_master->nodeNameAt(i);
             if (name.length() == 0)
@@ -1382,6 +1388,8 @@ private:
         const size_t count = _stack_master->nodeCount();
         for (size_t i = 0; i < count; ++i)
         {
+            if (!_stack_master->nodeIsControllerAt(i))
+                continue;
             DeviceEntry entry{};
             entry.local = false;
             entry.node_id = _stack_master->nodeIdAt(i);
@@ -2081,6 +2089,8 @@ inline bool TelegramMenu::handleSecuritySelection_(const TelegramClient::Update 
 {
     return TelegramMenuSecurity::handleSecuritySelection_(*this, u);
 }
+
+
 
 
 

@@ -209,6 +209,7 @@ public:
         {
             for (size_t i = 0; i < kDeviceCount; ++i)
                 writeOff_(_cfg[i], _state[i]);
+            reset_();
             return;
         }
         for (size_t i = 0; i < kDeviceCount; ++i)
@@ -341,20 +342,24 @@ public:
             return false;
         DeviceConfig &cfg = _cfg[idx];
         DeviceState &st = _state[idx];
-        cfg.enabled = enable;
         if (!enable)
         {
             writeOff_(cfg, st);
+            const uint8_t saved_id = cfg.id;
+            cfg = DeviceConfig{};
+            cfg.id = saved_id;
+            cfg.enabled = false;
             st = DeviceState{};
             _dirty = true;
-            _logs.info(F("THERMO"), F("id: %u enabled: 0"), (unsigned)cfg.id);
+            _logs.info(F("THERMO"), F("id: %u enabled: false"), (unsigned)cfg.id);
             return true;
         }
+        cfg.enabled = true;
         st = DeviceState{};
         st.has_button = setupButton_(cfg, st);
         setupRelay_(cfg, st);
         _dirty = true;
-        _logs.info(F("THERMO"), F("id: %u enabled: 1"), (unsigned)cfg.id);
+        _logs.info(F("THERMO"), F("id: %u enabled: true"), (unsigned)cfg.id);
         return true;
     }
 

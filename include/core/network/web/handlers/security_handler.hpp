@@ -110,9 +110,9 @@ public:
         page.replace("%SECURITY_SENSORS_PAGE%", String((unsigned)(page_idx + 1)));
         page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)max_pages));
         page.replace("%SECURITY_SENSOR_JSON%", web.securityPortOptionsJson_());
-        page.replace("%SECURITY_SENSOR_USED_JSON%", web.securityUsedPinsJson_());
+        page.replace("%SECURITY_SENSOR_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::DInput));
         page.replace("%SECURITY_SIREN_JSON%", web.socketPortOptionsJson_(PortIO::PinType::Relay));
-        page.replace("%SECURITY_SIREN_USED_JSON%", web.socketUsedPortsJson_(PortIO::PinType::Relay));
+        page.replace("%SECURITY_SIREN_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%SECURITY_STATUS%", stack_view ? web.stackSecurityStatusText_(node_id) : web._security_status);
         page.replace("%SECURITY_SENSORS_TITLE%", stack_view ? web.stackSecurityTitle_(node_id) : String("Датчики"));
         page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", stack_view ? "style=\"display:none\"" : "");
@@ -392,6 +392,15 @@ public:
             if (!has_any)
                 continue;
             const bool enabled = request->hasParam(en_key, true);
+            if (!enabled)
+            {
+                if (cfg->enabled != enabled)
+                {
+                    sec.setEnabled(cfg->id, enabled);
+                    changed = true;
+                }
+                continue;
+            }
             const bool silent = request->hasParam(silent_key, true);
             String name = web.paramValue_(request, name_key);
             name.trim();

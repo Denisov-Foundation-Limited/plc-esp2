@@ -78,6 +78,10 @@ private:
     mutable bool _mcp_inited[MAX_DEVS] = {};
     mutable Pcf8574 _pcf[MAX_DEVS] = {};
     mutable bool _pcf_inited[MAX_DEVS] = {};
+    mutable uint16_t _mcp_cache[MAX_DEVS] = {};
+    mutable uint16_t _mcp_cache_valid[MAX_DEVS] = {};
+    mutable uint8_t _pcf_cache[MAX_DEVS] = {};
+    mutable uint8_t _pcf_cache_valid[MAX_DEVS] = {};
     mutable bool _dev_failed[MAX_DEVS] = {};
     mutable bool _present[MAX_DEVS] = {};
     mutable bool _warned_missing[MAX_DEVS] = {};

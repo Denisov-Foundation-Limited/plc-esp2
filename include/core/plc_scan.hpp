@@ -15,14 +15,13 @@
 #include <stdint.h>
 
 #include "hal/io_stack.hpp"
-#include "plc/plc_control.hpp"
 
 class PlcScanLoop
 {
 public:
     static constexpr uint32_t kCycleUs = 1000; // 1ms fixed PLC scan cycle
 
-    PlcScanLoop(IoStack &io, PlcControl &plc) : _io(io), _plc(plc) {}
+    explicit PlcScanLoop(IoStack &io) : _io(io) {}
 
     void begin(uint32_t cycle_us = kCycleUs)
     {
@@ -66,7 +65,6 @@ private:
     void runCycle_()
     {
         _io.scanInputs();
-        _plc.task();
         _io.applyOutputs();
     }
 
@@ -80,7 +78,6 @@ private:
     }
 
     IoStack &_io;
-    PlcControl &_plc;
     uint32_t _cycle_us = kCycleUs;
     uint32_t _next_us = 0;
     uint32_t _missed = 0;

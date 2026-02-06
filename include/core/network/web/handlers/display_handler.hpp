@@ -37,9 +37,11 @@ public:
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", web.navHtml_());
         page.replace("%DISPLAY_SLOTS%", web.displaySlotsHtml_());
+        page.replace("%DISPLAY_DEVICE_JSON%", web.displayDeviceOptionsJson_());
         page.replace("%DISPLAY_SOCKET_JSON%", web.displaySocketOptionsJson_());
         page.replace("%DISPLAY_LIGHT_JSON%", web.displayLightOptionsJson_());
         page.replace("%DISPLAY_METEO_JSON%", web.displayMeteoOptionsJson_());
+        page.replace("%DISPLAY_THERMO_JSON%", web.displayThermoOptionsJson_());
         page.replace("%DISPLAY_TANK_JSON%", web.displayTankOptionsJson_());
         page.replace("%DISPLAY_SEPTIC_JSON%", web.displaySepticOptionsJson_());
         if (!web._display_status.length())
@@ -70,6 +72,7 @@ public:
             const String kind_str = web.paramValue_(request, prefix + "_kind");
             const String field_str = web.paramValue_(request, prefix + "_field");
             const String idx_str = web.paramValue_(request, prefix + "_index");
+            const String node_str = web.paramValue_(request, prefix + "_node");
             DisplaySlotKind kind = DisplaySlotKind::None;
             DisplaySlotField field = DisplaySlotField::None;
             if (!web.parseDisplaySlotKind_(kind_str, kind))
@@ -78,11 +81,16 @@ public:
                 field = DisplaySlotField::None;
             if (kind == DisplaySlotKind::Light && field == DisplaySlotField::SocketState)
                 field = DisplaySlotField::LightState;
+            if (kind == DisplaySlotKind::Thermo && field == DisplaySlotField::SocketState)
+                field = DisplaySlotField::ThermoState;
             if (kind == DisplaySlotKind::Septic && field == DisplaySlotField::TankLevel)
                 field = DisplaySlotField::SepticLevel;
             uint16_t idx = 0;
             if (web.parseUint_(idx_str, idx))
                 slot.index = (uint8_t)idx;
+            uint32_t node_id = 0;
+            if (web.parseUint_(node_str, node_id))
+                slot.node_id = node_id;
             slot.kind = kind;
             slot.field = field;
             const String text_str = web.paramValue_(request, prefix + "_text");
@@ -117,7 +125,7 @@ public:
 private:
     static bool displaySlotEqual_(const DisplaySlotConfig &a, const DisplaySlotConfig &b)
     {
-        if (a.kind != b.kind || a.index != b.index || a.field != b.field)
+        if (a.kind != b.kind || a.node_id != b.node_id || a.index != b.index || a.field != b.field)
             return false;
         return strncmp(a.text, b.text, sizeof(a.text)) == 0;
     }

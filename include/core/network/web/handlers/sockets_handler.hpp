@@ -89,8 +89,8 @@ public:
         {
             page.replace("%DINPUT_JSON%", web.socketPortOptionsJson_(PortIO::PinType::DInput));
             page.replace("%RELAY_JSON%", web.socketPortOptionsJson_(PortIO::PinType::Relay));
-            page.replace("%DINPUT_USED_JSON%", web.socketUsedPortsJson_(PortIO::PinType::DInput));
-            page.replace("%RELAY_USED_JSON%", web.socketUsedPortsJson_(PortIO::PinType::Relay));
+            page.replace("%DINPUT_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::DInput));
+            page.replace("%RELAY_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
             page.replace("%SOCKETS_STATUS%", web._sockets_status);
             page.replace("%SOCKETS_PAGINATION_STYLE%", "");
             page.replace("%SOCKETS_SAVE_BTN%", "<button class=\"btn\" type=\"submit\">Сохранить</button>");
@@ -265,20 +265,14 @@ public:
         if (!ok)
         {
             if (web._log)
-            {
-                const String ip = web.requestIp_(request);
-                web._log->warn(F("WEB"), F("sockets toggle failed: ip=%s id=%u action=%s"),
-                               ip.c_str(), (unsigned)id, action.c_str());
-            }
+                web._log->warn(F("WEB"), F("sockets toggle failed: id: %u action: %s"),
+                               (unsigned)id, action.c_str());
             web.sendText_(request, 400, "text/plain", "Toggle failed", set_cookie);
             return;
         }
         if (web._log)
-        {
-            const String ip = web.requestIp_(request);
-            web._log->info(F("WEB"), F("sockets toggle ok: ip=%s id=%u action=%s state=%s"),
-                           ip.c_str(), (unsigned)id, action.c_str(), state ? "on" : "off");
-        }
+            web._log->info(F("WEB"), F("sockets toggle ok: id: %u action: %s state: %s"),
+                           (unsigned)id, action.c_str(), state ? "on" : "off");
         web.sendText_(request, 200, "text/plain", state ? "on" : "off", set_cookie);
     }
 

@@ -47,10 +47,15 @@ public:
             return;
         }
         _c._io->println(F("Stack:"));
-        const size_t key_w = 11; // master_host
+        const size_t key_w = 16; // slave_controller
         const auto role = _c._configs_manager->stackRole();
         _c.printKeyValueTab_(F("role"), stackRoleName_(role), key_w);
         _c.printKeyValueTab_(F("master_host"), _c._configs_manager->stackMasterHost(), key_w);
+        _c.printKeyValueTab_(F("fallback"), _c._configs_manager->stackFallbackEnabled() ? F("on") : F("off"), key_w);
+        _c.printKeyValueTab_(F("fallback_host"), _c._configs_manager->stackFallbackHost(), key_w);
+        _c.printKeyValueTab_(F("slave_controller"),
+                             _c._configs_manager->stackSlaveController() ? F("on") : F("off"),
+                             key_w);
         const String api_key = _c._configs_manager->stackApiKey();
         _c.printKeyValueTab_(F("api_key"), api_key.length() ? F("set") : F("none"), key_w);
 
@@ -62,6 +67,24 @@ public:
     {
         String cmd = line;
         cmd.trim();
+        if (cmd == "stack trace")
+        {
+            _c._io->print(F("Stack trace: "));
+            _c._io->println(_trace_enabled ? F("on") : F("off"));
+            return;
+        }
+        if (cmd == "stack trace on")
+        {
+            _trace_enabled = true;
+            _c._io->println(F("Stack trace enabled"));
+            return;
+        }
+        if (cmd == "stack trace off")
+        {
+            _trace_enabled = false;
+            _c._io->println(F("Stack trace disabled"));
+            return;
+        }
         if (cmd == "stack nodes")
         {
             listStackNodes_();
@@ -95,6 +118,7 @@ public:
         if (!cmd.startsWith("stack send "))
         {
             _c._io->println(F("Usage: stack nodes"));
+            _c._io->println(F("       stack trace <on|off>"));
             _c._io->println(F("       stack send <id> <get|set> <json>"));
             _c._io->print(F("       stack socket <unit> <on|off|toggle> <id>"));
             printSocketIdRangeInline_();
@@ -505,6 +529,8 @@ public:
             return;
         if (handleStackRtcReply_(node_id, frame))
             return;
+        if (!_trace_enabled)
+            return;
         String payload = payloadToString_(frame.payload, frame.payload_len);
         _c._io->println();
         _c._io->print(F("[STACK] node="));
@@ -572,6 +598,7 @@ private:
     uint8_t _pending_plc_total = 0;
     uint8_t _pending_plc_done = 0;
     bool _pending_plc_scan = false;
+    bool _trace_enabled = false;
 
     void appendApiKey_(JsonDocument &doc)
     {

@@ -38,8 +38,10 @@ public:
         page.replace("%TANK_ITEMS%", stack_view ? web.listStackTanksHtml_(node_id) : web.listTanksHtml_());
         page.replace("%TANK_DINPUT_JSON%", stack_view ? "[]" : web.tankPortOptionsJson_(PortIO::PinType::DInput));
         page.replace("%TANK_RELAY_JSON%", stack_view ? "[]" : web.tankPortOptionsJson_(PortIO::PinType::Relay));
-        page.replace("%TANK_DINPUT_USED_JSON%", stack_view ? "[]" : web.tankUsedPortsJson_(PortIO::PinType::DInput));
-        page.replace("%TANK_RELAY_USED_JSON%", stack_view ? "[]" : web.tankUsedPortsJson_(PortIO::PinType::Relay));
+        page.replace("%TANK_DINPUT_USED_JSON%",
+                     stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::DInput));
+        page.replace("%TANK_RELAY_USED_JSON%",
+                     stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%TANK_DEVICE_SELECT%", web.tanksDeviceSelectHtml_(node_id, stack_view));
         page.replace("%TANK_SAVE_BTN%", stack_view ? "" : "<button type=\"submit\">Сохранить</button>");
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
@@ -95,6 +97,15 @@ public:
                 continue;
 
             const bool enabled = request->hasParam(en_key, true);
+            if (!enabled)
+            {
+                if (cfg->enabled != enabled)
+                {
+                    tanks.setEnabled(cfg->id, enabled);
+                    changed = true;
+                }
+                continue;
+            }
             const String power_str = web.paramValue_(request, power_key);
             const bool power_on = (power_str == "on" || power_str == "1" || power_str == "true");
             String name = web.paramValue_(request, name_key);

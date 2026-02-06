@@ -290,24 +290,42 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       if (item && typeof item === 'object' && item.l) return item.l;
       return labelFor(type, optionValue(item));
     }
-    function buildOptions(list, selected, type) {
-      let html = '<option value="">-</option>';
-      const used = thermoUsed[type] || [];
+    function buildOptions(list, selected, type, usedSet) {
+      const sel = String(selected || '');
+      let html = '<option value=""' + (sel === '' ? ' selected' : '') + '>-</option>';
+      const used = usedSet || new Set();
       for (let i = 0; i < list.length; i++) {
         const val = optionValue(list[i]);
-        if (used.indexOf(parseInt(val, 10)) !== -1 && val !== selected) {
-          continue;
-        }
+        const num = parseInt(val, 10);
+        const isUsed = !Number.isNaN(num) && used.has(num) && val !== sel;
         const label = optionLabel(list[i], type);
-        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') + '>' + label + '</option>';
+        html += '<option value="' + val + '"' + (val === selected ? ' selected' : '') +
+          (isUsed ? ' disabled' : '') + '>' + label + '</option>';
       }
       return html;
     }
+    function refreshThermoSelects() {
+      const usedByType = {};
+      document.querySelectorAll('select.thermo-select').forEach((el) => {
+        const type = el.dataset.type;
+        if (!usedByType[type]) {
+          const base = thermoUsed[type] || [];
+          usedByType[type] = new Set(base.map((v) => parseInt(v, 10)).filter((v) => !Number.isNaN(v)));
+        }
+        const v = parseInt(el.value || el.dataset.selected || '', 10);
+        if (!Number.isNaN(v)) usedByType[type].add(v);
+      });
+      document.querySelectorAll('select.thermo-select').forEach((el) => {
+        const type = el.dataset.type;
+        const selected = el.value || el.dataset.selected || '';
+        const list = thermoOptions[type] || [];
+        el.innerHTML = buildOptions(list, selected, type, usedByType[type]);
+        el.value = selected || '';
+      });
+    }
+    refreshThermoSelects();
     document.querySelectorAll('select.thermo-select').forEach((el) => {
-      const type = el.dataset.type;
-      const selected = el.dataset.selected || '';
-      const list = thermoOptions[type] || [];
-      el.innerHTML = buildOptions(list, selected, type);
+      el.addEventListener('change', refreshThermoSelects);
     });
     const thermoForm = document.getElementById('thermo-form');
     if (thermoForm) {
@@ -361,6 +379,30 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
           const enForce = tile.querySelector('input[type="hidden"][name$="_en_force"]');
           if (enForce) {
             enForce.value = '';
+          }
+          if (!el.checked) {
+            const name = tile.querySelector('input.field.name');
+            if (name) name.value = '';
+            const sensor = tile.querySelector('select[name$="_sensor"]');
+            if (sensor) sensor.value = '';
+            const mode = tile.querySelector('select[name$="_mode"]');
+            if (mode) mode.value = 'auto';
+            const target = tile.querySelector('input[name$="_target"]');
+            if (target) target.value = '22';
+            const hyst = tile.querySelector('input[name$="_hyst"]');
+            if (hyst) hyst.value = '1';
+            tile.querySelectorAll('select.thermo-select').forEach((sel) => {
+              sel.value = '';
+              sel.dataset.selected = '';
+            });
+            const power = tile.querySelector('input.thermo-power');
+            if (power) {
+              power.checked = false;
+              power.disabled = true;
+            }
+            const powerHidden = tile.querySelector('input[type="hidden"][name$="_power"]');
+            if (powerHidden) powerHidden.value = 'off';
+            refreshThermoSelects();
           }
         }
         if (thermoForm) {

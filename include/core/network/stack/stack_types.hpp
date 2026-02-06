@@ -30,6 +30,16 @@ enum class StackUnit : uint8_t
     Unknown
 };
 
+enum StackCaps : uint32_t
+{
+    StackCapController = 1u << 0
+};
+
+static inline bool stackCapsHas(uint32_t caps, uint32_t flag)
+{
+    return (caps & flag) != 0;
+}
+
 struct StackHello
 {
     uint32_t node_id = 0;

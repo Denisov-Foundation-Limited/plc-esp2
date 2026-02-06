@@ -22,5 +22,6 @@ struct BoardProfileCommon
 {
     static inline constexpr const char *UI_NAME = "Unknown";
     static inline constexpr uint16_t WEB_PORT = 80;
+    static inline constexpr uint8_t MASTER_LED_PIN = 0xFF;
     // Shared defaults could go here
 };

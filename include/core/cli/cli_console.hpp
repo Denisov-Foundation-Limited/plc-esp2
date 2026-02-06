@@ -694,6 +694,30 @@ public:
         return true;
     }
 
+    bool setStackFallbackEnabled_(bool enabled)
+    {
+        if (!_configs_manager)
+            return false;
+        _configs_manager->setStackFallbackEnabled(enabled);
+        return true;
+    }
+
+    bool setStackFallbackHost_(const String &host)
+    {
+        if (!_configs_manager)
+            return false;
+        _configs_manager->setStackFallbackHost(host);
+        return true;
+    }
+
+    bool setStackSlaveController_(bool controller)
+    {
+        if (!_configs_manager)
+            return false;
+        _configs_manager->setStackSlaveController(controller);
+        return true;
+    }
+
     void cmdEraseConfig_()
     {
         if (_configs.erase())
@@ -944,11 +968,14 @@ private:
             "help security",
             "help ring"}};
 
-        static const std::array<const char *, 34> kConfigCmds = {{
+        static const std::array<const char *, 37> kConfigCmds = {{
             "password <pass>",
             "admin password <pass>",
             "stack role <master|slave>",
             "stack master <host>",
+            "stack fallback <on|off>",
+            "stack fallback_host <host>",
+            "stack slave_controller <on|off>",
             "stack api_key <value>",
             "stack api_key clear",
             "stack api_key gen",

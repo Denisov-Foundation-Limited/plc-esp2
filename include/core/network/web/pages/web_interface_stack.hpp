@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -96,14 +96,32 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
                 <option value="slave" %STACK_ROLE_SLAVE_SEL%>slave</option>
               </select>
             </div>
-            <div id="master-host-field">
-              <label>Master host/IP</label>
+            <div id="master-host-field" style="%STACK_SLAVE_STYLE%">
+              <label>Хост/IP мастера</label>
               <input type="text" name="master_host" value="%STACK_MASTER_HOST%" placeholder="192.168.1.10">
             </div>
-            <div>
-              <label>API key</label>
+            <div id="fallback-enabled-field" style="%STACK_SLAVE_STYLE%">
+              <label>Резервный мастер</label>
               <div class="row">
-                <input type="text" name="api_key" value="%STACK_API_KEY%" placeholder="optional">
+                <input type="checkbox" name="fallback_enabled" id="fallback-enabled" %STACK_FALLBACK_ENABLED_CHECKED%>
+                <span class="status">Включить</span>
+              </div>
+            </div>
+            <div id="fallback-host-field" style="%STACK_SLAVE_STYLE%">
+              <label>Хост/IP резервного мастера</label>
+              <input type="text" name="fallback_host" value="%STACK_FALLBACK_HOST%" placeholder="192.168.1.20">
+            </div>
+            <div id="slave-controller-field" style="%STACK_SLAVE_STYLE%">
+              <label>Слейв-контроллер</label>
+              <div class="row">
+                <input type="checkbox" name="slave_controller" id="slave-controller" %STACK_SLAVE_CONTROLLER_CHECKED%>
+                <span class="status">Полноценный контроллер</span>
+              </div>
+            </div>
+            <div>
+              <label>API ключ</label>
+              <div class="row">
+                <input type="text" name="api_key" value="%STACK_API_KEY%" placeholder="необязательно">
                 <button class="mini" type="button" id="gen-api-key">Сгенерировать</button>
               </div>
             </div>
@@ -120,11 +138,16 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
   <script>
     const roleSelect = document.querySelector('select[name="role"]');
     const masterHost = document.getElementById('master-host-field');
+    const fallbackEnabled = document.getElementById('fallback-enabled-field');
+    const fallbackHost = document.getElementById('fallback-host-field');
     const apiKeyInput = document.querySelector('input[name="api_key"]');
     const apiKeyBtn = document.getElementById('gen-api-key');
     function updateMasterHost() {
       if (!roleSelect || !masterHost) return;
-      masterHost.style.display = roleSelect.value === 'slave' ? '' : 'none';
+      const isSlave = roleSelect.value === 'slave';
+      masterHost.style.display = isSlave ? '' : 'none';
+      if (fallbackEnabled) fallbackEnabled.style.display = isSlave ? '' : 'none';
+      if (fallbackHost) fallbackHost.style.display = isSlave ? '' : 'none';
       if (apiKeyBtn) apiKeyBtn.style.display = roleSelect.value === 'master' ? '' : 'none';
     }
     if (roleSelect) {

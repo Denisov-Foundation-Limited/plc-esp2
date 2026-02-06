@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -104,15 +104,11 @@ public:
             String label;
             label += String((unsigned)cfg->id);
             label += ": ";
-            if (cfg->name.length())
-            {
-                label += cfg->name;
-            }
+            String name;
+            if (self._meteo->displayName(cfg->id, name) && name.length())
+                label += name;
             else
-            {
-                label += F("Sensor");
-                label += String((unsigned)cfg->id);
-            }
+                label += String("Sensor ") + String((unsigned)cfg->id);
             out.push_back(label);
         }
         out.push_back(F("Назад"));
@@ -138,16 +134,15 @@ public:
             out += "\n  ";
             out += String((unsigned)cfg->id);
             out += ": ";
-            if (cfg->name.length())
+            String name;
+            if (self._meteo->displayName(cfg->id, name) && name.length())
             {
                 out += "<b>";
-                out += self.escapeHtml_(cfg->name);
+                out += self.escapeHtml_(name);
                 out += "</b>";
             }
             else
-            {
                 out += "<b>-</b>";
-            }
             if (st->has_temp)
             {
                 char buf[10] = {};
@@ -187,16 +182,15 @@ public:
         String out = F("<b>Датчик метео:</b>");
         out.reserve(384);
         out += "\n  имя: ";
-        if (cfg->name.length())
+        String name;
+        if (self._meteo->displayName(cfg->id, name) && name.length())
         {
             out += "<b>";
-            out += self.escapeHtml_(cfg->name);
+            out += self.escapeHtml_(name);
             out += "</b>";
         }
         else
-        {
             out += "<b>-</b>";
-        }
         out += "\n  тип: ";
         out += "<b>";
         out += MeteoController::typeName(cfg->type);

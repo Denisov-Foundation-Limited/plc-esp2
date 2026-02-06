@@ -29,6 +29,9 @@ public:
     virtual StackRole stackRole() const = 0;
     virtual String stackMasterHost() const = 0;
     virtual String stackApiKey() const = 0;
+    virtual bool stackFallbackEnabled() const = 0;
+    virtual String stackFallbackHost() const = 0;
+    virtual bool stackSlaveController() const = 0;
     virtual bool cloudEnabled() const = 0;
     virtual String cloudHost() const = 0;
     virtual uint16_t cloudPort() const = 0;
@@ -46,6 +49,9 @@ public:
     virtual void setStackRole(StackRole role) = 0;
     virtual void setStackMasterHost(const String &host) = 0;
     virtual void setStackApiKey(const String &key) = 0;
+    virtual void setStackFallbackEnabled(bool enabled) = 0;
+    virtual void setStackFallbackHost(const String &host) = 0;
+    virtual void setStackSlaveController(bool controller) = 0;
     virtual void setCloudEnabled(bool enabled) = 0;
     virtual void setCloudHost(const String &host) = 0;
     virtual void setCloudPort(uint16_t port) = 0;

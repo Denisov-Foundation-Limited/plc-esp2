@@ -71,6 +71,9 @@ public:
             _c._io->println(F("  Stack:"));
             _c._io->println(F("    stack role <master|slave> - set device role"));
             _c._io->println(F("    stack master <host>       - set master host/IP"));
+            _c._io->println(F("    stack fallback <on|off>   - enable fallback master mode"));
+            _c._io->println(F("    stack fallback_host <host> - set fallback host/IP"));
+            _c._io->println(F("    stack slave_controller <on|off> - mark slave as controller"));
             _c._io->println(F("    stack api_key <value>     - set stack api_key"));
             _c._io->println(F("    stack api_key clear       - clear stack api_key"));
             _c._io->println(F("    stack api_key gen         - generate stack api_key"));
@@ -807,6 +810,63 @@ private:
             String host = cmd.substring(13);
             host.trim();
             if (!_c.setStackMasterHost_(host))
+                _c._io->println(F("Config manager missing"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower.startsWith("stack fallback "))
+        {
+            String value = cmd.substring(15);
+            value.trim();
+            value.toLowerCase();
+            bool enabled = false;
+            if (value == "on" || value == "1" || value == "true" || value == "yes")
+                enabled = true;
+            else if (value == "off" || value == "0" || value == "false" || value == "no")
+                enabled = false;
+            else
+            {
+                _c._io->println(F("Invalid fallback value"));
+                _c.printPrompt_();
+                return;
+            }
+            if (!_c.setStackFallbackEnabled_(enabled))
+                _c._io->println(F("Config manager missing"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower.startsWith("stack fallback_host "))
+        {
+            String host = cmd.substring(20);
+            host.trim();
+            if (!_c.setStackFallbackHost_(host))
+                _c._io->println(F("Config manager missing"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower.startsWith("stack slave_controller "))
+        {
+            String value = cmd.substring(23);
+            value.trim();
+            value.toLowerCase();
+            bool enabled = false;
+            if (value == "on" || value == "1" || value == "true" || value == "yes")
+                enabled = true;
+            else if (value == "off" || value == "0" || value == "false" || value == "no")
+                enabled = false;
+            else
+            {
+                _c._io->println(F("Invalid slave_controller value"));
+                _c.printPrompt_();
+                return;
+            }
+            if (!_c.setStackSlaveController_(enabled))
                 _c._io->println(F("Config manager missing"));
             else
                 _c._io->println(F("OK"));

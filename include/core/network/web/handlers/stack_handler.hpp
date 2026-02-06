@@ -35,7 +35,11 @@ public:
         page.replace("%STACK_ROLE%", web.stackRoleName_(role));
         page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
         page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
+        page.replace("%STACK_SLAVE_STYLE%", role == ConfigsManagerIface::StackRole::Slave ? "" : "display:none");
         page.replace("%STACK_MASTER_HOST%", web.stackMasterHost_());
+        page.replace("%STACK_FALLBACK_ENABLED_CHECKED%", web.stackFallbackEnabled_() ? "checked" : "");
+        page.replace("%STACK_FALLBACK_HOST%", web.stackFallbackHost_());
+        page.replace("%STACK_SLAVE_CONTROLLER_CHECKED%", web.stackSlaveController_() ? "checked" : "");
         page.replace("%STACK_API_KEY%", web.stackApiKey_());
         page.replace("%STACK_STATUS%", web._stack_status);
         if (role == ConfigsManagerIface::StackRole::Master)
