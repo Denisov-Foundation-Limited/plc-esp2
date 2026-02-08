@@ -58,7 +58,10 @@ public:
             page.replace("%RING_ENABLED_LABEL%", ring_enabled ? "включен" : "выключен");
             const bool security_enabled = web._controllers->security().controllerEnabled();
             page.replace("%SECURITY_ENABLED_CHECKED%", security_enabled ? "checked" : "");
+            const bool watering_enabled = web._controllers->watering().controllerEnabled();
+            page.replace("%WATERING_ENABLED_CHECKED%", watering_enabled ? "checked" : "");
             page.replace("%SECURITY_ENABLED_LABEL%", security_enabled ? "включена" : "выключена");
+            page.replace("%WATERING_ENABLED_LABEL%", watering_enabled ? "включен" : "выключен");
         }
         else
         {
@@ -78,6 +81,8 @@ public:
             page.replace("%RING_ENABLED_LABEL%", "");
             page.replace("%SECURITY_ENABLED_CHECKED%", "");
             page.replace("%SECURITY_ENABLED_LABEL%", "недоступно");
+            page.replace("%WATERING_ENABLED_CHECKED%", "");
+            page.replace("%WATERING_ENABLED_LABEL%", "недоступно");
         }
         page.replace("%SOCKETS_STATUS%", web._sockets_status);
         page.replace("%LIGHTS_STATUS%", web._lights_status);
@@ -87,6 +92,7 @@ public:
         page.replace("%SEPTIC_STATUS%", web._septic_status);
         page.replace("%RING_STATUS%", web._ring_status);
         page.replace("%SECURITY_STATUS%", web._security_status);
+        page.replace("%WATERING_STATUS%", web._watering_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -167,6 +173,15 @@ public:
                 changed = true;
             }
         }
+        if (ctrl.length() == 0 || ctrl == "watering")
+        {
+            const bool watering_enabled = request->hasParam("watering_enabled", true);
+            if (web._controllers->watering().controllerEnabled() != watering_enabled)
+            {
+                web._controllers->watering().setControllerEnabled(watering_enabled);
+                changed = true;
+            }
+        }
         if (ctrl.length() == 0 || ctrl == "security")
         {
             const bool security_enabled = request->hasParam("security_enabled", true);
@@ -200,6 +215,7 @@ public:
         web._septic_status = web._controllers_status;
         web._ring_status = web._controllers_status;
         web._security_status = web._controllers_status;
+        web._watering_status = web._controllers_status;
         web.sendRedirect_(request, "/controllers", set_cookie);
     }
 };

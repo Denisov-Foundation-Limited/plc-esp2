@@ -1,0 +1,299 @@
+﻿/*                                                                    */
+/* Programmable Logic Controller for ESP microcontrollers             */
+/*                                                                    */
+/* Copyright (C) 2026 Denisov Foundation Limited                      */
+/* License: GPLv3                                                     */
+/* Written by Sergey Denisov aka LittleBuster                         */
+/* Email: DenisovFoundationLtd@gmail.com                              */
+/*                                                                    */
+/**********************************************************************/
+
+#pragma once
+
+class WebInterface;
+class AsyncWebServer;
+class AsyncWebServerRequest;
+
+class WateringHandler
+{
+public:
+    static void registerRoutes(WebInterface &web, AsyncWebServer &server)
+    {
+        server.on("/watering", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleWateringSave(web, request); });
+        server.on("/watering", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleWatering(web, request); });
+    }
+
+    static void handleWatering(WebInterface &web, AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!web.checkAuth_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        const bool stack_view = web.isStackWateringView_(node_id);
+        if (stack_view)
+            web.requestStackWatering_(node_id);
+        String page = FPSTR(kWebInterfaceWateringHtml);
+        page.reserve(page.length() + 32768);
+        page.replace("%NAV%", web.navHtml_());
+        page.replace("%WATERING_ROWS%", stack_view ? web.listStackWateringHtml_(node_id) : web.listWateringHtml_());
+        page.replace("%WATERING_STATUS%", stack_view ? web.stackWateringStatusText_(node_id) : web._watering_status);
+        page.replace("%WATERING_RELAY_JSON%", stack_view ? "[]" : web.wateringPortOptionsJson_());
+        page.replace("%WATERING_TANK_JSON%", stack_view ? "[]" : web.wateringTankOptionsJson_());
+        page.replace("%WATERING_DEVICE_SELECT%", web.wateringDeviceSelectHtml_(node_id, stack_view));
+        page.replace("%WATERING_SAVE_BTN%", stack_view ? "" : "<button type=\"submit\">Сохранить</button>");
+        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        web.sendHtml_(request, page, set_cookie);
+    }
+
+    static void handleWateringSave(WebInterface &web, AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!web.checkAuth_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (web.isStackWateringView_(node_id))
+        {
+            web._watering_status = "Доступно только на локальном устройстве";
+            web.sendRedirect_(request, "/watering", set_cookie);
+            return;
+        }
+        if (!web._controllers)
+        {
+            web.sendText_(request, 500, "text/plain", "Контроллеры недоступны", set_cookie);
+            return;
+        }
+        WateringController &watering = web._controllers->watering();
+        bool changed = false;
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+            const auto *cfg = watering.configByIndex(i);
+            const auto *st = watering.stateByIndex(i);
+            if (!cfg || !st)
+                continue;
+            const String idx = String((unsigned)cfg->id);
+            const String prefix = String("w") + idx + "_";
+            const String en_key = prefix + "en";
+            const String status_key = prefix + "status";
+            const String name_key = prefix + "name";
+            const String port_key = prefix + "port";
+            const String tank_key = prefix + "tank";
+            const String time_key = prefix + "time";
+            const String dur_key = prefix + "dur";
+            const String resume_key = prefix + "resume";
+            const String resume_level_key = prefix + "resume_level";
+
+            const bool enabled = paramChecked_(request, en_key);
+            if (cfg->enabled != enabled)
+            {
+                watering.setEnabled(cfg->id, enabled);
+                changed = true;
+            }
+            if (!enabled)
+                continue;
+
+            const bool status_on = request->hasParam(status_key, true);
+            if (st->status != status_on)
+            {
+                watering.setStatus(cfg->id, status_on);
+                changed = true;
+            }
+
+            String name = web.paramValue_(request, name_key);
+            name.trim();
+            if (name != cfg->name)
+            {
+                watering.setName(cfg->id, name);
+                changed = true;
+            }
+
+            const String port_str = web.paramValue_(request, port_key);
+            uint8_t port = WateringController::kInvalidPort;
+            if (!parsePort_(port_str, port))
+                port = WateringController::kInvalidPort;
+            if (port != cfg->port)
+            {
+                watering.setPort(cfg->id, port);
+                changed = true;
+            }
+
+            const String tank_str = web.paramValue_(request, tank_key);
+            uint8_t tank_id = 0;
+            if (!parseTank_(tank_str, tank_id))
+                tank_id = 0;
+            if (tank_id != cfg->tank_id)
+            {
+                watering.setTankId(cfg->id, tank_id);
+                changed = true;
+            }
+
+            uint8_t weekdays_mask = 0;
+            for (uint8_t dow = 1; dow <= 7; ++dow)
+            {
+                const String key = prefix + "d" + String((unsigned)dow);
+                if (request->hasParam(key, true))
+                    weekdays_mask |= (uint8_t)(1u << (dow - 1u));
+            }
+            if (weekdays_mask != cfg->weekdays_mask)
+            {
+                watering.setWeekdaysMask(cfg->id, weekdays_mask);
+                changed = true;
+            }
+
+            const String time_str = web.paramValue_(request, time_key);
+            uint8_t hour = 0;
+            uint8_t minute = 0;
+            if (!parseTime_(time_str, hour, minute))
+            {
+                hour = 0;
+                minute = 0;
+            }
+            if (hour != cfg->hour || minute != cfg->minute)
+            {
+                watering.setStartTime(cfg->id, hour, minute);
+                changed = true;
+            }
+
+            const String dur_str = web.paramValue_(request, dur_key);
+            uint32_t dur_min = 0;
+            parseDuration_(dur_str, dur_min);
+            const uint32_t dur_sec = dur_min * 60u;
+            if (dur_sec != cfg->duration_sec)
+            {
+                watering.setDuration(cfg->id, dur_sec);
+                changed = true;
+            }
+
+            const bool resume_on = request->hasParam(resume_key, true);
+            if (resume_on != cfg->resume_after_refill)
+            {
+                watering.setResumeAfterRefill(cfg->id, resume_on);
+                changed = true;
+            }
+
+            const String resume_level_str = web.paramValue_(request, resume_level_key);
+            uint8_t resume_level = cfg->resume_level;
+            if (parseResumeLevel_(resume_level_str, resume_level) && resume_level != cfg->resume_level)
+            {
+                watering.setResumeLevel(cfg->id, resume_level);
+                changed = true;
+            }
+        }
+
+        bool ok = true;
+        if (changed)
+        {
+            if (!web._configs_manager)
+            {
+                ok = false;
+                web._watering_status = "Менеджер конфигурации недоступен";
+            }
+            else if (!web._configs_manager->save())
+            {
+                ok = false;
+                web._watering_status = "Сохранение не удалось";
+            }
+        }
+        if (ok)
+            web._watering_status = changed ? "Обновлено" : "Без изменений";
+        web.sendRedirect_(request, "/watering", set_cookie);
+    }
+
+private:
+    static bool paramChecked_(AsyncWebServerRequest *request, const String &name)
+    {
+        if (!request)
+            return false;
+        const int count = request->params();
+        for (int i = 0; i < count; ++i)
+        {
+            const auto *param = request->getParam(i);
+            if (!param || param->name() != name)
+                continue;
+            String v = param->value();
+            v.toLowerCase();
+            if (v == "1" || v == "on" || v == "true")
+                return true;
+        }
+        return false;
+    }
+    static bool parsePort_(const String &s, uint8_t &out)
+    {
+        String t = s;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        for (size_t i = 0; i < t.length(); ++i)
+            if (t[i] < '0' || t[i] > '9')
+                return false;
+        const int v = t.toInt();
+        if (v < 0 || v > 255)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
+    static bool parseTank_(const String &s, uint8_t &out)
+    {
+        String t = s;
+        t.trim();
+        if (t.length() == 0)
+            return false;
+        for (size_t i = 0; i < t.length(); ++i)
+            if (t[i] < '0' || t[i] > '9')
+                return false;
+        const int v = t.toInt();
+        if (v < 0 || v > 255)
+            return false;
+        out = (uint8_t)v;
+        return true;
+    }
+
+    static bool parseTime_(const String &s, uint8_t &hour, uint8_t &minute)
+    {
+        const int p1 = s.indexOf(':');
+        if (p1 <= 0)
+            return false;
+        const int h = s.substring(0, p1).toInt();
+        const int m = s.substring(p1 + 1).toInt();
+        if (h < 0 || h > 23)
+            return false;
+        if (m < 0 || m > 59)
+            return false;
+        hour = (uint8_t)h;
+        minute = (uint8_t)m;
+        return true;
+    }
+
+    static bool parseDuration_(const String &s, uint32_t &out)
+    {
+        String t = s;
+        t.trim();
+        if (t.length() == 0)
+        {
+            out = 0;
+            return false;
+        }
+        for (size_t i = 0; i < t.length(); ++i)
+            if (t[i] < '0' || t[i] > '9')
+                return false;
+        out = (uint32_t)t.toInt();
+        return true;
+    }
+
+    static bool parseResumeLevel_(const String &s, uint8_t &out)
+    {
+        String t = s;
+        t.trim();
+        t.toLowerCase();
+        if (t == "low")
+            out = 0;
+        else if (t == "mid")
+            out = 1;
+        else if (t == "full")
+            out = 2;
+        else
+            return false;
+        return true;
+    }
+};
+

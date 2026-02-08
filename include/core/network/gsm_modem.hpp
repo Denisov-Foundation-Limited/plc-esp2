@@ -163,6 +163,7 @@ private:
             F("ATE0"),
             F("CMGF=1"),
             F("CLIP=1"),
+            F("CREG=1"),
             F("GSN"),
             F("CIMI"),
             F("COPS?"),
@@ -186,6 +187,7 @@ private:
         enqueueOrLog_(_modem.setEcho(false, &GsmModem::onCmdLog_, bind(idx++)), names[idx - 1]);
         enqueueOrLog_(_modem.setSmsTextMode(&GsmModem::onCmdLog_, bind(idx++)), names[idx - 1]);
         enqueueOrLog_(_modem.setCallerId(true, &GsmModem::onCmdLog_, bind(idx++)), names[idx - 1]);
+        enqueueOrLog_(_modem.enableRegUrc(&GsmModem::onCmdLog_, bind(idx++)), names[idx - 1]);
         enqueueOrLog_(_modem.requestImei(&GsmModem::onCmdLog_, bind(idx++)), names[idx - 1]);
         enqueueOrLog_(_modem.requestImsi(&GsmModem::onCmdLog_, bind(idx++)), names[idx - 1]);
         enqueueOrLog_(_modem.requestOperator(&GsmModem::onCmdLog_, bind(idx++)), names[idx - 1]);
@@ -290,7 +292,7 @@ private:
     int _last_http_len = -1;
     bool _enabled = true;
     bool _started = false;
-    static constexpr size_t kInitCmdCount = 9;
+    static constexpr size_t kInitCmdCount = 10;
     static constexpr uint32_t kInitTimeoutMs = 12000;
     static constexpr uint32_t kInitRetryDelayMs = 3000;
     static constexpr uint8_t kInitMaxAttempts = 3;
@@ -474,6 +476,8 @@ private:
             return "Signal quality";
         if (cmd == "AT+CREG?")
             return "Network registration";
+        if (cmd == "AT+CREG=1")
+            return "Enable registration URC";
         if (cmd.startsWith("AT+CMGS="))
             return "Send SMS";
         if (cmd.startsWith("AT+CMGR="))

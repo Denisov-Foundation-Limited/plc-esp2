@@ -157,7 +157,8 @@ struct ControlContext
 
     ControlContext(CoreContext &core, HardwareContext &hw, CommsContext &comms)
         : telegram_menu(hw.plc, comms.wifi, hw.rtc, comms.telegram_bot, core.configs, core.logs),
-          controllers(hw.gpio, hw.ow, hw.eeprom_storage, core.logs, comms.telegram_bot, telegram_menu, comms.gsm),
+          controllers(hw.gpio, hw.ow, hw.eeprom_storage, core.logs, comms.telegram_bot, telegram_menu, comms.gsm,
+                      hw.rtc),
           meteo_history(hw.rtc, controllers.meteo()),
           rfid_reader(),
           ring_client(hw.gpio, core.logs),
@@ -197,7 +198,7 @@ struct NetworkContext
           stack_slave(hw.io, hw.ds18b20, hw.ow, hw.i2c, hw.plc, hw.rtc, comms.telegram, core.logs, hw.ext,
                       control.controllers.sockets(), control.controllers.meteo(), control.controllers.thermo(),
                       control.controllers.septic(), control.controllers.security(), control.controllers.tanks(),
-                      control.controllers.ring())
+                      control.controllers.watering(), control.controllers.ring())
     {
     }
 };
@@ -269,6 +270,7 @@ struct App
         control.controllers.septic().setDetectHandler(&App::onSepticDetect_, this);
         control.controllers.tanks().setDetectHandler(&App::onTankEmpty_, this);
         control.controllers.ring().setHoldHandler(&App::onRingHold_, this);
+        control.controllers.watering().setEventHandler(&App::onWateringEvent_, this);
         control.ring_client.setButtonHandler(&App::onRingClientButton_, this);
         control.rfid_reader.setUidHandler(&App::onRfidUid_, this);
         hw.display.setSlotProvider(&App::onDisplaySlot_, this);
@@ -544,6 +546,7 @@ struct App
         flushPendingSecurityDetect_();
         flushPendingSepticDetect_();
         flushPendingTankEmpty_();
+        flushPendingWateringEvent_();
         flushPendingRfid_();
         flushPendingRingClient_();
     }
@@ -1040,6 +1043,15 @@ private:
         static_cast<App *>(ctx)->sendTankEmptyToMaster_(tank_id, name);
     }
 
+    static void onWateringEvent_(void *ctx, WateringController::Event ev,
+                                 const WateringController::RuleConfig &cfg,
+                                 const WateringController::RuleState &st)
+    {
+        if (!ctx)
+            return;
+        static_cast<App *>(ctx)->sendWateringEventToMaster_(ev, cfg, st);
+    }
+
     static void onRingHold_(void *ctx, bool on)
     {
         if (!ctx)
@@ -1231,6 +1243,79 @@ private:
         }
     }
 
+    void sendWateringEventToMaster_(WateringController::Event ev,
+                                    const WateringController::RuleConfig &cfg,
+                                    const WateringController::RuleState &st)
+    {
+        if (!stackSlaveActive_())
+            return;
+        StackNode &node = net.network.stackNode();
+        if (!node.connected())
+        {
+            _pending_watering_event = true;
+            _pending_watering_event_type = ev;
+            _pending_watering_event_cfg = cfg;
+            _pending_watering_event_state = st;
+            return;
+        }
+        StaticJsonDocument<256> doc;
+        doc["cmd_id"] = 0;
+        doc["feature"] = (uint8_t)StackFeature::Watering;
+        doc["action"] = "event";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["id"] = cfg.id;
+        if (cfg.name.length())
+            params["name"] = cfg.name;
+        if (cfg.port != WateringController::kInvalidPort)
+            params["port"] = cfg.port;
+        if (cfg.tank_id)
+            params["tank"] = cfg.tank_id;
+        if (cfg.resume_after_refill)
+            params["resume"] = true;
+        params["resume_level"] = cfg.resume_level;
+        params["remaining_ms"] = st.remaining_ms;
+        const char *event_str = "stop";
+        switch (ev)
+        {
+        case WateringController::Event::Start:
+            event_str = "start";
+            break;
+        case WateringController::Event::PauseEmpty:
+            event_str = "pause";
+            params["reason"] = "empty";
+            break;
+        case WateringController::Event::Resume:
+            event_str = "resume";
+            break;
+        case WateringController::Event::StopDone:
+            event_str = "stop";
+            params["reason"] = "done";
+            break;
+        case WateringController::Event::StopEmpty:
+            event_str = "stop";
+            params["reason"] = "empty";
+            break;
+        case WateringController::Event::Stop:
+        default:
+            event_str = "stop";
+            break;
+        }
+        params["event"] = event_str;
+
+        char payload[224] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return;
+        if (!node.send((uint8_t)StackMsgType::CmdSet,
+                       reinterpret_cast<const uint8_t *>(payload), len))
+        {
+            _pending_watering_event = true;
+            _pending_watering_event_type = ev;
+            _pending_watering_event_cfg = cfg;
+            _pending_watering_event_state = st;
+        }
+    }
+
     void broadcastRingHold_(bool on)
     {
         if (!stackMasterActive_())
@@ -1392,6 +1477,11 @@ private:
             handleTankFrame_(node_id, action, doc["params"]);
             return;
         }
+        if (feature == (uint8_t)StackFeature::Watering)
+        {
+            handleWateringFrame_(node_id, action, doc["params"]);
+            return;
+        }
     }
 
     void handleSepticFrame_(uint32_t node_id, const String &action, JsonVariantConst params)
@@ -1448,6 +1538,43 @@ private:
         if (unit_idx >= 0 && unit_idx < 32)
             hw.plc.setAlarmUnit(PlcControl::AlarmModule::Tanks, (uint8_t)unit_idx, true);
         control.controllers.tanks().notifyRemoteEmpty(source, tank_id, name);
+    }
+
+    void handleWateringFrame_(uint32_t node_id, const String &action, JsonVariantConst params)
+    {
+        if (action != "event")
+            return;
+        const String event = params["event"] | "";
+        if (!event.length())
+            return;
+        const uint8_t rule_id = (uint8_t)(params["id"] | 0);
+        const uint8_t port = (uint8_t)(params["port"] | WateringController::kInvalidPort);
+        const uint8_t tank_id = (uint8_t)(params["tank"] | 0);
+        const String name = params["name"] | "";
+        const String reason = params["reason"] | "";
+        const uint32_t remaining_ms = (uint32_t)(params["remaining_ms"] | 0u);
+        const uint8_t resume_level = (uint8_t)(params["resume_level"] | 0u);
+        const String source = stackNodeLabel_(node_id);
+
+        String msg;
+        msg.reserve(64);
+        msg += "remote ";
+        msg += event;
+        if (reason.length())
+        {
+            msg += " (";
+            msg += reason;
+            msg += ")";
+        }
+        core.logs.info(F("WATER"), F("%s: node: %s rule: %u name: %s port: %u tank: %u rem_ms: %lu resume_lvl: %u"),
+                       msg.c_str(),
+                       source.c_str(),
+                       (unsigned)rule_id,
+                       name.length() ? name.c_str() : "",
+                       (unsigned)port,
+                       (unsigned)tank_id,
+                       (unsigned long)remaining_ms,
+                       (unsigned)resume_level);
     }
 
     void updateSecurityNotifyMode_()
@@ -1548,6 +1675,20 @@ private:
             return;
         _pending_tank_empty = false;
         sendTankEmptyToMaster_(_pending_tank_id, _pending_tank_name);
+    }
+
+    void flushPendingWateringEvent_()
+    {
+        if (!_pending_watering_event)
+            return;
+        if (!stackSlaveActive_())
+            return;
+        StackNode &node = net.network.stackNode();
+        if (!node.connected())
+            return;
+        _pending_watering_event = false;
+        sendWateringEventToMaster_(_pending_watering_event_type, _pending_watering_event_cfg,
+                                   _pending_watering_event_state);
     }
 
     void flushPendingRfid_()
@@ -2645,6 +2786,10 @@ private:
     bool _pending_tank_empty = false;
     uint8_t _pending_tank_id = 0;
     String _pending_tank_name;
+    bool _pending_watering_event = false;
+    WateringController::Event _pending_watering_event_type = WateringController::Event::Stop;
+    WateringController::RuleConfig _pending_watering_event_cfg{};
+    WateringController::RuleState _pending_watering_event_state{};
     bool _pending_rfid = false;
     String _pending_rfid_uid;
     String _pending_rfid_name;

@@ -40,6 +40,7 @@
 #include "core/cli/modules/cli_security.hpp"
 #include "core/cli/modules/cli_septic.hpp"
 #include "core/cli/modules/cli_ring.hpp"
+#include "core/cli/modules/cli_watering.hpp"
 #include "core/cli/modules/cli_cloud.hpp"
 #include "boards/board_profile.hpp"
 #include "hal/bus/i2c.hpp"
@@ -71,6 +72,7 @@ public:
     using CLISeptic = CLISepticT<CliConsole>;
     using CLISecurity = CLISecurityT<CliConsole>;
     using CLIRing = CLIRingT<CliConsole>;
+    using CLIWatering = CLIWateringT<CliConsole>;
     using CLICloud = CLICloudT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
 
@@ -98,10 +100,11 @@ public:
           _septic_cli(*this, controllers.septic()),
           _security_cli(*this, controllers.security()),
           _ring_cli(*this, controllers.ring()),
+          _watering_cli(*this, controllers.watering()),
           _cloud_cli(*this),
           _enable(*this, _wifi_cli),
           _config(*this, _wifi_cli, _tgbot_cli, _socket_cli, _meteo_cli, _thermo_cli, _tank_cli, _septic_cli,
-                  _security_cli, _ring_cli, _cloud_cli)
+                  _security_cli, _ring_cli, _watering_cli, _cloud_cli)
     {
         _stack_cli.bind(stack_master);
     }
@@ -221,6 +224,7 @@ public:
     void enterConfigSeptic() { _mode = Mode::ConfigSeptic; printPrompt_(); }
     void enterConfigSecurity() { _mode = Mode::ConfigSecurity; printPrompt_(); }
     void enterConfigRing() { _mode = Mode::ConfigRing; printPrompt_(); }
+    void enterConfigWatering() { _mode = Mode::ConfigWatering; printPrompt_(); }
     void enterConfigCloud() { _mode = Mode::ConfigCloud; printPrompt_(); }
     void logout()
     {
@@ -766,6 +770,7 @@ private:
         ConfigSeptic,
         ConfigSecurity,
         ConfigRing,
+        ConfigWatering,
         ConfigCloud
     };
 
@@ -812,6 +817,10 @@ private:
             _io->print(F("  show tank <id>"));
             _tank_cli.printIdRangeInline();
             _io->println(F(" - tank details"));
+            _io->println(F("  show watering   - list watering rules"));
+            _io->print(F("  show watering <id>"));
+            _watering_cli.printIdRangeInline();
+            _io->println(F(" - rule details"));
             _io->println(F("  show septic     - list septic"));
             _io->print(F("  show septic <id>"));
             _septic_cli.printIdRangeInline();
@@ -865,6 +874,11 @@ private:
             _tank_cli.printHelpContextLines();
             return;
         }
+        if (t == "watering")
+        {
+            _watering_cli.printHelpContextLines();
+            return;
+        }
         if (t == "septic")
         {
             _septic_cli.printHelpContextLines();
@@ -897,7 +911,7 @@ private:
     {
         if (!_io || _state != State::LoggedIn)
             return;
-        static const std::array<const char *, 69> kEnableCmds = {{
+        static const std::array<const char *, 72> kEnableCmds = {{
             "show plc",
             "show board",
             "show wifi",
@@ -919,6 +933,8 @@ private:
             "show thermo <id>",
             "show tanks",
             "show tank <id>",
+            "show watering",
+            "show watering <id>",
             "show septic",
             "show septic <id>",
             "show security",
@@ -964,11 +980,12 @@ private:
             "help meteo",
             "help thermo",
             "help tank",
+            "help watering",
             "help septic",
             "help security",
             "help ring"}};
 
-        static const std::array<const char *, 37> kConfigCmds = {{
+        static const std::array<const char *, 39> kConfigCmds = {{
             "password <pass>",
             "admin password <pass>",
             "stack role <master|slave>",
@@ -987,6 +1004,7 @@ private:
             "meteo",
             "thermo",
             "tank",
+            "watering",
             "septic",
             "security",
             "ring",
@@ -1003,6 +1021,7 @@ private:
             "help meteo",
             "help thermo",
             "help tank",
+            "help watering",
             "help septic",
             "help security",
             "help ring"}};
@@ -1169,6 +1188,23 @@ private:
             "end",
             "help"}};
 
+        static const std::array<const char *, 15> kConfigWateringCmds = {{
+            "show",
+            "show <id>",
+            "name <id> <text>",
+            "enable <id>",
+            "disable <id>",
+            "status <id> <on|off>",
+            "port <id> <port|none>",
+            "tank <id> <tank_id|none>",
+            "days <id> <mon,tue,...|all|none>",
+            "time <id> <HH:MM>",
+            "duration <id> <min>",
+            "resume <id> <on|off>",
+            "resume_level <id> <low|mid|full>",
+            "exit",
+            "help"}};
+
         static const std::array<const char *, 15> kConfigCloudCmds = {{
             "enable on",
             "enable off",
@@ -1237,6 +1273,10 @@ private:
         case Mode::ConfigRing:
             cmds = kConfigRingCmds.data();
             count = kConfigRingCmds.size();
+            break;
+        case Mode::ConfigWatering:
+            cmds = kConfigWateringCmds.data();
+            count = kConfigWateringCmds.size();
             break;
         case Mode::ConfigCloud:
             cmds = kConfigCloudCmds.data();
@@ -1533,6 +1573,22 @@ private:
             else
                 _tank_cli.showTank(id);
         }
+        else if (eq_(what, "watering"))
+            _watering_cli.showRules();
+        else if (startsWith_(what, "watering "))
+        {
+            String tail = what.substring(9);
+            tail.trim();
+            uint16_t id = 0;
+            if (!parseUint_(tail, id))
+            {
+                _io->print(F("Usage: show watering <id>"));
+                _watering_cli.printIdRangeInline();
+                _io->println();
+            }
+            else
+                _watering_cli.showRule(id);
+        }
         else if (eq_(what, "septic"))
             _septic_cli.showSeptic();
         else if (startsWith_(what, "septic "))
@@ -1655,6 +1711,9 @@ private:
         case Mode::ConfigRing:
             _config.handleRingContext(line);
             break;
+        case Mode::ConfigWatering:
+            _config.handleWateringContext(line);
+            break;
         case Mode::ConfigCloud:
             _config.handleCloudContext(line);
             break;
@@ -1774,6 +1833,12 @@ private:
             break;
         case Mode::ConfigRing:
             _io->print(F("plc(config-ring)# "));
+            break;
+        case Mode::ConfigWatering:
+            _io->print(F("plc(config-watering)# "));
+            break;
+        case Mode::ConfigCloud:
+            _io->print(F("plc(config-cloud)# "));
             break;
         }
     }
@@ -2083,6 +2148,7 @@ private:
     CLISeptic _septic_cli;
     CLISecurity _security_cli;
     CLIRing _ring_cli;
+    CLIWatering _watering_cli;
     CLICloud _cloud_cli;
     CLIEnable _enable;
     CLIConfig _config;
@@ -2585,6 +2651,8 @@ private:
     friend class CLISecurityT;
     template <typename>
     friend class CLIRingT;
+    template <typename>
+    friend class CLIWateringT;
     template <typename>
     friend class CLICloudT;
 

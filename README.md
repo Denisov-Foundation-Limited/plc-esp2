@@ -97,6 +97,8 @@ plc#
 - `show thermo <id>` - детали устройства
 - `show tanks` - список баков
 - `show tank <id>` - детали бака
+- `show watering` - список правил полива
+- `show watering <id>` - детали правила
 - `show septic` - список септика
 - `show septic <id>` - детали септика
 - `show security` - список датчиков охраны
@@ -130,7 +132,7 @@ plc#
 - `logout` - завершить сессию
 - `exit` - завершить сессию
 - `help` / `?` - список команд
-- `help <topic>` - справка (show, wifi, user, system, tgbot, cloud, socket, meteo, thermo, tank, septic, security)
+- `help <topic>` - справка (show, wifi, user, system, tgbot, cloud, socket, meteo, thermo, tank, watering, septic, security)
 
 ### Config (`plc(config)#`)
 
@@ -146,6 +148,7 @@ plc#
 - `meteo` - вход в контекст meteo
 - `thermo` - вход в контекст термо
 - `tank` - вход в контекст баков
+- `watering` - вход в контекст полива
 - `septic` - вход в контекст септика
 - `security` - вход в контекст охраны
 - `exit` - выход в enable
@@ -273,6 +276,26 @@ plc#
 - `valve <id> <port|none>` - реле клапана
 - `pump <id> <port|none>` - реле насоса
 - `alarm <id> <port|none>` - реле аварии
+- `exit` - выход в config
+- `end` - выход в enable
+- `help` / `?` - список команд
+- `help <topic>` - справка по теме
+
+### Watering (`plc(config-watering)#`)
+
+- `show` - список правил
+- `show <id>` - детали правила
+- `name <id> <text>` - имя правила
+- `enable <id>` - включить правило
+- `disable <id>` - выключить правило
+- `status <id> <on|off>` - мониторинг времени
+- `port <id> <port|none>` - GPIO порт
+- `tank <id> <tank_id|none>` - привязать бак
+- `date <id> <YYYY-MM-DD>` - дата старта
+- `time <id> <HH:MM>` - время старта
+- `duration <id> <sec>` - длительность (сек)
+- `resume <id> <on|off>` - продолжать после наполнения
+- `resume_level <id> <low|mid|full>` - продолжать при уровне >= выбранного
 - `exit` - выход в config
 - `end` - выход в enable
 - `help` / `?` - список команд

@@ -203,6 +203,21 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">%TANKS_STATUS%</span>
         </div>
         <div class="tile">
+          <form method="POST" action="/controllers" id="watering-form">
+            <input type="hidden" name="ctrl" value="watering">
+            <div class="tile-head">
+              <a href="/watering">Полив</a>
+              <label class="switch">
+                <input type="checkbox" id="watering-enabled" name="watering_enabled" %WATERING_ENABLED_CHECKED%>
+                <span class="track"><span class="knob"></span></span>
+              </label>
+            </div>
+          </form>
+          <span>Правила и расписание полива</span>
+          <span class="status">Полив: <strong>%WATERING_ENABLED_LABEL%</strong></span>
+          <span class="status">%WATERING_STATUS%</span>
+        </div>
+<div class="tile">
           <form method="POST" action="/controllers" id="septic-form">
             <input type="hidden" name="ctrl" value="septic">
             <div class="tile-head">
@@ -276,6 +291,11 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
     if (tanksToggle && tanksForm) {
       tanksToggle.addEventListener('change', () => tanksForm.submit());
     }
+    const wateringToggle = document.getElementById('watering-enabled');
+    const wateringForm = document.getElementById('watering-form');
+    if (wateringToggle && wateringForm) {
+      wateringToggle.addEventListener('change', () => wateringForm.submit());
+    }
     const septicToggle = document.getElementById('septic-enabled');
     const septicForm = document.getElementById('septic-form');
     if (septicToggle && septicForm) {
@@ -295,6 +315,9 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+
+
 
 
 

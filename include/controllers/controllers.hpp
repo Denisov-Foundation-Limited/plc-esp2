@@ -20,10 +20,12 @@
 #include "controllers/socket_controller.hpp"
 #include "controllers/tank_controller.hpp"
 #include "controllers/thermo_controller.hpp"
+#include "controllers/watering_controller.hpp"
 #include "core/eeprom_storage.hpp"
 #include "core/network/gsm_modem.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
 #include "core/network/telegram/telegram_menu.hpp"
+#include "core/rtc.hpp"
 #include "hal/gpio/gpio.hpp"
 #include "utils/logger.hpp"
 
@@ -31,7 +33,7 @@ class Controllers
 {
 public:
     Controllers(Gpio &gpio, OneWireManager &ow, EepromStorage &storage, Logger &logs,
-                TelegramBot &tgbot, TelegramMenu &tgmenu, GsmModem &gsm)
+                TelegramBot &tgbot, TelegramMenu &tgmenu, GsmModem &gsm, RTC &rtc)
         : _sockets(gpio, logs),
           _meteo(ow, logs),
           _thermo(gpio, _meteo, logs),
@@ -39,6 +41,7 @@ public:
           _septic(gpio, logs, tgbot, tgmenu),
           _security(gpio, ow, logs, tgbot, tgmenu),
           _ring(gpio, logs),
+          _watering(gpio, _tanks, rtc, logs),
           _storage(storage),
           _logs(logs)
     {
@@ -90,6 +93,12 @@ public:
             _logs.error(F("CTRL"), F("Ring init failed"));
             return false;
         }
+        _logs.info(F("CTRL"), F("Watering init"));
+        if (!_watering.begin())
+        {
+            _logs.error(F("CTRL"), F("Watering init failed"));
+            return false;
+        }
         loadFromStorage_();
         _logs.info(F("CTRL"), F("Init done"));
         return true;
@@ -104,6 +113,7 @@ public:
         _septic.task();
         _security.task();
         _ring.task();
+        _watering.task();
         saveIfNeeded_();
     }
 
@@ -123,6 +133,8 @@ public:
             _septic.setControllerEnabled(cfg["septic_enabled"].as<bool>());
         if (cfg["security_enabled"].is<bool>())
             _security.setControllerEnabled(cfg["security_enabled"].as<bool>());
+        if (cfg["watering_enabled"].is<bool>())
+            _watering.setControllerEnabled(cfg["watering_enabled"].as<bool>());
         if (cfg["ring"].is<JsonObjectConst>())
             _ring.applyConfig(cfg["ring"].as<JsonObjectConst>());
         const bool has_lights = cfg["lights"].is<JsonArrayConst>();
@@ -140,6 +152,8 @@ public:
             _septic.applyConfig(cfg["septic"].as<JsonArrayConst>());
         if (cfg["security"].is<JsonArrayConst>())
             _security.applyConfig(cfg["security"].as<JsonArrayConst>());
+        if (cfg["watering"].is<JsonArrayConst>())
+            _watering.applyConfig(cfg["watering"].as<JsonArrayConst>());
         if (cfg["security_keys"].is<JsonArrayConst>())
             _security.applyKeys(cfg["security_keys"].as<JsonArrayConst>());
         if (cfg["security_rfid_keys"].is<JsonArrayConst>())
@@ -177,6 +191,9 @@ public:
         out["security_enabled"] = _security.controllerEnabled();
         JsonArray sec = out["security"].to<JsonArray>();
         _security.serialize(sec);
+        out["watering_enabled"] = _watering.controllerEnabled();
+        JsonArray watering = out["watering"].to<JsonArray>();
+        _watering.serialize(watering);
         JsonObject ring = out["ring"].to<JsonObject>();
         _ring.serialize(ring);
         JsonArray keys = out["security_keys"].to<JsonArray>();
@@ -203,6 +220,8 @@ public:
     const SecurityController &security() const { return _security; }
     RingController &ring() { return _ring; }
     const RingController &ring() const { return _ring; }
+    WateringController &watering() { return _watering; }
+    const WateringController &watering() const { return _watering; }
     void setSaveIntervalMs(uint32_t ms) { _save_interval_ms = ms; }
 
 private:
@@ -213,6 +232,7 @@ private:
     SepticController _septic;
     SecurityController _security;
     RingController _ring;
+    WateringController _watering;
     EepromStorage &_storage;
     Logger &_logs;
     uint32_t _last_save_ms = 0;
@@ -240,6 +260,13 @@ private:
         EepromStorage::SecuritySnapshot ssnap;
         if (_storage.loadSecurity(ssnap))
             _security.applySnapshot(ssnap.flags);
+        EepromStorage::WateringSnapshot wsnap;
+        if (_storage.loadWatering(wsnap))
+            _watering.applySnapshot(wsnap.status_mask, EepromStorage::kWateringMaskBytes);
+        EepromStorage::WateringRuntimeSnapshot wtsnap;
+        if (_storage.loadWateringRuntime(wtsnap))
+            _watering.applyRuntimeSnapshot(wtsnap.active_mask, wtsnap.paused_mask, wtsnap.remaining_ms,
+                                           wtsnap.last_start_key, EepromStorage::kWateringMaskBytes);
     }
 
     void saveIfNeeded_()
@@ -292,6 +319,21 @@ private:
             EepromStorage::SecuritySnapshot ssnap;
             _security.buildSnapshot(ssnap.flags);
             if (_storage.saveSecurity(ssnap))
+                saved = true;
+        }
+        if (_watering.takeDirty())
+        {
+            EepromStorage::WateringSnapshot wsnap;
+            _watering.buildSnapshot(wsnap.status_mask, EepromStorage::kWateringMaskBytes);
+            if (_storage.saveWatering(wsnap))
+                saved = true;
+        }
+        if (_watering.takeRuntimeDirty())
+        {
+            EepromStorage::WateringRuntimeSnapshot wtsnap;
+            _watering.buildRuntimeSnapshot(wtsnap.active_mask, wtsnap.paused_mask, wtsnap.remaining_ms,
+                                           wtsnap.last_start_key, EepromStorage::kWateringMaskBytes);
+            if (_storage.saveWateringRuntime(wtsnap))
                 saved = true;
         }
         if (saved)

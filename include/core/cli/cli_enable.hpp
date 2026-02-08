@@ -18,6 +18,7 @@
 #include "controllers/meteo_controller.hpp"
 #include "controllers/thermo_controller.hpp"
 #include "controllers/tank_controller.hpp"
+#include "controllers/watering_controller.hpp"
 
 template <typename ConsoleT>
 class CLIEnableT
@@ -68,6 +69,10 @@ public:
             _c._io->print(F("    show tank <id>"));
             printTankIdRangeInline_();
             _c._io->println(F(" - tank details"));
+            _c._io->println(F("    show watering   - list watering rules"));
+            _c._io->print(F("    show watering <id>"));
+            _c._watering_cli.printIdRangeInline();
+            _c._io->println(F(" - rule details"));
             _c._io->println(F("    show septic     - list septic"));
             _c._io->print(F("    show septic <id>"));
             _c._septic_cli.printIdRangeInline();

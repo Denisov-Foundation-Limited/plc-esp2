@@ -20,6 +20,7 @@
 class StackCache
 {
 public:
+    static constexpr uint16_t kWateringPageSize = 10;
     // Types
     struct StackSocketItem
     {
@@ -503,6 +504,57 @@ public:
                 items[i] = StackTankItem{};
         }
     };
+    struct StackWateringItem
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        bool status = false;
+        uint8_t port = WateringController::kInvalidPort;
+        uint8_t tank_id = 0;
+        uint8_t weekdays_mask = 0;
+        uint8_t hour = 0;
+        uint8_t minute = 0;
+        uint32_t duration_sec = 0;
+        bool resume_after_refill = false;
+        uint8_t resume_level = 0;
+        bool active = false;
+        bool paused = false;
+        uint32_t remaining_ms = 0;
+        static constexpr size_t kNameLen = 48;
+        char name[kNameLen] = {};
+    };
+    struct StackWateringCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        StackWateringItem *items = nullptr;
+        size_t capacity = WateringController::kRuleCount;
+        size_t item_count = 0;
+        uint16_t total_expected = 0;
+        uint16_t next_offset = 0;
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            item_count = 0;
+            total_expected = 0;
+            next_offset = 0;
+            if (!items)
+                return;
+            for (size_t i = 0; i < capacity; ++i)
+                items[i] = StackWateringItem{};
+        }
+    };
     struct StackNodeStatusCache
     {
         uint32_t node_id = 0;
@@ -625,9 +677,14 @@ public:
 
     StackTankCache &tanksLocal() { return _stack_tanks_cache[0]; }
     const StackTankCache &tanksLocal() const { return _stack_tanks_cache[0]; }
+    StackWateringCache &wateringLocal() { return _stack_watering_cache[0]; }
+    const StackWateringCache &wateringLocal() const { return _stack_watering_cache[0]; }
     StackTankCache *tanksCache(uint32_t node_id) { return findStackTanksCache_(node_id, false); }
     const StackTankCache *tanksCache(uint32_t node_id) const { return findStackTanksCache_(node_id, false); }
     bool requestTanks(uint32_t node_id) { return requestStackTanks_(node_id); }
+    StackWateringCache *wateringCache(uint32_t node_id) { return findStackWateringCache_(node_id, false); }
+    const StackWateringCache *wateringCache(uint32_t node_id) const { return findStackWateringCache_(node_id, false); }
+    bool requestWatering(uint32_t node_id) { return requestStackWatering_(node_id); }
 
     StackNodeStatusCache *statusCache(uint32_t node_id) { return findStackNodeStatusCache_(node_id, false); }
     const StackNodeStatusCache *statusCache(uint32_t node_id) const { return findStackNodeStatusCache_(node_id, false); }
@@ -820,6 +877,14 @@ private:
                 cache.capacity = 0;
             cache.reset();
         }
+        for (auto &cache : _stack_watering_cache)
+        {
+            cache.items = allocItems_<StackWateringItem>(cache.capacity, "watering",
+                                                        &cache - _stack_watering_cache, _log, true);
+            if (!cache.items)
+                cache.capacity = 0;
+            cache.reset();
+        }
     }
 
     void releaseCaches_()
@@ -884,6 +949,11 @@ private:
             releaseItems_(cache.items, cache.capacity);
             cache.items = nullptr;
         }
+        for (auto &cache : _stack_watering_cache)
+        {
+            releaseItems_(cache.items, cache.capacity);
+            cache.items = nullptr;
+        }
         _alloc_ready = false;
     }
 
@@ -926,6 +996,8 @@ private:
             log_fail("septic", i, _stack_septic_cache[i].items, _stack_septic_cache[i].capacity);
         for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
             log_fail("tanks", i, _stack_tanks_cache[i].items, _stack_tanks_cache[i].capacity);
+        for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
+            log_fail("watering", i, _stack_watering_cache[i].items, _stack_watering_cache[i].capacity);
     }
 
     void handleStackFrame_(uint32_t node_id, const StackFrame &frame)
@@ -1208,6 +1280,55 @@ private:
                 send_ok(data);
                 return;
             }
+            if ((StackFeature)feature == StackFeature::Watering && action == "get")
+            {
+                StackWateringCache *cache = findStackWateringCache_(target, false);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    requestStackWatering_(target);
+                    send_err("no_data");
+                    return;
+                }
+                DynamicJsonDocument data(4096);
+                const uint16_t offset = params["offset"] | 0u;
+                const uint16_t limit = params["limit"] | 0u;
+                const uint16_t page_limit = (limit == 0) ? kWateringPageSize : limit;
+                const uint16_t total = (uint16_t)cache->item_count;
+                data["total"] = total;
+                data["offset"] = offset;
+                JsonArray items = data["items"].to<JsonArray>();
+                uint16_t sent = 0;
+                for (size_t i = offset; i < cache->item_count && sent < page_limit; ++i)
+                {
+                    const StackWateringItem &it = cache->items[i];
+                    JsonObject o = items.add<JsonObject>();
+                    o["id"] = (unsigned)it.id;
+                    o["enabled"] = it.enabled;
+                    o["status"] = it.status;
+                    if (it.name[0])
+                        o["name"] = it.name;
+                    if (it.port != WateringController::kInvalidPort)
+                        o["port"] = it.port;
+                    if (it.tank_id)
+                        o["tank"] = it.tank_id;
+                    if (it.weekdays_mask)
+                        o["weekdays_mask"] = it.weekdays_mask;
+                    o["hour"] = it.hour;
+                    o["minute"] = it.minute;
+                    if (it.duration_sec)
+                        o["duration_s"] = it.duration_sec;
+                    o["resume"] = it.resume_after_refill;
+                    o["resume_level"] = it.resume_level;
+                    o["active"] = it.active;
+                    o["paused"] = it.paused;
+                    if (it.remaining_ms)
+                        o["remaining_ms"] = it.remaining_ms;
+                    ++sent;
+                }
+                data["count"] = sent;
+                send_ok(data);
+                return;
+            }
             return;
         }
         if (frame.type != (uint8_t)StackMsgType::Ack &&
@@ -1228,13 +1349,14 @@ private:
         StackThermoCache *thermo_cache = findStackThermoCacheByCmd_(cmd_id);
         StackSepticCache *septic_cache = findStackSepticCacheByCmd_(cmd_id);
         StackTankCache *tanks_cache = findStackTanksCacheByCmd_(cmd_id);
+        StackWateringCache *watering_cache = findStackWateringCacheByCmd_(cmd_id);
         StackI2cCache *i2c_cache = findStackI2cCacheByCmd_(cmd_id);
         StackOwCache *ow_cache = findStackOwCacheByCmd_(cmd_id);
         bool status_is_plc = false;
         bool status_is_rtc = false;
         StackNodeStatusCache *status_cache = findStackNodeStatusCacheByCmd_(cmd_id, status_is_plc, status_is_rtc);
         if (!sock_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !sec_prearm_cache && !meteo_cache &&
-            !thermo_cache && !septic_cache && !tanks_cache && !i2c_cache && !ow_cache && !status_cache)
+            !thermo_cache && !septic_cache && !tanks_cache && !watering_cache && !i2c_cache && !ow_cache && !status_cache)
             return;
         const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (doc["ok"] | false);
         JsonArrayConst items = doc["data"]["items"].as<JsonArrayConst>();
@@ -1605,6 +1727,61 @@ private:
             }
         }
 
+        if (watering_cache)
+        {
+            watering_cache->pending = false;
+            watering_cache->updated_ms = millis();
+            watering_cache->last_ok = false;
+            watering_cache->last_error = "";
+            if (!ok)
+            {
+                watering_cache->last_error = doc["error"] | "error";
+            }
+            else if (!items.isNull())
+            {
+                const uint16_t total = doc["data"]["total"] | 0u;
+                const uint16_t offset = doc["data"]["offset"] | 0u;
+                const uint16_t count = doc["data"]["count"] | (uint16_t)items.size();
+                if (offset == 0)
+                {
+                    watering_cache->item_count = 0;
+                    watering_cache->total_expected = total;
+                    watering_cache->next_offset = 0;
+                }
+                for (JsonObjectConst item : items)
+                {
+                    if (watering_cache->item_count >= WateringController::kRuleCount)
+                        break;
+                    if (!item["id"].is<unsigned>())
+                        continue;
+                    StackWateringItem &dst = watering_cache->items[watering_cache->item_count++];
+                    dst.id = (uint8_t)item["id"].as<unsigned>();
+                    dst.enabled = item["enabled"] | false;
+                    dst.status = item["status"] | false;
+                    dst.port = (uint8_t)(item["port"] | WateringController::kInvalidPort);
+                    dst.tank_id = (uint8_t)(item["tank"] | 0u);
+                    dst.weekdays_mask = (uint8_t)(item["weekdays_mask"] | 0u);
+                    dst.hour = (uint8_t)(item["hour"] | 0u);
+                    dst.minute = (uint8_t)(item["minute"] | 0u);
+                    dst.duration_sec = item["duration_s"] | 0u;
+                    dst.resume_after_refill = item["resume"] | false;
+                    dst.resume_level = (uint8_t)(item["resume_level"] | 0u);
+                    dst.active = item["active"] | false;
+                    dst.paused = item["paused"] | false;
+                    dst.remaining_ms = item["remaining_ms"] | 0u;
+                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                }
+                watering_cache->has_data = true;
+                watering_cache->last_ok = true;
+                watering_cache->node_id = node_id;
+                if (total > 0 && (uint16_t)watering_cache->item_count < total)
+                {
+                    watering_cache->next_offset = offset + count;
+                    requestStackWateringPage_(node_id, *watering_cache);
+                }
+            }
+        }
+
         if (i2c_cache)
         {
             i2c_cache->pending = false;
@@ -1958,6 +2135,70 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        return true;
+    }
+
+    bool requestStackWatering_(uint32_t node_id)
+    {
+        if (!_stack_master)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackWateringCache *cache = findStackWateringCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+            return false;
+        if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        cache->next_offset = 0;
+        cache->total_expected = 0;
+        const uint16_t cmd_id = nextStackCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Watering;
+        doc["action"] = "get";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["offset"] = cache->next_offset;
+        params["limit"] = kWateringPageSize;
+        char payload[96] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
+                                   (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
+        return true;
+    }
+
+    bool requestStackWateringPage_(uint32_t node_id, StackWateringCache &cache)
+    {
+        if (!_stack_master)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        if (cache.pending)
+            return false;
+        const uint16_t cmd_id = nextStackCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Watering;
+        doc["action"] = "get";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["offset"] = cache.next_offset;
+        params["limit"] = kWateringPageSize;
+        char payload[96] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
+                                   (const uint8_t *)payload, len))
+            return false;
+        cache.pending = true;
+        cache.pending_cmd_id = cmd_id;
         return true;
     }
 
@@ -2649,6 +2890,46 @@ private:
         return nullptr;
     }
 
+    StackWateringCache *findStackWateringCache_(uint32_t node_id, bool create)
+    {
+        if (!_stack_master)
+            return nullptr;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return nullptr;
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _stack_watering_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _stack_watering_cache)
+        {
+            if (c.node_id == 0)
+            {
+                c.reset();
+                c.node_id = node_id;
+                return &c;
+            }
+        }
+        return nullptr;
+    }
+
+    const StackWateringCache *findStackWateringCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackCache *>(this)->findStackWateringCache_(node_id, create);
+    }
+
+    StackWateringCache *findStackWateringCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _stack_watering_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
     StackNodeStatusCache *findStackNodeStatusCache_(uint32_t node_id, bool create)
     {
         if (!_stack_master)
@@ -2738,6 +3019,7 @@ private:
     StackThermoCache _stack_thermo_cache[StackMaster::MAX_SESSIONS] = {};
     StackSepticCache _stack_septic_cache[StackMaster::MAX_SESSIONS] = {};
     StackTankCache _stack_tanks_cache[StackMaster::MAX_SESSIONS] = {};
+    StackWateringCache _stack_watering_cache[StackMaster::MAX_SESSIONS] = {};
     StackNodeStatusCache _stack_status_cache[StackMaster::MAX_SESSIONS] = {};
     uint16_t _stack_cmd_id = 0;
 };

@@ -151,6 +151,11 @@ public:
         return enqueueCommand("AT+CREG?", "OK", 1000, cb, ctx);
     }
 
+    bool enableRegUrc(CommandCallback cb = nullptr, void *ctx = nullptr)
+    {
+        return enqueueCommand("AT+CREG=1", "OK", 1000, cb, ctx);
+    }
+
     bool sendUssd(const String &code, CommandCallback cb = nullptr, void *ctx = nullptr)
     {
         const String cmd = String("AT+CUSD=1,\"") + code + "\",15";

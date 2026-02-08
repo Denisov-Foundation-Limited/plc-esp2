@@ -48,6 +48,7 @@
 #include "core/network/web/pages/web_interface_meteo.hpp"
 #include "core/network/web/pages/web_interface_thermo.hpp"
 #include "core/network/web/pages/web_interface_tanks.hpp"
+#include "core/network/web/pages/web_interface_watering.hpp"
 #include "core/network/web/pages/web_interface_admin.hpp"
 #include "core/network/web/pages/web_interface_logs.hpp"
 #include "core/network/web/pages/web_interface_telegram.hpp"
@@ -77,6 +78,7 @@ class TelegramHandler;
 class CloudHandler;
 class MeteoHandler;
 class TankHandler;
+class WateringHandler;
 class RfidHandler;
 class RingClientHandler;
 class StackSlaveHandler;
@@ -248,6 +250,7 @@ private:
     friend class CloudHandler;
     friend class MeteoHandler;
     friend class TankHandler;
+    friend class WateringHandler;
     friend class RfidHandler;
     friend class RingClientHandler;
     struct StackSocketItem;
@@ -272,6 +275,8 @@ private:
     struct StackSepticCache;
     struct StackTankItem;
     struct StackTankCache;
+    struct StackWateringItem;
+    struct StackWateringCache;
     struct StackNodeStatusCache;
     void handleAdminSave_(AsyncWebServerRequest *request)
     {
@@ -1147,6 +1152,40 @@ private:
         return html;
     }
 
+    String wateringDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
+    {
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
+            return "";
+        String html;
+        html.reserve(512);
+        html += "<div class=\"row\">";
+        html += "<span class=\"muted\">Устройство</span>";
+        html += "<select id=\"watering-device\" class=\"field mini\">";
+        html += "<option value=\"local\"";
+        if (!stack_view)
+            html += " selected";
+        html += ">local</option>";
+        const size_t count = _stack_master->nodeCount();
+        for (size_t i = 0; i < count; ++i)
+        {
+            const uint32_t id = _stack_master->nodeIdAt(i);
+            html += "<option value=\"";
+            html += String((unsigned long)id);
+            html += "\"";
+            if (stack_view && id == selected_node_id)
+                html += " selected";
+            html += ">";
+            String name = _stack_master->nodeNameAt(i);
+            if (name.length() > 0)
+                appendHtmlEscaped_(html, name.c_str());
+            else
+                html += stackNodeIdHex_(id);
+            html += "</option>";
+        }
+        html += "</select></div>";
+        return html;
+    }
+
     String ringDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
     {
         if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
@@ -1339,6 +1378,24 @@ private:
         return "OK";
     }
 
+    String stackWateringStatusText_(uint32_t node_id) const
+    {
+        const StackWateringCache *cache = findStackWateringCache_(node_id, false);
+        if (!cache)
+            return "Нет данных со слейва";
+        if (cache->pending)
+            return "Запрос данных со слейва...";
+        if (!cache->last_ok && cache->last_error.length())
+        {
+            String msg = "Ошибка: ";
+            msg += cache->last_error;
+            return msg;
+        }
+        if (!cache->has_data)
+            return "Нет данных со слейва";
+        return "OK";
+    }
+
     String stackLightsStatusText_(uint32_t node_id) const
     {
         const StackLightsCache *cache = findStackLightsCache_(node_id, false);
@@ -1489,6 +1546,12 @@ private:
     }
 
     bool isStackTanksView_(uint32_t node_id) const
+    {
+        return node_id != 0 && _stack_master &&
+               stackRole_() == ConfigsManagerIface::StackRole::Master;
+    }
+
+    bool isStackWateringView_(uint32_t node_id) const
     {
         return node_id != 0 && _stack_master &&
                stackRole_() == ConfigsManagerIface::StackRole::Master;
@@ -1784,13 +1847,15 @@ private:
         StackThermoCache *thermo_cache = findStackThermoCacheByCmd_(cmd_id);
         StackSepticCache *septic_cache = findStackSepticCacheByCmd_(cmd_id);
         StackTankCache *tanks_cache = findStackTanksCacheByCmd_(cmd_id);
+        StackWateringCache *watering_cache = findStackWateringCacheByCmd_(cmd_id);
         StackI2cCache *i2c_cache = findStackI2cCacheByCmd_(cmd_id);
         StackOwCache *ow_cache = findStackOwCacheByCmd_(cmd_id);
         bool status_is_plc = false;
         bool status_is_rtc = false;
         StackNodeStatusCache *status_cache = findStackNodeStatusCacheByCmd_(cmd_id, status_is_plc, status_is_rtc);
         if (!sock_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !meteo_cache &&
-            !thermo_cache && !septic_cache && !tanks_cache && !i2c_cache && !ow_cache && !status_cache)
+            !thermo_cache && !septic_cache && !tanks_cache && !watering_cache && !i2c_cache && !ow_cache &&
+            !status_cache)
             return;
         const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (doc["ok"] | false);
         JsonArrayConst items = doc["data"]["items"].as<JsonArrayConst>();
@@ -2130,6 +2195,53 @@ private:
             }
         }
 
+        if (watering_cache)
+        {
+            watering_cache->pending = false;
+            watering_cache->updated_ms = millis();
+            watering_cache->last_ok = false;
+            watering_cache->last_error = "";
+            if (!ok)
+            {
+                watering_cache->last_error = doc["error"] | "error";
+            }
+            else if (!items.isNull())
+            {
+                watering_cache->item_count = 0;
+                watering_cache->total = (uint16_t)(doc["data"]["total"] | 0u);
+                watering_cache->offset = (uint16_t)(doc["data"]["offset"] | 0u);
+                for (JsonObjectConst item : items)
+                {
+                    if (watering_cache->item_count >= WateringController::kRuleCount)
+                        break;
+                    if (!item["id"].is<unsigned>())
+                        continue;
+                    StackWateringItem &dst = watering_cache->items[watering_cache->item_count++];
+                    dst.id = (uint8_t)item["id"].as<unsigned>();
+                    dst.enabled = item["enabled"] | false;
+                    dst.status = item["status"] | false;
+                    if (item["port"].is<int>() || item["port"].is<unsigned>())
+                        dst.port = (uint8_t)(item["port"] | WateringController::kInvalidPort);
+                    else
+                    dst.port = WateringController::kInvalidPort;
+                    dst.tank_id = (uint8_t)(item["tank"] | 0u);
+                    dst.weekdays_mask = (uint8_t)(item["weekdays_mask"] | 0u);
+                    dst.hour = (uint8_t)(item["hour"] | 0u);
+                    dst.minute = (uint8_t)(item["minute"] | 0u);
+                    dst.duration_sec = (uint32_t)(item["duration_s"] | 0u);
+                    dst.resume_after_refill = item["resume"] | false;
+                    dst.resume_level = (uint8_t)(item["resume_level"] | 0u);
+                    dst.active = item["active"] | false;
+                    dst.paused = item["paused"] | false;
+                    dst.remaining_ms = (uint32_t)(item["remaining_ms"] | 0u);
+                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                }
+                watering_cache->has_data = true;
+                watering_cache->last_ok = true;
+                watering_cache->node_id = node_id;
+            }
+        }
+
         if (i2c_cache)
         {
             i2c_cache->pending = false;
@@ -2452,6 +2564,40 @@ private:
         doc["feature"] = (uint8_t)StackFeature::Tanks;
         doc["action"] = "get";
         char payload[96] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
+                                   (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
+        return true;
+    }
+
+    bool requestStackWatering_(uint32_t node_id)
+    {
+        if (!_stack_master)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackWateringCache *cache = findStackWateringCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+            return false;
+        if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        const uint16_t cmd_id = nextStackCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Watering;
+        doc["action"] = "get";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["offset"] = 0;
+        params["limit"] = (uint16_t)WateringController::kRuleCount;
+        char payload[128] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
             return false;
@@ -2959,6 +3105,33 @@ private:
             return nullptr;
         if (_stack_tanks_cache.pending && _stack_tanks_cache.pending_cmd_id == cmd_id)
             return &_stack_tanks_cache;
+        return nullptr;
+    }
+
+    StackWateringCache *findStackWateringCache_(uint32_t node_id, bool create)
+    {
+        if (node_id == 0)
+            return nullptr;
+        if (_stack_watering_cache.node_id == node_id)
+            return &_stack_watering_cache;
+        if (!create)
+            return nullptr;
+        _stack_watering_cache = StackWateringCache{};
+        _stack_watering_cache.node_id = node_id;
+        return &_stack_watering_cache;
+    }
+
+    const StackWateringCache *findStackWateringCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<WebInterface *>(this)->findStackWateringCache_(node_id, create);
+    }
+
+    StackWateringCache *findStackWateringCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        if (_stack_watering_cache.pending && _stack_watering_cache.pending_cmd_id == cmd_id)
+            return &_stack_watering_cache;
         return nullptr;
     }
 
@@ -4887,6 +5060,247 @@ private:
         return items;
     }
 
+
+    String listStackWateringHtml_(uint32_t node_id)
+    {
+        StackWateringCache *cache = findStackWateringCache_(node_id, false);
+        if (!cache || !cache->has_data)
+            return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
+        if (cache->item_count == 0)
+            return "<div class=\"tile empty\"><strong>Правила отсутствуют</strong></div>";
+        String items;
+        size_t reserve = 2048u + cache->item_count * 520u;
+        if (reserve < 8192u)
+            reserve = 8192u;
+        items.reserve(reserve);
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const StackWateringItem &cfg = cache->items[i];
+            const char *state_label = cfg.active ? "активно" : (cfg.paused ? "пауза" : "ожидание");
+            items += "<div class=\"tile\" data-active=\"";
+            items += cfg.active ? "1\">" : "0\">";
+            items += "<div class=\"watering-visual\"><div class=\"tile-head\"><strong>Правило ";
+            items += String((unsigned)cfg.id);
+            items += "</strong><span class=\"badge\">";
+            items += cfg.enabled ? "вкл" : "выкл";
+            items += "</span></div><svg class=\"watering-icon\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M12 2c-2.3 3.5-6 7.4-6 11a6 6 0 0 0 12 0c0-3.6-3.7-7.5-6-11zm0 18a4 4 0 0 1-4-4c0-2.2 2.3-5.2 4-7.7 1.7 2.5 4 5.5 4 7.7a4 4 0 0 1-4 4z\"/></svg><div class=\"status-line\"><span class=\"muted\">Состояние</span><span class=\"status-value\">";
+            items += state_label;
+            items += "</span></div></div>";
+            items += "<div><div class=\"tile-head\"><strong>";
+            if (cfg.name[0])
+                appendHtmlEscaped_(items, cfg.name);
+            else
+                items += "Правило полива";
+            items += "</strong></div>";
+            items += "<div class=\"form-grid\">";
+            items += "<div class=\"form-row\"><label>Монитор</label><div class=\"field mini\">";
+            items += cfg.status ? "вкл" : "выкл";
+            items += "</div></div>";
+            items += "<div class=\"form-row\"><label>Кран</label><div class=\"field mini\">";
+            if (cfg.port != WateringController::kInvalidPort)
+                items += String((unsigned)cfg.port);
+            else
+                items += "--";
+            items += "</div></div>";
+            items += "<div class=\"form-row full\"><label>Дни</label><div class=\"field\">";
+            static const uint8_t kWeekdayMap[7] = {2, 3, 4, 5, 6, 7, 1};
+            static const char *kWeekdayLabels[7] = {"Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"};
+            bool any_day = false;
+            for (size_t wi = 0; wi < 7; ++wi)
+            {
+                const uint8_t dow = kWeekdayMap[wi];
+                if (cfg.weekdays_mask & (uint8_t)(1u << (dow - 1u)))
+                {
+                    if (any_day)
+                        items += " ";
+                    items += kWeekdayLabels[wi];
+                    any_day = true;
+                }
+            }
+            if (!any_day)
+                items += "--";
+            items += "</div></div>";
+            items += "<div class=\"form-row\"><label>Время</label><div class=\"field mini\">";
+            if (cfg.weekdays_mask)
+            {
+                char buf[8] = {};
+                snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour, (unsigned)cfg.minute);
+                items += buf;
+            }
+            else
+            {
+                items += "--";
+            }
+            items += "</div></div>";
+            items += "<div class=\"form-row\"><label>Бак</label><div class=\"field mini\">";
+            if (cfg.tank_id)
+                items += String((unsigned)cfg.tank_id);
+            else
+                items += "--";
+            items += "</div></div>";
+            items += "<div class=\"form-row\"><label>Длит. (мин)</label><div class=\"field mini\">";
+            if (cfg.duration_sec)
+                items += String((unsigned long)((cfg.duration_sec + 59) / 60));
+            else
+                items += "--";
+            items += "</div></div>";
+            items += "<div class=\"form-row\"><label>Продолжать</label><div class=\"field mini\">";
+            items += cfg.resume_after_refill ? "вкл" : "выкл";
+            items += "</div></div>";
+            items += "<div class=\"form-row full\"><label>Уровень >=</label><div class=\"field mini\">";
+            if (cfg.tank_id && cfg.resume_after_refill)
+            {
+                const char *level = "low";
+                if (cfg.resume_level == 1)
+                    level = "mid";
+                else if (cfg.resume_level == 2)
+                    level = "full";
+                items += level;
+            }
+            else
+            {
+                items += "--";
+            }
+            items += "</div></div>";
+            items += "</div></div></div>";
+        }
+        return items;
+    }
+
+
+    String listWateringHtml_()
+    {
+        if (!_controllers)
+            return "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>";
+        String items;
+        items.reserve(16384);
+        WateringController &watering = _controllers->watering();
+        auto appendRule = [&](const WateringController::RuleConfig &cfg, const WateringController::RuleState &st)
+        {
+            const char *state_label = st.active ? "активно" : (st.paused ? "пауза" : "ожидание");
+            items += "<div class=\"tile\" data-active=\"";
+            items += st.active ? "1\">" : "0\">";
+            items += "<div class=\"watering-visual\"><div class=\"tile-head\"><strong>Правило ";
+            items += String((unsigned)cfg.id);
+            items += "</strong><span class=\"badge\">";
+            items += cfg.enabled ? "вкл" : "выкл";
+            items += "</span></div><svg class=\"watering-icon\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M12 2c-2.3 3.5-6 7.4-6 11a6 6 0 0 0 12 0c0-3.6-3.7-7.5-6-11zm0 18a4 4 0 0 1-4-4c0-2.2 2.3-5.2 4-7.7 1.7 2.5 4 5.5 4 7.7a4 4 0 0 1-4 4z\"/></svg><div class=\"status-line\"><span class=\"muted\">Состояние</span><span class=\"status-value\">";
+            items += state_label;
+            items += "</span></div></div>";
+            items += "<div><div class=\"tile-head\"><strong>";
+            if (cfg.name.length())
+                appendHtmlEscaped_(items, cfg.name.c_str());
+            else
+                items += "Правило полива";
+            items += "</strong><input type=\"hidden\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_en\" value=\"0\"><label class=\"switch\"><input type=\"checkbox\" value=\"1\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_en\"";
+            if (cfg.enabled)
+                items += " checked";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+            items += "<input class=\"field name\" type=\"text\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_name\" value=\"";
+            appendHtmlEscaped_(items, cfg.name.c_str());
+            items += "\"><div class=\"form-grid\">";
+            items += "<div class=\"form-row\"><label>Монитор</label><label class=\"switch\"><input type=\"checkbox\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_status\"";
+            if (st.status)
+                items += " checked";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+            items += "<div class=\"form-row\"><label>Кран</label><select class=\"field mini watering-select\" data-type=\"relay\" data-selected=\"";
+            if (cfg.port != WateringController::kInvalidPort)
+                items += String((unsigned)cfg.port);
+            items += "\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_port\"></select></div>";
+            items += "<div class=\"form-row full\"><label>Дни</label><div class=\"weekday-group\">";
+            static const uint8_t kWeekdayMap[7] = {2, 3, 4, 5, 6, 7, 1};
+            static const char *kWeekdayLabels[7] = {"Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"};
+            for (size_t wi = 0; wi < 7; ++wi)
+            {
+                const uint8_t dow = kWeekdayMap[wi];
+                items += "<label class=\"weekday-item\"><input type=\"checkbox\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_d";
+                items += String((unsigned)dow);
+                items += "\"";
+                if (cfg.weekdays_mask & (uint8_t)(1u << (dow - 1u)))
+                    items += " checked";
+                items += "><span>";
+                items += kWeekdayLabels[wi];
+                items += "</span></label>";
+            }
+            items += "</div></div>";
+            items += "<div class=\"form-row\"><label>Время</label><input class=\"field mini\" type=\"time\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_time\" value=\"";
+            if (cfg.weekdays_mask)
+            {
+                char buf[8] = {};
+                snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour, (unsigned)cfg.minute);
+                items += buf;
+            }
+            items += "\"></div>";
+            items += "<div class=\"form-row\"><label>Бак</label><select class=\"field mini watering-select\" data-type=\"tank\" data-selected=\"";
+            if (cfg.tank_id)
+                items += String((unsigned)cfg.tank_id);
+            items += "\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_tank\"></select></div>";
+            items += "<div class=\"form-row\"><label>Длит. (мин)</label><input class=\"field mini\" type=\"number\" min=\"1\" step=\"1\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_dur\" value=\"";
+            if (cfg.duration_sec)
+                items += String((unsigned long)((cfg.duration_sec + 59) / 60));
+            items += "\"></div>";
+            items += "<div class=\"form-row tank-dependent\"><label>Продолжать</label><label class=\"switch\"><input type=\"checkbox\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_resume\"";
+            if (cfg.resume_after_refill)
+                items += " checked";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+            items += "<div class=\"form-row full tank-dependent resume-dependent\"><label>Уровень >=</label><select class=\"field mini\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_resume_level\"><option value=\"low\"";
+            if (cfg.resume_level == 0)
+                items += " selected";
+            items += ">low</option><option value=\"mid\"";
+            if (cfg.resume_level == 1)
+                items += " selected";
+            items += ">mid</option><option value=\"full\"";
+            if (cfg.resume_level == 2)
+                items += " selected";
+            items += ">full</option></select></div>";
+            items += "</div></div></div>";
+        };
+
+        const WateringController::RuleConfig *first_disabled = nullptr;
+        const WateringController::RuleState *first_disabled_state = nullptr;
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+            const auto *cfg = watering.configByIndex(i);
+            const auto *st = watering.stateByIndex(i);
+            if (!cfg || !st)
+                continue;
+            if (cfg->enabled)
+            {
+                appendRule(*cfg, *st);
+            }
+            else if (!first_disabled)
+            {
+                first_disabled = cfg;
+                first_disabled_state = st;
+            }
+        }
+        if (first_disabled && first_disabled_state)
+            appendRule(*first_disabled, *first_disabled_state);
+        return items;
+    }
+
     String listSepticHtml_()
     {
         if (!_controllers)
@@ -5930,6 +6344,42 @@ private:
     String tankPortOptionsJson_(PortIO::PinType type) const
     {
         return socketPortOptionsJson_(type);
+    }
+
+    String wateringPortOptionsJson_() const
+    {
+        return socketPortOptionsJson_(PortIO::PinType::Relay);
+    }
+
+    String wateringTankOptionsJson_() const
+    {
+        String out;
+        out.reserve(256);
+        out += "[";
+        bool first = true;
+        if (_controllers)
+        {
+            const TankController &tanks = _controllers->tanks();
+            for (size_t i = 0; i < TankController::kTankCount; ++i)
+            {
+                const auto *cfg = tanks.configByIndex(i);
+                if (!cfg || !cfg->enabled)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += "{\"v\":";
+                out += String((unsigned)cfg->id);
+                out += ",\"l\":\"";
+                if (cfg->name.length())
+                    appendJsonEscaped_(out, cfg->name);
+                else
+                    out += String("Tank #") + String((unsigned)cfg->id);
+                out += "\"}";
+                first = false;
+            }
+        }
+        out += "]";
+        return out;
     }
 
     String tankUsedPortsJson_(PortIO::PinType type) const
@@ -8575,6 +9025,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
         hashAdd_(hash, _meteo_status);
         hashAdd_(hash, _thermo_status);
         hashAdd_(hash, _tanks_status);
+        hashAdd_(hash, _watering_status);
         hashAdd_(hash, _septic_status);
         hashAdd_(hash, _ring_status);
         hashAdd_(hash, _security_status);
@@ -8623,6 +9074,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
                 hashAdd_(hash, _controllers->meteo().controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, _controllers->thermo().controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, _controllers->tanks().controllerEnabled() ? 1u : 0u);
+                hashAdd_(hash, _controllers->watering().controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, _controllers->septic().controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, _controllers->ring().controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, _controllers->security().controllerEnabled() ? 1u : 0u);
@@ -8905,6 +9357,66 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
                     hashAdd_(hash, it.valve_on ? 1u : 0u);
                     hashAdd_(hash, it.pump_on ? 1u : 0u);
                     hashAdd_(hash, it.alarm_on ? 1u : 0u);
+                    hashAdd_(hash, it.name);
+                }
+            }
+            return hash;
+        }
+        if (path == "/watering")
+        {
+            if (_controllers)
+            {
+                WateringController &watering = _controllers->watering();
+                for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+                {
+                    const auto *cfg = watering.configByIndex(i);
+                    const auto *st = watering.stateByIndex(i);
+                    if (!cfg || !st)
+                        continue;
+                    hashAdd_(hash, (uint32_t)cfg->id);
+                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cfg->port);
+                    hashAdd_(hash, (uint32_t)cfg->tank_id);
+                    hashAdd_(hash, (uint32_t)cfg->weekdays_mask);
+                    hashAdd_(hash, (uint32_t)cfg->hour);
+                    hashAdd_(hash, (uint32_t)cfg->minute);
+                    hashAdd_(hash, (uint32_t)cfg->duration_sec);
+                    hashAdd_(hash, cfg->resume_after_refill ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cfg->resume_level);
+                    hashAdd_(hash, cfg->name);
+                    hashAdd_(hash, st->status ? 1u : 0u);
+                    hashAdd_(hash, st->active ? 1u : 0u);
+                    hashAdd_(hash, st->paused ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)st->remaining_ms);
+                }
+            }
+            if (_stack_watering_cache.node_id != 0)
+            {
+                const StackWateringCache &c = _stack_watering_cache;
+                hashAdd_(hash, (uint32_t)c.node_id);
+                hashAdd_(hash, (uint32_t)c.item_count);
+                hashAdd_(hash, c.pending ? 1u : 0u);
+                hashAdd_(hash, c.last_ok ? 1u : 0u);
+                hashAdd_(hash, c.last_error);
+                hashAdd_(hash, (uint32_t)c.total);
+                hashAdd_(hash, (uint32_t)c.offset);
+                for (size_t j = 0; j < c.item_count; ++j)
+                {
+                    const StackWateringItem &it = c.items[j];
+                    hashAdd_(hash, (uint32_t)it.id);
+                    hashAdd_(hash, it.enabled ? 1u : 0u);
+                    hashAdd_(hash, it.status ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)it.port);
+                    hashAdd_(hash, (uint32_t)it.tank_id);
+                    hashAdd_(hash, (uint32_t)it.weekdays_mask);
+                    hashAdd_(hash, (uint32_t)it.hour);
+                    hashAdd_(hash, (uint32_t)it.minute);
+                    hashAdd_(hash, (uint32_t)it.duration_sec);
+                    hashAdd_(hash, it.resume_after_refill ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)it.resume_level);
+                    hashAdd_(hash, it.active ? 1u : 0u);
+                    hashAdd_(hash, it.paused ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)it.remaining_ms);
                     hashAdd_(hash, it.name);
                 }
             }
@@ -9585,6 +10097,40 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
         size_t item_count = 0;
     };
     StackTankCache _stack_tanks_cache = {};
+    struct StackWateringItem
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        bool status = false;
+        uint8_t port = WateringController::kInvalidPort;
+        uint8_t tank_id = 0;
+        uint8_t weekdays_mask = 0;
+        uint8_t hour = 0;
+        uint8_t minute = 0;
+        uint32_t duration_sec = 0;
+        bool resume_after_refill = false;
+        uint8_t resume_level = 0;
+        bool active = false;
+        bool paused = false;
+        uint32_t remaining_ms = 0;
+        static constexpr size_t kNameLen = 48;
+        char name[kNameLen] = {};
+    };
+    struct StackWateringCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        uint16_t total = 0;
+        uint16_t offset = 0;
+        StackWateringItem items[WateringController::kRuleCount] = {};
+        size_t item_count = 0;
+    };
+    StackWateringCache _stack_watering_cache = {};
     struct StackNodeStatusCache
     {
         uint32_t node_id = 0;
@@ -9637,6 +10183,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
     String _meteo_status;
     String _thermo_status;
     String _tanks_status;
+    String _watering_status;
     String _septic_status;
     String _ring_status;
     String _security_status;
@@ -9666,6 +10213,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
 #include "core/network/web/handlers/sockets_handler.hpp"
 #include "core/network/web/handlers/lights_handler.hpp"
 #include "core/network/web/handlers/thermo_handler.hpp"
+#include "core/network/web/handlers/watering_handler.hpp"
 #include "core/network/web/handlers/index_handler.hpp"
 #include "core/network/web/handlers/wifi_handler.hpp"
 #include "core/network/web/handlers/manage_handler.hpp"
@@ -9704,6 +10252,7 @@ inline void WebInterface::registerRoutes()
     SocketsHandler::registerRoutes(*this, _server);
     LightsHandler::registerRoutes(*this, _server);
     ThermoHandler::registerRoutes(*this, _server);
+    WateringHandler::registerRoutes(*this, _server);
     MeteoHandler::registerRoutes(*this, _server);
     TankHandler::registerRoutes(*this, _server);
     SepticHandler::registerRoutes(*this, _server);

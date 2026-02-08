@@ -44,6 +44,7 @@
 #include "controllers/socket_controller.hpp"
 #include "controllers/thermo_controller.hpp"
 #include "controllers/tank_controller.hpp"
+#include "controllers/watering_controller.hpp"
 #include "controllers/ring_controller.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/logger.hpp"
@@ -331,7 +332,7 @@ public:
                       PlcControl &plc, RTC &rtc, TelegramClient &telegram, Logger &logs,
                       Extender &ext, SocketController &sockets, MeteoController &meteo,
                       ThermoController &thermo, SepticController &septic, SecurityController &security,
-                      TankController &tanks, RingController &ring)
+                      TankController &tanks, WateringController &watering, RingController &ring)
         : _io(io),
           _ds18b20(ds18b20),
           _ow(ow),
@@ -347,6 +348,7 @@ public:
           _septic(septic),
           _security(security),
           _tanks(tanks),
+          _watering(watering),
           _ring(ring)
     {
     }
@@ -472,6 +474,7 @@ private:
     SepticController &_septic;
     SecurityController &_security;
     TankController &_tanks;
+    WateringController &_watering;
     RingController &_ring;
     StackNode *_node = nullptr;
     ConfigsManagerIface *_configs = nullptr;
@@ -771,6 +774,9 @@ private:
             break;
         case StackFeature::Tanks:
             handleTanks_(cmd_id, action);
+            break;
+        case StackFeature::Watering:
+            handleWatering_(cmd_id, action, params);
             break;
         case StackFeature::Ring:
             handleRing_(cmd_id, action, params);
@@ -1726,6 +1732,71 @@ private:
             o["pump_on"] = st->pump_on;
             o["alarm_on"] = st->alarm_on;
         }
+        sendAck_(cmd_id, doc);
+    }
+
+    void handleWatering_(uint16_t cmd_id, const String &action, JsonVariantConst params)
+    {
+        if (action != "get")
+        {
+            sendErr_(cmd_id, "unsupported");
+            return;
+        }
+        _tx_doc.clear();
+        JsonDocument &doc = _tx_doc;
+        JsonArray arr = doc["items"].to<JsonArray>();
+        const uint16_t offset = params["offset"] | 0u;
+        const uint16_t limit = params["limit"] | 0u;
+        const uint16_t page_limit = (limit == 0) ? 10u : limit;
+        uint16_t enabled_total = 0;
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+            const auto *cfg = _watering.configByIndex(i);
+            if (cfg && cfg->enabled)
+                ++enabled_total;
+        }
+        doc["total"] = enabled_total;
+        doc["offset"] = offset;
+        uint16_t sent = 0;
+        uint16_t skipped = 0;
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+            const auto *cfg = _watering.configByIndex(i);
+            const auto *st = _watering.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            if (skipped < offset)
+            {
+                ++skipped;
+                continue;
+            }
+            if (sent >= page_limit)
+                break;
+            JsonObject o = arr.add<JsonObject>();
+            o["id"] = (unsigned)cfg->id;
+            o["enabled"] = cfg->enabled;
+            o["status"] = st->status;
+            if (cfg->name.length())
+                o["name"] = cfg->name;
+            if (cfg->port != WateringController::kInvalidPort)
+                o["port"] = cfg->port;
+            if (cfg->tank_id)
+                o["tank"] = cfg->tank_id;
+            if (cfg->weekdays_mask)
+                o["weekdays_mask"] = cfg->weekdays_mask;
+            o["hour"] = cfg->hour;
+            o["minute"] = cfg->minute;
+            if (cfg->duration_sec)
+                o["duration_s"] = cfg->duration_sec;
+            o["resume"] = cfg->resume_after_refill;
+            o["resume_level"] = cfg->resume_level;
+            o["active"] = st->active;
+            o["paused"] = st->paused;
+            if (st->remaining_ms)
+                o["remaining_ms"] = st->remaining_ms;
+            ++sent;
+        }
+        doc["count"] = sent;
         sendAck_(cmd_id, doc);
     }
 

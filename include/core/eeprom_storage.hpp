@@ -30,6 +30,8 @@ public:
     static constexpr uint16_t kThermoTargetBytes = (uint16_t)(kThermoCount * sizeof(int16_t));
     static constexpr uint16_t kTankCount = 20;
     static constexpr uint16_t kTankMaskBytes = (kTankCount + 7) / 8;
+    static constexpr uint16_t kWateringCount = 30;
+    static constexpr uint16_t kWateringMaskBytes = (kWateringCount + 7) / 8;
 
     struct SocketSnapshot
     {
@@ -57,6 +59,19 @@ public:
     struct SecuritySnapshot
     {
         uint8_t flags = 0;
+    };
+
+    struct WateringSnapshot
+    {
+        uint8_t status_mask[kWateringMaskBytes] = {};
+    };
+
+    struct WateringRuntimeSnapshot
+    {
+        uint8_t active_mask[kWateringMaskBytes] = {};
+        uint8_t paused_mask[kWateringMaskBytes] = {};
+        uint32_t remaining_ms[kWateringCount] = {};
+        uint32_t last_start_key[kWateringCount] = {};
     };
 
     static constexpr uint8_t kSecurityArmedMask = 0x01;
@@ -87,6 +102,16 @@ public:
     {
         _security_base = base;
         _security_base_set = true;
+    }
+    void setWateringBase(uint16_t base)
+    {
+        _watering_base = base;
+        _watering_base_set = true;
+    }
+    void setWateringRuntimeBase(uint16_t base)
+    {
+        _watering_runtime_base = base;
+        _watering_runtime_base_set = true;
     }
     void setReady(bool ready) { _ready = ready; }
     bool isReady() const { return _ready; }
@@ -431,6 +456,149 @@ public:
         return true;
     }
 
+    bool saveWatering(const WateringSnapshot &snap)
+    {
+        if (!_eeprom)
+            return false;
+        uint16_t slot = 0;
+        uint32_t seq = 1;
+        if (_wl_slots > 1 && _watering_has_seq)
+        {
+            slot = (uint16_t)((_watering_last_slot + 1) % _wl_slots);
+            seq = _watering_last_seq + 1;
+        }
+        const uint16_t base = wateringSlotBase_(slot);
+        WateringHeader hdr{};
+        hdr.magic = kWateringMagic;
+        hdr.version = kWateringVersion;
+        hdr.watering_count = kWateringCount;
+        hdr.seq = seq;
+        if (!_eeprom->write(base, reinterpret_cast<const uint8_t *>(&hdr), sizeof(hdr)))
+            return false;
+        const uint16_t off = base + sizeof(hdr);
+        if (!_eeprom->write(off, snap.status_mask, kWateringMaskBytes))
+            return false;
+        _watering_last_slot = slot;
+        _watering_last_seq = seq;
+        _watering_has_seq = true;
+        return true;
+    }
+
+    bool loadWatering(WateringSnapshot &out)
+    {
+        if (!_eeprom)
+            return false;
+        WateringHeader best_hdr{};
+        uint16_t best_slot = 0;
+        bool found = false;
+        const uint16_t slots = (_wl_slots == 0) ? 1 : _wl_slots;
+        for (uint16_t i = 0; i < slots; ++i)
+        {
+            WateringHeader hdr{};
+            const uint16_t base = wateringSlotBase_(i);
+            if (!_eeprom->read(base, reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)))
+                continue;
+            if (hdr.magic != kWateringMagic || hdr.version != kWateringVersion ||
+                hdr.watering_count != kWateringCount)
+                continue;
+            if (!found || isSeqNewer_(hdr.seq, best_hdr.seq))
+            {
+                best_hdr = hdr;
+                best_slot = i;
+                found = true;
+            }
+        }
+        if (!found)
+            return false;
+        const uint16_t off = wateringSlotBase_(best_slot) + sizeof(best_hdr);
+        if (!_eeprom->read(off, out.status_mask, kWateringMaskBytes))
+            return false;
+        _watering_last_slot = best_slot;
+        _watering_last_seq = best_hdr.seq;
+        _watering_has_seq = true;
+        return true;
+    }
+
+    bool saveWateringRuntime(const WateringRuntimeSnapshot &snap)
+    {
+        if (!_eeprom)
+            return false;
+        uint16_t slot = 0;
+        uint32_t seq = 1;
+        if (_wl_slots > 1 && _watering_runtime_has_seq)
+        {
+            slot = (uint16_t)((_watering_runtime_last_slot + 1) % _wl_slots);
+            seq = _watering_runtime_last_seq + 1;
+        }
+        const uint16_t base = wateringRuntimeSlotBase_(slot);
+        WateringRuntimeHeader hdr{};
+        hdr.magic = kWateringRuntimeMagic;
+        hdr.version = kWateringRuntimeVersion;
+        hdr.watering_count = kWateringCount;
+        hdr.seq = seq;
+        if (!_eeprom->write(base, reinterpret_cast<const uint8_t *>(&hdr), sizeof(hdr)))
+            return false;
+        const uint16_t off = base + sizeof(hdr);
+        if (!_eeprom->write(off, snap.active_mask, kWateringMaskBytes))
+            return false;
+        if (!_eeprom->write(off + kWateringMaskBytes, snap.paused_mask, kWateringMaskBytes))
+            return false;
+        const uint16_t off2 = off + 2u * kWateringMaskBytes;
+        if (!_eeprom->write(off2, reinterpret_cast<const uint8_t *>(snap.remaining_ms),
+                            sizeof(snap.remaining_ms)))
+            return false;
+        if (!_eeprom->write(off2 + sizeof(snap.remaining_ms), reinterpret_cast<const uint8_t *>(snap.last_start_key),
+                            sizeof(snap.last_start_key)))
+            return false;
+        _watering_runtime_last_slot = slot;
+        _watering_runtime_last_seq = seq;
+        _watering_runtime_has_seq = true;
+        return true;
+    }
+
+    bool loadWateringRuntime(WateringRuntimeSnapshot &out)
+    {
+        if (!_eeprom)
+            return false;
+        WateringRuntimeHeader best_hdr{};
+        uint16_t best_slot = 0;
+        bool found = false;
+        const uint16_t slots = (_wl_slots == 0) ? 1 : _wl_slots;
+        for (uint16_t i = 0; i < slots; ++i)
+        {
+            WateringRuntimeHeader hdr{};
+            const uint16_t base = wateringRuntimeSlotBase_(i);
+            if (!_eeprom->read(base, reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)))
+                continue;
+            if (hdr.magic != kWateringRuntimeMagic || hdr.version != kWateringRuntimeVersion ||
+                hdr.watering_count != kWateringCount)
+                continue;
+            if (!found || isSeqNewer_(hdr.seq, best_hdr.seq))
+            {
+                best_hdr = hdr;
+                best_slot = i;
+                found = true;
+            }
+        }
+        if (!found)
+            return false;
+        const uint16_t off = wateringRuntimeSlotBase_(best_slot) + sizeof(best_hdr);
+        if (!_eeprom->read(off, out.active_mask, kWateringMaskBytes))
+            return false;
+        if (!_eeprom->read(off + kWateringMaskBytes, out.paused_mask, kWateringMaskBytes))
+            return false;
+        const uint16_t off2 = off + 2u * kWateringMaskBytes;
+        if (!_eeprom->read(off2, reinterpret_cast<uint8_t *>(out.remaining_ms), sizeof(out.remaining_ms)))
+            return false;
+        if (!_eeprom->read(off2 + sizeof(out.remaining_ms), reinterpret_cast<uint8_t *>(out.last_start_key),
+                           sizeof(out.last_start_key)))
+            return false;
+        _watering_runtime_last_slot = best_slot;
+        _watering_runtime_last_seq = best_hdr.seq;
+        _watering_runtime_has_seq = true;
+        return true;
+    }
+
 private:
     struct StorageHeader
     {
@@ -472,6 +640,22 @@ private:
         uint32_t seq = 0;
     };
 
+    struct WateringHeader
+    {
+        uint32_t magic = 0;
+        uint16_t version = 0;
+        uint16_t watering_count = 0;
+        uint32_t seq = 0;
+    };
+
+    struct WateringRuntimeHeader
+    {
+        uint32_t magic = 0;
+        uint16_t version = 0;
+        uint16_t watering_count = 0;
+        uint32_t seq = 0;
+    };
+
     static constexpr uint32_t kMagic = 0x45535031u; // "ESP1"
     static constexpr uint16_t kVersion = 2;
     static constexpr uint16_t kLegacyVersion = 1;
@@ -483,6 +667,10 @@ private:
     static constexpr uint16_t kTankVersion = 1;
     static constexpr uint32_t kSecurityMagic = 0x45535034u; // "ESP4"
     static constexpr uint16_t kSecurityVersion = 1;
+    static constexpr uint32_t kWateringMagic = 0x45535036u; // "ESP6"
+    static constexpr uint16_t kWateringVersion = 1;
+    static constexpr uint32_t kWateringRuntimeMagic = 0x45535037u; // "ESP7"
+    static constexpr uint16_t kWateringRuntimeVersion = 1;
 
     At24lc512 *_eeprom = nullptr;
     uint16_t _base = kDefaultBase;
@@ -511,6 +699,16 @@ private:
     uint16_t _security_last_slot = 0;
     uint32_t _security_last_seq = 0;
     bool _security_has_seq = false;
+    bool _watering_base_set = false;
+    uint16_t _watering_base = 0;
+    uint16_t _watering_last_slot = 0;
+    uint32_t _watering_last_seq = 0;
+    bool _watering_has_seq = false;
+    bool _watering_runtime_base_set = false;
+    uint16_t _watering_runtime_base = 0;
+    uint16_t _watering_runtime_last_slot = 0;
+    uint32_t _watering_runtime_last_seq = 0;
+    bool _watering_runtime_has_seq = false;
 
     uint16_t slotBase_(uint16_t slot) const
     {
@@ -541,6 +739,18 @@ private:
     uint16_t securitySlotSize_() const
     {
         return (uint16_t)(sizeof(SecurityHeader) + sizeof(SecuritySnapshot));
+    }
+
+    uint16_t wateringSlotSize_() const
+    {
+        return (uint16_t)(sizeof(WateringHeader) + kWateringMaskBytes);
+    }
+
+    uint16_t wateringRuntimeSlotSize_() const
+    {
+        return (uint16_t)(sizeof(WateringRuntimeHeader) + 2u * kWateringMaskBytes +
+                          sizeof(WateringRuntimeSnapshot::remaining_ms) +
+                          sizeof(WateringRuntimeSnapshot::last_start_key));
     }
 
     uint16_t lightsBase_() const
@@ -575,6 +785,22 @@ private:
         return (uint16_t)base;
     }
 
+    uint16_t wateringBase_() const
+    {
+        if (_watering_base_set)
+            return _watering_base;
+        const uint32_t base = (uint32_t)securityBase_() + (uint32_t)_wl_slots * securitySlotSize_();
+        return (uint16_t)base;
+    }
+
+    uint16_t wateringRuntimeBase_() const
+    {
+        if (_watering_runtime_base_set)
+            return _watering_runtime_base;
+        const uint32_t base = (uint32_t)wateringBase_() + (uint32_t)_wl_slots * wateringSlotSize_();
+        return (uint16_t)base;
+    }
+
     uint16_t thermoSlotBase_(uint16_t slot) const
     {
         const uint32_t base = (uint32_t)thermoBase_() + (uint32_t)slot * thermoSlotSize_();
@@ -596,6 +822,18 @@ private:
     uint16_t securitySlotBase_(uint16_t slot) const
     {
         const uint32_t base = (uint32_t)securityBase_() + (uint32_t)slot * securitySlotSize_();
+        return (uint16_t)base;
+    }
+
+    uint16_t wateringSlotBase_(uint16_t slot) const
+    {
+        const uint32_t base = (uint32_t)wateringBase_() + (uint32_t)slot * wateringSlotSize_();
+        return (uint16_t)base;
+    }
+
+    uint16_t wateringRuntimeSlotBase_(uint16_t slot) const
+    {
+        const uint32_t base = (uint32_t)wateringRuntimeBase_() + (uint32_t)slot * wateringRuntimeSlotSize_();
         return (uint16_t)base;
     }
 
