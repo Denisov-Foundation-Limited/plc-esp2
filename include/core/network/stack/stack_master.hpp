@@ -173,6 +173,24 @@ public:
         return false;
     }
 
+    bool nodeIsOnline(uint32_t node_id, uint32_t max_silence_ms = 0) const
+    {
+        for (const auto &s : _sessions)
+        {
+            if (!s.used || !s.data.has_id || !s.data.client)
+                continue;
+            if (s.data.node_id != node_id)
+                continue;
+            if (!s.data.client->connected())
+                return false;
+            if (max_silence_ms == 0)
+                return true;
+            const uint32_t now = millis();
+            return (uint32_t)(now - s.data.last_seen_ms) <= max_silence_ms;
+        }
+        return false;
+    }
+
     bool sendTo(uint32_t node_id, uint8_t type, const uint8_t *payload, size_t len)
     {
         Session *s = findByNode_(node_id);
@@ -180,44 +198,41 @@ public:
             return false;
         const uint8_t *payload_ptr = payload;
         size_t payload_len = len;
-        uint8_t payload_buf[StackCodec::kMaxPayload] = {};
         if (_configs && (type == (uint8_t)StackMsgType::CmdGet || type == (uint8_t)StackMsgType::CmdSet))
         {
             const String key = _configs->stackApiKey();
             if (key.length() > 0 && payload && len > 0)
             {
-                DynamicJsonDocument doc(2048);
-                DeserializationError err = deserializeJson(doc, payload, len);
+                _tx_doc.clear();
+                DeserializationError err = deserializeJson(_tx_doc, payload, len);
                 if (!err)
                 {
-                    if (!doc.containsKey("api_key"))
-                        doc["api_key"] = key;
-                    const size_t new_len = serializeJson(doc, payload_buf, sizeof(payload_buf));
-                    if (new_len > 0 && new_len <= sizeof(payload_buf))
+                    if (!_tx_doc.containsKey("api_key"))
+                        _tx_doc["api_key"] = key;
+                    const size_t new_len = serializeJson(_tx_doc, _payload_buf, sizeof(_payload_buf));
+                    if (new_len > 0 && new_len <= sizeof(_payload_buf))
                     {
-                        payload_ptr = payload_buf;
+                        payload_ptr = _payload_buf;
                         payload_len = new_len;
                     }
                 }
             }
         }
-        uint8_t buf[StackCodec::kMaxFrame] = {};
-        const size_t frame_len = StackCodec::encode(type, payload_ptr, payload_len, buf, sizeof(buf));
+        const size_t frame_len = StackCodec::encode(type, payload_ptr, payload_len, _frame_buf, sizeof(_frame_buf));
         if (frame_len == 0)
             return false;
-        s->client->write((const char *)buf, frame_len);
+        s->client->write((const char *)_frame_buf, frame_len);
         return true;
     }
 
     void broadcast(uint8_t type, const uint8_t *payload, size_t len)
     {
-        uint8_t buf[StackCodec::kMaxFrame] = {};
-        const size_t frame_len = StackCodec::encode(type, payload, len, buf, sizeof(buf));
+        const size_t frame_len = StackCodec::encode(type, payload, len, _frame_buf, sizeof(_frame_buf));
         if (frame_len == 0)
             return;
         for (auto &s : _sessions)
             if (s.used && s.data.client && s.data.client->connected())
-                s.data.client->write((const char *)buf, frame_len);
+                s.data.client->write((const char *)_frame_buf, frame_len);
     }
 
 private:
@@ -235,6 +250,8 @@ private:
     };
 
     AsyncServer *_server = nullptr;
+    uint8_t _payload_buf[StackCodec::kMaxPayload] = {};
+    uint8_t _frame_buf[StackCodec::kMaxFrame] = {};
     struct Slot
     {
         bool used = false;
@@ -251,6 +268,7 @@ private:
     void *_event_ctx = nullptr;
     Logger *_log = nullptr;
     ConfigsManagerIface *_configs = nullptr;
+    DynamicJsonDocument _tx_doc{2048};
 
     void onClient_(void *ctx, AsyncClient *client)
     {
@@ -346,7 +364,9 @@ private:
                 {
                     // Node reconnected: release old session to avoid binding to a stale client.
                     if (_log)
-                        _log->info(F("STACK"), F("node reconnected: 0x%08lX"), (unsigned long)hello.node_id);
+                        _log->info(F("STACK"), F("node reconnected: %s node_id: 0x%08lX"),
+                                   hello.name.length() ? hello.name.c_str() : "-",
+                                   (unsigned long)hello.node_id);
                     freeSession_(s);
                     s = nullptr;
                 }

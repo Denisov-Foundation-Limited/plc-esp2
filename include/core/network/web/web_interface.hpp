@@ -8157,7 +8157,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
     String formatTemp_(float temp_c) const
     {
         char buf[16] = {};
-        dtostrf(temp_c, 0, 2, buf);
+        dtostrf(temp_c, 0, 1, buf);
         return String(buf) + " C";
     }
 

@@ -239,7 +239,7 @@ private:
             _tanks.applySnapshot(tanksnap.power_mask, EepromStorage::kTankMaskBytes);
         EepromStorage::SecuritySnapshot ssnap;
         if (_storage.loadSecurity(ssnap))
-            _security.applySnapshot(ssnap.armed);
+            _security.applySnapshot(ssnap.flags);
     }
 
     void saveIfNeeded_()
@@ -247,7 +247,8 @@ private:
         if (!_storage.isReady())
             return;
         const uint32_t now = millis();
-        if (_save_interval_ms && (uint32_t)(now - _last_save_ms) < _save_interval_ms)
+        const bool force_security = _security.takeForceSave();
+        if (!force_security && _save_interval_ms && (uint32_t)(now - _last_save_ms) < _save_interval_ms)
             return;
         bool saved = false;
         if (_sockets.takeDirty())
@@ -282,7 +283,14 @@ private:
         if (_security.takeDirty())
         {
             EepromStorage::SecuritySnapshot ssnap;
-            _security.buildSnapshot(ssnap.armed);
+            _security.buildSnapshot(ssnap.flags);
+            if (_storage.saveSecurity(ssnap))
+                saved = true;
+        }
+        else if (force_security)
+        {
+            EepromStorage::SecuritySnapshot ssnap;
+            _security.buildSnapshot(ssnap.flags);
             if (_storage.saveSecurity(ssnap))
                 saved = true;
         }

@@ -262,6 +262,7 @@ struct App
         control.controllers.meteo().setRemoteSensorNameProvider(&App::onRemoteSensorName_, this);
         control.controllers.meteo().setAlarmHandler(&App::onMeteoAlarm_, this);
         control.controllers.security().setArmStateHandler(&App::onSecurityArmState_, this);
+        control.controllers.security().setPreArmCheckHandler(&App::onSecurityPreArmCheck_, this);
         control.controllers.security().setAlarmStateHandler(&App::onSecurityAlarmState_, this);
         control.controllers.security().setClearDetectHandler(&App::onSecurityClearDetect_, this);
         control.controllers.security().setDetectHandler(&App::onSecurityDetect_, this);
@@ -530,6 +531,7 @@ struct App
         updateSepticAlarms_();
         updateSecurityAlarms_();
         updateMeteoAlarms_();
+        pollSecurityPrearmWarmup_();
         pollStackCaches_();
         pollSecurityStatusFromMaster_();
         control.plc_scan.tick();
@@ -804,7 +806,10 @@ private:
         const uint32_t node_id = master.nodeIdAt(_stack_poll_index++);
         if (node_id == 0)
             return;
+        if (!master.nodeIsOnline(node_id, kStackNodeStaleMs))
+            return;
         stack_cache.requestSecurity(node_id);
+        stack_cache.requestSecurityPrearm(node_id);
         stack_cache.requestSeptic(node_id);
         stack_cache.requestTanks(node_id);
         stack_cache.requestMeteo(node_id);
@@ -957,6 +962,13 @@ private:
             self->broadcastSecurityAlarm_(false);
     }
 
+    static bool onSecurityPreArmCheck_(void *ctx, String &out, String *plain_out)
+    {
+        if (!ctx)
+            return false;
+        return static_cast<App *>(ctx)->collectRemoteSecurityDetections_(out, plain_out);
+    }
+
     static void onStackNodeEvent_(void *ctx, uint32_t node_id, bool online)
     {
         if (!ctx || node_id == 0)
@@ -972,7 +984,8 @@ private:
         {
             self->core.logs.info(F("STACK"), F("node online: %s ip: %s fw: %u"),
                                  label.c_str(), ip_c, (unsigned)fw_ver);
-            self->sendSecurityStateToNode_(node_id);
+            self->sendSecurityStateToNode_(node_id, self->control.controllers.security().armed(), true);
+            self->stack_cache.requestSecurityPrearm(node_id);
         }
         else
         {
@@ -1072,15 +1085,15 @@ private:
         StackMaster &master = net.network.stackMaster();
         const size_t count = master.nodeCount();
         for (size_t i = 0; i < count; ++i)
-            sendSecurityStateToNode_(master.nodeIdAt(i), armed);
+            sendSecurityStateToNode_(master.nodeIdAt(i), armed, false);
     }
 
     void sendSecurityStateToNode_(uint32_t node_id)
     {
-        sendSecurityStateToNode_(node_id, control.controllers.security().armed());
+        sendSecurityStateToNode_(node_id, control.controllers.security().armed(), false);
     }
 
-    void sendSecurityStateToNode_(uint32_t node_id, bool armed)
+    void sendSecurityStateToNode_(uint32_t node_id, bool armed, bool force)
     {
         if (node_id == 0)
             return;
@@ -1095,6 +1108,8 @@ private:
         JsonObject params = doc["params"].to<JsonObject>();
         params["armed"] = armed;
         params["alarm"] = armed ? control.controllers.security().alarmOn() : false;
+        if (force && armed)
+            params["force"] = true;
 
         char payload[128] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
@@ -2266,6 +2281,177 @@ private:
                   reinterpret_cast<const uint8_t *>(payload), len);
     }
 
+    bool collectRemoteSecurityDetections_(String &out, String *plain_out)
+    {
+        if (!stackMasterActive_())
+            return false;
+        StackMaster &master = net.network.stackMaster();
+        const size_t count = master.nodeCount();
+        bool any = false;
+        bool missing = false;
+        uint32_t beep_nodes[StackMaster::MAX_SESSIONS] = {};
+        size_t beep_count = 0;
+        auto mark_beep = [&beep_nodes, &beep_count](uint32_t node_id) {
+            for (size_t i = 0; i < beep_count; ++i)
+            {
+                if (beep_nodes[i] == node_id)
+                    return;
+            }
+            if (beep_count < StackMaster::MAX_SESSIONS)
+                beep_nodes[beep_count++] = node_id;
+        };
+        uint32_t pending_nodes[StackMaster::MAX_SESSIONS] = {};
+        uint32_t pending_req_ms[StackMaster::MAX_SESSIONS] = {};
+        size_t pending_count = 0;
+        const uint32_t now = millis();
+        for (size_t i = 0; i < count; ++i)
+        {
+            const uint32_t node_id = master.nodeIdAt(i);
+            if (node_id == 0)
+                continue;
+            if (!master.nodeIsOnline(node_id, kStackNodeStaleMs))
+                continue;
+            const auto *cache = stack_cache.securityPrearmCache(node_id);
+            const bool stale = cache && cache->has_data && (uint32_t)(now - cache->updated_ms) > kPreArmFreshMs;
+            if (!cache || cache->pending || !cache->has_data || !cache->items || !cache->last_ok || stale)
+            {
+                stack_cache.requestSecurityPrearmForce(node_id);
+                if (pending_count < StackMaster::MAX_SESSIONS)
+                {
+                    pending_nodes[pending_count] = node_id;
+                    pending_req_ms[pending_count] = millis();
+                    ++pending_count;
+                }
+            }
+        }
+        if (pending_count)
+        {
+            const uint32_t wait_until = millis() + kPreArmWaitMs;
+            bool any_pending = true;
+            while (any_pending && (int32_t)(millis() - wait_until) < 0)
+            {
+                any_pending = false;
+                for (size_t i = 0; i < pending_count; ++i)
+                {
+                    const uint32_t node_id = pending_nodes[i];
+                    if (node_id == 0)
+                        continue;
+                    const auto *cache = stack_cache.securityPrearmCache(node_id);
+                    if (!cache)
+                        continue;
+                    if (cache->pending || !cache->has_data || !cache->items || !cache->last_ok ||
+                        cache->updated_ms < pending_req_ms[i])
+                    {
+                        any_pending = true;
+                    }
+                }
+                if (any_pending)
+                    delay(20);
+            }
+        }
+        for (size_t i = 0; i < count; ++i)
+        {
+            const uint32_t node_id = master.nodeIdAt(i);
+            if (node_id == 0)
+                continue;
+            if (!master.nodeIsOnline(node_id, kStackNodeStaleMs))
+                continue;
+            const auto *cache = stack_cache.securityPrearmCache(node_id);
+            const uint32_t now2 = millis();
+            uint32_t req_ms = 0;
+            for (size_t j = 0; j < pending_count; ++j)
+            {
+                if (pending_nodes[j] == node_id)
+                {
+                    req_ms = pending_req_ms[j];
+                    break;
+                }
+            }
+            const bool stale = cache && cache->has_data && (uint32_t)(now2 - cache->updated_ms) > kPreArmFreshMs;
+            if (!cache || cache->pending || !cache->has_data || !cache->items || !cache->last_ok || stale ||
+                (req_ms != 0 && cache->updated_ms < req_ms))
+            {
+                const String label = stackNodeLabel_(node_id);
+                if (out.length())
+                    out += F("\n");
+                out += F("ожидание данных: ");
+                out += escapeHtml_(label);
+                if (plain_out)
+                {
+                    if (plain_out->length())
+                        *plain_out += F(", ");
+                    *plain_out += F("ожидание данных: ");
+                    *plain_out += label;
+                }
+                core.logs.warn(F("SECURITY"), F("prearm waiting data from %s"), label.c_str());
+                missing = true;
+                any = true;
+                mark_beep(node_id);
+                continue;
+            }
+            String line;
+            String plain_line;
+            bool node_any = false;
+            for (size_t j = 0; j < cache->item_count; ++j)
+            {
+                const auto &it = cache->items[j];
+                if (!node_any)
+                {
+                    const String label = stackNodeLabel_(node_id);
+                    line += escapeHtml_(label);
+                    line += F(": ");
+                    plain_line += label;
+                    plain_line += F(": ");
+                }
+                else
+                {
+                    line += F(", ");
+                    plain_line += F(", ");
+                }
+                line += String((unsigned)it.id);
+                plain_line += String((unsigned)it.id);
+                if (it.name[0])
+                {
+                    const String name = String(it.name);
+                    line += F(" (");
+                    line += F("<b>");
+                    line += escapeHtml_(name);
+                    line += F("</b>");
+                    line += F(")");
+                    plain_line += F(" (");
+                    plain_line += name;
+                    plain_line += F(")");
+                }
+                core.logs.warn(F("SECURITY"), F("prearm blocked %s sensor %u (%s)"),
+                               stackNodeLabel_(node_id).c_str(),
+                               (unsigned)it.id,
+                               it.name[0] ? it.name : "-");
+                node_any = true;
+            }
+            if (!node_any)
+                continue;
+            mark_beep(node_id);
+            if (out.length())
+                out += F("\n");
+            out += line;
+            if (plain_out)
+            {
+                if (plain_out->length())
+                    *plain_out += F(", ");
+                *plain_out += plain_line;
+            }
+            any = true;
+        }
+        if (beep_count)
+        {
+            for (size_t i = 0; i < beep_count; ++i)
+                sendSecurityBeepToNode_(beep_nodes[i], "reject");
+        }
+        if (missing)
+            return true;
+        return any;
+    }
+
     String stackNodeLabel_(uint32_t node_id) const
     {
         StackMaster &master = const_cast<App *>(this)->net.network.stackMaster();
@@ -2284,6 +2470,38 @@ private:
         return String(buf);
     }
 
+    static String escapeHtml_(const String &in)
+    {
+        String out;
+        out.reserve(in.length() + 8);
+        for (size_t i = 0; i < in.length(); ++i)
+        {
+            const char c = in.charAt(i);
+            switch (c)
+            {
+            case '&':
+                out += F("&amp;");
+                break;
+            case '<':
+                out += F("&lt;");
+                break;
+            case '>':
+                out += F("&gt;");
+                break;
+            case '"':
+                out += F("&quot;");
+                break;
+            case '\'':
+                out += F("&#39;");
+                break;
+            default:
+                out += c;
+                break;
+            }
+        }
+        return out;
+    }
+
     int stackNodeIndex_(uint32_t node_id) const
     {
         StackMaster &master = const_cast<App *>(this)->net.network.stackMaster();
@@ -2295,6 +2513,11 @@ private:
         }
         return -1;
     }
+
+    static constexpr uint32_t kPreArmFreshMs = 8000;
+    static constexpr uint32_t kPreArmWaitMs = 900;
+    static constexpr uint32_t kPreArmPollMs = 1000;
+    static constexpr uint32_t kStackNodeStaleMs = 15000;
 
     void broadcastSecurityAlarm_(bool alarm_on)
     {
@@ -2327,6 +2550,53 @@ private:
             return;
         master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
                       reinterpret_cast<const uint8_t *>(payload), len);
+    }
+
+    void sendSecurityBeepToNode_(uint32_t node_id, const char *kind)
+    {
+        if (node_id == 0)
+            return;
+        if (!stackMasterActive_())
+            return;
+        StackMaster &master = net.network.stackMaster();
+
+        StaticJsonDocument<96> doc;
+        doc["cmd_id"] = 0;
+        doc["feature"] = (uint8_t)StackFeature::Security;
+        doc["action"] = "set";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["beep"] = kind ? kind : "reject";
+
+        char payload[96] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return;
+        master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                      reinterpret_cast<const uint8_t *>(payload), len);
+    }
+
+    void pollSecurityPrearmWarmup_()
+    {
+        if (!stackMasterActive_())
+            return;
+        const uint32_t now = millis();
+        if ((uint32_t)(now - _last_prearm_poll_ms) < kPreArmPollMs)
+            return;
+        _last_prearm_poll_ms = now;
+        StackMaster &master = net.network.stackMaster();
+        const size_t count = master.nodeCount();
+        for (size_t i = 0; i < count; ++i)
+        {
+            const uint32_t node_id = master.nodeIdAt(i);
+            if (node_id == 0)
+                continue;
+            if (!master.nodeIsOnline(node_id, kStackNodeStaleMs))
+                continue;
+            const auto *cache = stack_cache.securityPrearmCache(node_id);
+            const bool stale = cache && cache->has_data && (uint32_t)(now - cache->updated_ms) > kPreArmFreshMs;
+            if (!cache || !cache->has_data || !cache->items || !cache->last_ok || stale || cache->pending)
+                stack_cache.requestSecurityPrearm(node_id);
+        }
     }
 
     void broadcastSecurityClear_()
@@ -2380,6 +2650,7 @@ private:
     String _pending_rfid_name;
     bool _rfid_enabled = false;
     uint32_t _last_rfid_status_ms = 0;
+    uint32_t _last_prearm_poll_ms = 0;
     bool _ring_client_enabled = false;
     uint8_t _ring_client_button_port = 0xFF;
     bool _pending_ring_client = false;

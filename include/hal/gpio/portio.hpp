@@ -130,6 +130,8 @@ public:
             _hasLast[i] = false;
             _last[i] = false;
         }
+        for (uint8_t i = 0; i < Extender::MAX_DEVS; ++i)
+            _ext_present[i] = false;
 
         if (usesExtender_() && _ext == nullptr)
         {
@@ -138,7 +140,12 @@ public:
         }
 
         if (_ext)
+        {
             _ext->begin();
+            const uint8_t dev_count = _ext->devCount();
+            for (uint8_t i = 0; i < dev_count && i < Extender::MAX_DEVS; ++i)
+                _ext_present[i] = _ext->isPresent(i);
+        }
 
         for (uint8_t i = 0; i < PORT_COUNT; ++i)
         {
@@ -186,7 +193,17 @@ public:
     void loop()
     {
         if (_ext)
+        {
+            const uint8_t dev_count = _ext->devCount();
+            for (uint8_t i = 0; i < dev_count && i < Extender::MAX_DEVS; ++i)
+            {
+                const bool present = _ext->isPresent(i);
+                if (present && !_ext_present[i])
+                    restoreExtenderOutputs_(i);
+                _ext_present[i] = present;
+            }
             _ext->flushAll();
+        }
     }
     Error lastError() const { return _err; }
 
@@ -380,6 +397,7 @@ private:
 
     bool _last[PORT_COUNT] = {};
     bool _hasLast[PORT_COUNT] = {};
+    bool _ext_present[Extender::MAX_DEVS] = {};
 
     bool usesExtender_() const
     {
@@ -505,5 +523,34 @@ private:
         }
 
         return true;
+    }
+
+    void restoreExtenderOutputs_(uint8_t dev)
+    {
+        for (uint8_t i = 0; i < PORT_COUNT; ++i)
+        {
+            const auto &p = _ports[i];
+            if (p.caps == Cap::None)
+                continue;
+            if (p.backend != Backend::Extender || p.u.ext.dev != dev)
+                continue;
+
+            pinMode(i, p.mode);
+
+            if (has(p.caps, Cap::Output) &&
+                (p.mode == PortMode::Output || p.mode == PortMode::OutputOpenDrain) &&
+                !has(p.caps, Cap::InputOnly))
+            {
+                bool v = p.initial_level;
+                if (_hasLast[i])
+                    v = _last[i];
+                write(i, v);
+            }
+            else
+            {
+                // PCF-style "release" default
+                write(i, true);
+            }
+        }
     }
 };

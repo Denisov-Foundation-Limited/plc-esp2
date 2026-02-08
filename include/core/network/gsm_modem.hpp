@@ -58,6 +58,7 @@ public:
             return;
         _modem.tick();
         checkInitWatchdog_();
+        checkInitRetry_();
     }
 
     Sim800l &driver() { return _modem; }
@@ -153,6 +154,10 @@ private:
 
     void initSequence_()
     {
+        _init_retry_pending = false;
+        if (_init_attempt < kInitMaxAttempts)
+            ++_init_attempt;
+        _init_logged = false;
         static const __FlashStringHelper *names[] = {
             F("AT"),
             F("ATE0"),
@@ -206,6 +211,10 @@ private:
                     if (_log.ready())
                         _log.error(F("GSM"), F("Modem not responding"));
                 }
+                if (_init_ok == 0)
+                    scheduleInitRetry_();
+                if (_init_ok > 0)
+                    logInitSummary_();
             }
         }
         if (ok && name)
@@ -283,12 +292,18 @@ private:
     bool _started = false;
     static constexpr size_t kInitCmdCount = 9;
     static constexpr uint32_t kInitTimeoutMs = 12000;
+    static constexpr uint32_t kInitRetryDelayMs = 3000;
+    static constexpr uint8_t kInitMaxAttempts = 3;
     CmdLogCtx _init_ctx[kInitCmdCount]{};
     bool _init_pending = false;
     bool _init_warned = false;
     uint32_t _init_started_ms = 0;
     uint8_t _init_ok = 0;
     uint8_t _init_fail = 0;
+    uint8_t _init_attempt = 0;
+    bool _init_retry_pending = false;
+    uint32_t _init_retry_at_ms = 0;
+    bool _init_logged = false;
     static constexpr uint8_t kCallQueue = 4;
     String _call_queue[kCallQueue];
     uint8_t _call_head = 0;
@@ -341,7 +356,35 @@ private:
             if (!_log.ready())
                 return;
             _log.error(F("GSM"), F("Modem not responding"));
+            _init_pending = false;
+            scheduleInitRetry_();
         }
+    }
+
+    void scheduleInitRetry_()
+    {
+        if (!_enabled)
+            return;
+        if (_init_retry_pending)
+            return;
+        if (_init_attempt >= kInitMaxAttempts)
+            return;
+        _init_retry_pending = true;
+        _init_retry_at_ms = millis() + kInitRetryDelayMs;
+        if (_log.ready())
+            _log.warn(F("GSM"), F("Init retry %u/%u in %u ms"),
+                      (unsigned)(_init_attempt + 1), (unsigned)kInitMaxAttempts,
+                      (unsigned)kInitRetryDelayMs);
+    }
+
+    void checkInitRetry_()
+    {
+        if (!_init_retry_pending)
+            return;
+        const uint32_t now = millis();
+        if ((int32_t)(now - _init_retry_at_ms) < 0)
+            return;
+        initSequence_();
     }
 
     static String firstDataLine_(const String &response)
@@ -466,5 +509,23 @@ private:
         if (cmd == "AT+CPOWD=1")
             return "Power down modem";
         return "";
+    }
+
+    void logInitSummary_()
+    {
+        if (_init_logged || !_log.ready())
+            return;
+        _init_logged = true;
+        _log.info(F("GSM"), F("Modem connected"));
+        if (_imei.length())
+            _log.info(F("GSM"), F("IMEI: %s"), _imei.c_str());
+        if (_signal_quality.length())
+            _log.info(F("GSM"), F("Signal: %s"), _signal_quality.c_str());
+        if (_reg_status.length())
+            _log.info(F("GSM"), F("Registration: %s"), _reg_status.c_str());
+        if (_operator_name.length())
+            _log.info(F("GSM"), F("Operator: %s"), _operator_name.c_str());
+        if (_imsi.length())
+            _log.info(F("GSM"), F("IMSI: %s"), _imsi.c_str());
     }
 };

@@ -371,7 +371,11 @@ public:
         initRemoteDevices_();
         _alloc_ready = true;
     }
-    void loop() { updateRemoteMeteo_(); }
+    void loop()
+    {
+        updateRemoteMeteo_();
+        updateBuzzer_();
+    }
     const RemoteMeteoCache *remoteMeteoCache(uint32_t node_id) const { return findRemoteMeteoCache_(node_id, false); }
     size_t remoteMeteoCacheSlots() const { return StackMaster::MAX_SESSIONS; }
     const RemoteMeteoCache &remoteMeteoCacheAt(size_t idx) const { return _remote_meteo_cache[idx]; }
@@ -482,7 +486,14 @@ private:
     DynamicJsonDocument _rx_doc{kDocCapacity};
     DynamicJsonDocument _tx_doc{kDocCapacity};
     DynamicJsonDocument _msg_doc{kDocCapacity};
+    uint8_t _tx_payload_buf[StackCodec::kMaxPayload] = {};
     bool _rfid_io_ready = false;
+    bool _beep_active = false;
+    uint8_t _beep_remaining = 0;
+    uint16_t _beep_on_ms = 0;
+    uint16_t _beep_off_ms = 0;
+    bool _beep_state_on = false;
+    uint32_t _beep_next_ms = 0;
     RemoteMeteoCache _remote_meteo_cache[StackMaster::MAX_SESSIONS] = {};
     RemoteSocketsCache _remote_sockets_cache[StackMaster::MAX_SESSIONS] = {};
     RemoteLightsCache _remote_lights_cache[StackMaster::MAX_SESSIONS] = {};
@@ -1490,6 +1501,15 @@ private:
             sendAck_(cmd_id, doc);
             return;
         }
+        if (action == "prearm")
+        {
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            JsonArray arr = doc["items"].to<JsonArray>();
+            _security.fillPrearmItems(arr);
+            sendAck_(cmd_id, doc);
+            return;
+        }
         if (action == "set")
         {
             if (!params.is<JsonObjectConst>())
@@ -1499,11 +1519,22 @@ private:
             }
             JsonObjectConst obj = params.as<JsonObjectConst>();
             String user = obj["user"] | "";
+            const bool force = obj["force"] | false;
+            const String beep = obj["beep"] | "";
+            if (obj["enabled"].is<bool>())
+                _security.setControllerEnabled(obj["enabled"].as<bool>());
             if (obj["armed"].is<bool>())
             {
                 const bool on = obj["armed"].as<bool>();
+                if (on && !_security.controllerEnabled())
+                    _security.setControllerEnabled(true);
                 if (on)
-                    _security.armFrom("stack", user);
+                {
+                    if (force)
+                        _security.armForcedFrom("stack", user);
+                    else
+                        _security.armFrom("stack", user);
+                }
                 else
                     _security.disarmFrom("stack", user);
             }
@@ -1515,6 +1546,15 @@ private:
             }
             if (obj["clear"].is<bool>() && obj["clear"].as<bool>())
                 _security.clearDetect();
+            if (isSlave_() && beep.length())
+            {
+                if (beep == "arm")
+                    beepArm_();
+                else if (beep == "disarm")
+                    beepDisarm_();
+                else
+                    beepReject_();
+            }
             if (isSlave_())
                 updateRfidLeds_(_security.armed());
             sendAck_(cmd_id);
@@ -2072,11 +2112,10 @@ private:
             if (key.length())
                 doc["api_key"] = key;
         }
-        char payload[StackCodec::kMaxPayload] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        const size_t len = serializeJson(doc, reinterpret_cast<char *>(_tx_payload_buf), sizeof(_tx_payload_buf));
         if (len == 0)
             return false;
-        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, _tx_payload_buf, len))
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
@@ -2108,14 +2147,13 @@ private:
             if (key.length())
                 doc["api_key"] = key;
         }
-        char payload[StackCodec::kMaxPayload] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        const size_t len = serializeJson(doc, reinterpret_cast<char *>(_tx_payload_buf), sizeof(_tx_payload_buf));
         if (len == 0)
         {
             _remote_all_cmd_id = 0;
             return false;
         }
-        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, _tx_payload_buf, len))
         {
             _remote_all_cmd_id = 0;
             return false;
@@ -2150,11 +2188,10 @@ private:
             if (key.length())
                 doc["api_key"] = key;
         }
-        char payload[StackCodec::kMaxPayload] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        const size_t len = serializeJson(doc, reinterpret_cast<char *>(_tx_payload_buf), sizeof(_tx_payload_buf));
         if (len == 0)
             return false;
-        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, _tx_payload_buf, len))
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
@@ -2188,11 +2225,10 @@ private:
             if (key.length())
                 doc["api_key"] = key;
         }
-        char payload[StackCodec::kMaxPayload] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        const size_t len = serializeJson(doc, reinterpret_cast<char *>(_tx_payload_buf), sizeof(_tx_payload_buf));
         if (len == 0)
             return false;
-        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, _tx_payload_buf, len))
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
@@ -2226,11 +2262,10 @@ private:
             if (key.length())
                 doc["api_key"] = key;
         }
-        char payload[StackCodec::kMaxPayload] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        const size_t len = serializeJson(doc, reinterpret_cast<char *>(_tx_payload_buf), sizeof(_tx_payload_buf));
         if (len == 0)
             return false;
-        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, _tx_payload_buf, len))
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
@@ -2264,11 +2299,10 @@ private:
             if (key.length())
                 doc["api_key"] = key;
         }
-        char payload[StackCodec::kMaxPayload] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        const size_t len = serializeJson(doc, reinterpret_cast<char *>(_tx_payload_buf), sizeof(_tx_payload_buf));
         if (len == 0)
             return false;
-        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, _tx_payload_buf, len))
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
@@ -2302,11 +2336,10 @@ private:
             if (key.length())
                 doc["api_key"] = key;
         }
-        char payload[StackCodec::kMaxPayload] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        const size_t len = serializeJson(doc, reinterpret_cast<char *>(_tx_payload_buf), sizeof(_tx_payload_buf));
         if (len == 0)
             return false;
-        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, _tx_payload_buf, len))
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
@@ -2340,11 +2373,10 @@ private:
             if (key.length())
                 doc["api_key"] = key;
         }
-        char payload[StackCodec::kMaxPayload] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        const size_t len = serializeJson(doc, reinterpret_cast<char *>(_tx_payload_buf), sizeof(_tx_payload_buf));
         if (len == 0)
             return false;
-        if (!_node->send((uint8_t)StackMsgType::CmdGet, (const uint8_t *)payload, len))
+        if (!_node->send((uint8_t)StackMsgType::CmdGet, _tx_payload_buf, len))
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
@@ -2990,11 +3022,10 @@ private:
 
     void sendJson_(uint8_t type, JsonDocument &doc)
     {
-        uint8_t payload[StackCodec::kMaxPayload] = {};
-        const size_t len = serializeJson(doc, reinterpret_cast<char *>(payload), sizeof(payload));
-        if (len == 0 || len > sizeof(payload))
+        const size_t len = serializeJson(doc, reinterpret_cast<char *>(_tx_payload_buf), sizeof(_tx_payload_buf));
+        if (len == 0 || len > sizeof(_tx_payload_buf))
             return;
-        _node->send(type, payload, len);
+        _node->send(type, _tx_payload_buf, len);
     }
 
     bool isSlave_() const
@@ -3025,21 +3056,62 @@ private:
         _io.write(ActiveBoardProfile::BUZZER_PIN, on);
     }
 
-    void beep_(uint8_t count, uint16_t on_ms, uint16_t off_ms)
+    void startBeep_(uint8_t count, uint16_t on_ms, uint16_t off_ms)
     {
-        for (uint8_t i = 0; i < count; ++i)
-        {
-            buzzerOn_(true);
-            delay(on_ms);
-            buzzerOn_(false);
-            if (off_ms)
-                delay(off_ms);
-        }
+        if (count == 0)
+            return;
+        _beep_remaining = count;
+        _beep_on_ms = on_ms;
+        _beep_off_ms = off_ms;
+        _beep_state_on = true;
+        _beep_next_ms = millis() + on_ms;
+        _beep_active = true;
+        buzzerOn_(true);
     }
 
-    void beepArm_() { beep_(2, 120, 120); }
-    void beepDisarm_() { beep_(1, 420, 0); }
-    void beepReject_() { beep_(3, 60, 80); }
+    void updateBuzzer_()
+    {
+        if (!_beep_active || _beep_remaining == 0)
+            return;
+        const uint32_t now = millis();
+        if ((int32_t)(now - _beep_next_ms) < 0)
+            return;
+        if (_beep_state_on)
+        {
+            _beep_state_on = false;
+            buzzerOn_(false);
+            if (_beep_off_ms == 0)
+            {
+                if (_beep_remaining > 0)
+                    --_beep_remaining;
+                if (_beep_remaining == 0)
+                {
+                    _beep_active = false;
+                    return;
+                }
+                _beep_state_on = true;
+                buzzerOn_(true);
+                _beep_next_ms = now + _beep_on_ms;
+                return;
+            }
+            _beep_next_ms = now + _beep_off_ms;
+            return;
+        }
+        if (_beep_remaining > 0)
+            --_beep_remaining;
+        if (_beep_remaining == 0)
+        {
+            _beep_active = false;
+            return;
+        }
+        _beep_state_on = true;
+        buzzerOn_(true);
+        _beep_next_ms = now + _beep_on_ms;
+    }
+
+    void beepArm_() { startBeep_(2, 120, 120); }
+    void beepDisarm_() { startBeep_(1, 420, 0); }
+    void beepReject_() { startBeep_(3, 60, 80); }
 
     void requestSecurityStatus_()
     {

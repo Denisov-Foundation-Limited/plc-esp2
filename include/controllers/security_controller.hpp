@@ -24,6 +24,7 @@
 #include "hal/gpio/gpio.hpp"
 #include "hal/gpio/portio.hpp"
 #include "hal/ibutton.hpp"
+#include "core/eeprom_storage.hpp"
 #include "utils/logger.hpp"
 
 class SecurityController
@@ -58,6 +59,7 @@ public:
     };
 
     using ArmStateHandler = void (*)(void *ctx, bool armed);
+    using PreArmCheckHandler = bool (*)(void *ctx, String &out, String *plain_out);
     using AlarmStateHandler = void (*)(void *ctx, bool alarm_on);
     using ClearDetectHandler = void (*)(void *ctx);
     using DetectHandler = void (*)(void *ctx, uint8_t sensor_id, const String &name, bool silent);
@@ -119,6 +121,11 @@ public:
                 {
                     const bool was_alarm = _alarm_on;
                     _alarm_on = true;
+                    if (!was_alarm)
+                    {
+                        _dirty = true;
+                        _force_save = true;
+                    }
                     resetAlarmBuzzer_();
                     updateSiren_();
                     if (!was_alarm)
@@ -417,20 +424,31 @@ public:
         }
     }
 
-    void buildSnapshot(uint8_t &armed) const
+    void buildSnapshot(uint8_t &flags) const
     {
-        armed = _armed ? 1 : 0;
+        flags = 0;
+        if (_armed)
+            flags |= EepromStorage::kSecurityArmedMask;
+        if (_alarm_on)
+            flags |= EepromStorage::kSecurityAlarmMask;
     }
 
-    void applySnapshot(uint8_t armed)
+    void applySnapshot(uint8_t flags)
     {
-        applySnapshot_(armed != 0);
+        const bool armed = (flags & EepromStorage::kSecurityArmedMask) != 0;
+        const bool alarm = armed && ((flags & EepromStorage::kSecurityAlarmMask) != 0);
+        applySnapshot_(armed, alarm);
     }
 
     void setArmStateHandler(ArmStateHandler cb, void *ctx)
     {
         _arm_state_cb = cb;
         _arm_state_ctx = ctx;
+    }
+    void setPreArmCheckHandler(PreArmCheckHandler cb, void *ctx)
+    {
+        _pre_arm_cb = cb;
+        _pre_arm_ctx = ctx;
     }
 
     void setAlarmStateHandler(AlarmStateHandler cb, void *ctx)
@@ -493,6 +511,14 @@ public:
         return true;
     }
 
+    bool takeForceSave()
+    {
+        if (!_force_save)
+            return false;
+        _force_save = false;
+        return true;
+    }
+
     bool controllerEnabled() const { return _controller_enabled; }
     void setControllerEnabled(bool enabled)
     {
@@ -551,6 +577,15 @@ public:
         arm_(src, user);
         return true;
     }
+    bool armForcedFrom(const char *src, const String &user)
+    {
+        if (_armed)
+            return true;
+        if (!_controller_enabled)
+            return false;
+        armForce_(src, user);
+        return true;
+    }
     bool disarmFrom(const char *src, const String &user, bool silent = false)
     {
         if (!_armed)
@@ -569,6 +604,42 @@ public:
     {
         clearDetect_();
         notifyClearDetect_();
+    }
+
+    bool fillPrearmItems(JsonArray &arr, String *plain_out = nullptr)
+    {
+        bool any = false;
+        if (plain_out)
+            *plain_out = "";
+        for (size_t i = 0; i < kSensorCount; ++i)
+        {
+            SensorConfig &cfg = _cfg[i];
+            SensorState &st = _state[i];
+            if (!cfg.enabled)
+                continue;
+            const bool raw = readRaw_(cfg);
+            st.raw = raw;
+            if (!isTriggered_(cfg, raw))
+                continue;
+            JsonObject o = arr.add<JsonObject>();
+            o["id"] = (unsigned)cfg.id;
+            if (cfg.name.length())
+                o["name"] = cfg.name;
+            if (plain_out)
+            {
+                if (plain_out->length())
+                    *plain_out += F(", ");
+                *plain_out += String((unsigned)cfg.id);
+                if (cfg.name.length())
+                {
+                    *plain_out += F(" (");
+                    *plain_out += cfg.name;
+                    *plain_out += F(")");
+                }
+            }
+            any = true;
+        }
+        return any;
     }
 
     void notifyRemoteDetect(const String &source, uint8_t sensor_id, const String &name, bool silent)
@@ -604,6 +675,8 @@ public:
         if (_alarm_on == on)
             return;
         _alarm_on = on;
+        _dirty = true;
+        _force_save = true;
         resetAlarmBuzzer_();
         updateSiren_();
         notifyAlarmState_(on);
@@ -1007,6 +1080,7 @@ private:
     bool _alarm_on = false;
     uint8_t _siren_port = kInvalidPort;
     bool _dirty = false;
+    bool _force_save = false;
 
     uint8_t _beep_remaining = 0;
     uint16_t _beep_on_ms = 0;
@@ -1033,6 +1107,8 @@ private:
         _armed = false;
         _alarm_on = false;
         _beep_remaining = 0;
+        _dirty = false;
+        _force_save = false;
     }
 
     void clearKeys_()
@@ -1314,6 +1390,7 @@ private:
         if (hasTriggeredBeforeArm_(blocked, &blocked_log))
         {
             _logs.warn(F("SECURITY"), F("arm blocked, triggered: %s"), blocked_log.c_str());
+            startBeep_(kBeepRejectCount, kBeepRejectOnMs, kBeepRejectOffMs);
             const char *src = "local";
             const char *who = "unknown";
             String msg = F("Охрана: невозможно поставить, источник: <b>");
@@ -1335,6 +1412,8 @@ private:
         updateSiren_();
         startBeep_(2, kBeepShortMs, kBeepGapMs);
         _dirty = true;
+        if (was_alarm)
+            _force_save = true;
         logArmAction_(true, nullptr, String());
         notifyArmState_(true);
         if (was_alarm)
@@ -1353,6 +1432,8 @@ private:
         if (!silent)
             startBeep_(1, kBeepLongMs, 0);
         _dirty = true;
+        if (was_alarm)
+            _force_save = true;
         logArmAction_(false, nullptr, String());
         notifyArmState_(false);
         if (was_alarm)
@@ -1366,6 +1447,7 @@ private:
         if (hasTriggeredBeforeArm_(blocked, &blocked_log))
         {
             _logs.warn(F("SECURITY"), F("arm blocked, triggered: %s"), blocked_log.c_str());
+            startBeep_(kBeepRejectCount, kBeepRejectOnMs, kBeepRejectOffMs);
             const char *who = user.length() ? user.c_str() : "unknown";
             const char *from = src ? src : "local";
             String msg = F("Охрана: невозможно поставить, источник: <b>");
@@ -1387,6 +1469,27 @@ private:
         updateSiren_();
         startBeep_(2, kBeepShortMs, kBeepGapMs);
         _dirty = true;
+        if (was_alarm)
+            _force_save = true;
+        logArmAction_(true, src, user);
+        notifyArmState_(true);
+        if (was_alarm)
+            notifyAlarmState_(false);
+    }
+
+    void armForce_(const char *src, const String &user)
+    {
+        _armed = true;
+        const bool was_alarm = _alarm_on;
+        _alarm_on = false;
+        clearDetect_();
+        resetAlarmBuzzer_();
+        updateAlarmLed_();
+        updateSiren_();
+        startBeep_(2, kBeepShortMs, kBeepGapMs);
+        _dirty = true;
+        if (was_alarm)
+            _force_save = true;
         logArmAction_(true, src, user);
         notifyArmState_(true);
         if (was_alarm)
@@ -1405,16 +1508,18 @@ private:
         if (!silent)
             startBeep_(1, kBeepLongMs, 0);
         _dirty = true;
+        if (was_alarm)
+            _force_save = true;
         logArmAction_(false, src, user);
         notifyArmState_(false);
         if (was_alarm)
             notifyAlarmState_(false);
     }
 
-    void applySnapshot_(bool armed)
+    void applySnapshot_(bool armed, bool alarm)
     {
         _armed = armed;
-        _alarm_on = false;
+        _alarm_on = alarm;
         clearDetect_();
         _beep_remaining = 0;
         _beep_state_on = false;
@@ -1427,6 +1532,7 @@ private:
             _gpio.writeDyn(ActiveBoardProfile::BUZZER_PIN, false);
         }
         _dirty = false;
+        _force_save = false;
     }
 
     bool hasTriggeredBeforeArm_(String &out, String *plain_out = nullptr)
@@ -1435,6 +1541,7 @@ private:
         if (plain_out)
             *plain_out = "";
         bool any = false;
+        bool local_any = false;
         for (size_t i = 0; i < kSensorCount; ++i)
         {
             SensorConfig &cfg = _cfg[i];
@@ -1445,8 +1552,12 @@ private:
             st.raw = raw;
             if (!isTriggered_(cfg, raw))
                 continue;
-            if (any)
-                out += F("\n");
+            _logs.warn(F("SECURITY"), F("prearm blocked sensor %u (%s)"),
+                       (unsigned)cfg.id, cfg.name.length() ? cfg.name.c_str() : "-");
+            if (local_any)
+                out += F(", ");
+            else
+                out += F("локально: ");
             out += String((unsigned)cfg.id);
             if (cfg.name.length())
             {
@@ -1458,8 +1569,10 @@ private:
             }
             if (plain_out)
             {
-                if (any)
+                if (local_any)
                     *plain_out += F(", ");
+                else
+                    *plain_out += F("локально: ");
                 *plain_out += String((unsigned)cfg.id);
                 if (cfg.name.length())
                 {
@@ -1468,7 +1581,27 @@ private:
                     *plain_out += F(")");
                 }
             }
+            local_any = true;
             any = true;
+        }
+        if (_pre_arm_cb)
+        {
+            String extra;
+            String extra_plain;
+            const bool extra_any = _pre_arm_cb(_pre_arm_ctx, extra, plain_out ? &extra_plain : nullptr);
+            if (extra_any)
+            {
+                if (out.length())
+                    out += F("\n");
+                out += extra;
+                if (plain_out && extra_plain.length())
+                {
+                    if (plain_out->length())
+                        *plain_out += F(", ");
+                    *plain_out += extra_plain;
+                }
+                any = true;
+            }
         }
         return any;
     }
@@ -1906,6 +2039,8 @@ private:
     uint32_t _alarm_buzz_next_ms = 0;
     ArmStateHandler _arm_state_cb = nullptr;
     void *_arm_state_ctx = nullptr;
+    PreArmCheckHandler _pre_arm_cb = nullptr;
+    void *_pre_arm_ctx = nullptr;
     AlarmStateHandler _alarm_state_cb = nullptr;
     void *_alarm_state_ctx = nullptr;
     ClearDetectHandler _clear_detect_cb = nullptr;

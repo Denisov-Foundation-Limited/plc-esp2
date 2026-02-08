@@ -254,6 +254,40 @@ public:
         char type[kTypeLen] = {};
         char name[kNameLen] = {};
     };
+    struct StackSecurityPrearmItem
+    {
+        uint8_t id = 0;
+        static constexpr size_t kNameLen = 48;
+        char name[kNameLen] = {};
+    };
+    struct StackSecurityPrearmCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        StackSecurityPrearmItem *items = nullptr;
+        size_t capacity = SecurityController::kSensorCount;
+        size_t item_count = 0;
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            item_count = 0;
+            if (!items)
+                return;
+            for (size_t i = 0; i < capacity; ++i)
+                items[i] = StackSecurityPrearmItem{};
+        }
+    };
     struct StackSecurityCache
     {
         uint32_t node_id = 0;
@@ -562,7 +596,11 @@ public:
     const StackSecurityCache &securityLocal() const { return _stack_security_cache[0]; }
     StackSecurityCache *securityCache(uint32_t node_id) { return findStackSecurityCache_(node_id, false); }
     const StackSecurityCache *securityCache(uint32_t node_id) const { return findStackSecurityCache_(node_id, false); }
+    StackSecurityPrearmCache *securityPrearmCache(uint32_t node_id) { return findStackSecurityPrearmCache_(node_id, false); }
+    const StackSecurityPrearmCache *securityPrearmCache(uint32_t node_id) const { return findStackSecurityPrearmCache_(node_id, false); }
     bool requestSecurity(uint32_t node_id) { return requestStackSecurity_(node_id); }
+    bool requestSecurityPrearm(uint32_t node_id) { return requestStackSecurityPrearm_(node_id, false); }
+    bool requestSecurityPrearmForce(uint32_t node_id) { return requestStackSecurityPrearm_(node_id, true); }
 
     StackMeteoCache &meteoLocal() { return _stack_meteo_cache[0]; }
     const StackMeteoCache &meteoLocal() const { return _stack_meteo_cache[0]; }
@@ -742,6 +780,14 @@ private:
                 cache.capacity = 0;
             cache.reset();
         }
+        for (auto &cache : _stack_security_prearm_cache)
+        {
+            cache.items = allocItems_<StackSecurityPrearmItem>(cache.capacity, "sec_prearm",
+                                                              &cache - _stack_security_prearm_cache, _log, true);
+            if (!cache.items)
+                cache.capacity = 0;
+            cache.reset();
+        }
         for (auto &cache : _stack_meteo_cache)
         {
             cache.items = allocItems_<StackMeteoItem>(cache.capacity, "meteo", &cache - _stack_meteo_cache,
@@ -813,6 +859,11 @@ private:
             releaseItems_(cache.items, cache.capacity);
             cache.items = nullptr;
         }
+        for (auto &cache : _stack_security_prearm_cache)
+        {
+            releaseItems_(cache.items, cache.capacity);
+            cache.items = nullptr;
+        }
         for (auto &cache : _stack_meteo_cache)
         {
             releaseItems_(cache.items, cache.capacity);
@@ -865,6 +916,8 @@ private:
             log_fail("ow", i, _stack_ow_cache[i].items, _stack_ow_cache[i].capacity);
         for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
             log_fail("security", i, _stack_security_cache[i].items, _stack_security_cache[i].capacity);
+        for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
+            log_fail("sec_prearm", i, _stack_security_prearm_cache[i].items, _stack_security_prearm_cache[i].capacity);
         for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
             log_fail("meteo", i, _stack_meteo_cache[i].items, _stack_meteo_cache[i].capacity);
         for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
@@ -935,11 +988,10 @@ private:
                 out["cmd_id"] = cmd_id;
                 out["ok"] = true;
                 out["data"] = data.as<JsonVariantConst>();
-                char payload[StackCodec::kMaxPayload] = {};
-                const size_t len = serializeJson(out, payload, sizeof(payload));
+                const size_t len = serializeJson(out, reinterpret_cast<char *>(_tx_payload_buf), sizeof(_tx_payload_buf));
                 if (len > 0)
                     _stack_master->sendTo(node_id, (uint8_t)StackMsgType::Ack,
-                                          (const uint8_t *)payload, len);
+                                          _tx_payload_buf, len);
             };
 
             if ((StackFeature)feature == StackFeature::Meteo && action == "get")
@@ -1171,6 +1223,7 @@ private:
         StackPortsCache *ports_cache = findStackPortsCacheByCmd_(cmd_id);
         StackExtendersCache *ext_cache = findStackExtendersCacheByCmd_(cmd_id);
         StackSecurityCache *sec_cache = findStackSecurityCacheByCmd_(cmd_id);
+        StackSecurityPrearmCache *sec_prearm_cache = findStackSecurityPrearmCacheByCmd_(cmd_id);
         StackMeteoCache *meteo_cache = findStackMeteoCacheByCmd_(cmd_id);
         StackThermoCache *thermo_cache = findStackThermoCacheByCmd_(cmd_id);
         StackSepticCache *septic_cache = findStackSepticCacheByCmd_(cmd_id);
@@ -1180,7 +1233,7 @@ private:
         bool status_is_plc = false;
         bool status_is_rtc = false;
         StackNodeStatusCache *status_cache = findStackNodeStatusCacheByCmd_(cmd_id, status_is_plc, status_is_rtc);
-        if (!sock_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !meteo_cache &&
+        if (!sock_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !sec_prearm_cache && !meteo_cache &&
             !thermo_cache && !septic_cache && !tanks_cache && !i2c_cache && !ow_cache && !status_cache)
             return;
         const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (doc["ok"] | false);
@@ -1354,6 +1407,39 @@ private:
                 sec_cache->has_data = true;
                 sec_cache->last_ok = true;
                 sec_cache->node_id = node_id;
+            }
+        }
+
+        if (sec_prearm_cache)
+        {
+            sec_prearm_cache->pending = false;
+            sec_prearm_cache->updated_ms = millis();
+            sec_prearm_cache->last_ok = false;
+            sec_prearm_cache->last_error = "";
+            if (!ok)
+            {
+                sec_prearm_cache->last_error = doc["error"] | "error";
+                if (_log)
+                    _log->warn(F("STACK"), F("security prearm err: node=0x%08lX err=%s"),
+                               (unsigned long)node_id,
+                               sec_prearm_cache->last_error.length() ? sec_prearm_cache->last_error.c_str() : "error");
+            }
+            else if (!items.isNull())
+            {
+                sec_prearm_cache->item_count = 0;
+                for (JsonObjectConst item : items)
+                {
+                    if (sec_prearm_cache->item_count >= SecurityController::kSensorCount)
+                        break;
+                    if (!item["id"].is<unsigned>())
+                        continue;
+                    StackSecurityPrearmItem &dst = sec_prearm_cache->items[sec_prearm_cache->item_count++];
+                    dst.id = (uint8_t)item["id"].as<unsigned>();
+                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                }
+                sec_prearm_cache->has_data = true;
+                sec_prearm_cache->last_ok = true;
+                sec_prearm_cache->node_id = node_id;
             }
         }
 
@@ -1709,6 +1795,37 @@ private:
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Security;
         doc["action"] = "get";
+        char payload[96] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
+                                   (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
+        return true;
+    }
+
+    bool requestStackSecurityPrearm_(uint32_t node_id, bool force)
+    {
+        if (!_stack_master)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackSecurityPrearmCache *cache = findStackSecurityPrearmCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+            return false;
+        if (!force && cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        const uint16_t cmd_id = nextStackCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Security;
+        doc["action"] = "prearm";
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -2332,6 +2449,46 @@ private:
         return nullptr;
     }
 
+    StackSecurityPrearmCache *findStackSecurityPrearmCache_(uint32_t node_id, bool create)
+    {
+        if (!_stack_master)
+            return nullptr;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return nullptr;
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _stack_security_prearm_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _stack_security_prearm_cache)
+        {
+            if (c.node_id == 0)
+            {
+                c.reset();
+                c.node_id = node_id;
+                return &c;
+            }
+        }
+        return nullptr;
+    }
+
+    const StackSecurityPrearmCache *findStackSecurityPrearmCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackCache *>(this)->findStackSecurityPrearmCache_(node_id, create);
+    }
+
+    StackSecurityPrearmCache *findStackSecurityPrearmCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _stack_security_prearm_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
     StackMeteoCache *findStackMeteoCache_(uint32_t node_id, bool create)
     {
         if (!_stack_master)
@@ -2568,6 +2725,7 @@ private:
     bool _force_master = false;
     bool _alloc_ready = false;
     bool _alloc_logged = false;
+    uint8_t _tx_payload_buf[StackCodec::kMaxPayload] = {};
     StackSocketsCache _stack_sockets_cache[StackMaster::MAX_SESSIONS] = {};
     StackLightsCache _stack_lights_cache[StackMaster::MAX_SESSIONS] = {};
     StackPortsCache _stack_ports_cache[StackMaster::MAX_SESSIONS] = {};
@@ -2575,6 +2733,7 @@ private:
     StackI2cCache _stack_i2c_cache[StackMaster::MAX_SESSIONS] = {};
     StackOwCache _stack_ow_cache[StackMaster::MAX_SESSIONS] = {};
     StackSecurityCache _stack_security_cache[StackMaster::MAX_SESSIONS] = {};
+    StackSecurityPrearmCache _stack_security_prearm_cache[StackMaster::MAX_SESSIONS] = {};
     StackMeteoCache _stack_meteo_cache[StackMaster::MAX_SESSIONS] = {};
     StackThermoCache _stack_thermo_cache[StackMaster::MAX_SESSIONS] = {};
     StackSepticCache _stack_septic_cache[StackMaster::MAX_SESSIONS] = {};

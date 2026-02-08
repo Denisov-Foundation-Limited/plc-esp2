@@ -32,7 +32,7 @@ struct BoardProfileFCPLC_3v1 : BoardProfileCommon
     // ---- UART ----
     static inline constexpr uint8_t UART_COUNT = 1;
     static inline constexpr std::array<UartCfg, UART_COUNT> UARTS{{
-        /*  0 */ { .uart_num = 1, .tx = 28, .rx = 29, .baud = 115200 }
+        /*  0 */ { .uart_num = 1, .tx = 29, .rx = 28, .baud = 9600 }
     }};
 
     // ---- RTC ----

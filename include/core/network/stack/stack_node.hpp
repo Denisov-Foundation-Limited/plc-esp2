@@ -101,11 +101,10 @@ public:
     {
         if (!_client.connected())
             return false;
-        uint8_t buf[StackCodec::kMaxFrame] = {};
-        const size_t frame_len = StackCodec::encode(type, payload, len, buf, sizeof(buf));
+        const size_t frame_len = StackCodec::encode(type, payload, len, _tx_frame_buf, sizeof(_tx_frame_buf));
         if (frame_len == 0)
             return false;
-        _client.write((const char *)buf, frame_len);
+        _client.write((const char *)_tx_frame_buf, frame_len);
         return true;
     }
 
@@ -119,11 +118,10 @@ public:
         hello.fw_ver = fw_ver;
         hello.caps = (caps == 0xFFFFFFFFu) ? _caps : caps;
         hello.name = _device_name;
-        uint8_t payload[StackCodec::kMaxPayload] = {};
-        const size_t payload_len = StackHello::encode(hello, payload, sizeof(payload));
+        const size_t payload_len = StackHello::encode(hello, _tx_payload_buf, sizeof(_tx_payload_buf));
         if (payload_len == 0)
             return false;
-        return send((uint8_t)StackMsgType::Hello, payload, payload_len);
+        return send((uint8_t)StackMsgType::Hello, _tx_payload_buf, payload_len);
     }
 
 private:
@@ -146,6 +144,8 @@ private:
     StackCodec _codec;
 
     AsyncClient _client;
+    uint8_t _tx_payload_buf[StackCodec::kMaxPayload] = {};
+    uint8_t _tx_frame_buf[StackCodec::kMaxFrame] = {};
 
     void setupClient_()
     {
@@ -211,17 +211,16 @@ private:
 
     void sendStatus_()
     {
-        uint8_t payload[StackCodec::kMaxPayload] = {};
         size_t payload_len = 0;
         if (_status_cb)
-            payload_len = _status_cb(_status_ctx, payload, sizeof(payload));
+            payload_len = _status_cb(_status_ctx, _tx_payload_buf, sizeof(_tx_payload_buf));
         else
         {
             StackStatus st{};
             st.uptime_ms = millis();
-            payload_len = StackStatus::encode(st, payload, sizeof(payload));
+            payload_len = StackStatus::encode(st, _tx_payload_buf, sizeof(_tx_payload_buf));
         }
         if (payload_len > 0)
-            send((uint8_t)StackMsgType::Status, payload, payload_len);
+            send((uint8_t)StackMsgType::Status, _tx_payload_buf, payload_len);
     }
 };

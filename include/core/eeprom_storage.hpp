@@ -56,8 +56,11 @@ public:
 
     struct SecuritySnapshot
     {
-        uint8_t armed = 0;
+        uint8_t flags = 0;
     };
+
+    static constexpr uint8_t kSecurityArmedMask = 0x01;
+    static constexpr uint8_t kSecurityAlarmMask = 0x02;
 
     EepromStorage() = default;
     explicit EepromStorage(At24lc512 &eeprom) : _eeprom(&eeprom) {}
