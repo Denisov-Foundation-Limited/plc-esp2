@@ -571,6 +571,106 @@ public:
                 items[i] = StackWateringItem{};
         }
     };
+    struct StackAvrCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        bool enabled = false;
+        bool auto_mode = true;
+        bool prefer_main = true;
+        bool auto_return_main = true;
+        bool main_ok = false;
+        bool reserve_ok = false;
+        bool relay_main_on = false;
+        bool relay_reserve_on = false;
+        bool transfer = false;
+        uint8_t main_ok_port = AvrController::kInvalidPort;
+        uint8_t reserve_ok_port = AvrController::kInvalidPort;
+        uint8_t relay_main_port = AvrController::kInvalidPort;
+        uint8_t relay_reserve_port = AvrController::kInvalidPort;
+        uint8_t feedback_main_port = AvrController::kInvalidPort;
+        uint8_t feedback_reserve_port = AvrController::kInvalidPort;
+        static constexpr size_t kSourceLen = 16;
+        static constexpr size_t kFaultLen = 32;
+        char active_source[kSourceLen] = {};
+        char target_source[kSourceLen] = {};
+        char fault[kFaultLen] = {};
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            enabled = false;
+            auto_mode = true;
+            prefer_main = true;
+            auto_return_main = true;
+            main_ok = false;
+            reserve_ok = false;
+            relay_main_on = false;
+            relay_reserve_on = false;
+            transfer = false;
+            main_ok_port = AvrController::kInvalidPort;
+            reserve_ok_port = AvrController::kInvalidPort;
+            relay_main_port = AvrController::kInvalidPort;
+            relay_reserve_port = AvrController::kInvalidPort;
+            feedback_main_port = AvrController::kInvalidPort;
+            feedback_reserve_port = AvrController::kInvalidPort;
+            active_source[0] = '\0';
+            target_source[0] = '\0';
+            fault[0] = '\0';
+        }
+    };
+    struct StackLeakItem
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        bool power_on = false;
+        bool sensor_active_low = true;
+        uint8_t sensor = LeakController::kInvalidPort;
+        uint8_t valve = LeakController::kInvalidPort;
+        uint8_t alarm = LeakController::kInvalidPort;
+        bool wet = false;
+        bool alarm_latched = false;
+        static constexpr size_t kNameLen = 48;
+        char name[kNameLen] = {};
+    };
+    struct StackLeakCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        StackLeakItem *items = nullptr;
+        size_t capacity = LeakController::kZoneCount;
+        size_t item_count = 0;
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            item_count = 0;
+            if (!items)
+                return;
+            for (size_t i = 0; i < capacity; ++i)
+                items[i] = StackLeakItem{};
+        }
+    };
     struct StackNodeStatusCache
     {
         uint32_t node_id = 0;
@@ -698,6 +798,16 @@ public:
     StackTankCache *tanksCache(uint32_t node_id) { return findStackTanksCache_(node_id, false); }
     const StackTankCache *tanksCache(uint32_t node_id) const { return findStackTanksCache_(node_id, false); }
     bool requestTanks(uint32_t node_id) { return requestStackTanks_(node_id); }
+    StackAvrCache &avrLocal() { return _stack_avr_cache[0]; }
+    const StackAvrCache &avrLocal() const { return _stack_avr_cache[0]; }
+    StackAvrCache *avrCache(uint32_t node_id) { return findStackAvrCache_(node_id, false); }
+    const StackAvrCache *avrCache(uint32_t node_id) const { return findStackAvrCache_(node_id, false); }
+    bool requestAvr(uint32_t node_id) { return requestStackAvr_(node_id); }
+    StackLeakCache &leakLocal() { return _stack_leak_cache[0]; }
+    const StackLeakCache &leakLocal() const { return _stack_leak_cache[0]; }
+    StackLeakCache *leakCache(uint32_t node_id) { return findStackLeakCache_(node_id, false); }
+    const StackLeakCache *leakCache(uint32_t node_id) const { return findStackLeakCache_(node_id, false); }
+    bool requestLeak(uint32_t node_id) { return requestStackLeak_(node_id); }
     StackWateringCache *wateringCache(uint32_t node_id) { return findStackWateringCache_(node_id, false); }
     const StackWateringCache *wateringCache(uint32_t node_id) const { return findStackWateringCache_(node_id, false); }
     bool requestWatering(uint32_t node_id) { return requestStackWatering_(node_id); }
@@ -901,6 +1011,18 @@ private:
                 cache.capacity = 0;
             cache.reset();
         }
+        for (auto &cache : _stack_avr_cache)
+        {
+            cache.reset();
+        }
+        for (auto &cache : _stack_leak_cache)
+        {
+            cache.items = allocItems_<StackLeakItem>(cache.capacity, "leak",
+                                                     &cache - _stack_leak_cache, _log, true);
+            if (!cache.items)
+                cache.capacity = 0;
+            cache.reset();
+        }
     }
 
     void releaseCaches_()
@@ -970,6 +1092,11 @@ private:
             releaseItems_(cache.items, cache.capacity);
             cache.items = nullptr;
         }
+        for (auto &cache : _stack_leak_cache)
+        {
+            releaseItems_(cache.items, cache.capacity);
+            cache.items = nullptr;
+        }
         _alloc_ready = false;
     }
 
@@ -1014,6 +1141,8 @@ private:
             log_fail("tanks", i, _stack_tanks_cache[i].items, _stack_tanks_cache[i].capacity);
         for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
             log_fail("watering", i, _stack_watering_cache[i].items, _stack_watering_cache[i].capacity);
+        for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
+            log_fail("leak", i, _stack_leak_cache[i].items, _stack_leak_cache[i].capacity);
     }
 
     void handleStackFrame_(uint32_t node_id, const StackFrame &frame)
@@ -1359,6 +1488,76 @@ private:
                 send_ok(data);
                 return;
             }
+            if ((StackFeature)feature == StackFeature::Avr && action == "get")
+            {
+                StackAvrCache *cache = findStackAvrCache_(target, false);
+                if (!cache || !cache->has_data)
+                {
+                    requestStackAvr_(target);
+                    send_err("no_data");
+                    return;
+                }
+                DynamicJsonDocument data(1024);
+                data["enabled"] = cache->enabled;
+                data["auto_mode"] = cache->auto_mode;
+                data["prefer_main"] = cache->prefer_main;
+                data["auto_return_main"] = cache->auto_return_main;
+                if (cache->main_ok_port != AvrController::kInvalidPort)
+                    data["main_ok_port"] = cache->main_ok_port;
+                if (cache->reserve_ok_port != AvrController::kInvalidPort)
+                    data["reserve_ok_port"] = cache->reserve_ok_port;
+                if (cache->relay_main_port != AvrController::kInvalidPort)
+                    data["relay_main_port"] = cache->relay_main_port;
+                if (cache->relay_reserve_port != AvrController::kInvalidPort)
+                    data["relay_reserve_port"] = cache->relay_reserve_port;
+                if (cache->feedback_main_port != AvrController::kInvalidPort)
+                    data["feedback_main_port"] = cache->feedback_main_port;
+                if (cache->feedback_reserve_port != AvrController::kInvalidPort)
+                    data["feedback_reserve_port"] = cache->feedback_reserve_port;
+                data["main_ok"] = cache->main_ok;
+                data["reserve_ok"] = cache->reserve_ok;
+                data["relay_main_on"] = cache->relay_main_on;
+                data["relay_reserve_on"] = cache->relay_reserve_on;
+                data["active_source"] = cache->active_source;
+                data["target_source"] = cache->target_source;
+                data["fault"] = cache->fault;
+                data["transfer"] = cache->transfer;
+                send_ok(data);
+                return;
+            }
+            if ((StackFeature)feature == StackFeature::Leak && action == "get")
+            {
+                StackLeakCache *cache = findStackLeakCache_(target, false);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    requestStackLeak_(target);
+                    send_err("no_data");
+                    return;
+                }
+                DynamicJsonDocument data(4096);
+                JsonArray items = data["items"].to<JsonArray>();
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const StackLeakItem &it = cache->items[i];
+                    JsonObject o = items.add<JsonObject>();
+                    o["id"] = (unsigned)it.id;
+                    o["enabled"] = it.enabled;
+                    o["power_on"] = it.power_on;
+                    o["sensor_active_low"] = it.sensor_active_low;
+                    if (it.sensor != LeakController::kInvalidPort)
+                        o["sensor"] = it.sensor;
+                    if (it.valve != LeakController::kInvalidPort)
+                        o["valve"] = it.valve;
+                    if (it.alarm != LeakController::kInvalidPort)
+                        o["alarm"] = it.alarm;
+                    if (it.name[0])
+                        o["name"] = it.name;
+                    o["wet"] = it.wet;
+                    o["alarm_latched"] = it.alarm_latched;
+                }
+                send_ok(data);
+                return;
+            }
             return;
         }
         if (frame.type != (uint8_t)StackMsgType::Ack &&
@@ -1379,6 +1578,8 @@ private:
         StackThermoCache *thermo_cache = findStackThermoCacheByCmd_(cmd_id);
         StackSepticCache *septic_cache = findStackSepticCacheByCmd_(cmd_id);
         StackTankCache *tanks_cache = findStackTanksCacheByCmd_(cmd_id);
+        StackAvrCache *avr_cache = findStackAvrCacheByCmd_(cmd_id);
+        StackLeakCache *leak_cache = findStackLeakCacheByCmd_(cmd_id);
         StackWateringCache *watering_cache = findStackWateringCacheByCmd_(cmd_id);
         StackI2cCache *i2c_cache = findStackI2cCacheByCmd_(cmd_id);
         StackOwCache *ow_cache = findStackOwCacheByCmd_(cmd_id);
@@ -1386,7 +1587,8 @@ private:
         bool status_is_rtc = false;
         StackNodeStatusCache *status_cache = findStackNodeStatusCacheByCmd_(cmd_id, status_is_plc, status_is_rtc);
         if (!sock_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !sec_prearm_cache && !meteo_cache &&
-            !thermo_cache && !septic_cache && !tanks_cache && !watering_cache && !i2c_cache && !ow_cache && !status_cache)
+            !thermo_cache && !septic_cache && !tanks_cache && !avr_cache && !leak_cache &&
+            !watering_cache && !i2c_cache && !ow_cache && !status_cache)
             return;
         const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (doc["ok"] | false);
         JsonObjectConst data_obj = doc["data"].as<JsonObjectConst>();
@@ -1926,6 +2128,99 @@ private:
             }
         }
 
+        if (avr_cache)
+        {
+            avr_cache->updated_ms = millis();
+            avr_cache->pending = false;
+            avr_cache->last_ok = false;
+            avr_cache->last_error = "";
+            if (!ok)
+            {
+                avr_cache->last_error = doc["error"] | "error";
+            }
+            else
+            {
+                avr_cache->enabled = data_obj["enabled"] | false;
+                avr_cache->auto_mode = data_obj["auto_mode"] | true;
+                avr_cache->prefer_main = data_obj["prefer_main"] | true;
+                avr_cache->auto_return_main = data_obj["auto_return_main"] | true;
+                avr_cache->main_ok = data_obj["main_ok"] | false;
+                avr_cache->reserve_ok = data_obj["reserve_ok"] | false;
+                avr_cache->relay_main_on = data_obj["relay_main_on"] | false;
+                avr_cache->relay_reserve_on = data_obj["relay_reserve_on"] | false;
+                avr_cache->transfer = data_obj["transfer"] | false;
+                avr_cache->main_ok_port = (uint8_t)(data_obj["main_ok_port"] | AvrController::kInvalidPort);
+                avr_cache->reserve_ok_port = (uint8_t)(data_obj["reserve_ok_port"] | AvrController::kInvalidPort);
+                avr_cache->relay_main_port = (uint8_t)(data_obj["relay_main_port"] | AvrController::kInvalidPort);
+                avr_cache->relay_reserve_port = (uint8_t)(data_obj["relay_reserve_port"] | AvrController::kInvalidPort);
+                avr_cache->feedback_main_port = (uint8_t)(data_obj["feedback_main_port"] | AvrController::kInvalidPort);
+                avr_cache->feedback_reserve_port = (uint8_t)(data_obj["feedback_reserve_port"] | AvrController::kInvalidPort);
+                copyStr_(avr_cache->active_source, sizeof(avr_cache->active_source), data_obj["active_source"].as<const char *>());
+                copyStr_(avr_cache->target_source, sizeof(avr_cache->target_source), data_obj["target_source"].as<const char *>());
+                copyStr_(avr_cache->fault, sizeof(avr_cache->fault), data_obj["fault"].as<const char *>());
+                avr_cache->has_data = true;
+                avr_cache->last_ok = true;
+                avr_cache->node_id = node_id;
+            }
+        }
+
+        if (leak_cache)
+        {
+            leak_cache->updated_ms = millis();
+            if (!ok)
+            {
+                leak_cache->pending = false;
+                leak_cache->last_ok = false;
+                leak_cache->last_error = "";
+                leak_cache->last_error = doc["error"] | "error";
+            }
+            else
+            {
+                const uint16_t part = data_obj["part"] | 1;
+                const uint16_t parts = data_obj["parts"] | 1;
+                const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
+                {
+                    leak_cache->item_count = 0;
+                    leak_cache->has_data = false;
+                    leak_cache->last_ok = false;
+                    leak_cache->last_error = "";
+                }
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (leak_cache->item_count >= LeakController::kZoneCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackLeakItem &dst = leak_cache->items[leak_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.power_on = item["power_on"] | false;
+                        dst.sensor_active_low = item["sensor_active_low"] | true;
+                        dst.sensor = (uint8_t)(item["sensor"] | LeakController::kInvalidPort);
+                        dst.valve = (uint8_t)(item["valve"] | LeakController::kInvalidPort);
+                        dst.alarm = (uint8_t)(item["alarm"] | LeakController::kInvalidPort);
+                        dst.wet = item["wet"] | false;
+                        dst.alarm_latched = item["alarm_latched"] | false;
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    }
+                }
+                if (done)
+                {
+                    leak_cache->pending = false;
+                    leak_cache->has_data = true;
+                    leak_cache->last_ok = true;
+                    leak_cache->node_id = node_id;
+                }
+                else
+                {
+                    leak_cache->pending = true;
+                }
+            }
+        }
+
         if (watering_cache)
         {
             watering_cache->pending = false;
@@ -2400,6 +2695,68 @@ private:
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
         cache->pending_since_ms = now;
+        return true;
+    }
+
+    bool requestStackAvr_(uint32_t node_id)
+    {
+        if (!_stack_master)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackAvrCache *cache = findStackAvrCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+            return false;
+        if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        const uint16_t cmd_id = nextStackCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Avr;
+        doc["action"] = "get";
+        char payload[96] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
+                                   (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
+        return true;
+    }
+
+    bool requestStackLeak_(uint32_t node_id)
+    {
+        if (!_stack_master)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackLeakCache *cache = findStackLeakCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+            return false;
+        if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        const uint16_t cmd_id = nextStackCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Leak;
+        doc["action"] = "get";
+        char payload[96] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
+                                   (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
         return true;
     }
 
@@ -3155,6 +3512,86 @@ private:
         return nullptr;
     }
 
+    StackAvrCache *findStackAvrCache_(uint32_t node_id, bool create)
+    {
+        if (!_stack_master)
+            return nullptr;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return nullptr;
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _stack_avr_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _stack_avr_cache)
+        {
+            if (c.node_id == 0)
+            {
+                c.reset();
+                c.node_id = node_id;
+                return &c;
+            }
+        }
+        return nullptr;
+    }
+
+    const StackAvrCache *findStackAvrCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackCache *>(this)->findStackAvrCache_(node_id, create);
+    }
+
+    StackAvrCache *findStackAvrCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _stack_avr_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
+    StackLeakCache *findStackLeakCache_(uint32_t node_id, bool create)
+    {
+        if (!_stack_master)
+            return nullptr;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return nullptr;
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _stack_leak_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _stack_leak_cache)
+        {
+            if (c.node_id == 0)
+            {
+                c.reset();
+                c.node_id = node_id;
+                return &c;
+            }
+        }
+        return nullptr;
+    }
+
+    const StackLeakCache *findStackLeakCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackCache *>(this)->findStackLeakCache_(node_id, create);
+    }
+
+    StackLeakCache *findStackLeakCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _stack_leak_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
     StackWateringCache *findStackWateringCache_(uint32_t node_id, bool create)
     {
         if (!_stack_master)
@@ -3284,6 +3721,8 @@ private:
     StackThermoCache _stack_thermo_cache[StackMaster::MAX_SESSIONS] = {};
     StackSepticCache _stack_septic_cache[StackMaster::MAX_SESSIONS] = {};
     StackTankCache _stack_tanks_cache[StackMaster::MAX_SESSIONS] = {};
+    StackAvrCache _stack_avr_cache[StackMaster::MAX_SESSIONS] = {};
+    StackLeakCache _stack_leak_cache[StackMaster::MAX_SESSIONS] = {};
     StackWateringCache _stack_watering_cache[StackMaster::MAX_SESSIONS] = {};
     StackNodeStatusCache _stack_status_cache[StackMaster::MAX_SESSIONS] = {};
     uint16_t _stack_cmd_id = 0;

@@ -24,6 +24,8 @@ enum class DisplaySlotKind : uint8_t
     Tank,
     Septic,
     Security,
+    Avr,
+    Leak,
     Text
 };
 
@@ -39,8 +41,12 @@ enum class DisplaySlotField : uint8_t
     TankLevel,
     SepticLevel,
     SecurityArmed,
+    AvrSource,
+    LeakState,
     Text,
-    TimeMin
+    TimeMin,
+    AvrMainOk,
+    AvrReserveOk
 };
 
 struct DisplaySlotConfig

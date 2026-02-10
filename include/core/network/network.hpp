@@ -130,8 +130,8 @@ public:
         if (!configureTelegram_(ActiveBoardProfile::TELEGRAM_NET))
             return false;
         _logs.info(F("NET"), F("Enable Telegram auto poll"));
-        _tgbot.setAutoPollIntervalMs(10000);
-        _tgbot.enableAutoPoll(true, 0);
+        _tgbot.setAutoPollIntervalMs(kTelegramPollIntervalMs);
+        _tgbot.enableAutoPoll(true, kTelegramPollTimeoutSec);
         _logs.info(F("NET"), F("Init Stack"));
         beginStack_();
         _started = true;
@@ -194,6 +194,8 @@ private:
     uint16_t _proxy_port = 0;
     String _proxy_path;
     bool _started = false;
+    static constexpr uint32_t kTelegramPollIntervalMs = 1000;
+    static constexpr uint16_t kTelegramPollTimeoutSec = 2;
 
     static constexpr uint16_t kStackPort = 9010;
     static constexpr uint32_t kStackFallbackDelayMs = 10000;

@@ -195,7 +195,8 @@ struct NetworkContext
           stack_slave(hw.io, hw.ds18b20, hw.ow, hw.i2c, hw.plc, hw.rtc, comms.telegram, core.logs, hw.ext,
                       control.controllers.sockets(), control.controllers.meteo(), control.controllers.thermo(),
                       control.controllers.septic(), control.controllers.security(), control.controllers.tanks(),
-                      control.controllers.watering(), control.controllers.ring())
+                      control.controllers.watering(), control.controllers.ring(),
+                      control.controllers.avr(), control.controllers.leak())
     {
     }
 };
@@ -235,6 +236,7 @@ struct App
     {
         core.logs.setRtc(hw.rtc);
         ui.console.setStackMaster(&net.network.stackMaster());
+        ui.console.setStackSlave(&net.stack_slave);
         ui.console.setConfigsManager(cfg.configs_manager);
 
         control.telegram_menu.setConfigsManager(cfg.configs_manager);
@@ -807,6 +809,8 @@ private:
         stack_cache.requestSeptic(node_id);
         stack_cache.requestTanks(node_id);
         stack_cache.requestMeteo(node_id);
+        stack_cache.requestAvr(node_id);
+        stack_cache.requestLeak(node_id);
     }
 
     static bool onRemoteMeteo_(void *ctx, uint32_t node_id, uint8_t sensor_id, float &temp_c, bool &has_temp)
@@ -2068,7 +2072,7 @@ private:
                 const uint32_t age_ms = (uint32_t)(millis() - cache->updated_ms);
                 if (age_ms > 3000u)
                     net.stack_slave.requestRemoteMeteoAll();
-                if (age_ms > 8000u)
+                if (age_ms > kStackNodeStaleMs)
                 {
                     memcpy(out, "ERR ", 4);
                     return true;
@@ -2173,7 +2177,7 @@ private:
             const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
             if (age_ms > 3000u)
                 net.stack_slave.requestRemoteThermo(node_id);
-            if (age_ms > 8000u)
+            if (age_ms > kStackNodeStaleMs)
             {
                 memcpy(out, "ERR ", 4);
                 return true;
@@ -2222,20 +2226,33 @@ private:
             if (is_master)
             {
                 const auto *cache = stack_cache.tanksCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
+                if (!cache || !cache->items)
                 {
                     stack_cache.requestTanks(node_id);
                     return false;
                 }
-                const uint32_t age_ms = (uint32_t)(millis() - cache->updated_ms);
+                const bool node_online = net.network.stackMaster().nodeIsOnline(node_id, kStackNodeStaleMs);
+                const uint32_t now = millis();
+                const uint32_t age_ms = (uint32_t)(now - cache->updated_ms);
                 if (age_ms > 3000u)
                     stack_cache.requestTanks(node_id);
-                if (age_ms > 8000u)
+                if (!cache->has_data)
                 {
-                    memcpy(out, "ERR ", 4);
-                    return true;
+                    bool no_data_long = false;
+                    if (cache->pending_since_ms)
+                        no_data_long = (uint32_t)(now - cache->pending_since_ms) > kDisplayNoDataErrMs;
+                    else if (cache->updated_ms)
+                        no_data_long = (uint32_t)(now - cache->updated_ms) > kDisplayNoDataErrMs;
+                    else
+                        no_data_long = now > kDisplayNoDataErrMs;
+                    if (no_data_long && !node_online)
+                    {
+                        memcpy(out, "ERR ", 4);
+                        return true;
+                    }
+                    return false;
                 }
-                if (!cache->last_ok && cache->last_error.length())
+                if (age_ms > kDisplayNoDataErrMs && !node_online)
                 {
                     memcpy(out, "ERR ", 4);
                     return true;
@@ -2262,20 +2279,33 @@ private:
             if (!is_slave)
                 return false;
             const auto *rcache = net.stack_slave.remoteTanksCache(node_id);
-            if (!rcache || !rcache->has_data || !rcache->items)
+            if (!rcache || !rcache->items)
             {
                 net.stack_slave.requestRemoteTanks(node_id);
                 return false;
             }
-            const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
+            const bool master_connected = net.network.stackNode().connected();
+            const uint32_t now = millis();
+            const uint32_t age_ms = (uint32_t)(now - rcache->updated_ms);
             if (age_ms > 3000u)
                 net.stack_slave.requestRemoteTanks(node_id);
-            if (age_ms > 8000u)
+            if (!rcache->has_data)
             {
-                memcpy(out, "ERR ", 4);
-                return true;
+                bool no_data_long = false;
+                if (rcache->pending_since_ms)
+                    no_data_long = (uint32_t)(now - rcache->pending_since_ms) > kDisplayNoDataErrMs;
+                else if (rcache->updated_ms)
+                    no_data_long = (uint32_t)(now - rcache->updated_ms) > kDisplayNoDataErrMs;
+                else
+                    no_data_long = now > kDisplayNoDataErrMs;
+                if (no_data_long && !master_connected)
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                return false;
             }
-            if (!rcache->last_ok && rcache->last_error.length())
+            if (age_ms > kDisplayNoDataErrMs && !master_connected)
             {
                 memcpy(out, "ERR ", 4);
                 return true;
@@ -2378,6 +2408,99 @@ private:
                     else
                         memcpy(out, "OK  ", 4);
                     return true;
+            }
+            return false;
+        }
+        case DisplaySlotKind::Avr:
+        {
+            if (local)
+            {
+                const auto &st = control.controllers.avr().state();
+                if (slot.field == DisplaySlotField::AvrMainOk)
+                    memcpy(out, st.main_ok ? "ON  " : "OFF ", 4);
+                else if (slot.field == DisplaySlotField::AvrReserveOk)
+                    memcpy(out, st.reserve_ok ? "ON  " : "OFF ", 4);
+                else if (st.active_source == AvrController::Source::Main)
+                    memcpy(out, "MAN ", 4);
+                else if (st.active_source == AvrController::Source::Reserve)
+                    memcpy(out, "RES ", 4);
+                else
+                    memcpy(out, "OFF ", 4);
+                return true;
+            }
+            if (is_master)
+            {
+                const auto *cache = stack_cache.avrCache(node_id);
+                if (!cache || !cache->has_data)
+                {
+                    stack_cache.requestAvr(node_id);
+                    return false;
+                }
+                const uint32_t age_ms = (uint32_t)(millis() - cache->updated_ms);
+                if (age_ms > 3000u)
+                    stack_cache.requestAvr(node_id);
+                if (age_ms > 8000u || (!cache->last_ok && cache->last_error.length()))
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                if (slot.field == DisplaySlotField::AvrMainOk)
+                    memcpy(out, cache->main_ok ? "ON  " : "OFF ", 4);
+                else if (slot.field == DisplaySlotField::AvrReserveOk)
+                    memcpy(out, cache->reserve_ok ? "ON  " : "OFF ", 4);
+                else if (strcmp(cache->active_source, "main") == 0)
+                    memcpy(out, "MAN ", 4);
+                else if (strcmp(cache->active_source, "reserve") == 0)
+                    memcpy(out, "RES ", 4);
+                else
+                    memcpy(out, "OFF ", 4);
+                return true;
+            }
+            return false;
+        }
+        case DisplaySlotKind::Leak:
+        {
+            if (slot.index == 0)
+                return false;
+            if (local)
+            {
+                const auto *st = control.controllers.leak().state(slot.index);
+                if (!st)
+                    return false;
+                if (st->wet || st->alarm_latched)
+                    memcpy(out, "ALRM", 4);
+                else
+                    memcpy(out, "DRY ", 4);
+                return true;
+            }
+            if (is_master)
+            {
+                const auto *cache = stack_cache.leakCache(node_id);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    stack_cache.requestLeak(node_id);
+                    return false;
+                }
+                const uint32_t age_ms = (uint32_t)(millis() - cache->updated_ms);
+                if (age_ms > 3000u)
+                    stack_cache.requestLeak(node_id);
+                if (age_ms > 8000u || (!cache->last_ok && cache->last_error.length()))
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (it.id != slot.index || !it.enabled)
+                        continue;
+                    if (it.wet || it.alarm_latched)
+                        memcpy(out, "ALRM", 4);
+                    else
+                        memcpy(out, "DRY ", 4);
+                    return true;
+                }
+                return false;
             }
             return false;
         }
@@ -2771,6 +2894,7 @@ private:
     static constexpr uint32_t kPreArmWaitMs = 900;
     static constexpr uint32_t kPreArmPollMs = 1000;
     static constexpr uint32_t kStackNodeStaleMs = 15000;
+    static constexpr uint32_t kDisplayNoDataErrMs = 30000;
 
     void broadcastSecurityAlarm_(bool alarm_on)
     {

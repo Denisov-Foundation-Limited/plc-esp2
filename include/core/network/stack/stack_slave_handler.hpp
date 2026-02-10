@@ -46,12 +46,15 @@
 #include "controllers/tank_controller.hpp"
 #include "controllers/watering_controller.hpp"
 #include "controllers/ring_controller.hpp"
+#include "controllers/avr_controller.hpp"
+#include "controllers/leak_controller.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/logger.hpp"
 
 class StackSlaveHandler
 {
 public:
+    using TraceHandler = void (*)(void *ctx, bool outgoing, const StackFrame &frame);
     struct RemoteMeteoItem
     {
         uint8_t id = 0;
@@ -346,7 +349,8 @@ public:
                       PlcControl &plc, RTC &rtc, TelegramClient &telegram, Logger &logs,
                       Extender &ext, SocketController &sockets, MeteoController &meteo,
                       ThermoController &thermo, SepticController &septic, SecurityController &security,
-                      TankController &tanks, WateringController &watering, RingController &ring)
+                      TankController &tanks, WateringController &watering, RingController &ring,
+                      AvrController &avr, LeakController &leak)
         : _io(io),
           _ds18b20(ds18b20),
           _ow(ow),
@@ -363,7 +367,9 @@ public:
           _security(security),
           _tanks(tanks),
           _watering(watering),
-          _ring(ring)
+          _ring(ring),
+          _avr(avr),
+          _leak(leak)
     {
     }
     ~StackSlaveHandler()
@@ -377,6 +383,11 @@ public:
         _node = &node;
         node.setFrameHandler(&StackSlaveHandler::onFrame_, this);
         node.setStatusProvider(&StackSlaveHandler::onStatus_, this);
+    }
+    void setTraceHandler(TraceHandler cb, void *ctx)
+    {
+        _trace_cb = cb;
+        _trace_ctx = ctx;
     }
     bool nodeConnected() const { return _node && _node->connected(); }
     bool linkReadyAfterHello() const
@@ -495,7 +506,11 @@ private:
     TankController &_tanks;
     WateringController &_watering;
     RingController &_ring;
+    AvrController &_avr;
+    LeakController &_leak;
     StackNode *_node = nullptr;
+    TraceHandler _trace_cb = nullptr;
+    void *_trace_ctx = nullptr;
     ConfigsManagerIface *_configs = nullptr;
     bool _alloc_ready = false;
     static constexpr uint8_t MAX_I2C_ADDRS = 127;
@@ -704,6 +719,7 @@ private:
 
     void handleFrame_(const StackFrame &frame)
     {
+        traceFrame_(false, frame);
         if (!_node)
             return;
         if (frame.type == (uint8_t)StackMsgType::Ack || frame.type == (uint8_t)StackMsgType::Err)
@@ -797,6 +813,12 @@ private:
             break;
         case StackFeature::Watering:
             handleWatering_(cmd_id, action, params);
+            break;
+        case StackFeature::Avr:
+            handleAvr_(cmd_id, action, params);
+            break;
+        case StackFeature::Leak:
+            handleLeak_(cmd_id, action, params);
             break;
         case StackFeature::Ring:
             handleRing_(cmd_id, action, params);
@@ -2271,6 +2293,234 @@ private:
         sendErr_(cmd_id, "unsupported");
     }
 
+    void handleAvr_(uint16_t cmd_id, const String &action, JsonVariantConst params)
+    {
+        if (action == "get")
+        {
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            const auto &cfg = _avr.config();
+            const auto &st = _avr.state();
+            doc["enabled"] = cfg.enabled;
+            doc["auto_mode"] = cfg.auto_mode;
+            doc["prefer_main"] = cfg.prefer_main;
+            doc["auto_return_main"] = cfg.auto_return_main;
+            if (cfg.main_ok_port != AvrController::kInvalidPort)
+                doc["main_ok_port"] = cfg.main_ok_port;
+            if (cfg.reserve_ok_port != AvrController::kInvalidPort)
+                doc["reserve_ok_port"] = cfg.reserve_ok_port;
+            if (cfg.relay_main_port != AvrController::kInvalidPort)
+                doc["relay_main_port"] = cfg.relay_main_port;
+            if (cfg.relay_reserve_port != AvrController::kInvalidPort)
+                doc["relay_reserve_port"] = cfg.relay_reserve_port;
+            if (cfg.feedback_main_port != AvrController::kInvalidPort)
+                doc["feedback_main_port"] = cfg.feedback_main_port;
+            if (cfg.feedback_reserve_port != AvrController::kInvalidPort)
+                doc["feedback_reserve_port"] = cfg.feedback_reserve_port;
+            doc["main_ok"] = st.main_ok;
+            doc["reserve_ok"] = st.reserve_ok;
+            doc["relay_main_on"] = st.relay_main_on;
+            doc["relay_reserve_on"] = st.relay_reserve_on;
+            doc["active_source"] = AvrController::sourceName(st.active_source);
+            doc["target_source"] = AvrController::sourceName(st.target_source);
+            doc["fault"] = AvrController::faultName(st.fault);
+            doc["transfer"] = st.transfer_in_progress;
+            sendAck_(cmd_id, doc);
+            return;
+        }
+        if (action == "set")
+        {
+            if (!params.is<JsonObjectConst>())
+            {
+                sendErr_(cmd_id, "missing params");
+                return;
+            }
+            JsonObjectConst obj = params.as<JsonObjectConst>();
+            DynamicJsonDocument cfg_doc(1024);
+            JsonObject cfg = cfg_doc.to<JsonObject>();
+            if (obj["enabled"].is<bool>())
+                cfg["enabled"] = obj["enabled"].as<bool>();
+            if (obj["auto_mode"].is<bool>())
+                cfg["auto_mode"] = obj["auto_mode"].as<bool>();
+            if (obj["prefer_main"].is<bool>())
+                cfg["prefer_main"] = obj["prefer_main"].as<bool>();
+            if (obj["auto_return_main"].is<bool>())
+                cfg["auto_return_main"] = obj["auto_return_main"].as<bool>();
+            if (obj["main_ok"].is<unsigned>())
+                cfg["main_ok"] = obj["main_ok"].as<unsigned>();
+            if (obj["reserve_ok"].is<unsigned>())
+                cfg["reserve_ok"] = obj["reserve_ok"].as<unsigned>();
+            if (obj["relay_main"].is<unsigned>())
+                cfg["relay_main"] = obj["relay_main"].as<unsigned>();
+            if (obj["relay_reserve"].is<unsigned>())
+                cfg["relay_reserve"] = obj["relay_reserve"].as<unsigned>();
+            if (obj["feedback_main"].is<unsigned>())
+                cfg["feedback_main"] = obj["feedback_main"].as<unsigned>();
+            if (obj["feedback_reserve"].is<unsigned>())
+                cfg["feedback_reserve"] = obj["feedback_reserve"].as<unsigned>();
+            if (obj["main_ok_active_low"].is<bool>())
+                cfg["main_ok_active_low"] = obj["main_ok_active_low"].as<bool>();
+            if (obj["reserve_ok_active_low"].is<bool>())
+                cfg["reserve_ok_active_low"] = obj["reserve_ok_active_low"].as<bool>();
+            if (obj["feedback_main_active_low"].is<bool>())
+                cfg["feedback_main_active_low"] = obj["feedback_main_active_low"].as<bool>();
+            if (obj["feedback_reserve_active_low"].is<bool>())
+                cfg["feedback_reserve_active_low"] = obj["feedback_reserve_active_low"].as<bool>();
+            if (obj["relay_main_invert"].is<bool>())
+                cfg["relay_main_invert"] = obj["relay_main_invert"].as<bool>();
+            if (obj["relay_reserve_invert"].is<bool>())
+                cfg["relay_reserve_invert"] = obj["relay_reserve_invert"].as<bool>();
+            if (obj["debounce_ms"].is<unsigned>())
+                cfg["debounce_ms"] = obj["debounce_ms"].as<unsigned>();
+            if (obj["loss_delay_ms"].is<unsigned>())
+                cfg["loss_delay_ms"] = obj["loss_delay_ms"].as<unsigned>();
+            if (obj["return_delay_ms"].is<unsigned>())
+                cfg["return_delay_ms"] = obj["return_delay_ms"].as<unsigned>();
+            if (obj["break_ms"].is<unsigned>())
+                cfg["break_ms"] = obj["break_ms"].as<unsigned>();
+            if (obj["warmup_ms"].is<unsigned>())
+                cfg["warmup_ms"] = obj["warmup_ms"].as<unsigned>();
+            if (obj["transfer_timeout_ms"].is<unsigned>())
+                cfg["transfer_timeout_ms"] = obj["transfer_timeout_ms"].as<unsigned>();
+            _avr.applyConfig(cfg_doc.as<JsonObjectConst>());
+
+            if (obj["manual_source"].is<const char *>())
+            {
+                String src = obj["manual_source"].as<const char *>();
+                src.toLowerCase();
+                if (src == "main")
+                    _avr.setManualSource(AvrController::Source::Main);
+                else if (src == "reserve")
+                    _avr.setManualSource(AvrController::Source::Reserve);
+                else
+                    _avr.setManualSource(AvrController::Source::Off);
+            }
+            if (obj["clear_fault"].is<bool>() && obj["clear_fault"].as<bool>())
+                _avr.clearFault();
+
+            if (_configs)
+                _configs->save();
+            sendAck_(cmd_id);
+            return;
+        }
+        sendErr_(cmd_id, "unsupported");
+    }
+
+    void handleLeak_(uint16_t cmd_id, const String &action, JsonVariantConst params)
+    {
+        if (action == "get")
+        {
+            static constexpr size_t kDefaultChunk = 6;
+            static constexpr size_t kMaxChunk = 16;
+            size_t chunk = kDefaultChunk;
+            if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
+            {
+                const unsigned raw = params["chunk"].as<unsigned>();
+                if (raw > 0)
+                    chunk = raw;
+            }
+            if (chunk > kMaxChunk)
+                chunk = kMaxChunk;
+
+            size_t total = 0;
+            for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+            {
+                const auto *cfg = _leak.configByIndex(i);
+                const auto *st = _leak.stateByIndex(i);
+                if (cfg && st && cfg->enabled)
+                    ++total;
+            }
+
+            const size_t parts = total ? ((total + chunk - 1) / chunk) : 1;
+            for (size_t part = 0; part < parts; ++part)
+            {
+                const size_t from = part * chunk;
+                const size_t to = from + chunk;
+                _tx_doc.clear();
+                JsonDocument &doc = _tx_doc;
+                JsonArray arr = doc["items"].to<JsonArray>();
+                size_t pos = 0;
+                for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+                {
+                    const auto *cfg = _leak.configByIndex(i);
+                    const auto *st = _leak.stateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    if (pos >= from && pos < to)
+                    {
+                        JsonObject o = arr.add<JsonObject>();
+                        o["id"] = (unsigned)cfg->id;
+                        o["enabled"] = cfg->enabled;
+                        o["power_on"] = cfg->power_on;
+                        o["sensor_active_low"] = cfg->sensor_active_low;
+                        if (cfg->sensor_port != LeakController::kInvalidPort)
+                            o["sensor"] = cfg->sensor_port;
+                        if (cfg->valve_port != LeakController::kInvalidPort)
+                            o["valve"] = cfg->valve_port;
+                        if (cfg->alarm_port != LeakController::kInvalidPort)
+                            o["alarm"] = cfg->alarm_port;
+                        if (cfg->name.length())
+                            o["name"] = cfg->name;
+                        o["wet"] = st->wet;
+                        o["alarm_latched"] = st->alarm_latched;
+                    }
+                    ++pos;
+                    if (pos >= to)
+                        break;
+                }
+                doc["part"] = (unsigned)(part + 1);
+                doc["parts"] = (unsigned)parts;
+                doc["done"] = (part + 1) >= parts;
+                sendAck_(cmd_id, doc);
+            }
+            return;
+        }
+        if (action == "set")
+        {
+            if (!params.is<JsonObjectConst>())
+            {
+                sendErr_(cmd_id, "missing params");
+                return;
+            }
+            JsonObjectConst obj = params.as<JsonObjectConst>();
+            if (obj["ack_all"].is<bool>() && obj["ack_all"].as<bool>())
+                _leak.ackAll();
+
+            if (obj["zones"].is<JsonArrayConst>())
+            {
+                JsonArrayConst zones = obj["zones"].as<JsonArrayConst>();
+                for (JsonObjectConst zone : zones)
+                {
+                    if (!zone["id"].is<unsigned>())
+                        continue;
+                    const size_t id = (size_t)zone["id"].as<unsigned>();
+                    if (id == 0 || id > LeakController::kZoneCount)
+                        continue;
+                    if (zone["enabled"].is<bool>())
+                        _leak.setEnabled(id, zone["enabled"].as<bool>());
+                    if (zone["power_on"].is<bool>())
+                        _leak.setPower(id, zone["power_on"].as<bool>());
+                    if (zone["sensor_active_low"].is<bool>())
+                        _leak.setSensorActiveLow(id, zone["sensor_active_low"].as<bool>());
+                    _leak.setValveOpenOnPower(id, true);
+                    if (zone["name"].is<const char *>())
+                        _leak.setName(id, String(zone["name"].as<const char *>()));
+                    if (zone["sensor"].is<unsigned>())
+                        _leak.setSensorPort(id, (uint8_t)zone["sensor"].as<unsigned>());
+                    if (zone["valve"].is<unsigned>())
+                        _leak.setValvePort(id, (uint8_t)zone["valve"].as<unsigned>());
+                    if (zone["alarm"].is<unsigned>())
+                        _leak.setAlarmPort(id, (uint8_t)zone["alarm"].as<unsigned>());
+                }
+            }
+            if (_configs)
+                _configs->save();
+            sendAck_(cmd_id);
+            return;
+        }
+        sendErr_(cmd_id, "unsupported");
+    }
+
     size_t buildStatus_(uint8_t *out, size_t cap)
     {
         StaticJsonDocument<256> doc;
@@ -3631,7 +3881,18 @@ private:
         const size_t len = serializeJson(doc, reinterpret_cast<char *>(_tx_payload_buf), sizeof(_tx_payload_buf));
         if (len == 0 || len > sizeof(_tx_payload_buf))
             return;
+        StackFrame frame{};
+        frame.type = type;
+        frame.payload = _tx_payload_buf;
+        frame.payload_len = len;
+        traceFrame_(true, frame);
         _node->send(type, _tx_payload_buf, len);
+    }
+
+    void traceFrame_(bool outgoing, const StackFrame &frame)
+    {
+        if (_trace_cb)
+            _trace_cb(_trace_ctx, outgoing, frame);
     }
 
     bool isSlave_() const

@@ -262,6 +262,36 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Охрана: <strong>%SECURITY_ENABLED_LABEL%</strong></span>
           <span class="status">%SECURITY_STATUS%</span>
         </div>
+        <div class="tile">
+          <form method="POST" action="/controllers" id="avr-form">
+            <input type="hidden" name="ctrl" value="avr">
+            <div class="tile-head">
+              <a href="/avr">АВР</a>
+              <label class="switch">
+                <input type="checkbox" id="avr-enabled" name="avr_enabled" %AVR_ENABLED_CHECKED%>
+                <span class="track"><span class="knob"></span></span>
+              </label>
+            </div>
+          </form>
+          <span>АВР</span>
+          <span class="status">АВР: <strong>%AVR_ENABLED_LABEL%</strong></span>
+          <span class="status">%AVR_STATUS%</span>
+        </div>
+        <div class="tile">
+          <form method="POST" action="/controllers" id="leak-form">
+            <input type="hidden" name="ctrl" value="leak">
+            <div class="tile-head">
+              <a href="/leak">Протечки</a>
+              <label class="switch">
+                <input type="checkbox" id="leak-enabled" name="leak_enabled" %LEAK_ENABLED_CHECKED%>
+                <span class="track"><span class="knob"></span></span>
+              </label>
+            </div>
+          </form>
+          <span>Защита от протечек</span>
+          <span class="status">Протечки: <strong>%LEAK_ENABLED_LABEL%</strong></span>
+          <span class="status">%LEAK_STATUS%</span>
+        </div>
       </div>
     </div>
   </div>
@@ -311,10 +341,21 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
     if (securityToggle && securityForm) {
       securityToggle.addEventListener('change', () => securityForm.submit());
     }
+    const avrToggle = document.getElementById('avr-enabled');
+    const avrForm = document.getElementById('avr-form');
+    if (avrToggle && avrForm) {
+      avrToggle.addEventListener('change', () => avrForm.submit());
+    }
+    const leakToggle = document.getElementById('leak-enabled');
+    const leakForm = document.getElementById('leak-form');
+    if (leakToggle && leakForm) {
+      leakToggle.addEventListener('change', () => leakForm.submit());
+    }
   </script>
 </body>
 </html>
 )HTML";
+
 
 
 

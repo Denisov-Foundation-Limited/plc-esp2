@@ -73,14 +73,11 @@ public:
     }
 
     bool showStr(uint8_t str, const String &text) {
-        if (str > 0 || str < 2) {
-            if (text.length() > 16) {
-                return false;
-            }
-            _lcd.setCursor(0, str);
-            _lcd.print(text);
-        }
-        return false;
+        if (str > 1 || text.length() > 16)
+            return false;
+        _lcd.setCursor(0, str);
+        _lcd.print(text);
+        return true;
     }
 
     void clear() {
@@ -91,6 +88,8 @@ public:
     {
         if (!_ready)
             return;
+        // Keep LCD backpack backlight latched ON after transient I2C glitches.
+        _lcd.backlightOn();
         if (_slot_provider)
         {
             char line0[17] = {};

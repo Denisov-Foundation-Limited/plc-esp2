@@ -359,7 +359,11 @@ private:
             logError_(String("Request failed: ") + _last_error);
             return false;
         }
+        // Keep synchronous API calls short to avoid blocking the main control loop.
+        const uint16_t prev_timeout_ms = (uint16_t)min<uint32_t>(_auto_poll_timeout_s ? (_auto_poll_timeout_s * 1000u) : 2000u, 60000u);
+        _fb->setTimeout(kSendTimeoutMs);
         fb::Result res = _fb->sendCommand(cmd, payload, true);
+        _fb->setTimeout(prev_timeout_ms);
         if (res.isError())
         {
             String err;
@@ -373,4 +377,5 @@ private:
         return !res.isEmpty();
     }
 
+    static constexpr uint16_t kSendTimeoutMs = 1500;
 };

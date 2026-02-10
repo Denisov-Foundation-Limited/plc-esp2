@@ -18,6 +18,7 @@
 #include <string.h>
 
 #include "core/network/stack/stack_master.hpp"
+#include "core/network/stack/stack_slave_handler.hpp"
 #include "core/network/stack/stack_features.hpp"
 #include "core/network/stack/stack_protocol.hpp"
 #include "controllers/meteo_controller.hpp"
@@ -37,6 +38,17 @@ public:
         _stack_master = master;
         if (_stack_master)
             _stack_master->setFrameHandler(&CLIStackT::onStackFrame_, this);
+    }
+
+    void bindSlave(StackSlaveHandler *slave)
+    {
+        if (_stack_slave == slave)
+            return;
+        if (_stack_slave)
+            _stack_slave->setTraceHandler(nullptr, nullptr);
+        _stack_slave = slave;
+        if (_stack_slave)
+            _stack_slave->setTraceHandler(&CLIStackT::onStackSlaveTrace_, this);
     }
 
     void cmdShowStack_()
@@ -565,6 +577,7 @@ private:
 
     ConsoleT &_c;
     StackMaster *_stack_master = nullptr;
+    StackSlaveHandler *_stack_slave = nullptr;
 
     uint16_t _stack_cmd_id = 0;
     uint16_t _pending_i2c_cmd_id = 0;
@@ -614,6 +627,30 @@ private:
         if (!ctx)
             return;
         static_cast<CLIStackT *>(ctx)->handleStackFrame_(node_id, frame);
+    }
+
+    static void onStackSlaveTrace_(void *ctx, bool outgoing, const StackFrame &frame)
+    {
+        if (!ctx)
+            return;
+        static_cast<CLIStackT *>(ctx)->handleStackSlaveTrace_(outgoing, frame);
+    }
+
+    void handleStackSlaveTrace_(bool outgoing, const StackFrame &frame)
+    {
+        if (!_c._io || !_trace_enabled)
+            return;
+        String payload = payloadToString_(frame.payload, frame.payload_len);
+        _c._io->println();
+        _c._io->print(F("[STACK] slave "));
+        _c._io->print(outgoing ? F("tx") : F("rx"));
+        _c._io->print(F(" type="));
+        _c._io->print(stackMsgName_(frame.type));
+        _c._io->print(F(" payload="));
+        _c._io->println(payload.length() ? payload : String(F("<empty>")));
+        _c._cmd_blank_after = true;
+        _c.printPrompt_();
+        _c._io->print(_c._line);
     }
 
     void listStackNodes_()

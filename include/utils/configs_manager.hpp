@@ -779,6 +779,10 @@ private:
             return "septic";
         case DisplaySlotKind::Security:
             return "security";
+        case DisplaySlotKind::Avr:
+            return "avr";
+        case DisplaySlotKind::Leak:
+            return "leak";
         case DisplaySlotKind::Text:
             return "text";
         case DisplaySlotKind::None:
@@ -811,6 +815,10 @@ private:
             return "level";
         case DisplaySlotField::SecurityArmed:
             return "armed";
+        case DisplaySlotField::AvrSource:
+            return "avr_source";
+        case DisplaySlotField::LeakState:
+            return "leak_state";
         case DisplaySlotField::Text:
             return "text";
         case DisplaySlotField::None:
@@ -844,6 +852,10 @@ private:
                 return DisplaySlotKind::Septic;
             if (s == "security")
                 return DisplaySlotKind::Security;
+            if (s == "avr")
+                return DisplaySlotKind::Avr;
+            if (s == "leak")
+                return DisplaySlotKind::Leak;
             if (s == "text")
                 return DisplaySlotKind::Text;
             return DisplaySlotKind::None;
@@ -890,6 +902,10 @@ private:
             }
             if (s == "armed")
                 return DisplaySlotField::SecurityArmed;
+            if (s == "avr_source")
+                return DisplaySlotField::AvrSource;
+            if (s == "leak_state")
+                return DisplaySlotField::LeakState;
             if (s == "text")
                 return DisplaySlotField::Text;
             return DisplaySlotField::None;
@@ -918,6 +934,10 @@ private:
             return DisplaySlotField::SepticLevel;
         if (kind == DisplaySlotKind::Security)
             return DisplaySlotField::SecurityArmed;
+        if (kind == DisplaySlotKind::Avr)
+            return DisplaySlotField::AvrSource;
+        if (kind == DisplaySlotKind::Leak)
+            return DisplaySlotField::LeakState;
         return DisplaySlotField::None;
     }
 };

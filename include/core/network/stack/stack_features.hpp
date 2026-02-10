@@ -35,5 +35,7 @@ enum class StackFeature : uint8_t
     Septic = 0x12,
     Tanks = 0x13,
     Ring = 0x14,
-    Watering = 0x15
+    Watering = 0x15,
+    Avr = 0x16,
+    Leak = 0x17
 };

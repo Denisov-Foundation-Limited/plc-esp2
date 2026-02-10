@@ -127,6 +127,8 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
       { v: 'tank', l: 'Бак' },
       { v: 'septic', l: 'Септик' },
       { v: 'security', l: 'Охрана' },
+      { v: 'avr', l: 'АВР' },
+      { v: 'leak', l: 'Протечки' },
       { v: 'text', l: 'Текст' }
     ];
     const fieldOptions = {
@@ -138,6 +140,8 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
       tank: [{ v: 'level', l: 'Уровень' }],
       septic: [{ v: 'level', l: 'Уровень' }],
       security: [{ v: 'armed', l: 'ARM/DIS' }],
+      avr: [{ v: 'avr_source', l: 'Источник' }, { v: 'avr_main_ok', l: 'Основная сеть' }, { v: 'avr_reserve_ok', l: 'Резервная сеть' }],
+      leak: [{ v: 'leak_state', l: 'Состояние' }],
       text: [{ v: 'text', l: 'Текст' }]
     };
     const deviceOptions = %DISPLAY_DEVICE_JSON%;
@@ -147,6 +151,8 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
     const thermoOptions = %DISPLAY_THERMO_JSON%;
     const tankOptions = %DISPLAY_TANK_JSON%;
     const septicOptions = %DISPLAY_SEPTIC_JSON%;
+    const avrOptions = %DISPLAY_AVR_JSON%;
+    const leakOptions = %DISPLAY_LEAK_JSON%;
 
     function buildOptions(list, selected) {
       let html = '<option value="">-</option>';
@@ -187,6 +193,8 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
       if (kind === 'thermo') return thermoOptions[key] || thermoOptions['0'] || [];
       if (kind === 'tank') return tankOptions[key] || tankOptions['0'] || [];
       if (kind === 'septic') return septicOptions[key] || septicOptions['0'] || [];
+      if (kind === 'avr') return avrOptions[key] || avrOptions['0'] || [];
+      if (kind === 'leak') return leakOptions[key] || leakOptions['0'] || [];
       return [];
     }
 
@@ -209,7 +217,7 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
       function updateVisibility() {
         const curr = kindSelect ? kindSelect.value : kind;
         const dev = nodeSelect ? nodeSelect.value : node;
-        if (idxSelect) idxSelect.style.display = (curr === 'socket' || curr === 'light' || curr === 'meteo' || curr === 'thermo' || curr === 'tank' || curr === 'septic') ? '' : 'none';
+        if (idxSelect) idxSelect.style.display = (curr === 'socket' || curr === 'light' || curr === 'meteo' || curr === 'thermo' || curr === 'tank' || curr === 'septic' || curr === 'avr' || curr === 'leak') ? '' : 'none';
         if (fieldSelect) fieldSelect.style.display = (curr === 'none') ? 'none' : '';
         if (textInput) textInput.style.display = (curr === 'text') ? '' : 'none';
         if (idxSelect) idxSelect.innerHTML = buildOptions(slotOptionsFor(curr, dev), idxSelect.value || '');
@@ -239,6 +247,11 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
       if (kind === 'tank') return '66% ';
       if (kind === 'septic') return 'ALM ';
       if (kind === 'security') return 'ARM ';
+      if (kind === 'avr') {
+        if (field === 'avr_main_ok' || field === 'avr_reserve_ok') return 'ON  ';
+        return 'MAN ';
+      }
+      if (kind === 'leak') return 'DRY ';
       if (kind === 'text') return pad4(text || '');
       return '    ';
     }

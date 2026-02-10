@@ -60,6 +60,12 @@ public:
             page.replace("%SECURITY_ENABLED_CHECKED%", security_enabled ? "checked" : "");
             const bool watering_enabled = web._controllers->watering().controllerEnabled();
             page.replace("%WATERING_ENABLED_CHECKED%", watering_enabled ? "checked" : "");
+            const bool avr_enabled = web._controllers->avr().controllerEnabled();
+            page.replace("%AVR_ENABLED_CHECKED%", avr_enabled ? "checked" : "");
+            page.replace("%AVR_ENABLED_LABEL%", avr_enabled ? "включен" : "выключен");
+            const bool leak_enabled = web._controllers->leak().controllerEnabled();
+            page.replace("%LEAK_ENABLED_CHECKED%", leak_enabled ? "checked" : "");
+            page.replace("%LEAK_ENABLED_LABEL%", leak_enabled ? "включены" : "выключены");
             page.replace("%SECURITY_ENABLED_LABEL%", security_enabled ? "включена" : "выключена");
             page.replace("%WATERING_ENABLED_LABEL%", watering_enabled ? "включен" : "выключен");
         }
@@ -82,6 +88,10 @@ public:
             page.replace("%SECURITY_ENABLED_CHECKED%", "");
             page.replace("%SECURITY_ENABLED_LABEL%", "недоступно");
             page.replace("%WATERING_ENABLED_CHECKED%", "");
+            page.replace("%AVR_ENABLED_CHECKED%", "");
+            page.replace("%AVR_ENABLED_LABEL%", "недоступно");
+            page.replace("%LEAK_ENABLED_CHECKED%", "");
+            page.replace("%LEAK_ENABLED_LABEL%", "недоступно");
             page.replace("%WATERING_ENABLED_LABEL%", "недоступно");
         }
         page.replace("%SOCKETS_STATUS%", web._sockets_status);
@@ -93,6 +103,8 @@ public:
         page.replace("%RING_STATUS%", web._ring_status);
         page.replace("%SECURITY_STATUS%", web._security_status);
         page.replace("%WATERING_STATUS%", web._watering_status);
+        page.replace("%AVR_STATUS%", web._avr_status);
+        page.replace("%LEAK_STATUS%", web._leak_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -191,22 +203,40 @@ public:
                 changed = true;
             }
         }
+        if (ctrl.length() == 0 || ctrl == "avr")
+        {
+            const bool avr_enabled = request->hasParam("avr_enabled", true);
+            if (web._controllers->avr().controllerEnabled() != avr_enabled)
+            {
+                web._controllers->avr().setControllerEnabled(avr_enabled);
+                changed = true;
+            }
+        }
+        if (ctrl.length() == 0 || ctrl == "leak")
+        {
+            const bool leak_enabled = request->hasParam("leak_enabled", true);
+            if (web._controllers->leak().controllerEnabled() != leak_enabled)
+            {
+                web._controllers->leak().setControllerEnabled(leak_enabled);
+                changed = true;
+            }
+        }
         bool ok = true;
         if (changed)
         {
             if (!web._configs_manager)
             {
                 ok = false;
-                web._controllers_status = "Config manager missing";
+                web._controllers_status = "Менеджер конфигурации недоступен";
             }
             else if (!web._configs_manager->save())
             {
                 ok = false;
-                web._controllers_status = "Save failed";
+                web._controllers_status = "Ошибка сохранения";
             }
         }
         if (ok)
-            web._controllers_status = changed ? "Updated" : "No changes";
+            web._controllers_status = changed ? "Обновлено" : "Без изменений";
         web._sockets_status = web._controllers_status;
         web._lights_status = web._controllers_status;
         web._meteo_status = web._controllers_status;
@@ -214,8 +244,11 @@ public:
         web._tanks_status = web._controllers_status;
         web._septic_status = web._controllers_status;
         web._ring_status = web._controllers_status;
+        web._avr_status = web._controllers_status;
+        web._leak_status = web._controllers_status;
         web._security_status = web._controllers_status;
         web._watering_status = web._controllers_status;
         web.sendRedirect_(request, "/controllers", set_cookie);
     }
 };
+

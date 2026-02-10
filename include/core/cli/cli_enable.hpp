@@ -19,6 +19,7 @@
 #include "controllers/thermo_controller.hpp"
 #include "controllers/tank_controller.hpp"
 #include "controllers/watering_controller.hpp"
+#include "controllers/avr_controller.hpp"
 
 template <typename ConsoleT>
 class CLIEnableT
@@ -82,6 +83,8 @@ public:
             _c._security_cli.printIdRangeInline();
             _c._io->println(F(" - sensor details"));
             _c._io->println(F("    show ring       - ring status"));
+            _c._io->println(F("    show avr        - AVR config/state"));
+            _c._io->println(F("    show leak       - leak zones/state"));
             _c._io->print(F("    socket toggle <id>"));
             printSocketIdRangeInline_();
             _c._io->println(F(" - toggle socket relay"));
@@ -96,6 +99,9 @@ public:
             _c._io->println(F("    copy tftp://<ip>/firmware.bin firmware - update firmware"));
             _c._io->println(F("    copy http://<ip>/firmware.bin firmware - update firmware"));
             _c._io->println(F("    stack nodes     - list stack nodes"));
+            _c._io->println(F("    stack trace     - show stack trace state"));
+            _c._io->println(F("    stack trace on  - enable stack trace"));
+            _c._io->println(F("    stack trace off - disable stack trace"));
             _c._io->println(F("    stack send <id> <get|set> <json> - send stack command"));
             _c._io->print(F("    stack socket <unit> <on|off|toggle> <id>"));
             printSocketIdRangeInline_();
@@ -111,6 +117,10 @@ public:
             _c._io->println(F("    security disarm - disarm security"));
             _c._io->println(F("    ring on         - hold relay on"));
             _c._io->println(F("    ring off        - release relay"));
+            _c._io->println(F("    avr on          - enable AVR"));
+            _c._io->println(F("    avr off         - disable AVR"));
+            _c._io->println(F("    avr source <off|main|reserve> - set manual source"));
+            _c._io->println(F("    avr clear_fault - clear AVR fault"));
             _wifi.printHelpEnable();
             _c._io->println(F("    reload          - restart controller"));
             _c._io->println(F("    reset           - restart controller"));
@@ -208,6 +218,45 @@ public:
                 _c._io->println(F("Failed"));
             else
                 _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (eq_(cmd, "avr on") || eq_(cmd, "avr off"))
+        {
+            const bool on = eq_(cmd, "avr on");
+            if (!_c._controllers.avr().setControllerEnabled(on))
+                _c._io->println(F("No changes"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (startsWith_(cmd, "avr source "))
+        {
+            String src = cmd.substring(11);
+            src.trim();
+            src.toLowerCase();
+            AvrController::Source source = AvrController::Source::Off;
+            if (src == "main")
+                source = AvrController::Source::Main;
+            else if (src == "reserve")
+                source = AvrController::Source::Reserve;
+            else if (src != "off")
+            {
+                _c._io->println(F("Usage: avr source <off|main|reserve>"));
+                _c.printPrompt_();
+                return;
+            }
+            _c._controllers.avr().setAutoMode(false);
+            _c._controllers.avr().setManualSource(source);
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (eq_(cmd, "avr clear_fault"))
+        {
+            _c._controllers.avr().clearFault();
+            _c._io->println(F("OK"));
             _c.printPrompt_();
             return;
         }

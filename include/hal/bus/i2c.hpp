@@ -91,6 +91,20 @@ public:
         return true;
     }
 
+    bool probeAddress(uint8_t bus_num, uint8_t addr)
+    {
+        if (addr == 0 || addr >= 127)
+            return false;
+        TwoWire *w = wirePtr_(bus_num);
+        if (!w)
+        {
+            _err = Error::InvalidBus;
+            return false;
+        }
+        w->beginTransmission(addr);
+        return w->endTransmission() == 0;
+    }
+
 private:
     Error _err = Error::Ok;
 

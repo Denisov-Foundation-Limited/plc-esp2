@@ -22,6 +22,8 @@
 #include "core/cli/modules/cli_septic.hpp"
 #include "core/cli/modules/cli_security.hpp"
 #include "core/cli/modules/cli_ring.hpp"
+#include "core/cli/modules/cli_avr.hpp"
+#include "core/cli/modules/cli_leak.hpp"
 #include "core/cli/modules/cli_watering.hpp"
 #include "core/cli/modules/cli_cloud.hpp"
 #include "utils/configs_manager_iface.hpp"
@@ -33,7 +35,8 @@ public:
     CLIConfigT(ConsoleT &console, CLIWifiT<ConsoleT> &wifi, CLITgbotT<ConsoleT> &tgbot,
                CLISocketT<ConsoleT> &socket, CLIMeteoT<ConsoleT> &meteo, CLIThermoT<ConsoleT> &thermo,
                CLITankT<ConsoleT> &tank, CLISepticT<ConsoleT> &septic, CLISecurityT<ConsoleT> &security,
-               CLIRingT<ConsoleT> &ring, CLIWateringT<ConsoleT> &watering, CLICloudT<ConsoleT> &cloud)
+               CLIRingT<ConsoleT> &ring, CLIAvrT<ConsoleT> &avr, CLILeakT<ConsoleT> &leak,
+               CLIWateringT<ConsoleT> &watering, CLICloudT<ConsoleT> &cloud)
         : _c(console),
           _wifi(wifi),
           _tgbot(tgbot),
@@ -44,6 +47,8 @@ public:
           _septic(septic),
           _security(security),
           _ring(ring),
+          _avr(avr),
+          _leak(leak),
           _watering(watering),
           _cloud(cloud)
     {
@@ -94,6 +99,8 @@ public:
             _septic.printHelpConfigLines();
             _security.printHelpConfigLines();
             _ring.printHelpConfigLines();
+            _avr.printHelpConfigLines();
+            _leak.printHelpConfigLines();
             _watering.printHelpConfigLines();
             _c._io->println(F("  Session:"));
             _c._io->println(F("    exit                     - return to enable"));
@@ -154,6 +161,16 @@ public:
         if (lower == "ring")
         {
             _c.enterConfigRing();
+            return;
+        }
+        if (lower == "avr")
+        {
+            _c.enterConfigAvr();
+            return;
+        }
+        if (lower == "leak")
+        {
+            _c.enterConfigLeak();
             return;
         }
         if (lower == "watering")
@@ -761,6 +778,48 @@ public:
         _c.printPrompt_();
     }
 
+    void handleAvrContext(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String lower = cmd;
+        lower.toLowerCase();
+
+        if (lower.startsWith("help "))
+        {
+            String topic = cmd.substring(5);
+            topic.trim();
+            _c.showHelpTopic_(topic);
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "help" || lower == "?")
+        {
+            _c._io->println(F("Commands (config-avr):"));
+            _avr.printHelpContextLines();
+            _c._io->println(F("  Session:"));
+            _c._io->println(F("    exit                - return to config"));
+            _c._io->println(F("    end                 - return to enable"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "exit")
+        {
+            _c.enterConfig();
+            return;
+        }
+        if (lower == "end")
+        {
+            _c.enterEnable();
+            return;
+        }
+        if (_avr.handleContext(cmd))
+            return;
+
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
+    }
+
     void handleCloudContext(const String &line)
     {
         String cmd = line;
@@ -798,6 +857,48 @@ public:
             return;
         }
         if (_cloud.handleContext(cmd))
+            return;
+
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
+    }
+
+    void handleLeakContext(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String lower = cmd;
+        lower.toLowerCase();
+
+        if (lower.startsWith("help "))
+        {
+            String topic = cmd.substring(5);
+            topic.trim();
+            _c.showHelpTopic_(topic);
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "help" || lower == "?")
+        {
+            _c._io->println(F("Commands (config-leak):"));
+            _leak.printHelpContextLines();
+            _c._io->println(F("  Session:"));
+            _c._io->println(F("    exit                - return to config"));
+            _c._io->println(F("    end                 - return to enable"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "exit")
+        {
+            _c.enterConfig();
+            return;
+        }
+        if (lower == "end")
+        {
+            _c.enterEnable();
+            return;
+        }
+        if (_leak.handleContext(cmd))
             return;
 
         _c._io->println(F("Unknown command"));
@@ -1046,6 +1147,8 @@ private:
     CLISepticT<ConsoleT> &_septic;
     CLISecurityT<ConsoleT> &_security;
     CLIRingT<ConsoleT> &_ring;
+    CLIAvrT<ConsoleT> &_avr;
+    CLILeakT<ConsoleT> &_leak;
     CLIWateringT<ConsoleT> &_watering;
     CLICloudT<ConsoleT> &_cloud;
 };

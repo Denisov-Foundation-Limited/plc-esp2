@@ -44,6 +44,8 @@ public:
         page.replace("%DISPLAY_THERMO_JSON%", web.displayThermoOptionsJson_());
         page.replace("%DISPLAY_TANK_JSON%", web.displayTankOptionsJson_());
         page.replace("%DISPLAY_SEPTIC_JSON%", web.displaySepticOptionsJson_());
+        page.replace("%DISPLAY_AVR_JSON%", web.displayAvrOptionsJson_());
+        page.replace("%DISPLAY_LEAK_JSON%", web.displayLeakOptionsJson_());
         if (!web._display_status.length())
             web._display_status = "OK";
         page.replace("%DISPLAY_STATUS%", web._display_status);

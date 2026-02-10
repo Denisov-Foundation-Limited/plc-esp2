@@ -40,6 +40,8 @@
 #include "core/cli/modules/cli_security.hpp"
 #include "core/cli/modules/cli_septic.hpp"
 #include "core/cli/modules/cli_ring.hpp"
+#include "core/cli/modules/cli_avr.hpp"
+#include "core/cli/modules/cli_leak.hpp"
 #include "core/cli/modules/cli_watering.hpp"
 #include "core/cli/modules/cli_cloud.hpp"
 #include "boards/board_profile.hpp"
@@ -48,6 +50,7 @@
 #include "hal/gpio/extender.hpp"
 #include "hal/gpio/portio.hpp"
 #include "core/network/stack/stack_master.hpp"
+#include "core/network/stack/stack_slave_handler.hpp"
 #include "core/network/stack/stack_protocol.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
@@ -72,6 +75,8 @@ public:
     using CLISeptic = CLISepticT<CliConsole>;
     using CLISecurity = CLISecurityT<CliConsole>;
     using CLIRing = CLIRingT<CliConsole>;
+    using CLIAvr = CLIAvrT<CliConsole>;
+    using CLILeak = CLILeakT<CliConsole>;
     using CLIWatering = CLIWateringT<CliConsole>;
     using CLICloud = CLICloudT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
@@ -100,11 +105,13 @@ public:
           _septic_cli(*this, controllers.septic()),
           _security_cli(*this, controllers.security()),
           _ring_cli(*this, controllers.ring()),
+          _avr_cli(*this, controllers.avr()),
+          _leak_cli(*this, controllers.leak()),
           _watering_cli(*this, controllers.watering()),
           _cloud_cli(*this),
           _enable(*this, _wifi_cli),
           _config(*this, _wifi_cli, _tgbot_cli, _socket_cli, _meteo_cli, _thermo_cli, _tank_cli, _septic_cli,
-                  _security_cli, _ring_cli, _watering_cli, _cloud_cli)
+                  _security_cli, _ring_cli, _avr_cli, _leak_cli, _watering_cli, _cloud_cli)
     {
         _stack_cli.bind(stack_master);
     }
@@ -120,6 +127,7 @@ public:
     }
 
     void setStackMaster(StackMaster *master) { _stack_cli.bind(master); }
+    void setStackSlave(StackSlaveHandler *slave) { _stack_cli.bindSlave(slave); }
 
     void loop()
     {
@@ -224,6 +232,8 @@ public:
     void enterConfigSeptic() { _mode = Mode::ConfigSeptic; printPrompt_(); }
     void enterConfigSecurity() { _mode = Mode::ConfigSecurity; printPrompt_(); }
     void enterConfigRing() { _mode = Mode::ConfigRing; printPrompt_(); }
+    void enterConfigAvr() { _mode = Mode::ConfigAvr; printPrompt_(); }
+    void enterConfigLeak() { _mode = Mode::ConfigLeak; printPrompt_(); }
     void enterConfigWatering() { _mode = Mode::ConfigWatering; printPrompt_(); }
     void enterConfigCloud() { _mode = Mode::ConfigCloud; printPrompt_(); }
     void logout()
@@ -770,6 +780,8 @@ private:
         ConfigSeptic,
         ConfigSecurity,
         ConfigRing,
+        ConfigAvr,
+        ConfigLeak,
         ConfigWatering,
         ConfigCloud
     };
@@ -830,6 +842,8 @@ private:
             _security_cli.printIdRangeInline();
             _io->println(F(" - sensor details"));
             _io->println(F("  show ring       - ring status"));
+            _io->println(F("  show avr        - AVR config/state"));
+            _io->println(F("  show leak       - leak zones/state"));
             return;
         }
         if (t == "wifi")
@@ -894,6 +908,16 @@ private:
             _ring_cli.printHelpContextLines();
             return;
         }
+        if (t == "avr")
+        {
+            _avr_cli.printHelpContextLines();
+            return;
+        }
+        if (t == "leak")
+        {
+            _leak_cli.printHelpContextLines();
+            return;
+        }
         if (t == "system")
         {
             _io->println(F("System commands:"));
@@ -911,7 +935,7 @@ private:
     {
         if (!_io || _state != State::LoggedIn)
             return;
-        static const std::array<const char *, 72> kEnableCmds = {{
+        static const std::array<const char *, 83> kEnableCmds = {{
             "show plc",
             "show board",
             "show wifi",
@@ -940,8 +964,14 @@ private:
             "show security",
             "show security <id>",
             "show ring",
+            "show avr",
+            "show leak",
             "ring on",
             "ring off",
+            "avr on",
+            "avr off",
+            "avr source <off|main|reserve>",
+            "avr clear_fault",
             "socket toggle <id>",
             "socket on <id>",
             "socket off <id>",
@@ -952,6 +982,9 @@ private:
             "copy tftp://<ip>/firmware.bin firmware",
             "copy http://<ip>/firmware.bin firmware",
             "stack nodes",
+            "stack trace",
+            "stack trace on",
+            "stack trace off",
             "stack send <id> <get|set> <json>",
             "stack socket <unit> <on|off|toggle> <id>",
             "stack thermo <unit> <on|off|toggle> <id>",
@@ -983,9 +1016,11 @@ private:
             "help watering",
             "help septic",
             "help security",
-            "help ring"}};
+            "help ring",
+            "help avr",
+            "help leak"}};
 
-        static const std::array<const char *, 39> kConfigCmds = {{
+        static const std::array<const char *, 43> kConfigCmds = {{
             "password <pass>",
             "admin password <pass>",
             "stack role <master|slave>",
@@ -1008,6 +1043,8 @@ private:
             "septic",
             "security",
             "ring",
+            "avr",
+            "leak",
             "exit",
             "end",
             "help",
@@ -1024,7 +1061,9 @@ private:
             "help watering",
             "help septic",
             "help security",
-            "help ring"}};
+            "help ring",
+            "help avr",
+            "help leak"}};
 
         static const std::array<const char *, 16> kConfigWifiCmds = {{
             "ssid <value>",
@@ -1188,6 +1227,54 @@ private:
             "end",
             "help"}};
 
+        static const std::array<const char *, 29> kConfigAvrCmds = {{
+            "show",
+            "enable",
+            "disable",
+            "mode <auto|manual>",
+            "source <off|main|reserve>",
+            "prefer_main <on|off>",
+            "auto_return <on|off>",
+            "main_ok <port|none>",
+            "reserve_ok <port|none>",
+            "relay_main <port|none>",
+            "relay_reserve <port|none>",
+            "fb_main <port|none>",
+            "fb_reserve <port|none>",
+            "main_ok_al <on|off>",
+            "reserve_ok_al <on|off>",
+            "fb_main_al <on|off>",
+            "fb_reserve_al <on|off>",
+            "relay_main_inv <on|off>",
+            "relay_reserve_inv <on|off>",
+            "debounce <ms>",
+            "loss_delay <ms>",
+            "return_delay <ms>",
+            "break <ms>",
+            "warmup <ms>",
+            "timeout <ms>",
+            "clear_fault",
+            "exit",
+            "end",
+            "help"}};
+
+        static const std::array<const char *, 15> kConfigLeakCmds = {{
+            "show",
+            "show <id>",
+            "enable",
+            "disable",
+            "zone enable <id>",
+            "zone disable <id>",
+            "power <id> <on|off>",
+            "sensor <id> <port|none>",
+            "valve <id> <port|none>",
+            "alarm <id> <port|none>",
+            "active_low <id> <on|off>",
+            "name <id> <text>",
+            "ack <id|all>",
+            "exit",
+            "help"}};
+
         static const std::array<const char *, 19> kConfigWateringCmds = {{
             "show",
             "show <id>",
@@ -1277,6 +1364,14 @@ private:
         case Mode::ConfigRing:
             cmds = kConfigRingCmds.data();
             count = kConfigRingCmds.size();
+            break;
+        case Mode::ConfigAvr:
+            cmds = kConfigAvrCmds.data();
+            count = kConfigAvrCmds.size();
+            break;
+        case Mode::ConfigLeak:
+            cmds = kConfigLeakCmds.data();
+            count = kConfigLeakCmds.size();
             break;
         case Mode::ConfigWatering:
             cmds = kConfigWateringCmds.data();
@@ -1627,6 +1722,10 @@ private:
         }
         else if (eq_(what, "ring"))
             _ring_cli.showRing();
+        else if (eq_(what, "avr"))
+            _avr_cli.showAvr();
+        else if (eq_(what, "leak"))
+            _leak_cli.showAll();
         else
             _io->println(F("Unknown show"));
         printPrompt_();
@@ -1714,6 +1813,12 @@ private:
             break;
         case Mode::ConfigRing:
             _config.handleRingContext(line);
+            break;
+        case Mode::ConfigAvr:
+            _config.handleAvrContext(line);
+            break;
+        case Mode::ConfigLeak:
+            _config.handleLeakContext(line);
             break;
         case Mode::ConfigWatering:
             _config.handleWateringContext(line);
@@ -1837,6 +1942,12 @@ private:
             break;
         case Mode::ConfigRing:
             _io->print(F("plc(config-ring)# "));
+            break;
+        case Mode::ConfigAvr:
+            _io->print(F("plc(config-avr)# "));
+            break;
+        case Mode::ConfigLeak:
+            _io->print(F("plc(config-leak)# "));
             break;
         case Mode::ConfigWatering:
             _io->print(F("plc(config-watering)# "));
@@ -2152,6 +2263,8 @@ private:
     CLISeptic _septic_cli;
     CLISecurity _security_cli;
     CLIRing _ring_cli;
+    CLIAvr _avr_cli;
+    CLILeak _leak_cli;
     CLIWatering _watering_cli;
     CLICloud _cloud_cli;
     CLIEnable _enable;
@@ -2655,6 +2768,10 @@ private:
     friend class CLISecurityT;
     template <typename>
     friend class CLIRingT;
+    template <typename>
+    friend class CLIAvrT;
+    template <typename>
+    friend class CLILeakT;
     template <typename>
     friend class CLIWateringT;
     template <typename>

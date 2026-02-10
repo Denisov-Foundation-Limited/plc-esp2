@@ -107,26 +107,6 @@ inline void Extender::rescan()
     if (!_i2c)
         return;
 
-    bool bus_used[3] = {false, false, false};
-    for (uint8_t i = 0; i < _dev_count; ++i)
-    {
-        if (!isConfigured(i))
-            continue;
-        const uint8_t bus = _devs[i].bus_num;
-        if (bus < 3)
-            bus_used[bus] = true;
-    }
-
-    bool present[3][127] = {};
-    bool bus_ok[3] = {true, true, true};
-    for (uint8_t b = 0; b < 3; ++b)
-    {
-        if (!bus_used[b])
-            continue;
-        if (!_i2c->scanDevices(b, present[b]))
-            bus_ok[b] = false;
-    }
-
     for (uint8_t i = 0; i < _dev_count; ++i)
     {
         if (!isConfigured(i))
@@ -136,15 +116,12 @@ inline void Extender::rescan()
         }
         const uint8_t bus = _devs[i].bus_num;
         const uint8_t addr = _devs[i].i2c_addr;
-        if (bus >= 3 || !bus_ok[bus])
+        if (bus >= 3 || addr == 0 || addr >= 127)
         {
             setPresent_(i, false);
             continue;
         }
-        if (addr < 127)
-            setPresent_(i, present[bus][addr]);
-        else
-            setPresent_(i, false);
+        setPresent_(i, _i2c->probeAddress(bus, addr));
     }
 }
 

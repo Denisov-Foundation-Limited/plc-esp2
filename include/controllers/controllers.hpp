@@ -13,6 +13,8 @@
 
 #include <ArduinoJson.h>
 
+#include "controllers/avr_controller.hpp"
+#include "controllers/leak_controller.hpp"
 #include "controllers/meteo_controller.hpp"
 #include "controllers/ring_controller.hpp"
 #include "controllers/septic_controller.hpp"
@@ -42,6 +44,8 @@ public:
           _security(gpio, ow, logs, tgbot, tgmenu),
           _ring(gpio, logs),
           _watering(gpio, _tanks, rtc, logs),
+          _avr(gpio, logs, tgbot, tgmenu),
+          _leak(gpio, logs, tgbot, tgmenu),
           _storage(storage),
           _logs(logs)
     {
@@ -99,6 +103,18 @@ public:
             _logs.error(F("CTRL"), F("Watering init failed"));
             return false;
         }
+        _logs.info(F("CTRL"), F("AVR init"));
+        if (!_avr.begin())
+        {
+            _logs.error(F("CTRL"), F("AVR init failed"));
+            return false;
+        }
+        _logs.info(F("CTRL"), F("Leak init"));
+        if (!_leak.begin())
+        {
+            _logs.error(F("CTRL"), F("Leak init failed"));
+            return false;
+        }
         loadFromStorage_();
         _logs.info(F("CTRL"), F("Init done"));
         return true;
@@ -114,6 +130,8 @@ public:
         _security.task();
         _ring.task();
         _watering.task();
+        _avr.task();
+        _leak.task();
         saveIfNeeded_();
     }
 
@@ -135,8 +153,16 @@ public:
             _security.setControllerEnabled(cfg["security_enabled"].as<bool>());
         if (cfg["watering_enabled"].is<bool>())
             _watering.setControllerEnabled(cfg["watering_enabled"].as<bool>());
+        if (cfg["avr_enabled"].is<bool>())
+            _avr.setControllerEnabled(cfg["avr_enabled"].as<bool>());
+        if (cfg["leak_enabled"].is<bool>())
+            _leak.setControllerEnabled(cfg["leak_enabled"].as<bool>());
         if (cfg["ring"].is<JsonObjectConst>())
             _ring.applyConfig(cfg["ring"].as<JsonObjectConst>());
+        if (cfg["avr"].is<JsonObjectConst>())
+            _avr.applyConfig(cfg["avr"].as<JsonObjectConst>());
+        if (cfg["leak"].is<JsonArrayConst>())
+            _leak.applyConfig(cfg["leak"].as<JsonArrayConst>());
         const bool has_lights = cfg["lights"].is<JsonArrayConst>();
         if (cfg["sockets"].is<JsonArrayConst>())
             _sockets.applyConfig(cfg["sockets"].as<JsonArrayConst>(), !has_lights);
@@ -188,6 +214,12 @@ public:
         out["watering_enabled"] = _watering.controllerEnabled();
         JsonArray watering = out["watering"].to<JsonArray>();
         _watering.serialize(watering);
+        out["avr_enabled"] = _avr.controllerEnabled();
+        JsonObject avr = out["avr"].to<JsonObject>();
+        _avr.serialize(avr);
+        out["leak_enabled"] = _leak.controllerEnabled();
+        JsonArray leak = out["leak"].to<JsonArray>();
+        _leak.serialize(leak);
         JsonObject ring = out["ring"].to<JsonObject>();
         _ring.serialize(ring);
         if (_security.sirenPort() != SecurityController::kInvalidPort)
@@ -210,6 +242,10 @@ public:
     const RingController &ring() const { return _ring; }
     WateringController &watering() { return _watering; }
     const WateringController &watering() const { return _watering; }
+    AvrController &avr() { return _avr; }
+    const AvrController &avr() const { return _avr; }
+    LeakController &leak() { return _leak; }
+    const LeakController &leak() const { return _leak; }
     void setSaveIntervalMs(uint32_t ms) { _save_interval_ms = ms; }
 
 private:
@@ -221,6 +257,8 @@ private:
     SecurityController _security;
     RingController _ring;
     WateringController _watering;
+    AvrController _avr;
+    LeakController _leak;
     EepromStorage &_storage;
     Logger &_logs;
     uint32_t _last_save_ms = 0;

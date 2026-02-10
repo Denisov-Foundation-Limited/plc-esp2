@@ -82,7 +82,7 @@ private:
     typename TaskManager<N>::Handle bindTgbot()
     {
         typename TaskManager<N>::Options opt;
-        opt.interval_ms = 500;
+        opt.interval_ms = 200;
         opt.priority = TaskManager<N>::Priority::Low;
         return _tm.template add<&TaskBinder::tgbotTask_>(*this, opt);
     }
@@ -125,7 +125,7 @@ private:
     typename TaskManager<N>::Handle bindDisplay_()
     {
         typename TaskManager<N>::Options opt;
-        opt.interval_ms = 1000;
+        opt.interval_ms = 250;
         opt.priority = TaskManager<N>::Priority::Low;
         _display_task = _tm.template add<&Display::task>(_display, opt);
         return _display_task;
