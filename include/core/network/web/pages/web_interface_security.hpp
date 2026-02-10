@@ -314,56 +314,6 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
             <select class="field mini siren-select" data-selected="%SECURITY_SIREN%" name="security_siren"></select>
           </div>
         </div>
-        <h2>Ключи iButton</h2>
-        <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th class="right">ID</th>
-              <th>Вкл</th>
-              <th>Имя</th>
-              <th>Серийный</th>
-            </tr>
-          </thead>
-          <tbody>
-            %SECURITY_KEYS_ROWS%
-          </tbody>
-        </table>
-        </div>
-        <h2> RFID</h2>
-        <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th class="right">ID</th>
-              <th>Вкл</th>
-              <th>Имя</th>
-              <th>Серийный</th>
-            </tr>
-          </thead>
-          <tbody>
-            %SECURITY_RFID_KEYS_ROWS%
-          </tbody>
-        </table>
-        </div>
-        <h2>GSM телефоны</h2>
-        <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th class="right">ID</th>
-              <th>Вкл</th>
-              <th>Имя</th>
-              <th>Телефон</th>
-              <th>Уведомл.</th>
-              <th>Звонок</th>
-            </tr>
-          </thead>
-          <tbody>
-            %SECURITY_PHONES_ROWS%
-          </tbody>
-        </table>
-        </div>
         <h2>%SECURITY_SENSORS_TITLE%</h2>
         %SECURITY_DEVICE_SELECT%
         <div class="pagination" %SECURITY_SENSORS_PAGINATION_STYLE%>

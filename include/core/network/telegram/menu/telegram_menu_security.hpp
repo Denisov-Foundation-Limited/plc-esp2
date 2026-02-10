@@ -327,11 +327,12 @@ public:
     static String userFromChat_(TelegramMenu &self, const TelegramClient::Update &u)
     {
         String user = self.normalizeUsername_(u.from);
+        const auto users = self.allowedUsers();
         size_t idx = 0;
         if (u.chat_id != 0 && self.findAllowedUserByChatId_(u.chat_id, idx))
         {
-            if (self._allowed_users[idx].username.length())
-                user = self._allowed_users[idx].username;
+            if (idx < users.size && users[idx].username.length())
+                user = users[idx].username;
         }
         return user;
     }

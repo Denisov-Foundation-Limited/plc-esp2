@@ -154,12 +154,6 @@ public:
             _security.applyConfig(cfg["security"].as<JsonArrayConst>());
         if (cfg["watering"].is<JsonArrayConst>())
             _watering.applyConfig(cfg["watering"].as<JsonArrayConst>());
-        if (cfg["security_keys"].is<JsonArrayConst>())
-            _security.applyKeys(cfg["security_keys"].as<JsonArrayConst>());
-        if (cfg["security_rfid_keys"].is<JsonArrayConst>())
-            _security.applyRfidKeys(cfg["security_rfid_keys"].as<JsonArrayConst>());
-        if (cfg["security_phones"].is<JsonArrayConst>())
-            _security.applyPhones(cfg["security_phones"].as<JsonArrayConst>());
         if (cfg["security_siren"].is<unsigned>())
         {
             const unsigned raw = cfg["security_siren"].as<unsigned>();
@@ -196,12 +190,6 @@ public:
         _watering.serialize(watering);
         JsonObject ring = out["ring"].to<JsonObject>();
         _ring.serialize(ring);
-        JsonArray keys = out["security_keys"].to<JsonArray>();
-        _security.serializeKeys(keys);
-        JsonArray rkeys = out["security_rfid_keys"].to<JsonArray>();
-        _security.serializeRfidKeys(rkeys);
-        JsonArray phones = out["security_phones"].to<JsonArray>();
-        _security.serializePhones(phones);
         if (_security.sirenPort() != SecurityController::kInvalidPort)
             out["security_siren"] = (unsigned)_security.sirenPort();
     }

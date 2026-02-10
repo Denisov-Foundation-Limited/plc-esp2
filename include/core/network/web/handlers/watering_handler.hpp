@@ -38,6 +38,8 @@ public:
         page.replace("%WATERING_ROWS%", stack_view ? web.listStackWateringHtml_(node_id) : web.listWateringHtml_());
         page.replace("%WATERING_STATUS%", stack_view ? web.stackWateringStatusText_(node_id) : web._watering_status);
         page.replace("%WATERING_RELAY_JSON%", stack_view ? "[]" : web.wateringPortOptionsJson_());
+        page.replace("%WATERING_RELAY_USED_JSON%",
+                     stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%WATERING_TANK_JSON%", stack_view ? "[]" : web.wateringTankOptionsJson_());
         page.replace("%WATERING_DEVICE_SELECT%", web.wateringDeviceSelectHtml_(node_id, stack_view));
         page.replace("%WATERING_SAVE_BTN%", stack_view ? "" : "<button type=\"submit\">Сохранить</button>");
@@ -78,7 +80,11 @@ public:
             const String port_key = prefix + "port";
             const String tank_key = prefix + "tank";
             const String time_key = prefix + "time";
+            const String time2_key = prefix + "time2";
+            const String time3_key = prefix + "time3";
             const String dur_key = prefix + "dur";
+            const String dur2_key = prefix + "dur2";
+            const String dur3_key = prefix + "dur3";
             const String resume_key = prefix + "resume";
             const String resume_level_key = prefix + "resume_level";
 
@@ -142,24 +148,77 @@ public:
             const String time_str = web.paramValue_(request, time_key);
             uint8_t hour = 0;
             uint8_t minute = 0;
-            if (!parseTime_(time_str, hour, minute))
+            const bool time_ok = parseTime_(time_str, hour, minute);
+            if (!time_ok)
             {
-                hour = 0;
-                minute = 0;
+                hour = 0xFF;
+                minute = 0xFF;
             }
             if (hour != cfg->hour || minute != cfg->minute)
             {
                 watering.setStartTime(cfg->id, hour, minute);
                 changed = true;
             }
+            const String time2_str = web.paramValue_(request, time2_key);
+            uint8_t hour2 = 0;
+            uint8_t minute2 = 0;
+            const bool time2_ok = parseTime_(time2_str, hour2, minute2);
+            if (!time2_ok)
+            {
+                hour2 = 0xFF;
+                minute2 = 0xFF;
+            }
+            if (hour2 != cfg->hour2 || minute2 != cfg->minute2)
+            {
+                watering.setStartTimeSlot(cfg->id, 1, hour2, minute2);
+                changed = true;
+            }
+            const String time3_str = web.paramValue_(request, time3_key);
+            uint8_t hour3 = 0;
+            uint8_t minute3 = 0;
+            const bool time3_ok = parseTime_(time3_str, hour3, minute3);
+            if (!time3_ok)
+            {
+                hour3 = 0xFF;
+                minute3 = 0xFF;
+            }
+            if (hour3 != cfg->hour3 || minute3 != cfg->minute3)
+            {
+                watering.setStartTimeSlot(cfg->id, 2, hour3, minute3);
+                changed = true;
+            }
 
             const String dur_str = web.paramValue_(request, dur_key);
             uint32_t dur_min = 0;
             parseDuration_(dur_str, dur_min);
-            const uint32_t dur_sec = dur_min * 60u;
+            uint32_t dur_sec = dur_min * 60u;
+            if (!time_ok)
+                dur_sec = 0;
             if (dur_sec != cfg->duration_sec)
             {
                 watering.setDuration(cfg->id, dur_sec);
+                changed = true;
+            }
+            const String dur2_str = web.paramValue_(request, dur2_key);
+            uint32_t dur2_min = 0;
+            parseDuration_(dur2_str, dur2_min);
+            uint32_t dur2_sec = dur2_min * 60u;
+            if (!time2_ok)
+                dur2_sec = 0;
+            if (dur2_sec != cfg->duration2_sec)
+            {
+                watering.setDurationSlot(cfg->id, 1, dur2_sec);
+                changed = true;
+            }
+            const String dur3_str = web.paramValue_(request, dur3_key);
+            uint32_t dur3_min = 0;
+            parseDuration_(dur3_str, dur3_min);
+            uint32_t dur3_sec = dur3_min * 60u;
+            if (!time3_ok)
+                dur3_sec = 0;
+            if (dur3_sec != cfg->duration3_sec)
+            {
+                watering.setDurationSlot(cfg->id, 2, dur3_sec);
                 changed = true;
             }
 

@@ -109,6 +109,7 @@ public:
     }
 
     bool connected() const { return _client.connected(); }
+    bool helloSentCurrentConnection() const { return _hello_sent_current_connection; }
 
     bool sendHello(uint16_t fw_ver = 0, uint32_t caps = 0xFFFFFFFFu)
     {
@@ -121,7 +122,10 @@ public:
         const size_t payload_len = StackHello::encode(hello, _tx_payload_buf, sizeof(_tx_payload_buf));
         if (payload_len == 0)
             return false;
-        return send((uint8_t)StackMsgType::Hello, _tx_payload_buf, payload_len);
+        const bool ok = send((uint8_t)StackMsgType::Hello, _tx_payload_buf, payload_len);
+        if (ok && _client.connected())
+            _hello_sent_current_connection = true;
+        return ok;
     }
 
 private:
@@ -136,6 +140,7 @@ private:
     uint32_t _status_interval_ms = 5000;
     uint32_t _last_hello_ms = 0;
     uint32_t _last_status_ms = 0;
+    bool _hello_sent_current_connection = false;
     FrameHandler _frame_cb = nullptr;
     void *_frame_ctx = nullptr;
     StatusProvider _status_cb = nullptr;
@@ -183,6 +188,7 @@ private:
 
     void onConnect_()
     {
+        _hello_sent_current_connection = false;
         sendHello();
         const uint32_t now = millis();
         _last_hello_ms = now;
@@ -190,7 +196,7 @@ private:
         sendStatus_();
     }
 
-    void onDisconnect_() {}
+    void onDisconnect_() { _hello_sent_current_connection = false; }
 
     void onData_(const uint8_t *data, size_t len)
     {

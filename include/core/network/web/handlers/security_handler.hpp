@@ -72,9 +72,6 @@ public:
             page.replace("%SECURITY_ALARM_LABEL%", "недоступно");
             page.replace("%SECURITY_GSM_LABEL%", web.gsmStatusLabel_());
             page.replace("%SECURITY_SIREN%", "");
-            page.replace("%SECURITY_KEYS_ROWS%", "");
-            page.replace("%SECURITY_RFID_KEYS_ROWS%", "");
-            page.replace("%SECURITY_PHONES_ROWS%", "");
             page.replace("%SECURITY_SENSORS%", "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>");
             page.replace("%SECURITY_SENSORS_PAGE%", "1");
             page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)(max_pages ? max_pages : 1)));
@@ -102,9 +99,6 @@ public:
             page.replace("%SECURITY_SIREN%", String((unsigned)sec.sirenPort()));
         else
             page.replace("%SECURITY_SIREN%", "");
-        page.replace("%SECURITY_KEYS_ROWS%", web.listSecurityKeysHtml_());
-        page.replace("%SECURITY_RFID_KEYS_ROWS%", web.listSecurityRfidKeysHtml_());
-        page.replace("%SECURITY_PHONES_ROWS%", web.listSecurityPhonesHtml_());
         page.replace("%SECURITY_SENSORS%",
                      stack_view ? web.listStackSecuritySensorsTiles_(node_id) : web.listSecuritySensorsTiles_(start, end));
         page.replace("%SECURITY_SENSORS_PAGE%", String((unsigned)(page_idx + 1)));
@@ -200,174 +194,6 @@ public:
             if (set_siren && sec.sirenPort() != siren_port)
             {
                 sec.setSirenPort(siren_port);
-                changed = true;
-            }
-        }
-
-        uint8_t new_keys[SecurityController::kKeyCount][8] = {};
-        bool new_set[SecurityController::kKeyCount] = {};
-        String new_key_names[SecurityController::kKeyCount];
-        for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
-        {
-            const String idx = String((unsigned)(i + 1));
-            const String en_key = String("k") + idx + "_en";
-            const String serial_key = String("k") + idx + "_serial";
-            const String name_key = String("k") + idx + "_name";
-            const bool enabled = request->hasParam(en_key, true);
-            String serial = web.paramValue_(request, serial_key);
-            serial.trim();
-            String name = web.paramValue_(request, name_key);
-            name.trim();
-            if (!enabled)
-            {
-                new_key_names[i] = name;
-                continue;
-            }
-            if (!web.parseSecurityKeyHex_(serial, new_keys[i]))
-            {
-                web._security_status = String("Invalid key ") + idx;
-                web.sendRedirect_(request, "/security", set_cookie);
-                return;
-            }
-            new_set[i] = true;
-            new_key_names[i] = name;
-        }
-
-        bool keys_changed = false;
-        for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
-        {
-            uint8_t old_addr[8] = {};
-            bool old_enabled = false;
-            sec.keySlot(i, old_addr, old_enabled);
-            if (old_enabled != new_set[i])
-            {
-                keys_changed = true;
-                break;
-            }
-            if (old_enabled && memcmp(old_addr, new_keys[i], 8) != 0)
-            {
-                keys_changed = true;
-                break;
-            }
-            if (sec.keyNameByIndex(i) != new_key_names[i])
-            {
-                keys_changed = true;
-                break;
-            }
-        }
-        if (keys_changed)
-        {
-            for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
-                sec.setKeySlot(i, new_keys[i], new_set[i], new_key_names[i]);
-            changed = true;
-        }
-
-        uint8_t new_rfid[SecurityController::kRfidKeyCount][10] = {};
-        uint8_t new_rfid_len[SecurityController::kRfidKeyCount] = {};
-        bool new_rfid_set[SecurityController::kRfidKeyCount] = {};
-        String new_rfid_names[SecurityController::kRfidKeyCount];
-        for (size_t i = 0; i < SecurityController::kRfidKeyCount; ++i)
-        {
-            const String idx = String((unsigned)(i + 1));
-            const String en_key = String("rk") + idx + "_en";
-            const String serial_key = String("rk") + idx + "_serial";
-            const String name_key = String("rk") + idx + "_name";
-            const bool enabled = request->hasParam(en_key, true);
-            String serial = web.paramValue_(request, serial_key);
-            serial.trim();
-            String name = web.paramValue_(request, name_key);
-            name.trim();
-            if (!enabled)
-            {
-                new_rfid_names[i] = name;
-                continue;
-            }
-            if (!SecurityController::parseRfidSerial(serial.c_str(), new_rfid[i], new_rfid_len[i]))
-            {
-                web._security_status = String("Invalid RFID key ") + idx;
-                web.sendRedirect_(request, "/security", set_cookie);
-                return;
-            }
-            new_rfid_set[i] = true;
-            new_rfid_names[i] = name;
-        }
-
-        bool rfid_changed = false;
-        for (size_t i = 0; i < SecurityController::kRfidKeyCount; ++i)
-        {
-            uint8_t old_bytes[10] = {};
-            uint8_t old_len = 0;
-            bool old_enabled = false;
-            sec.rfidKeySlot(i, old_bytes, old_len, old_enabled);
-            if (old_enabled != new_rfid_set[i])
-            {
-                rfid_changed = true;
-                break;
-            }
-            if (old_enabled && (old_len != new_rfid_len[i] ||
-                                memcmp(old_bytes, new_rfid[i], old_len) != 0))
-            {
-                rfid_changed = true;
-                break;
-            }
-            if (sec.rfidKeyNameByIndex(i) != new_rfid_names[i])
-            {
-                rfid_changed = true;
-                break;
-            }
-        }
-        if (rfid_changed)
-        {
-            for (size_t i = 0; i < SecurityController::kRfidKeyCount; ++i)
-                sec.setRfidKeySlot(i, new_rfid[i], new_rfid_len[i], new_rfid_set[i], new_rfid_names[i]);
-            changed = true;
-        }
-
-        auto normalizePhone = [](const String &number) -> String {
-            String out;
-            out.reserve(number.length());
-            for (size_t i = 0; i < number.length(); ++i)
-            {
-                const char c = number.charAt(i);
-                if (c >= '0' && c <= '9')
-                    out += c;
-            }
-            return out;
-        };
-        for (size_t i = 0; i < SecurityController::kPhoneCount; ++i)
-        {
-            const String idx = String((unsigned)(i + 1));
-            const String en_key = String("p") + idx + "_en";
-            const String num_key = String("p") + idx + "_num";
-            const String name_key = String("p") + idx + "_name";
-            const String notify_key = String("p") + idx + "_notify";
-            const String call_key = String("p") + idx + "_call";
-            const bool enabled = request->hasParam(en_key, true);
-            const bool notify = request->hasParam(notify_key, true);
-            const bool call = request->hasParam(call_key, true);
-            String number = web.paramValue_(request, num_key);
-            number.trim();
-            String name = web.paramValue_(request, name_key);
-            name.trim();
-            String norm = enabled ? normalizePhone(number) : String();
-            if (enabled && norm.length() == 0)
-            {
-                web._security_status = String("Invalid phone ") + idx;
-                web.sendRedirect_(request, "/security", set_cookie);
-                return;
-            }
-            String old_number;
-            bool old_enabled = false;
-            sec.phoneSlot(i, old_number, old_enabled);
-            if (old_enabled != enabled || old_number != norm ||
-                sec.phoneNameByIndex(i) != name || sec.phoneNotifyByIndex(i) != notify ||
-                sec.phoneCallByIndex(i) != call)
-            {
-                sec.setPhone(i, norm);
-                sec.setPhoneEnabled(i, enabled);
-                sec.setPhoneName(i, name);
-                sec.setPhoneNotify(i, notify);
-                sec.setPhoneCall(i, call);
                 changed = true;
             }
         }

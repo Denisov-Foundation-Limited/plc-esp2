@@ -42,7 +42,6 @@ public:
         page.replace("%TGBOT_PROXY_HOST%", web._tgbot ? web._tgbot->proxyHost() : String(""));
         page.replace("%TGBOT_PROXY_PORT%", web._tgbot ? String((unsigned)web._tgbot->proxyPort()) : String("0"));
         page.replace("%TGBOT_PROXY_PATH%", web._tgbot ? web._tgbot->proxyPath() : String(""));
-        page.replace("%TGBOT_ALLOWED_USERS_ROWS%", web.allowedUsersRowsHtml_());
         page.replace("%TGBOT_STATUS%", web._tgbot_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
@@ -113,20 +112,6 @@ public:
                 web._tgbot->clearProxy();
                 changed = true;
             }
-        }
-
-        if (web._tgbot_menu)
-        {
-            std::vector<TelegramMenu::AllowedUser> users;
-            String err;
-            if (!web.parseAllowedUsers_(request, users, err))
-            {
-                web._tgbot_status = err.length() ? err : "Invalid allowed users";
-                web.sendRedirect_(request, "/telegram", set_cookie);
-                return;
-            }
-            web._tgbot_menu->setAllowedUsers(users);
-            changed = true;
         }
 
         bool save_ok = true;

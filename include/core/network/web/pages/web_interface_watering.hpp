@@ -247,6 +247,9 @@ static const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
       relay: %WATERING_RELAY_JSON%,
       tank: %WATERING_TANK_JSON%
     };
+    const wateringUsed = {
+      relay: %WATERING_RELAY_USED_JSON%
+    };
     function optionValue(item) {
       return (item && typeof item === 'object') ? String(item.v) : String(item);
     }
@@ -254,22 +257,44 @@ static const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
       if (item && typeof item === 'object' && item.l) return item.l;
       return String(item);
     }
-    function buildOptions(list, selected) {
+    function buildOptions(list, selected, usedSet) {
       const sel = String(selected || '');
       let html = '<option value=""' + (sel === '' ? ' selected' : '') + '>-</option>';
+      const used = usedSet || new Set();
       for (let i = 0; i < list.length; i++) {
         const val = optionValue(list[i]);
+        const num = parseInt(val, 10);
+        const isUsed = !Number.isNaN(num) && used.has(num) && val !== sel;
         const label = optionLabel(list[i]);
-        html += '<option value="' + val + '"' + (val === sel ? ' selected' : '') + '>' + label + '</option>';
+        html += '<option value="' + val + '"' + (val === sel ? ' selected' : '') +
+          (isUsed ? ' disabled' : '') + '>' + label + '</option>';
       }
       return html;
     }
+    function refreshWateringSelects() {
+      const usedByType = {};
+      document.querySelectorAll('select.watering-select').forEach((el) => {
+        const type = el.dataset.type;
+        if (!usedByType[type]) {
+          const base = wateringUsed[type] || [];
+          usedByType[type] = new Set(base.map((v) => parseInt(v, 10)).filter((v) => !Number.isNaN(v)));
+        }
+        if (type !== 'relay') return;
+        const v = parseInt(el.value || el.dataset.selected || '', 10);
+        if (!Number.isNaN(v)) usedByType[type].add(v);
+      });
+      document.querySelectorAll('select.watering-select').forEach((el) => {
+        const type = el.dataset.type;
+        const selected = el.value || el.dataset.selected || '';
+        const list = wateringOptions[type] || [];
+        const usedSet = (type === 'relay') ? usedByType[type] : undefined;
+        el.innerHTML = buildOptions(list, selected, usedSet);
+        el.value = selected || '';
+      });
+    }
+    refreshWateringSelects();
     document.querySelectorAll('select.watering-select').forEach((el) => {
-      const type = el.dataset.type;
-      const selected = el.dataset.selected || '';
-      const list = wateringOptions[type] || [];
-      el.innerHTML = buildOptions(list, selected);
-      el.value = selected || '';
+      el.addEventListener('change', refreshWateringSelects);
     });
     function updateTankDependent(tile) {
       const tankSelect = tile.querySelector('select[data-type="tank"]');

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -12,8 +12,6 @@
 
 #include "core/task_binder.hpp"
 #include "core/task_manager.hpp"
-#include "clients/rfid_reader.hpp"
-#include "clients/ring_client.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/network/gsm_modem.hpp"
 #include "core/rtc.hpp"
@@ -58,6 +56,7 @@
 #include "utils/configs_manager.hpp"
 #include "utils/meteo_history.hpp"
 #include "utils/build_info.hpp"
+#include "utils/users_registry.hpp"
 
 struct CoreContext
 {
@@ -145,25 +144,23 @@ struct CommsContext
 
 struct ControlContext
 {
+    UsersRegistry users;
     TelegramMenu telegram_menu;
     Controllers controllers;
     MeteoHistory meteo_history;
-    RfidReader rfid_reader;
-    RingClient ring_client;
 
     TaskBinder<TASK_MGR_TSK_COUNT> task_binder;
     Ftest ftest;
     PlcScanLoop plc_scan;
 
     ControlContext(CoreContext &core, HardwareContext &hw, CommsContext &comms)
-        : telegram_menu(hw.plc, comms.wifi, hw.rtc, comms.telegram_bot, core.configs, core.logs),
+        : users(),
+          telegram_menu(hw.plc, comms.wifi, hw.rtc, comms.telegram_bot, core.configs, core.logs, users),
           controllers(hw.gpio, hw.ow, hw.eeprom_storage, core.logs, comms.telegram_bot, telegram_menu, comms.gsm,
                       hw.rtc),
           meteo_history(hw.rtc, controllers.meteo()),
-          rfid_reader(),
-          ring_client(hw.gpio, core.logs),
-          task_binder(core.tm, comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history, rfid_reader,
-                      ring_client, hw.display, hw.plc),
+          task_binder(core.tm, comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history,
+                      hw.display, hw.plc),
           ftest(core.logs, hw.io, hw.ow, hw.ibutton, hw.ds18b20, hw.i2c, hw.rtc, hw.ext, core.tm, task_binder),
           plc_scan(hw.io)
     {
@@ -192,7 +189,7 @@ struct NetworkContext
         : web(ActiveBoardProfile::WEB_PORT),
           fw_upgrade(web, ui.console, comms.wifi, core.configs, hw.plc, hw.rtc, comms.telegram,
                      comms.telegram_bot, control.telegram_menu, core.logs, hw.ext, hw.i2c, hw.ow,
-                     control.controllers, control.rfid_reader),
+                     control.controllers),
           network(core.logs, comms.wifi, comms.gsm, comms.telegram, comms.telegram_bot, control.telegram_menu,
                   fw_upgrade, web, comms.telegram_wifi_client, control.controllers, hw.plc, hw.rtc),
           stack_slave(hw.io, hw.ds18b20, hw.ow, hw.i2c, hw.plc, hw.rtc, comms.telegram, core.logs, hw.ext,
@@ -210,7 +207,7 @@ struct ConfigContext
     ConfigContext(CoreContext &core, HardwareContext &hw, CommsContext &comms,
                   ControlContext &control, UiContext &ui, NetworkContext &network)
         : configs_manager(core.configs, comms.wifi, comms.telegram, network.network, ui.console,
-                          control.telegram_menu, hw.plc, control.controllers, comms.gsm)
+                          control.telegram_menu, hw.plc, control.controllers, comms.gsm, control.users)
     {
     }
 };
@@ -256,6 +253,7 @@ struct App
         net.fw_upgrade.setStackSlave(&net.stack_slave);
         net.fw_upgrade.setGsmModem(comms.gsm);
         net.fw_upgrade.setCloudClient(net.network.cloudClient());
+        net.fw_upgrade.setUsersRegistry(control.users);
         net.network.setStackConfig(cfg.configs_manager);
         control.controllers.thermo().setRemoteMeteoProvider(&App::onRemoteMeteo_, this);
         control.controllers.meteo().setRemoteMeteoProvider(&App::onRemoteMeteoProxy_, this);
@@ -267,12 +265,14 @@ struct App
         control.controllers.security().setAlarmStateHandler(&App::onSecurityAlarmState_, this);
         control.controllers.security().setClearDetectHandler(&App::onSecurityClearDetect_, this);
         control.controllers.security().setDetectHandler(&App::onSecurityDetect_, this);
+        control.controllers.security().setRfidUidHandler(&App::onSecurityRfidUid_, this);
+        control.controllers.security().setIButtonSerialHandler(&App::onSecurityIButtonSerial_, this);
+        control.controllers.security().setRfidI2c(&hw.i2c);
+        control.controllers.security().setUsersRegistry(control.users);
         control.controllers.septic().setDetectHandler(&App::onSepticDetect_, this);
         control.controllers.tanks().setDetectHandler(&App::onTankEmpty_, this);
         control.controllers.ring().setHoldHandler(&App::onRingHold_, this);
         control.controllers.watering().setEventHandler(&App::onWateringEvent_, this);
-        control.ring_client.setButtonHandler(&App::onRingClientButton_, this);
-        control.rfid_reader.setUidHandler(&App::onRfidUid_, this);
         hw.display.setSlotProvider(&App::onDisplaySlot_, this);
         net.network.stackMaster().setEventHandler(&App::onStackNodeEvent_, this);
         net.network.stackMaster().setFrameHandlerTertiary(&App::onStackFrame_, this);
@@ -375,9 +375,6 @@ struct App
         updateSecurityNotifyMode_();
         updateSepticNotifyMode_();
         updateTanksNotifyMode_();
-        updateRfidMode_();
-        updateRingClientMode_();
-        updateRingClientConfig_();
         updateDisplayLayout_();
         net.network.setStackDeviceName(hw.plc.deviceName());
         cfg.configs_manager.setCloudFirmwareVersion(BuildInfo::kFwVersion);
@@ -395,10 +392,6 @@ struct App
             core.logs.error(F("APP"), F("HAL init failed: %s"), Hal::errorName(hw.hal.lastError()));
             ok = false;
         }
-
-        core.logs.info(F("APP"), F("Initializing RFID reader"));
-        if (!control.rfid_reader.begin(hw.i2c))
-            core.logs.warn(F("APP"), F("RFID reader init failed"));
 
         core.logs.info(F("APP"), F("Initializing EEPROM"));
         {
@@ -525,9 +518,6 @@ struct App
 
     void loop()
     {
-        updateRfidMode_();
-        updateRingClientMode_();
-        updateRingClientConfig_();
         updateDisplayLayout_();
         updateTankAlarms_();
         updateSepticAlarms_();
@@ -548,7 +538,8 @@ struct App
         flushPendingTankEmpty_();
         flushPendingWateringEvent_();
         flushPendingRfid_();
-        flushPendingRingClient_();
+        flushPendingIButton_();
+        flushPendingRingButton_();
     }
 
 private:
@@ -1057,6 +1048,15 @@ private:
         if (!ctx)
             return;
         App *self = static_cast<App *>(ctx);
+        const RingController::Source src = self->control.controllers.ring().lastSource();
+        if (src == RingController::Source::Button && self->stackSlaveActive_())
+        {
+            if (!self->sendRingButtonToMaster_(on))
+            {
+                self->_pending_ring_button = true;
+                self->_pending_ring_button_pressed = on;
+            }
+        }
         self->broadcastRingHold_(on);
         if (on)
             self->notifyRingHold_();
@@ -1069,18 +1069,18 @@ private:
         static_cast<App *>(ctx)->handleStackFrame_(node_id, frame);
     }
 
-    static void onRingClientButton_(void *ctx, bool pressed)
+    static bool onSecurityRfidUid_(void *ctx, const String &uid)
     {
         if (!ctx)
-            return;
-        static_cast<App *>(ctx)->handleRingClientButton_(pressed);
+            return false;
+        return static_cast<App *>(ctx)->handleSecurityRfidUid_(uid);
     }
 
-    static void onRfidUid_(void *ctx, const RfidReader::Uid &uid)
+    static bool onSecurityIButtonSerial_(void *ctx, const String &serial)
     {
         if (!ctx)
-            return;
-        static_cast<App *>(ctx)->handleRfidUid_(uid);
+            return false;
+        return static_cast<App *>(ctx)->handleSecurityIButtonSerial_(serial);
     }
 
     static bool onDisplaySlot_(void *ctx, const DisplaySlotConfig &slot, char out[5])
@@ -1444,10 +1444,24 @@ private:
                 core.logs.info(F("SECURITY"), F("remote RFID: node: %s uid: %s"),
                                source.c_str(), uid.c_str());
                 SecurityController &sec = control.controllers.security();
-                const bool was_armed = sec.armed();
                 const bool matched = sec.processRfidUidString(uid.c_str(), source.c_str());
-                const String result = matched ? (was_armed ? "disarm" : "arm") : "reject";
+                const String result = matched ? "disarm" : "reject";
                 sendRfidResultToNode_(node_id, uid, matched, result, sec.armed());
+                return;
+            }
+            if (action == "ibutton")
+            {
+                JsonObjectConst params = doc["params"];
+                const String serial = params["serial"] | "";
+                if (!serial.length())
+                    return;
+                const String source = params["name"] | stackNodeLabel_(node_id);
+                core.logs.info(F("SECURITY"), F("remote iButton: node: %s serial: %s"),
+                               source.c_str(), serial.c_str());
+                SecurityController &sec = control.controllers.security();
+                const bool matched = sec.processIButtonSerialString(serial.c_str(), source.c_str());
+                const String result = matched ? "disarm" : "reject";
+                sendIButtonResultToNode_(node_id, serial, matched, result, sec.armed());
                 return;
             }
             if (action == "status_req")
@@ -1592,36 +1606,6 @@ private:
         control.controllers.tanks().setNotifyEnabled(stackMasterActive_());
     }
 
-    void updateRfidMode_()
-    {
-        const bool enable = stackSlaveActive_() && cfg.configs_manager.rfidEnabled();
-        if (_rfid_enabled != enable)
-        {
-            _rfid_enabled = enable;
-            control.rfid_reader.setEnabled(enable);
-        }
-    }
-
-    void updateRingClientMode_()
-    {
-        const bool enable = stackSlaveActive_() && cfg.configs_manager.ringClientEnabled();
-        if (_ring_client_enabled != enable)
-        {
-            _ring_client_enabled = enable;
-            control.ring_client.setEnabled(enable);
-        }
-    }
-
-    void updateRingClientConfig_()
-    {
-        const uint8_t port = cfg.configs_manager.ringClientButtonPort();
-        if (_ring_client_button_port != port)
-        {
-            _ring_client_button_port = port;
-            control.ring_client.setButtonPort(port);
-        }
-    }
-
     void updateDisplayLayout_()
     {
         const size_t count = cfg.configs_manager.displaySlotCount();
@@ -1701,67 +1685,82 @@ private:
         if (!node.connected())
             return;
         _pending_rfid = false;
-        sendRfidToMaster_(_pending_rfid_uid, _pending_rfid_name);
+        sendRfidToMaster_(_pending_rfid_uid, hw.plc.deviceName());
     }
 
-    void flushPendingRingClient_()
+    void flushPendingIButton_()
     {
-        if (!_pending_ring_client)
+        if (!_pending_ibutton)
             return;
         if (!stackSlaveActive_())
             return;
         StackNode &node = net.network.stackNode();
         if (!node.connected())
             return;
-        _pending_ring_client = false;
-        sendRingClientToMaster_(_pending_ring_client_pressed);
+        _pending_ibutton = false;
+        sendIButtonToMaster_(_pending_ibutton_serial, hw.plc.deviceName());
     }
 
-    void handleRfidUid_(const RfidReader::Uid &uid)
+    void flushPendingRingButton_()
     {
+        if (!_pending_ring_button)
+            return;
         if (!stackSlaveActive_())
             return;
-        const String uid_str = RfidReader::uidToString(uid);
-        if (uid_str.length() == 0)
+        StackNode &node = net.network.stackNode();
+        if (!node.connected())
             return;
+        _pending_ring_button = false;
+        sendRingButtonToMaster_(_pending_ring_button_pressed);
+    }
+
+    bool handleSecurityRfidUid_(const String &uid_str)
+    {
+        if (!stackSlaveActive_())
+            return false;
+        if (uid_str.length() == 0)
+            return false;
         const String name = hw.plc.deviceName();
         StackNode &node = net.network.stackNode();
         if (!node.connected())
         {
             _pending_rfid = true;
             _pending_rfid_uid = uid_str;
-            _pending_rfid_name = name;
-            return;
+            return true;
         }
         if (!sendRfidToMaster_(uid_str, name))
         {
             _pending_rfid = true;
             _pending_rfid_uid = uid_str;
-            _pending_rfid_name = name;
+            return true;
         }
+        return true;
     }
 
-    void handleRingClientButton_(bool pressed)
+    bool handleSecurityIButtonSerial_(const String &serial)
     {
         if (!stackSlaveActive_())
-            return;
-        if (!cfg.configs_manager.ringClientEnabled())
-            return;
+            return false;
+        if (serial.length() == 0)
+            return false;
+        const String name = hw.plc.deviceName();
         StackNode &node = net.network.stackNode();
         if (!node.connected())
         {
-            _pending_ring_client = true;
-            _pending_ring_client_pressed = pressed;
-            return;
+            _pending_ibutton = true;
+            _pending_ibutton_serial = serial;
+            return true;
         }
-        if (!sendRingClientToMaster_(pressed))
+        if (!sendIButtonToMaster_(serial, name))
         {
-            _pending_ring_client = true;
-            _pending_ring_client_pressed = pressed;
+            _pending_ibutton = true;
+            _pending_ibutton_serial = serial;
+            return true;
         }
+        return true;
     }
 
-    bool sendRingClientToMaster_(bool pressed)
+    bool sendRingButtonToMaster_(bool pressed)
     {
         if (!stackSlaveActive_())
             return false;
@@ -1840,6 +1839,14 @@ private:
                 net.stack_slave.requestRemoteSecurity(node_id);
                 return false;
             }
+            const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
+            if (age_ms > 3000u)
+                net.stack_slave.requestRemoteSecurity(node_id);
+            if (age_ms > 8000u)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
             if (!rcache->last_ok && rcache->last_error.length())
             {
                 memcpy(out, "ERR ", 4);
@@ -1893,6 +1900,14 @@ private:
             {
                 net.stack_slave.requestRemoteSockets(node_id);
                 return false;
+            }
+            const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
+            if (age_ms > 3000u)
+                net.stack_slave.requestRemoteSockets(node_id);
+            if (age_ms > 8000u)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
             }
             if (!rcache->last_ok && rcache->last_error.length())
             {
@@ -1954,6 +1969,14 @@ private:
             {
                 net.stack_slave.requestRemoteLights(node_id);
                 return false;
+            }
+            const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
+            if (age_ms > 3000u)
+                net.stack_slave.requestRemoteLights(node_id);
+            if (age_ms > 8000u)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
             }
             if (!rcache->last_ok && rcache->last_error.length())
             {
@@ -2041,6 +2064,14 @@ private:
                 {
                     net.stack_slave.requestRemoteMeteoAll();
                     return false;
+                }
+                const uint32_t age_ms = (uint32_t)(millis() - cache->updated_ms);
+                if (age_ms > 3000u)
+                    net.stack_slave.requestRemoteMeteoAll();
+                if (age_ms > 8000u)
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
                 }
                 if (!cache->last_ok && cache->last_error.length())
                 {
@@ -2139,6 +2170,14 @@ private:
                 net.stack_slave.requestRemoteThermo(node_id);
                 return false;
             }
+            const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
+            if (age_ms > 3000u)
+                net.stack_slave.requestRemoteThermo(node_id);
+            if (age_ms > 8000u)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
             if (!rcache->last_ok && rcache->last_error.length())
             {
                 memcpy(out, "ERR ", 4);
@@ -2171,13 +2210,13 @@ private:
                 if (!st || !st->levels_ok)
                     return false;
                 if (st->level_full)
-                    memcpy(out, "FULL", 4);
+                    memcpy(out, "99% ", 4);
                 else if (st->level_mid)
-                    memcpy(out, "MID ", 4);
+                    memcpy(out, "66% ", 4);
                 else if (st->level_low)
-                    memcpy(out, "LOW ", 4);
+                    memcpy(out, "33% ", 4);
                 else
-                    memcpy(out, "EMP ", 4);
+                    memcpy(out, "0%  ", 4);
                 return true;
             }
             if (is_master)
@@ -2187,6 +2226,14 @@ private:
                 {
                     stack_cache.requestTanks(node_id);
                     return false;
+                }
+                const uint32_t age_ms = (uint32_t)(millis() - cache->updated_ms);
+                if (age_ms > 3000u)
+                    stack_cache.requestTanks(node_id);
+                if (age_ms > 8000u)
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
                 }
                 if (!cache->last_ok && cache->last_error.length())
                 {
@@ -2201,13 +2248,13 @@ private:
                     if (!it.levels_ok)
                         return false;
                     if (it.level_full)
-                        memcpy(out, "FULL", 4);
+                        memcpy(out, "99% ", 4);
                     else if (it.level_mid)
-                        memcpy(out, "MID ", 4);
+                        memcpy(out, "66% ", 4);
                     else if (it.level_low)
-                        memcpy(out, "LOW ", 4);
+                        memcpy(out, "33% ", 4);
                     else
-                        memcpy(out, "EMP ", 4);
+                        memcpy(out, "0%  ", 4);
                     return true;
                 }
                 return false;
@@ -2219,6 +2266,14 @@ private:
             {
                 net.stack_slave.requestRemoteTanks(node_id);
                 return false;
+            }
+            const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
+            if (age_ms > 3000u)
+                net.stack_slave.requestRemoteTanks(node_id);
+            if (age_ms > 8000u)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
             }
             if (!rcache->last_ok && rcache->last_error.length())
             {
@@ -2233,13 +2288,13 @@ private:
                 if (!it.levels_ok)
                     return false;
                 if (it.level_full)
-                    memcpy(out, "FULL", 4);
+                    memcpy(out, "99% ", 4);
                 else if (it.level_mid)
-                    memcpy(out, "MID ", 4);
+                    memcpy(out, "66% ", 4);
                 else if (it.level_low)
-                    memcpy(out, "LOW ", 4);
+                    memcpy(out, "33% ", 4);
                 else
-                    memcpy(out, "EMP ", 4);
+                    memcpy(out, "0%  ", 4);
                 return true;
             }
             return false;
@@ -2297,6 +2352,14 @@ private:
             {
                 net.stack_slave.requestRemoteSeptic(node_id);
                 return false;
+            }
+            const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
+            if (age_ms > 3000u)
+                net.stack_slave.requestRemoteSeptic(node_id);
+            if (age_ms > 8000u)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
             }
             if (!rcache->last_ok && rcache->last_error.length())
             {
@@ -2373,6 +2436,29 @@ private:
                          reinterpret_cast<const uint8_t *>(payload), len);
     }
 
+    bool sendIButtonToMaster_(const String &serial, const String &name)
+    {
+        if (!stackSlaveActive_())
+            return false;
+        StackNode &node = net.network.stackNode();
+        if (!node.connected())
+            return false;
+        StaticJsonDocument<128> doc;
+        doc["cmd_id"] = 0;
+        doc["feature"] = (uint8_t)StackFeature::Security;
+        doc["action"] = "ibutton";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["serial"] = serial;
+        if (name.length())
+            params["name"] = name;
+        char payload[128] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        return node.send((uint8_t)StackMsgType::CmdSet,
+                         reinterpret_cast<const uint8_t *>(payload), len);
+    }
+
     void sendRfidResultToNode_(uint32_t node_id, const String &uid, bool matched,
                                const String &result, bool armed)
     {
@@ -2392,6 +2478,32 @@ private:
             params["result"] = result;
         params["armed"] = armed;
         char payload[160] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return;
+        master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                      reinterpret_cast<const uint8_t *>(payload), len);
+    }
+
+    void sendIButtonResultToNode_(uint32_t node_id, const String &serial, bool matched,
+                                  const String &result, bool armed)
+    {
+        if (node_id == 0)
+            return;
+        if (!stackMasterActive_())
+            return;
+        StackMaster &master = net.network.stackMaster();
+        StaticJsonDocument<176> doc;
+        doc["cmd_id"] = 0;
+        doc["feature"] = (uint8_t)StackFeature::Security;
+        doc["action"] = "ibutton_result";
+        JsonObject params = doc["params"].to<JsonObject>();
+        params["serial"] = serial;
+        params["match"] = matched;
+        if (result.length())
+            params["result"] = result;
+        params["armed"] = armed;
+        char payload[176] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
             return;
@@ -2792,14 +2904,12 @@ private:
     WateringController::RuleState _pending_watering_event_state{};
     bool _pending_rfid = false;
     String _pending_rfid_uid;
-    String _pending_rfid_name;
-    bool _rfid_enabled = false;
+    bool _pending_ibutton = false;
+    String _pending_ibutton_serial;
     uint32_t _last_rfid_status_ms = 0;
     uint32_t _last_prearm_poll_ms = 0;
-    bool _ring_client_enabled = false;
-    uint8_t _ring_client_button_port = 0xFF;
-    bool _pending_ring_client = false;
-    bool _pending_ring_client_pressed = false;
+    bool _pending_ring_button = false;
+    bool _pending_ring_button_pressed = false;
     bool _stack_master_effective = false;
     bool _master_led_initialized = false;
     bool _master_led_state = false;

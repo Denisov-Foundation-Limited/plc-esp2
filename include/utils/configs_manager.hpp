@@ -25,6 +25,7 @@
 #include "controllers/controllers.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
+#include "utils/users_registry.hpp"
 #include "core/display_slots.hpp"
 #include "plc/plc_control.hpp"
 
@@ -36,7 +37,7 @@ public:
 
     ConfigsManager(Configs &configs, WifiManager &wifi, TelegramClient &telegram,
                    Network &network, CliConsole &console, TelegramMenu &telegram_menu, PlcControl &plc,
-                   Controllers &controllers, GsmModem &gsm)
+                   Controllers &controllers, GsmModem &gsm, UsersRegistry &users)
         : _configs(configs),
           _wifi(wifi),
           _telegram(telegram),
@@ -45,7 +46,8 @@ public:
           _telegram_menu(telegram_menu),
           _plc(plc),
           _controllers(controllers),
-          _gsm(gsm)
+          _gsm(gsm),
+          _users(users)
     {
         _display_slots[0].kind = DisplaySlotKind::Time;
         _display_slots[0].field = DisplaySlotField::TimeHm;
@@ -66,9 +68,6 @@ public:
     uint32_t cloudEventIntervalMs() const override { return _cloud_event_ms; }
     String cloudApiKey() const override { return _cloud_api_key; }
     String cloudFirmwareVersion() const override { return _cloud_fw_version; }
-    bool rfidEnabled() const override { return _rfid_enabled; }
-    bool ringClientEnabled() const override { return _ring_client_enabled; }
-    uint8_t ringClientButtonPort() const override { return _ring_client_button_port; }
     size_t displaySlotCount() const override { return kDisplaySlotCount; }
     bool displaySlot(size_t idx, DisplaySlotConfig &out) const override
     {
@@ -146,9 +145,6 @@ public:
         _cloud_fw_version = ver;
         _network.setCloudFirmwareVersion(ver);
     }
-    void setRfidEnabled(bool enabled) override { _rfid_enabled = enabled; }
-    void setRingClientEnabled(bool enabled) override { _ring_client_enabled = enabled; }
-    void setRingClientButtonPort(uint8_t port) override { _ring_client_button_port = port; }
     void setDisplaySlot(size_t idx, const DisplaySlotConfig &slot) override
     {
         if (idx >= kDisplaySlotCount)
@@ -188,25 +184,8 @@ public:
         t["proxy_host"] = _telegram.proxyHost();
         t["proxy_port"] = (unsigned)_telegram.proxyPort();
         t["proxy_path"] = _telegram.proxyPath();
-        JsonArray allowed = t["allowed_users"].to<JsonArray>();
-        size_t allow_idx = 0;
-        const auto users = _telegram_menu.allowedUsers();
-        for (size_t i = 0; i < users.size; ++i)
-        {
-            const auto &user = users[i];
-            if (!user.enabled)
-                continue;
-            JsonObject u = allowed.add<JsonObject>();
-            u["id"] = (unsigned)(allow_idx + 1);
-            if (user.username.length())
-                u["username"] = user.username;
-            if (user.chat_id)
-                u["chat_id"] = (long long)user.chat_id;
-            u["is_admin"] = user.is_admin;
-            u["is_notify"] = user.is_notify;
-            u["enabled"] = user.enabled;
-            ++allow_idx;
-        }
+        JsonArray users = _doc["users"].to<JsonArray>();
+        _users.serializeToJson(users);
 
         if (_console.adminPasswordSet())
         {
@@ -230,15 +209,6 @@ public:
 
         JsonObject g = _doc["gsm"].to<JsonObject>();
         g["enabled"] = _gsm.enabled();
-
-        JsonObject r = _doc["rfid"].to<JsonObject>();
-        r["enabled"] = _rfid_enabled;
-
-        JsonObject clients = _doc["clients"].to<JsonObject>();
-        JsonObject ring = clients["ring"].to<JsonObject>();
-        ring["enabled"] = _ring_client_enabled;
-        if (_ring_client_button_port != 0xFF)
-            ring["button"] = (unsigned)_ring_client_button_port;
 
         JsonObject disp = _doc["display"].to<JsonObject>();
         JsonArray slots = disp["slots"].to<JsonArray>();
@@ -359,61 +329,172 @@ private:
                     _network.disableTelegramProxy();
             }
 
-            if (t["allowed_users"].is<JsonArrayConst>())
+            if (!doc["users"].is<JsonArrayConst>() && t["allowed_users"].is<JsonArrayConst>())
             {
-                std::array<TelegramMenu::AllowedUser, TelegramMenu::kMaxAllowedUsers> ordered{};
-                std::array<bool, TelegramMenu::kMaxAllowedUsers> used{};
-                std::vector<TelegramMenu::AllowedUser> tail;
+                _users.clear();
+                size_t slot = 0;
                 JsonArrayConst arr = t["allowed_users"].as<JsonArrayConst>();
                 for (JsonVariantConst v : arr)
                 {
+                    if (slot >= _users.size())
+                        break;
+                    UsersRegistry::User &dst = _users.user(slot);
                     if (v.is<const char *>())
                     {
-                        TelegramMenu::AllowedUser u{};
-                        u.username = v.as<const char *>();
-                        u.is_admin = true;
-                        tail.push_back(u);
+                        dst.enabled = true;
+                        dst.tg_username = UsersRegistry::normalizeTgUsername(v.as<const char *>());
+                        dst.tg_admin = true;
+                        ++slot;
                         continue;
                     }
                     if (!v.is<JsonObjectConst>())
                         continue;
                     JsonObjectConst obj = v.as<JsonObjectConst>();
-                    TelegramMenu::AllowedUser u{};
-                    uint8_t id = 0;
                     if (obj["id"].is<unsigned>())
                     {
                         const unsigned raw = obj["id"].as<unsigned>();
-                        if (raw >= 1 && raw <= TelegramMenu::kMaxAllowedUsers)
-                            id = (uint8_t)raw;
+                        if (raw >= 1 && raw <= _users.size())
+                            slot = (size_t)(raw - 1);
                     }
-                    if (obj["username"].is<const char *>())
-                        u.username = obj["username"].as<const char *>();
-                    if (obj["chat_id"].is<long long>())
-                        u.chat_id = (int64_t)obj["chat_id"].as<long long>();
-                    if (obj["is_admin"].is<bool>())
-                        u.is_admin = obj["is_admin"].as<bool>();
-                    if (obj["is_notify"].is<bool>())
-                        u.is_notify = obj["is_notify"].as<bool>();
+                    UsersRegistry::User &u = _users.user(slot);
                     if (obj["enabled"].is<bool>())
                         u.enabled = obj["enabled"].as<bool>();
-                    if (id > 0 && !used[id - 1])
-                    {
-                        ordered[id - 1] = u;
-                        used[id - 1] = true;
-                    }
-                    else
-                    {
-                        tail.push_back(u);
-                    }
+                    if (obj["username"].is<const char *>())
+                        u.tg_username = UsersRegistry::normalizeTgUsername(obj["username"].as<const char *>());
+                    if (obj["chat_id"].is<long long>())
+                        u.tg_chat_id = (int64_t)obj["chat_id"].as<long long>();
+                    if (obj["is_admin"].is<bool>())
+                        u.tg_admin = obj["is_admin"].as<bool>();
+                    if (obj["is_notify"].is<bool>())
+                        u.tg_notify = obj["is_notify"].as<bool>();
+                    ++slot;
                 }
-                std::vector<TelegramMenu::AllowedUser> users;
-                for (size_t i = 0; i < TelegramMenu::kMaxAllowedUsers; ++i)
+            }
+        }
+
+        if (doc["users"].is<JsonArrayConst>())
+        {
+            _users.applyFromJson(doc["users"].as<JsonArrayConst>());
+        }
+        else if (doc["controllers"].is<JsonObjectConst>())
+        {
+            JsonObjectConst ctrl = doc["controllers"].as<JsonObjectConst>();
+            if (ctrl["security_keys"].is<JsonArrayConst>())
+            {
+                JsonArrayConst arr = ctrl["security_keys"].as<JsonArrayConst>();
+                size_t idx = 0;
+                for (JsonVariantConst v : arr)
                 {
-                    if (used[i])
-                        users.push_back(ordered[i]);
+                    if (idx >= _users.size())
+                        break;
+                    const char *serial = nullptr;
+                    bool enabled = true;
+                    if (v.is<const char *>())
+                    {
+                        serial = v.as<const char *>();
+                    }
+                    else if (v.is<JsonObjectConst>())
+                    {
+                        JsonObjectConst obj = v.as<JsonObjectConst>();
+                        if (obj["serial"].is<const char *>())
+                            serial = obj["serial"].as<const char *>();
+                        else if (obj["addr"].is<const char *>())
+                            serial = obj["addr"].as<const char *>();
+                        if (obj["enabled"].is<bool>())
+                            enabled = obj["enabled"].as<bool>();
+                        if (obj["name"].is<const char *>())
+                            _users.user(idx).username = obj["name"].as<const char *>();
+                    }
+                    if (serial && enabled)
+                        _users.user(idx).ibutton_key = UsersRegistry::normalizeHex(serial, 16);
+                    ++idx;
                 }
-                users.insert(users.end(), tail.begin(), tail.end());
-                _telegram_menu.setAllowedUsers(users);
+            }
+            if (ctrl["security_rfid_keys"].is<JsonArrayConst>())
+            {
+                JsonArrayConst arr = ctrl["security_rfid_keys"].as<JsonArrayConst>();
+                size_t idx = 0;
+                for (JsonVariantConst v : arr)
+                {
+                    if (idx >= _users.size())
+                        break;
+                    const char *serial = nullptr;
+                    bool enabled = true;
+                    if (v.is<const char *>())
+                    {
+                        serial = v.as<const char *>();
+                    }
+                    else if (v.is<JsonObjectConst>())
+                    {
+                        JsonObjectConst obj = v.as<JsonObjectConst>();
+                        if (obj["serial"].is<const char *>())
+                            serial = obj["serial"].as<const char *>();
+                        else if (obj["uid"].is<const char *>())
+                            serial = obj["uid"].as<const char *>();
+                        if (obj["enabled"].is<bool>())
+                            enabled = obj["enabled"].as<bool>();
+                        if (obj["name"].is<const char *>())
+                            _users.user(idx).username = obj["name"].as<const char *>();
+                    }
+                    if (serial && enabled)
+                        _users.user(idx).rfid_key = UsersRegistry::normalizeHex(serial, 20);
+                    ++idx;
+                }
+            }
+        }
+        if (doc["controllers"].is<JsonObjectConst>())
+        {
+            JsonObjectConst ctrl = doc["controllers"].as<JsonObjectConst>();
+            if (ctrl["security_phones"].is<JsonArrayConst>())
+            {
+                JsonArrayConst arr = ctrl["security_phones"].as<JsonArrayConst>();
+                size_t idx = 0;
+                for (JsonVariantConst v : arr)
+                {
+                    if (idx >= _users.size())
+                        break;
+                    const char *number = nullptr;
+                    bool enabled = true;
+                    bool sms = false;
+                    bool call = false;
+                    if (v.is<const char *>())
+                    {
+                        number = v.as<const char *>();
+                    }
+                    else if (v.is<JsonObjectConst>())
+                    {
+                        JsonObjectConst obj = v.as<JsonObjectConst>();
+                        if (obj["id"].is<unsigned>())
+                        {
+                            const unsigned raw = obj["id"].as<unsigned>();
+                            if (raw >= 1 && raw <= _users.size())
+                                idx = (size_t)(raw - 1);
+                        }
+                        if (obj["number"].is<const char *>())
+                            number = obj["number"].as<const char *>();
+                        if (obj["enabled"].is<bool>())
+                            enabled = obj["enabled"].as<bool>();
+                        if (obj["notify"].is<bool>())
+                            sms = obj["notify"].as<bool>();
+                        if (obj["call"].is<bool>())
+                            call = obj["call"].as<bool>();
+                        if (obj["name"].is<const char *>())
+                        {
+                            if (_users.user(idx).username.length() == 0)
+                                _users.user(idx).username = obj["name"].as<const char *>();
+                        }
+                    }
+                    auto &u = _users.user(idx);
+                    if (u.gsm_phone.length() == 0 && number && enabled)
+                        u.gsm_phone = UsersRegistry::normalizePhone(number);
+                    if (!u.gsm_sms)
+                        u.gsm_sms = sms;
+                    if (!u.gsm_call)
+                        u.gsm_call = call;
+                    if (u.gsm_phone.length() && !u.enabled)
+                        u.enabled = enabled;
+                    ++idx;
+                }
             }
         }
 
@@ -489,26 +570,6 @@ private:
                 _stack_fallback_host = s["fallback_host"].as<const char *>();
             if (s["slave_controller"].is<bool>())
                 _stack_slave_controller = s["slave_controller"].as<bool>();
-        }
-
-        if (doc["rfid"].is<JsonObjectConst>())
-        {
-            JsonObjectConst r = doc["rfid"].as<JsonObjectConst>();
-            if (r["enabled"].is<bool>())
-                _rfid_enabled = r["enabled"].as<bool>();
-        }
-
-        if (doc["clients"].is<JsonObjectConst>())
-        {
-            JsonObjectConst clients = doc["clients"].as<JsonObjectConst>();
-            if (clients["ring"].is<JsonObjectConst>())
-            {
-                JsonObjectConst ring = clients["ring"].as<JsonObjectConst>();
-                if (ring["enabled"].is<bool>())
-                    _ring_client_enabled = ring["enabled"].as<bool>();
-                if (ring["button"].is<unsigned>())
-                    _ring_client_button_port = (uint8_t)ring["button"].as<unsigned>();
-            }
         }
 
         if (doc["display"].is<JsonObjectConst>())
@@ -663,6 +724,7 @@ private:
     PlcControl &_plc;
     Controllers &_controllers;
     GsmModem &_gsm;
+    UsersRegistry &_users;
     StackRole _stack_role = StackRole::Master;
     String _stack_master_host;
     String _stack_api_key;
@@ -678,9 +740,6 @@ private:
     String _cloud_fw_version;
     uint32_t _cloud_event_ms = 0;
     bool _cloud_enabled = true;
-    bool _rfid_enabled = true;
-    bool _ring_client_enabled = true;
-    uint8_t _ring_client_button_port = 0xFF;
     DisplaySlotConfig _display_slots[kDisplaySlotCount]{};
     DynamicJsonDocument _doc{kConfigDocCapacity};
 

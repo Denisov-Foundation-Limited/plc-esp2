@@ -131,24 +131,6 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
             </div>
           </div>
         </div>
-        <div class="section">
-          <h2>Разрешенные пользователи</h2>
-          <table class="table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Имя пользователя</th>
-                <th>Chat ID</th>
-                <th>Админ</th>
-                <th>Уведомл.</th>
-                <th>Включен</th>
-              </tr>
-            </thead>
-            <tbody>
-              %TGBOT_ALLOWED_USERS_ROWS%
-            </tbody>
-          </table>
-        </div>
         <div class="row" style="margin-top:10px;">
           <button type="submit">Сохранить</button>
           <span class="status"><strong>%TGBOT_STATUS%</strong></span>

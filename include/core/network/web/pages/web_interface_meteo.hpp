@@ -398,6 +398,34 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
         el.addEventListener('change', () => updateRow(row));
       }
     });
+    let remoteSourcesBusy = false;
+    async function pollRemoteSources() {
+      if (remoteSourcesBusy) return;
+      const sourceSelects = Array.from(document.querySelectorAll('select.meteo-source'));
+      if (!sourceSelects.length) return;
+      remoteSourcesBusy = true;
+      try {
+        const resp = await fetch('/meteo/remote_sources', { cache: 'no-store' });
+        if (!resp.ok) return;
+        const html = await resp.text();
+        sourceSelects.forEach((el) => {
+          const prev = el.value || '';
+          if (el.innerHTML !== html) {
+            el.innerHTML = html;
+          }
+          if (prev) {
+            el.value = prev;
+          }
+          const row = el.closest('.tile');
+          if (row) updateRow(row);
+        });
+      } catch (e) {
+      } finally {
+        remoteSourcesBusy = false;
+      }
+    }
+    pollRemoteSources();
+    setInterval(pollRemoteSources, 3000);
     document.querySelectorAll('input.meteo-enable').forEach((el) => {
       el.addEventListener('change', () => {
         const tile = el.closest('.tile');

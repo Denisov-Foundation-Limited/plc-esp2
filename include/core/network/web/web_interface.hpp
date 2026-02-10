@@ -1,4 +1,4 @@
-﻿/**********************************************************************/
+/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -38,10 +38,8 @@
 #include "core/network/web/pages/web_interface_stack.hpp"
 #include "core/network/web/pages/web_interface_wifi.hpp"
 #include "core/network/web/pages/web_interface_controllers.hpp"
-#include "core/network/web/pages/web_interface_clients.hpp"
-#include "core/network/web/pages/web_interface_rfid.hpp"
+#include "core/network/web/pages/web_interface_users.hpp"
 #include "core/network/web/pages/web_interface_display.hpp"
-#include "core/network/web/pages/web_interface_client_ring.hpp"
 #include "core/network/web/pages/web_interface_security.hpp"
 #include "core/network/web/pages/web_interface_ring.hpp"
 #include "core/network/web/pages/web_interface_septic.hpp"
@@ -66,7 +64,7 @@ class ManageHandler;
 class PortsHandler;
 class BusesHandler;
 class StackHandler;
-class ClientsHandler;
+class UsersHandler;
 class DisplayHandler;
 class AdminHandler;
 class LogsHandler;
@@ -79,8 +77,6 @@ class CloudHandler;
 class MeteoHandler;
 class TankHandler;
 class WateringHandler;
-class RfidHandler;
-class RingClientHandler;
 class StackSlaveHandler;
 #include "core/rtc.hpp"
 #include "plc/plc_control.hpp"
@@ -88,6 +84,7 @@ class StackSlaveHandler;
 #include "core/network/telegram/telegram_menu.hpp"
 #include "utils/logger.hpp"
 #include "utils/configs.hpp"
+#include "utils/users_registry.hpp"
 #include "utils/fs_config.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "core/network/stack/stack_master.hpp"
@@ -100,7 +97,6 @@ class StackSlaveHandler;
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
 #include "hal/ibutton.hpp"
-#include "clients/rfid_reader.hpp"
 #include "controllers/controllers.hpp"
 
 static const char kWebAutoRefreshScript[] PROGMEM = R"HTML(
@@ -149,7 +145,7 @@ public:
     WebInterface(AsyncWebServer &server, CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
                  RTC &rtc, TelegramClient &tgbot, TelegramBot &tgbot_bot, TelegramMenu &tgbot_menu, Logger &logs,
                  Extender &ext,
-                 I2CManager &i2c, OneWireManager &ow, Controllers &controllers, RfidReader &rfid)
+                 I2CManager &i2c, OneWireManager &ow, Controllers &controllers)
         : _server(server),
           _cli_auth(&cli),
           _wifi(wifi),
@@ -160,7 +156,6 @@ public:
           _tgbot_bot(&tgbot_bot),
           _tgbot_menu(&tgbot_menu),
           _controllers(&controllers),
-          _rfid(&rfid),
           _ext(&ext),
           _i2c(&i2c),
           _ow(&ow),
@@ -207,6 +202,7 @@ public:
         if (_stack_cache)
             _stack_cache->setConfigsManager(&mgr);
     }
+    void setUsersRegistry(UsersRegistry &users) { _users = &users; }
     void setStackMaster(StackMaster &master)
     {
         _stack_master = &master;
@@ -238,7 +234,7 @@ private:
     friend class PortsHandler;
     friend class BusesHandler;
     friend class StackHandler;
-    friend class ClientsHandler;
+    friend class UsersHandler;
     friend class DisplayHandler;
     friend class AdminHandler;
     friend class LogsHandler;
@@ -251,8 +247,6 @@ private:
     friend class MeteoHandler;
     friend class TankHandler;
     friend class WateringHandler;
-    friend class RfidHandler;
-    friend class RingClientHandler;
     struct StackSocketItem;
     struct StackSocketsCache;
     struct StackLightItem;
@@ -1862,82 +1856,134 @@ private:
 
         if (sock_cache)
         {
-            sock_cache->pending = false;
             sock_cache->updated_ms = millis();
-            sock_cache->last_ok = false;
-            sock_cache->last_error = "";
             if (!ok)
             {
+                sock_cache->pending = false;
+                sock_cache->last_ok = false;
+                sock_cache->last_error = "";
                 sock_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                sock_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
+                const uint16_t part = data["part"] | 1;
+                const uint16_t parts = data["parts"] | 1;
+                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (sock_cache->item_count >= SocketController::kSocketCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackSocketItem &dst = sock_cache->items[sock_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.state = item["state"] | false;
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    sock_cache->item_count = 0;
+                    sock_cache->has_data = false;
+                    sock_cache->last_ok = false;
+                    sock_cache->last_error = "";
                 }
-                sock_cache->has_data = true;
-                sock_cache->last_ok = true;
-                sock_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (sock_cache->item_count >= SocketController::kSocketCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackSocketItem &dst = sock_cache->items[sock_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.state = item["state"] | false;
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    }
+                }
+                if (done)
+                {
+                    sock_cache->pending = false;
+                    sock_cache->has_data = true;
+                    sock_cache->last_ok = true;
+                    sock_cache->node_id = node_id;
+                }
+                else
+                {
+                    sock_cache->pending = true;
+                }
             }
         }
 
         if (light_cache)
         {
-            light_cache->pending = false;
             light_cache->updated_ms = millis();
-            light_cache->last_ok = false;
-            light_cache->last_error = "";
             if (!ok)
             {
+                light_cache->pending = false;
+                light_cache->last_ok = false;
+                light_cache->last_error = "";
                 light_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                light_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
+                const uint16_t part = data["part"] | 1;
+                const uint16_t parts = data["parts"] | 1;
+                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (light_cache->item_count >= SocketController::kLightCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackLightItem &dst = light_cache->items[light_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.state = item["state"] | false;
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    light_cache->item_count = 0;
+                    light_cache->has_data = false;
+                    light_cache->last_ok = false;
+                    light_cache->last_error = "";
                 }
-                light_cache->has_data = true;
-                light_cache->last_ok = true;
-                light_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (light_cache->item_count >= SocketController::kLightCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackLightItem &dst = light_cache->items[light_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.state = item["state"] | false;
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    }
+                }
+                if (done)
+                {
+                    light_cache->pending = false;
+                    light_cache->has_data = true;
+                    light_cache->last_ok = true;
+                    light_cache->node_id = node_id;
+                }
+                else
+                {
+                    light_cache->pending = true;
+                }
             }
         }
 
         if (ports_cache)
         {
-            ports_cache->pending = false;
             ports_cache->updated_ms = millis();
-            ports_cache->last_ok = false;
-            ports_cache->last_error = "";
             if (!ok)
             {
+                ports_cache->pending = false;
+                ports_cache->last_ok = false;
+                ports_cache->last_error = "";
                 ports_cache->last_error = doc["error"] | "error";
             }
             else
             {
-                JsonArrayConst ports = doc["data"]["ports"].as<JsonArrayConst>();
+                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
+                const uint16_t part = data["part"] | 1;
+                const uint16_t parts = data["parts"] | 1;
+                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
+                JsonArrayConst ports = data["ports"].as<JsonArrayConst>();
                 if (!ports.isNull())
                 {
-                    ports_cache->item_count = 0;
+                    if (part <= 1)
+                    {
+                        ports_cache->item_count = 0;
+                        ports_cache->has_data = false;
+                        ports_cache->last_ok = false;
+                        ports_cache->last_error = "";
+                    }
                     for (JsonObjectConst item : ports)
                     {
                         if (ports_cache->item_count >= PortIO::PORT_COUNT)
@@ -1961,9 +2007,17 @@ private:
                         else
                             dst.pin = -1;
                     }
-                    ports_cache->has_data = true;
-                    ports_cache->last_ok = true;
-                    ports_cache->node_id = node_id;
+                    if (done)
+                    {
+                        ports_cache->pending = false;
+                        ports_cache->has_data = true;
+                        ports_cache->last_ok = true;
+                        ports_cache->node_id = node_id;
+                    }
+                    else
+                    {
+                        ports_cache->pending = true;
+                    }
                 }
             }
         }
@@ -2002,196 +2056,301 @@ private:
 
         if (sec_cache)
         {
-            sec_cache->pending = false;
             sec_cache->updated_ms = millis();
-            sec_cache->last_ok = false;
-            sec_cache->last_error = "";
             if (!ok)
             {
+                sec_cache->pending = false;
+                sec_cache->last_ok = false;
+                sec_cache->last_error = "";
                 sec_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                sec_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
+                const uint16_t part = data["part"] | 1;
+                const uint16_t parts = data["parts"] | 1;
+                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (sec_cache->item_count >= SecurityController::kSensorCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackSecuritySensorItem &dst = sec_cache->items[sec_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.detect = item["detect"] | false;
-                    dst.silent = item["silent"] | false;
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
-                    copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
-                    dst.port = (uint8_t)(item["port"] | SecurityController::kInvalidPort);
+                    sec_cache->item_count = 0;
+                    sec_cache->has_data = false;
+                    sec_cache->last_ok = false;
+                    sec_cache->last_error = "";
                 }
-                sec_cache->has_data = true;
-                sec_cache->last_ok = true;
-                sec_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (sec_cache->item_count >= SecurityController::kSensorCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackSecuritySensorItem &dst = sec_cache->items[sec_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.detect = item["detect"] | false;
+                        dst.silent = item["silent"] | false;
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                        copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
+                        dst.port = (uint8_t)(item["port"] | SecurityController::kInvalidPort);
+                    }
+                }
+                if (done)
+                {
+                    sec_cache->pending = false;
+                    sec_cache->has_data = true;
+                    sec_cache->last_ok = true;
+                    sec_cache->node_id = node_id;
+                }
+                else
+                {
+                    sec_cache->pending = true;
+                }
             }
         }
 
         if (meteo_cache)
         {
-            meteo_cache->pending = false;
             meteo_cache->updated_ms = millis();
-            meteo_cache->last_ok = false;
-            meteo_cache->last_error = "";
             if (!ok)
             {
+                meteo_cache->pending = false;
+                meteo_cache->last_ok = false;
+                meteo_cache->last_error = "";
                 meteo_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                meteo_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
+                const uint16_t part = data["part"] | 1;
+                const uint16_t parts = data["parts"] | 1;
+                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (meteo_cache->item_count >= MeteoController::kSensorCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackMeteoItem &dst = meteo_cache->items[meteo_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.ok = item["ok"] | false;
-                    dst.has_temp = item["has_temp"] | false;
-                    dst.has_hum = item["has_hum"] | false;
-                    dst.temp_c = item["temp_c"] | 0.0f;
-                    dst.hum = item["hum"] | 0.0f;
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
-                    copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
-                    copyStr_(dst.addr, sizeof(dst.addr), item["addr"].as<const char *>());
-                    if (item["pin"].is<int>() || item["pin"].is<unsigned>())
-                        dst.pin = item["pin"].as<int>();
-                    else
-                        dst.pin = -1;
+                    meteo_cache->item_count = 0;
+                    meteo_cache->has_data = false;
+                    meteo_cache->last_ok = false;
+                    meteo_cache->last_error = "";
                 }
-                meteo_cache->has_data = true;
-                meteo_cache->last_ok = true;
-                meteo_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (meteo_cache->item_count >= MeteoController::kSensorCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackMeteoItem &dst = meteo_cache->items[meteo_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.ok = item["ok"] | false;
+                        dst.has_temp = item["has_temp"] | false;
+                        dst.has_hum = item["has_hum"] | false;
+                        dst.temp_c = item["temp_c"] | 0.0f;
+                        dst.hum = item["hum"] | 0.0f;
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                        copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
+                        copyStr_(dst.addr, sizeof(dst.addr), item["addr"].as<const char *>());
+                        if (item["pin"].is<int>() || item["pin"].is<unsigned>())
+                            dst.pin = item["pin"].as<int>();
+                        else
+                            dst.pin = -1;
+                    }
+                }
+                if (done)
+                {
+                    meteo_cache->pending = false;
+                    meteo_cache->has_data = true;
+                    meteo_cache->last_ok = true;
+                    meteo_cache->node_id = node_id;
+                }
+                else
+                {
+                    meteo_cache->pending = true;
+                }
             }
         }
 
         if (thermo_cache)
         {
-            thermo_cache->pending = false;
             thermo_cache->updated_ms = millis();
-            thermo_cache->last_ok = false;
-            thermo_cache->last_error = "";
             if (!ok)
             {
+                thermo_cache->pending = false;
+                thermo_cache->last_ok = false;
+                thermo_cache->last_error = "";
                 thermo_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                thermo_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
+                const uint16_t part = data["part"] | 1;
+                const uint16_t parts = data["parts"] | 1;
+                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (thermo_cache->item_count >= ThermoController::kDeviceCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackThermoItem &dst = thermo_cache->items[thermo_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.power_on = item["power_on"] | false;
-                    dst.heat_on = item["heat_on"] | false;
-                    dst.cool_on = item["cool_on"] | false;
-                    dst.sensor = (uint8_t)(item["sensor"] | 0u);
-                    dst.target = item["target"] | 0.0f;
-                    dst.hyst = item["hyst"] | 0.0f;
-                    dst.heat = (uint8_t)(item["heat"] | ThermoController::kInvalidPort);
-                    dst.cool = (uint8_t)(item["cool"] | ThermoController::kInvalidPort);
-                    dst.button = (uint8_t)(item["button"] | ThermoController::kInvalidPort);
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
-                    copyStr_(dst.mode, sizeof(dst.mode), item["mode"].as<const char *>());
+                    thermo_cache->item_count = 0;
+                    thermo_cache->has_data = false;
+                    thermo_cache->last_ok = false;
+                    thermo_cache->last_error = "";
                 }
-                thermo_cache->has_data = true;
-                thermo_cache->last_ok = true;
-                thermo_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (thermo_cache->item_count >= ThermoController::kDeviceCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackThermoItem &dst = thermo_cache->items[thermo_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.power_on = item["power_on"] | false;
+                        dst.heat_on = item["heat_on"] | false;
+                        dst.cool_on = item["cool_on"] | false;
+                        dst.sensor = (uint8_t)(item["sensor"] | 0u);
+                        dst.target = item["target"] | 0.0f;
+                        dst.hyst = item["hyst"] | 0.0f;
+                        dst.heat = (uint8_t)(item["heat"] | ThermoController::kInvalidPort);
+                        dst.cool = (uint8_t)(item["cool"] | ThermoController::kInvalidPort);
+                        dst.button = (uint8_t)(item["button"] | ThermoController::kInvalidPort);
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                        copyStr_(dst.mode, sizeof(dst.mode), item["mode"].as<const char *>());
+                    }
+                }
+                if (done)
+                {
+                    thermo_cache->pending = false;
+                    thermo_cache->has_data = true;
+                    thermo_cache->last_ok = true;
+                    thermo_cache->node_id = node_id;
+                }
+                else
+                {
+                    thermo_cache->pending = true;
+                }
             }
         }
 
         if (septic_cache)
         {
-            septic_cache->pending = false;
             septic_cache->updated_ms = millis();
-            septic_cache->last_ok = false;
-            septic_cache->last_error = "";
             if (!ok)
             {
+                septic_cache->pending = false;
+                septic_cache->last_ok = false;
+                septic_cache->last_error = "";
                 septic_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                septic_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
+                const uint16_t part = data["part"] | 1;
+                const uint16_t parts = data["parts"] | 1;
+                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (septic_cache->item_count >= SepticController::kSepticCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackSepticItem &dst = septic_cache->items[septic_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.monitor = item["monitor"] | false;
-                    dst.warning_port = (uint8_t)(item["warning_port"] | SepticController::kInvalidPort);
-                    dst.alarm_port = (uint8_t)(item["alarm_port"] | SepticController::kInvalidPort);
-                    dst.relay_warning = (uint8_t)(item["relay_warning"] | SepticController::kInvalidPort);
-                    dst.relay_alarm = (uint8_t)(item["relay_alarm"] | SepticController::kInvalidPort);
-                    dst.warning = item["warning"] | false;
-                    dst.alarm = item["alarm"] | false;
+                    septic_cache->item_count = 0;
+                    septic_cache->has_data = false;
+                    septic_cache->last_ok = false;
+                    septic_cache->last_error = "";
                 }
-                septic_cache->has_data = true;
-                septic_cache->last_ok = true;
-                septic_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (septic_cache->item_count >= SepticController::kSepticCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackSepticItem &dst = septic_cache->items[septic_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.monitor = item["monitor"] | false;
+                        dst.warning_port = (uint8_t)(item["warning_port"] | SepticController::kInvalidPort);
+                        dst.alarm_port = (uint8_t)(item["alarm_port"] | SepticController::kInvalidPort);
+                        dst.relay_warning = (uint8_t)(item["relay_warning"] | SepticController::kInvalidPort);
+                        dst.relay_alarm = (uint8_t)(item["relay_alarm"] | SepticController::kInvalidPort);
+                        dst.warning = item["warning"] | false;
+                        dst.alarm = item["alarm"] | false;
+                    }
+                }
+                if (done)
+                {
+                    septic_cache->pending = false;
+                    septic_cache->has_data = true;
+                    septic_cache->last_ok = true;
+                    septic_cache->node_id = node_id;
+                }
+                else
+                {
+                    septic_cache->pending = true;
+                }
             }
         }
 
         if (tanks_cache)
         {
-            tanks_cache->pending = false;
             tanks_cache->updated_ms = millis();
-            tanks_cache->last_ok = false;
-            tanks_cache->last_error = "";
             if (!ok)
             {
+                tanks_cache->pending = false;
+                tanks_cache->last_ok = false;
+                tanks_cache->last_error = "";
                 tanks_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                tanks_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
+                const uint16_t part = data["part"] | 1;
+                const uint16_t parts = data["parts"] | 1;
+                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (tanks_cache->item_count >= TankController::kTankCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackTankItem &dst = tanks_cache->items[tanks_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.power_on = item["power_on"] | false;
-                    dst.low = (uint8_t)(item["low"] | TankController::kInvalidPort);
-                    dst.mid = (uint8_t)(item["mid"] | TankController::kInvalidPort);
-                    dst.full = (uint8_t)(item["full"] | TankController::kInvalidPort);
-                    dst.valve = (uint8_t)(item["valve"] | TankController::kInvalidPort);
-                    dst.pump = (uint8_t)(item["pump"] | TankController::kInvalidPort);
-                    dst.alarm = (uint8_t)(item["alarm"] | TankController::kInvalidPort);
-                    dst.level_low = item["level_low"] | false;
-                    dst.level_mid = item["level_mid"] | false;
-                    dst.level_full = item["level_full"] | false;
-                    dst.levels_ok = item["levels_ok"] | false;
-                    dst.valve_on = item["valve_on"] | false;
-                    dst.pump_on = item["pump_on"] | false;
-                    dst.alarm_on = item["alarm_on"] | false;
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    tanks_cache->item_count = 0;
+                    tanks_cache->has_data = false;
+                    tanks_cache->last_ok = false;
+                    tanks_cache->last_error = "";
                 }
-                tanks_cache->has_data = true;
-                tanks_cache->last_ok = true;
-                tanks_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (tanks_cache->item_count >= TankController::kTankCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackTankItem &dst = tanks_cache->items[tanks_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.power_on = item["power_on"] | false;
+                        dst.low = (uint8_t)(item["low"] | TankController::kInvalidPort);
+                        dst.mid = (uint8_t)(item["mid"] | TankController::kInvalidPort);
+                        dst.full = (uint8_t)(item["full"] | TankController::kInvalidPort);
+                        dst.valve = (uint8_t)(item["valve"] | TankController::kInvalidPort);
+                        dst.pump = (uint8_t)(item["pump"] | TankController::kInvalidPort);
+                        dst.alarm = (uint8_t)(item["alarm"] | TankController::kInvalidPort);
+                        dst.level_low = item["level_low"] | false;
+                        dst.level_mid = item["level_mid"] | false;
+                        dst.level_full = item["level_full"] | false;
+                        dst.levels_ok = item["levels_ok"] | false;
+                        dst.valve_on = item["valve_on"] | false;
+                        dst.pump_on = item["pump_on"] | false;
+                        dst.alarm_on = item["alarm_on"] | false;
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    }
+                }
+                if (done)
+                {
+                    tanks_cache->pending = false;
+                    tanks_cache->has_data = true;
+                    tanks_cache->last_ok = true;
+                    tanks_cache->node_id = node_id;
+                }
+                else
+                {
+                    tanks_cache->pending = true;
+                }
             }
         }
 
@@ -2229,6 +2388,12 @@ private:
                     dst.hour = (uint8_t)(item["hour"] | 0u);
                     dst.minute = (uint8_t)(item["minute"] | 0u);
                     dst.duration_sec = (uint32_t)(item["duration_s"] | 0u);
+                    dst.hour2 = (uint8_t)(item["hour2"] | 0u);
+                    dst.minute2 = (uint8_t)(item["minute2"] | 0u);
+                    dst.duration2_sec = (uint32_t)(item["duration2_s"] | 0u);
+                    dst.hour3 = (uint8_t)(item["hour3"] | 0u);
+                    dst.minute3 = (uint8_t)(item["minute3"] | 0u);
+                    dst.duration3_sec = (uint32_t)(item["duration3_s"] | 0u);
                     dst.resume_after_refill = item["resume"] | false;
                     dst.resume_level = (uint8_t)(item["resume_level"] | 0u);
                     dst.active = item["active"] | false;
@@ -3348,197 +3513,6 @@ private:
         return items;
     }
 
-    String listSecurityKeysHtml_()
-    {
-        if (!_controllers)
-            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
-        String items;
-        items.reserve(1400);
-        SecurityController &sec = _controllers->security();
-        char last_hex[17] = {};
-        const bool has_last = sec.lastKeyHex(last_hex);
-        auto appendRow = [&](size_t idx, bool enabled, const char *hex, const String &name) {
-            items += "<tr><td class=\"right\"><strong>";
-            items += String((unsigned)(idx + 1));
-            items += "</strong></td><td><input type=\"checkbox\" name=\"k";
-            items += String((unsigned)(idx + 1));
-            items += "_en\"";
-            if (enabled)
-                items += " checked";
-            items += "></td><td><input class=\"field name\" type=\"text\" name=\"k";
-            items += String((unsigned)(idx + 1));
-            items += "_name\" value=\"";
-            if (name.length())
-                appendHtmlEscaped_(items, name.c_str());
-            items += "\"></td><td><input class=\"field serial\" type=\"text\" name=\"k";
-            items += String((unsigned)(idx + 1));
-            items += "_serial\" list=\"k";
-            items += String((unsigned)(idx + 1));
-            items += "_serial_list\" value=\"";
-            if (enabled && hex)
-                appendHtmlEscaped_(items, hex);
-            items += "\">";
-            if (has_last)
-            {
-                items += "<datalist id=\"k";
-                items += String((unsigned)(idx + 1));
-                items += "_serial_list\"><option value=\"";
-                items += last_hex;
-                items += "\"></option></datalist>";
-            }
-            items += "</td></tr>";
-        };
-
-        int first_disabled = -1;
-        for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
-        {
-            bool enabled = false;
-            uint8_t addr[8] = {};
-            sec.keySlot(i, addr, enabled);
-            if (enabled)
-            {
-                char hex[17] = {};
-                IButton::toHex(addr, hex);
-                appendRow(i, true, hex, sec.keyNameByIndex(i));
-            }
-            else if (first_disabled < 0)
-            {
-                first_disabled = (int)i;
-            }
-        }
-        if (first_disabled >= 0)
-            appendRow((size_t)first_disabled, false, nullptr, "");
-        if (items.length() == 0)
-            items = "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Ключи отсутствуют</strong></td></tr>";
-        return items;
-    }
-
-    String listSecurityRfidKeysHtml_()
-    {
-        if (!_controllers)
-            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
-        String items;
-        items.reserve(1400);
-        SecurityController &sec = _controllers->security();
-        String last_serial;
-        const bool has_last = sec.lastRfidSerial(last_serial);
-        auto appendRow = [&](size_t idx, bool enabled, const char *serial, const String &name) {
-            items += "<tr><td class=\"right\"><strong>";
-            items += String((unsigned)(idx + 1));
-            items += "</strong></td><td><input type=\"checkbox\" name=\"rk";
-            items += String((unsigned)(idx + 1));
-            items += "_en\"";
-            if (enabled)
-                items += " checked";
-            items += "></td><td><input class=\"field name\" type=\"text\" name=\"rk";
-            items += String((unsigned)(idx + 1));
-            items += "_name\" value=\"";
-            if (name.length())
-                appendHtmlEscaped_(items, name.c_str());
-            items += "\"></td><td><input class=\"field serial\" type=\"text\" name=\"rk";
-            items += String((unsigned)(idx + 1));
-            items += "_serial\" list=\"rk";
-            items += String((unsigned)(idx + 1));
-            items += "_serial_list\" value=\"";
-            if (enabled && serial)
-                appendHtmlEscaped_(items, serial);
-            items += "\">";
-            if (has_last)
-            {
-                items += "<datalist id=\"rk";
-                items += String((unsigned)(idx + 1));
-                items += "_serial_list\"><option value=\"";
-                appendHtmlEscaped_(items, last_serial.c_str());
-                items += "\"></option></datalist>";
-            }
-            items += "</td></tr>";
-        };
-
-        int first_disabled = -1;
-        for (size_t i = 0; i < SecurityController::kRfidKeyCount; ++i)
-        {
-            bool enabled = false;
-            uint8_t bytes[10] = {};
-            uint8_t len = 0;
-            sec.rfidKeySlot(i, bytes, len, enabled);
-            if (enabled)
-            {
-                const String serial = SecurityController::rfidSerialToString(bytes, len);
-                appendRow(i, true, serial.c_str(), sec.rfidKeyNameByIndex(i));
-            }
-            else if (first_disabled < 0)
-            {
-                first_disabled = (int)i;
-            }
-        }
-        if (first_disabled >= 0)
-            appendRow((size_t)first_disabled, false, nullptr, "");
-        if (items.length() == 0)
-            items = "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Ключи отсутствуют</strong></td></tr>";
-        return items;
-    }
-
-    String listClientsTilesHtml_(uint8_t page_idx, uint8_t &out_pages)
-    {
-        const uint8_t page_size = 6;
-        const uint8_t total = 2;
-        out_pages = (uint8_t)((total + page_size - 1) / page_size);
-        if (out_pages == 0)
-            out_pages = 1;
-        if (page_idx >= out_pages)
-            page_idx = (uint8_t)(out_pages - 1);
-
-        String items;
-        items.reserve(512);
-        const uint8_t start = (uint8_t)(page_idx * page_size);
-        const uint8_t end = (uint8_t)(start + page_size);
-        if (start >= total)
-        {
-            items = "<div class=\"tile\"><strong>Клиенты отсутствуют</strong></div>";
-            return items;
-        }
-
-        if (start <= 0 && 0 < end)
-        {
-            const bool enabled = _configs_manager ? _configs_manager->rfidEnabled() : false;
-            const bool active = enabled && (stackRole_() == ConfigsManagerIface::StackRole::Slave);
-            items += "<div class=\"tile\"><form method=\"POST\" action=\"/clients\" id=\"rfid-form\">";
-            items += "<input type=\"hidden\" name=\"client\" value=\"rfid\">";
-            items += "<div class=\"tile-head\"><a href=\"/rfid\">RFID</a>";
-            items += "<label class=\"switch\"><input type=\"checkbox\" id=\"rfid-enabled\" name=\"rfid_enabled\"";
-            if (enabled)
-                items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div></form>";
-            items += "<span>Тонкий клиент: RFID reader</span>";
-            items += "<span class=\"status\">RFID: <strong>";
-            items += enabled ? "включен" : "выключен";
-            items += "</strong></span>";
-            items += "<span class=\"status\">Состояние: <strong>";
-            items += active ? "active" : "inactive";
-            items += "</strong></span></div>";
-        }
-        if (start <= 1 && 1 < end)
-        {
-            const bool enabled = _configs_manager ? _configs_manager->ringClientEnabled() : false;
-            const bool active = enabled && (stackRole_() == ConfigsManagerIface::StackRole::Slave);
-            items += "<div class=\"tile\"><form method=\"POST\" action=\"/clients\" id=\"ring-client-form\">";
-            items += "<input type=\"hidden\" name=\"client\" value=\"ring\">";
-            items += "<div class=\"tile-head\"><a href=\"/client/ring\">Ring</a>";
-            items += "<label class=\"switch\"><input type=\"checkbox\" id=\"ring-client-enabled\" name=\"ring_client_enabled\"";
-            if (enabled)
-                items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div></form>";
-            items += "<span>Тонкий клиент: Ring button</span>";
-            items += "<span class=\"status\">Ring: <strong>";
-            items += enabled ? "включен" : "выключен";
-            items += "</strong></span>";
-            items += "<span class=\"status\">Состояние: <strong>";
-            items += active ? "active" : "inactive";
-            items += "</strong></span></div>";
-        }
-        return items;
-    }
-
     String displaySlotsHtml_() const
     {
         String html;
@@ -3587,81 +3561,6 @@ private:
             html += "\"></div>";
         }
         return html;
-    }
-
-    String listSecurityPhonesHtml_()
-    {
-        if (!_controllers)
-            return "<tr><td colspan=\"6\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></td></tr>";
-        String items;
-        items.reserve(1400);
-        SecurityController &sec = _controllers->security();
-        int first_empty = -1;
-        for (size_t i = 0; i < SecurityController::kPhoneCount; ++i)
-        {
-            String number;
-            bool enabled = false;
-            if (!sec.phoneSlot(i, number, enabled))
-                continue;
-            const bool notify = sec.phoneNotifyByIndex(i);
-            const bool call = sec.phoneCallByIndex(i);
-            const String &name = sec.phoneNameByIndex(i);
-            const bool has_data = enabled || notify || call || number.length() || name.length();
-            if (!has_data)
-            {
-                if (first_empty < 0)
-                    first_empty = (int)i;
-                continue;
-            }
-            items += "<tr><td class=\"right\"><strong>";
-            items += String((unsigned)(i + 1));
-            items += "</strong></td><td><input type=\"checkbox\" name=\"p";
-            items += String((unsigned)(i + 1));
-            items += "_en\"";
-            if (enabled)
-                items += " checked";
-            items += "></td><td><input class=\"field name\" type=\"text\" name=\"p";
-            items += String((unsigned)(i + 1));
-            items += "_name\" value=\"";
-            if (name.length())
-                appendHtmlEscaped_(items, name.c_str());
-            items += "\"></td><td><input class=\"field serial\" type=\"text\" name=\"p";
-            items += String((unsigned)(i + 1));
-            items += "_num\" value=\"";
-            if (number.length())
-                appendHtmlEscaped_(items, number.c_str());
-            items += "\"></td><td><input type=\"checkbox\" name=\"p";
-            items += String((unsigned)(i + 1));
-            items += "_notify\"";
-            if (notify)
-                items += " checked";
-            items += "></td><td><input type=\"checkbox\" name=\"p";
-            items += String((unsigned)(i + 1));
-            items += "_call\"";
-            if (call)
-                items += " checked";
-            items += "></td></tr>";
-        }
-        if (first_empty >= 0)
-        {
-            const size_t i = (size_t)first_empty;
-            items += "<tr><td class=\"right\"><strong>";
-            items += String((unsigned)(i + 1));
-            items += "</strong></td><td><input type=\"checkbox\" name=\"p";
-            items += String((unsigned)(i + 1));
-            items += "_en\"></td><td><input class=\"field name\" type=\"text\" name=\"p";
-            items += String((unsigned)(i + 1));
-            items += "_name\" value=\"\"></td><td><input class=\"field serial\" type=\"text\" name=\"p";
-            items += String((unsigned)(i + 1));
-            items += "_num\" value=\"\"></td><td><input type=\"checkbox\" name=\"p";
-            items += String((unsigned)(i + 1));
-            items += "_notify\"></td><td><input type=\"checkbox\" name=\"p";
-            items += String((unsigned)(i + 1));
-            items += "_call\"></td></tr>";
-        }
-        if (items.length() == 0)
-            items = "<tr><td colspan=\"6\" style=\"color:#94a3b8\"><strong>Телефоны отсутствуют</strong></td></tr>";
-        return items;
     }
 
     String listSecuritySensorsHtml_()
@@ -4281,26 +4180,26 @@ private:
         for (size_t i = 0; i < cache->item_count; ++i)
         {
             const StackTankItem &cfg = cache->items[i];
-            const char *level = "пусто";
+            const char *level = "0%";
             const char *level_class = "level-empty";
-            unsigned level_pct = 10;
+            unsigned level_pct = 0;
             if (cfg.level_full)
             {
-                level = "полный";
+                level = "99%";
                 level_class = "level-full";
-                level_pct = 90;
+                level_pct = 99;
             }
             else if (cfg.level_mid)
             {
-                level = "средний";
+                level = "66%";
                 level_class = "level-mid";
-                level_pct = 60;
+                level_pct = 66;
             }
             else if (cfg.level_low)
             {
-                level = "низкий";
+                level = "33%";
                 level_class = "level-low";
-                level_pct = 30;
+                level_pct = 33;
             }
 
             items += "<div class=\"tile";
@@ -4912,26 +4811,26 @@ private:
 
         auto appendRow = [&](const TankController::TankConfig &cfg, const TankController::TankState &st,
                              bool enabled) {
-            const char *level = "пусто";
+            const char *level = "0%";
             const char *level_class = "level-empty";
-            unsigned level_pct = 10;
+            unsigned level_pct = 0;
             if (st.level_full)
             {
-                level = "полный";
+                level = "99%";
                 level_class = "level-full";
-                level_pct = 90;
+                level_pct = 99;
             }
             else if (st.level_mid)
             {
-                level = "средний";
+                level = "66%";
                 level_class = "level-mid";
-                level_pct = 60;
+                level_pct = 66;
             }
             else if (st.level_low)
             {
-                level = "низкий";
+                level = "33%";
                 level_class = "level-low";
-                level_pct = 30;
+                level_pct = 33;
             }
 
             items += "<div class=\"tile";
@@ -5121,7 +5020,7 @@ private:
                 items += "--";
             items += "</div></div>";
             items += "<div class=\"form-row\"><label>Время</label><div class=\"field mini\">";
-            if (cfg.weekdays_mask)
+            if (cfg.weekdays_mask && cfg.duration_sec && cfg.hour <= 23 && cfg.minute <= 59)
             {
                 char buf[8] = {};
                 snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour, (unsigned)cfg.minute);
@@ -5141,6 +5040,42 @@ private:
             items += "<div class=\"form-row\"><label>Длит. (мин)</label><div class=\"field mini\">";
             if (cfg.duration_sec)
                 items += String((unsigned long)((cfg.duration_sec + 59) / 60));
+            else
+                items += "--";
+            items += "</div></div>";
+            items += "<div class=\"form-row\"><label>Время 2</label><div class=\"field mini\">";
+            if (cfg.weekdays_mask && cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
+            {
+                char buf2[8] = {};
+                snprintf(buf2, sizeof(buf2), "%02u:%02u", (unsigned)cfg.hour2, (unsigned)cfg.minute2);
+                items += buf2;
+            }
+            else
+            {
+                items += "--";
+            }
+            items += "</div></div>";
+            items += "<div class=\"form-row\"><label>Длит.2 (мин)</label><div class=\"field mini\">";
+            if (cfg.duration2_sec)
+                items += String((unsigned long)((cfg.duration2_sec + 59) / 60));
+            else
+                items += "--";
+            items += "</div></div>";
+            items += "<div class=\"form-row\"><label>Время 3</label><div class=\"field mini\">";
+            if (cfg.weekdays_mask && cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
+            {
+                char buf3[8] = {};
+                snprintf(buf3, sizeof(buf3), "%02u:%02u", (unsigned)cfg.hour3, (unsigned)cfg.minute3);
+                items += buf3;
+            }
+            else
+            {
+                items += "--";
+            }
+            items += "</div></div>";
+            items += "<div class=\"form-row\"><label>Длит.3 (мин)</label><div class=\"field mini\">";
+            if (cfg.duration3_sec)
+                items += String((unsigned long)((cfg.duration3_sec + 59) / 60));
             else
                 items += "--";
             items += "</div></div>";
@@ -5238,11 +5173,31 @@ private:
             items += "<div class=\"form-row\"><label>Время</label><input class=\"field mini\" type=\"time\" name=\"w";
             items += String((unsigned)cfg.id);
             items += "_time\" value=\"";
-            if (cfg.weekdays_mask)
+            if (cfg.weekdays_mask && cfg.duration_sec && cfg.hour <= 23 && cfg.minute <= 59)
             {
                 char buf[8] = {};
                 snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour, (unsigned)cfg.minute);
                 items += buf;
+            }
+            items += "\"></div>";
+            items += "<div class=\"form-row\"><label>Время 2</label><input class=\"field mini\" type=\"time\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_time2\" value=\"";
+            if (cfg.weekdays_mask && cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
+            {
+                char buf2[8] = {};
+                snprintf(buf2, sizeof(buf2), "%02u:%02u", (unsigned)cfg.hour2, (unsigned)cfg.minute2);
+                items += buf2;
+            }
+            items += "\"></div>";
+            items += "<div class=\"form-row\"><label>Время 3</label><input class=\"field mini\" type=\"time\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_time3\" value=\"";
+            if (cfg.weekdays_mask && cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
+            {
+                char buf3[8] = {};
+                snprintf(buf3, sizeof(buf3), "%02u:%02u", (unsigned)cfg.hour3, (unsigned)cfg.minute3);
+                items += buf3;
             }
             items += "\"></div>";
             items += "<div class=\"form-row\"><label>Бак</label><select class=\"field mini watering-select\" data-type=\"tank\" data-selected=\"";
@@ -5256,6 +5211,18 @@ private:
             items += "_dur\" value=\"";
             if (cfg.duration_sec)
                 items += String((unsigned long)((cfg.duration_sec + 59) / 60));
+            items += "\"></div>";
+            items += "<div class=\"form-row\"><label>Длит.2 (мин)</label><input class=\"field mini\" type=\"number\" min=\"0\" step=\"1\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_dur2\" value=\"";
+            if (cfg.duration2_sec)
+                items += String((unsigned long)((cfg.duration2_sec + 59) / 60));
+            items += "\"></div>";
+            items += "<div class=\"form-row\"><label>Длит.3 (мин)</label><input class=\"field mini\" type=\"number\" min=\"0\" step=\"1\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_dur3\" value=\"";
+            if (cfg.duration3_sec)
+                items += String((unsigned long)((cfg.duration3_sec + 59) / 60));
             items += "\"></div>";
             items += "<div class=\"form-row tank-dependent\"><label>Продолжать</label><label class=\"switch\"><input type=\"checkbox\" name=\"w";
             items += String((unsigned)cfg.id);
@@ -5471,7 +5438,7 @@ private:
         out += "<h2>Контроллеры</h2>";
         out += "<table><thead><tr>";
         out += "<th>Unit</th><th>DeviceName</th><th>NodeID</th><th>IP</th><th>Тип</th>";
-        out += "</tr></thead><tbody>";
+        out += "</tr></thead><tbody id=\"stack-nodes-tbody\">";
         out += listStackNodesHtml_();
         out += "</tbody></table>";
         out += "</div>";
@@ -6630,9 +6597,6 @@ private:
             mark_used(used, rcfg.button_port);
             mark_used(used, rcfg.relay_port);
         }
-        if (_configs_manager)
-            mark_used(used, _configs_manager->ringClientButtonPort());
-
         for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
         {
             if (!used[i])
@@ -7384,7 +7348,7 @@ sendRedirect_(request, "/", set_cookie);
         String nav = F("<div class=\"nav\">");
         nav += F("<a href=\"/\">FCPLC</a> | <a href=\"/wifi\">Сеть</a> | ");
         nav += F("<a href=\"/manage\">Прошивка и файлы</a> | <a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a> | ");
-        nav += F("<a href=\"/stack\">Стек</a> | <a href=\"/controllers\">Контроллеры</a> | <a href=\"/clients\">Клиенты</a> | <a href=\"/display\">Дисплей</a> | ");
+        nav += F("<a href=\"/stack\">Стек</a> | <a href=\"/controllers\">Контроллеры</a> | <a href=\"/users\">Пользователи</a> | <a href=\"/display\">Дисплей</a> | ");
         nav += F("<a href=\"/telegram\">Telegram</a> | <a href=\"/cloud\">Облако</a> | ");
         nav += F("<a href=\"/admin\">Система</a> | <a href=\"/logs\">Logs</a>");
         nav += F("</div>");
@@ -8691,66 +8655,6 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
         return (uint8_t)(dow + 1);
     }
 
-    String allowedUsersRowsHtml_() const
-    {
-        if (!_tgbot_menu)
-            return "";
-        String out;
-        const auto users = _tgbot_menu->allowedUsers();
-        const size_t max = TelegramMenu::kMaxAllowedUsers;
-        auto appendRow = [&](size_t row, const TelegramMenu::AllowedUser &u, bool enabled) {
-            out += "<tr><td>";
-            out += String((unsigned)(row + 1));
-            out += "</td><td><input class=\"mini\" type=\"text\" name=\"au";
-            out += String((unsigned)row);
-            out += "_user\" value=\"";
-            appendHtmlEscaped_(out, u.username.c_str());
-            out += "\"></td><td><input class=\"mini\" type=\"text\" name=\"au";
-            out += String((unsigned)row);
-            out += "_chat\" value=\"";
-            if (u.chat_id)
-                out += String((long long)u.chat_id);
-            out += "\"></td><td><input type=\"checkbox\" name=\"au";
-            out += String((unsigned)row);
-            out += "_admin\"";
-            if (u.is_admin)
-                out += " checked";
-            out += "></td><td><input type=\"checkbox\" name=\"au";
-            out += String((unsigned)row);
-            out += "_notify\"";
-            if (u.is_notify)
-                out += " checked";
-            out += "></td><td><input type=\"checkbox\" name=\"au";
-            out += String((unsigned)row);
-            out += "_enabled\"";
-            if (enabled)
-                out += " checked";
-            out += "></td></tr>";
-        };
-
-        size_t row = 0;
-        bool added_disabled = false;
-        for (size_t i = 0; i < users.size && row < max; ++i)
-        {
-            const auto &u = users[i];
-            if (u.enabled)
-            {
-                appendRow(row++, u, true);
-            }
-            else if (!added_disabled)
-            {
-                appendRow(row++, u, false);
-                added_disabled = true;
-            }
-        }
-        if (!added_disabled && row < max)
-        {
-            TelegramMenu::AllowedUser empty{};
-            appendRow(row++, empty, false);
-        }
-        return out;
-    }
-
     void notifyRingPress_(bool stack_view, uint32_t node_id)
     {
         String msg = F("Звонок: веб-кнопка");
@@ -8819,54 +8723,6 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
                 break;
             }
         }
-    }
-
-    static bool parseAllowedUsers_(AsyncWebServerRequest *request, std::vector<TelegramMenu::AllowedUser> &out,
-                                   String &err)
-    {
-        out.clear();
-        if (!request)
-            return true;
-        const size_t max = TelegramMenu::kMaxAllowedUsers;
-        for (size_t i = 0; i < max; ++i)
-        {
-            const String user_key = String("au") + String((unsigned)i) + "_user";
-            const String chat_key = String("au") + String((unsigned)i) + "_chat";
-            const String admin_key = String("au") + String((unsigned)i) + "_admin";
-            const String notify_key = String("au") + String((unsigned)i) + "_notify";
-            const String enabled_key = String("au") + String((unsigned)i) + "_enabled";
-            const bool has_any = request->hasParam(user_key, true) ||
-                                 request->hasParam(chat_key, true) ||
-                                 request->hasParam(admin_key, true) ||
-                                 request->hasParam(notify_key, true) ||
-                                 request->hasParam(enabled_key, true);
-            if (!has_any)
-                continue;
-            String user = request->hasParam(user_key, true) ? request->getParam(user_key, true)->value() : "";
-            String chat = request->hasParam(chat_key, true) ? request->getParam(chat_key, true)->value() : "";
-            user.trim();
-            chat.trim();
-            TelegramMenu::AllowedUser u{};
-            u.username = user;
-            u.is_admin = request->hasParam(admin_key, true);
-            u.is_notify = request->hasParam(notify_key, true);
-            u.enabled = request->hasParam(enabled_key, true);
-            if (chat.length())
-            {
-                const char *c = chat.c_str();
-                for (size_t j = 0; c[j]; ++j)
-                {
-                    if (c[j] < '0' || c[j] > '9')
-                    {
-                        err = "Invalid chat id";
-                        return false;
-                    }
-                }
-                u.chat_id = (int64_t)strtoll(c, nullptr, 10);
-            }
-            out.push_back(u);
-        }
-        return true;
     }
 
     float rtcTemp_() const
@@ -9065,6 +8921,17 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
             hashAdd_(hash, listFilesHtml_());
             return hash;
         }
+        if (path == "/stack")
+        {
+            hashAdd_(hash, stackRoleName_(stackRole_()));
+            hashAdd_(hash, stackMasterHost_());
+            if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+            {
+                hashAdd_(hash, _stack_slave->nodeConnected() ? 1u : 0u);
+                hashAdd_(hash, _stack_slave->linkReadyAfterHello() ? 1u : 0u);
+            }
+            return hash;
+        }
         if (path == "/controllers")
         {
             if (_controllers)
@@ -9078,6 +8945,29 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
                 hashAdd_(hash, _controllers->septic().controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, _controllers->ring().controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, _controllers->security().controllerEnabled() ? 1u : 0u);
+            }
+            return hash;
+        }
+        if (path == "/users")
+        {
+            if (_users)
+            {
+                for (size_t i = 0; i < _users->size(); ++i)
+                {
+                    const auto &u = _users->user(i);
+                    hashAdd_(hash, (uint32_t)u.id);
+                    hashAdd_(hash, u.enabled ? 1u : 0u);
+                    hashAdd_(hash, u.username);
+                    hashAdd_(hash, u.tg_username);
+                    hashAdd_(hash, String((long long)u.tg_chat_id));
+                    hashAdd_(hash, u.tg_admin ? 1u : 0u);
+                    hashAdd_(hash, u.tg_notify ? 1u : 0u);
+                    hashAdd_(hash, u.gsm_phone);
+                    hashAdd_(hash, u.gsm_sms ? 1u : 0u);
+                    hashAdd_(hash, u.gsm_call ? 1u : 0u);
+                    hashAdd_(hash, u.ibutton_key);
+                    hashAdd_(hash, u.rfid_key);
+                }
             }
             return hash;
         }
@@ -9381,6 +9271,12 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
                     hashAdd_(hash, (uint32_t)cfg->hour);
                     hashAdd_(hash, (uint32_t)cfg->minute);
                     hashAdd_(hash, (uint32_t)cfg->duration_sec);
+                    hashAdd_(hash, (uint32_t)cfg->hour2);
+                    hashAdd_(hash, (uint32_t)cfg->minute2);
+                    hashAdd_(hash, (uint32_t)cfg->duration2_sec);
+                    hashAdd_(hash, (uint32_t)cfg->hour3);
+                    hashAdd_(hash, (uint32_t)cfg->minute3);
+                    hashAdd_(hash, (uint32_t)cfg->duration3_sec);
                     hashAdd_(hash, cfg->resume_after_refill ? 1u : 0u);
                     hashAdd_(hash, (uint32_t)cfg->resume_level);
                     hashAdd_(hash, cfg->name);
@@ -9412,6 +9308,12 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
                     hashAdd_(hash, (uint32_t)it.hour);
                     hashAdd_(hash, (uint32_t)it.minute);
                     hashAdd_(hash, (uint32_t)it.duration_sec);
+                    hashAdd_(hash, (uint32_t)it.hour2);
+                    hashAdd_(hash, (uint32_t)it.minute2);
+                    hashAdd_(hash, (uint32_t)it.duration2_sec);
+                    hashAdd_(hash, (uint32_t)it.hour3);
+                    hashAdd_(hash, (uint32_t)it.minute3);
+                    hashAdd_(hash, (uint32_t)it.duration3_sec);
                     hashAdd_(hash, it.resume_after_refill ? 1u : 0u);
                     hashAdd_(hash, (uint32_t)it.resume_level);
                     hashAdd_(hash, it.active ? 1u : 0u);
@@ -9506,17 +9408,6 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
                     hashAdd_(hash, cfg->name);
                     hashAdd_(hash, st->raw ? 1u : 0u);
                     hashAdd_(hash, st->is_detect ? 1u : 0u);
-                }
-                for (size_t i = 0; i < SecurityController::kPhoneCount; ++i)
-                {
-                    hashAdd_(hash, sec.phoneByIndex(i));
-                    hashAdd_(hash, sec.phoneNameByIndex(i));
-                    hashAdd_(hash, sec.phoneNotifyByIndex(i) ? 1u : 0u);
-                    hashAdd_(hash, sec.phoneCallByIndex(i) ? 1u : 0u);
-                    bool enabled = false;
-                    String number;
-                    sec.phoneSlot(i, number, enabled);
-                    hashAdd_(hash, enabled ? 1u : 0u);
                 }
                 for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
                 {
@@ -9671,7 +9562,6 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
                 hashAdd_(hash, String((unsigned)_tgbot->proxyPort()));
                 hashAdd_(hash, _tgbot->proxyPath());
             }
-            hashAdd_(hash, allowedUsersRowsHtml_());
             return hash;
         }
         if (path == "/cloud")
@@ -9817,7 +9707,6 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
     TelegramBot *_tgbot_bot = nullptr;
     TelegramMenu *_tgbot_menu = nullptr;
     Controllers *_controllers = nullptr;
-    RfidReader *_rfid = nullptr;
     GsmModem *_gsm = nullptr;
     I2CManager *_i2c = nullptr;
     OneWireManager *_ow = nullptr;
@@ -10108,6 +9997,12 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
         uint8_t hour = 0;
         uint8_t minute = 0;
         uint32_t duration_sec = 0;
+        uint8_t hour2 = 0;
+        uint8_t minute2 = 0;
+        uint32_t duration2_sec = 0;
+        uint8_t hour3 = 0;
+        uint8_t minute3 = 0;
+        uint32_t duration3_sec = 0;
         bool resume_after_refill = false;
         uint8_t resume_level = 0;
         bool active = false;
@@ -10187,10 +10082,8 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
     String _septic_status;
     String _ring_status;
     String _security_status;
-    String _rfid_status;
+    String _users_status;
     String _display_status;
-    String _ring_client_status;
-    String _clients_status;
     bool _auth_enabled = false;
     String _auth_user;
     String _auth_pass;
@@ -10201,6 +10094,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
     StackSlaveHandler *_stack_slave = nullptr;
     StackCache *_stack_cache = nullptr;
     CloudClient *_cloud = nullptr;
+    UsersRegistry *_users = nullptr;
     String _session_token;
     uint32_t _session_expire_ms = 0;
     uint32_t _session_ttl_ms = 10u * 60u * 1000u;
@@ -10220,7 +10114,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
 #include "core/network/web/handlers/ports_handler.hpp"
 #include "core/network/web/handlers/buses_handler.hpp"
 #include "core/network/web/handlers/stack_handler.hpp"
-#include "core/network/web/handlers/clients_handler.hpp"
+#include "core/network/web/handlers/users_handler.hpp"
 #include "core/network/web/handlers/display_handler.hpp"
 #include "core/network/web/handlers/admin_handler.hpp"
 #include "core/network/web/handlers/logs_handler.hpp"
@@ -10232,8 +10126,6 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
 #include "core/network/web/handlers/cloud_handler.hpp"
 #include "core/network/web/handlers/meteo_handler.hpp"
 #include "core/network/web/handlers/tank_handler.hpp"
-#include "core/network/web/handlers/rfid_handler.hpp"
-#include "core/network/web/handlers/ring_client_handler.hpp"
 
 inline void WebInterface::registerRoutes()
 {
@@ -10245,10 +10137,8 @@ inline void WebInterface::registerRoutes()
     _server.on("/stack/gen_key", HTTP_POST, [this](AsyncWebServerRequest *request) { handleStackGenKey_(request); });
     StackHandler::registerRoutes(*this, _server);
     ControllersHandler::registerRoutes(*this, _server);
-    ClientsHandler::registerRoutes(*this, _server);
+    UsersHandler::registerRoutes(*this, _server);
     DisplayHandler::registerRoutes(*this, _server);
-    RfidHandler::registerRoutes(*this, _server);
-    RingClientHandler::registerRoutes(*this, _server);
     SocketsHandler::registerRoutes(*this, _server);
     LightsHandler::registerRoutes(*this, _server);
     ThermoHandler::registerRoutes(*this, _server);

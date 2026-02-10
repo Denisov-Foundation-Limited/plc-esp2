@@ -31,31 +31,12 @@ public:
         String page = FPSTR(kWebInterfaceBusesHtml);
         page.reserve(page.length() + 3072);
         page.replace("%NAV%", web.navHtml_());
-        const uint32_t node_id = web.parseStackNodeIdParam_(request);
-        const bool stack_view = web.isStackBusesView_(node_id);
-        if (stack_view)
-        {
-            String scan = request->hasParam("scan") ? request->getParam("scan")->value() : "";
-            scan.toLowerCase();
-            const bool run_i2c = (scan == "i2c");
-            const bool run_ow = (scan == "ow");
-            if (run_i2c)
-                web.requestStackI2c_(node_id, true);
-            else
-                web.requestStackI2c_(node_id, false);
-            if (run_ow)
-                web.requestStackOw_(node_id, true);
-            else
-                web.requestStackOw_(node_id, false);
-        }
-        page.replace("%I2C%", stack_view ? web.listStackI2cHtml_(node_id) : web.listI2cHtml_());
-        page.replace("%OW%", stack_view ? web.listStackOwHtml_(node_id) : web.listOwHtml_());
-        page.replace("%BUS_DEVICE_SELECT%", web.busesDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%BUS_STACK_STATUS%", stack_view ? web.stackBusesStatusText_(node_id) : "");
-        page.replace("%BUS_I2C_SCAN_URL%",
-                     stack_view ? (String("/buses?node=") + String(node_id) + "&scan=i2c") : String("/buses"));
-        page.replace("%BUS_OW_SCAN_URL%",
-                     stack_view ? (String("/buses?node=") + String(node_id) + "&scan=ow") : String("/buses"));
+        page.replace("%I2C%", web.listI2cHtml_());
+        page.replace("%OW%", web.listOwHtml_());
+        page.replace("%BUS_DEVICE_SELECT%", "");
+        page.replace("%BUS_STACK_STATUS%", "");
+        page.replace("%BUS_I2C_SCAN_URL%", String("/buses"));
+        page.replace("%BUS_OW_SCAN_URL%", String("/buses"));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }

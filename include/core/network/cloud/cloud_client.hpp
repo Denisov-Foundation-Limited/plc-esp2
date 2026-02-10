@@ -137,6 +137,7 @@ private:
         Thermo,
         Tanks,
         Septic,
+        Watering,
         SecurityStatus,
         SecuritySensors,
         Ring
@@ -148,6 +149,7 @@ private:
         uint16_t cmd_id = 0;
         uint8_t pending_idx = 0;
         StackPart part = StackPart::None;
+        bool started = false;
     };
 
     struct PendingRequest
@@ -424,6 +426,8 @@ private:
             ok = handleCmdTanks_(action, args);
         else if (ctrl == "septic")
             ok = handleCmdSeptic_(action, args);
+        else if (ctrl == "watering")
+            ok = handleCmdWatering_(action, args);
         else if (ctrl == "security")
             ok = handleCmdSecurity_(action, args);
         else if (ctrl == "ring")
@@ -498,8 +502,43 @@ private:
             params["id"] = (unsigned)(args["id"] | 1);
             params["monitor"] = (String(args["state"] | "") == "on");
         }
+        else if (ctrl == "watering")
+        {
+            feature = StackFeature::Watering;
+            stack_action = "set";
+            params["id"] = (unsigned)(args["id"] | 0);
+            params["state"] = (String(args["state"] | "") == "on");
+        }
         else if (ctrl == "security")
         {
+            if (action == "rfid")
+            {
+                String uid = args["uid"] | "";
+                if (uid.length() == 0)
+                    uid = args["serial"] | "";
+                if (!uid.length())
+                {
+                    sendError_(req_id, "missing uid");
+                    return;
+                }
+                const String src = args["name"] | stackNodeName_(node_id);
+                const bool ok = _controllers.security().processRfidUidString(uid.c_str(), src.c_str());
+                sendAck_(req_id, ok, ok ? "" : "failed");
+                return;
+            }
+            if (action == "ibutton")
+            {
+                const String serial = args["serial"] | "";
+                if (!serial.length())
+                {
+                    sendError_(req_id, "missing serial");
+                    return;
+                }
+                const String src = args["name"] | stackNodeName_(node_id);
+                const bool ok = _controllers.security().processIButtonSerialString(serial.c_str(), src.c_str());
+                sendAck_(req_id, ok, ok ? "" : "failed");
+                return;
+            }
             feature = StackFeature::Security;
             stack_action = "set";
             if (action == "arm")
@@ -580,9 +619,18 @@ private:
         return _controllers.septic().setMonitoring(id, (String(args["state"] | "") == "on"));
     }
 
+    bool handleCmdWatering_(const String &action, JsonObjectConst args)
+    {
+        if (action != "status")
+            return false;
+        const uint8_t id = (uint8_t)(args["id"] | 0);
+        if (id == 0)
+            return false;
+        return _controllers.watering().setStatus(id, (String(args["state"] | "") == "on"));
+    }
+
     bool handleCmdSecurity_(const String &action, JsonObjectConst args)
     {
-        (void)args;
         if (action == "arm")
             return _controllers.security().armFrom("cloud", "");
         if (action == "disarm")
@@ -591,6 +639,24 @@ private:
         {
             _controllers.security().clearDetect();
             return true;
+        }
+        if (action == "rfid")
+        {
+            String uid = args["uid"] | "";
+            if (uid.length() == 0)
+                uid = args["serial"] | "";
+            if (!uid.length())
+                return false;
+            const String src = args["name"] | "cloud";
+            return _controllers.security().processRfidUidString(uid.c_str(), src.c_str());
+        }
+        if (action == "ibutton")
+        {
+            const String serial = args["serial"] | "";
+            if (!serial.length())
+                return false;
+            const String src = args["name"] | "cloud";
+            return _controllers.security().processIButtonSerialString(serial.c_str(), src.c_str());
         }
         return false;
     }
@@ -678,6 +744,7 @@ private:
         p->pending_mask |= maskFor_(StackPart::Thermo);
         p->pending_mask |= maskFor_(StackPart::Tanks);
         p->pending_mask |= maskFor_(StackPart::Septic);
+        p->pending_mask |= maskFor_(StackPart::Watering);
         p->pending_mask |= maskFor_(StackPart::SecurityStatus);
         p->pending_mask |= maskFor_(StackPart::SecuritySensors);
         p->pending_mask |= maskFor_(StackPart::Ring);
@@ -688,6 +755,10 @@ private:
         sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Thermo, "get");
         sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Tanks, "get");
         sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Septic, "get");
+        DynamicJsonDocument watering_params(64);
+        watering_params["offset"] = 0;
+        watering_params["limit"] = (unsigned)WateringController::kRuleCount;
+        sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Watering, "get", watering_params);
         sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Security, "status");
         sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Security, "get");
         sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Ring, "get");
@@ -775,14 +846,20 @@ private:
         }
         const bool ok = doc["ok"] | false;
         JsonObject data = doc["data"].as<JsonObject>();
-        applyStackPart_(p, cmd->part, ok, data);
-        cmd->used = false;
+        const uint16_t part_idx = data["part"] | 1;
+        const uint16_t parts = data["parts"] | 1;
+        const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part_idx >= parts);
+        const bool first_part = !cmd->started || part_idx <= 1;
+        applyStackPart_(p, cmd->part, ok, data, first_part, done);
+        cmd->started = true;
+        if (done || !ok)
+            cmd->used = false;
 
         if (p->pending_mask == 0)
             finalizePending_(p, true, "");
     }
 
-    void applyStackPart_(PendingRequest *p, StackPart part, bool ok, JsonObject data)
+    void applyStackPart_(PendingRequest *p, StackPart part, bool ok, JsonObject data, bool first_part, bool done)
     {
         if (!p || !p->doc)
             return;
@@ -795,8 +872,9 @@ private:
         if (p->want_system)
             applyStackSystem_(root, part, data, p->node_id);
         if (p->want_controllers)
-            applyStackControllers_(root, part, data);
-        p->pending_mask &= ~maskFor_(part);
+            applyStackControllers_(root, part, data, first_part);
+        if (done)
+            p->pending_mask &= ~maskFor_(part);
     }
 
     void applyStackSystem_(JsonObject root, StackPart part, JsonObject data, uint32_t node_id)
@@ -841,24 +919,26 @@ private:
         }
     }
 
-    void applyStackControllers_(JsonObject root, StackPart part, JsonObject data)
+    void applyStackControllers_(JsonObject root, StackPart part, JsonObject data, bool first_part)
     {
         JsonObject ctrls = root["controllers"].to<JsonObject>();
         if (ctrls.isNull())
             ctrls = root.createNestedObject("controllers");
 
         if (part == StackPart::Sockets)
-            copyItems_(ctrls, "sockets", data["items"].as<JsonArrayConst>());
+            copyItems_(ctrls, "sockets", data["items"].as<JsonArrayConst>(), first_part);
         else if (part == StackPart::Lights)
-            copyItems_(ctrls, "lights", data["items"].as<JsonArrayConst>());
+            copyItems_(ctrls, "lights", data["items"].as<JsonArrayConst>(), first_part);
         else if (part == StackPart::Meteo)
-            copyItems_(ctrls, "meteo", data["items"].as<JsonArrayConst>());
+            copyItems_(ctrls, "meteo", data["items"].as<JsonArrayConst>(), first_part);
         else if (part == StackPart::Thermo)
-            copyItems_(ctrls, "thermo", data["items"].as<JsonArrayConst>());
+            copyItems_(ctrls, "thermo", data["items"].as<JsonArrayConst>(), first_part);
         else if (part == StackPart::Tanks)
-            copyItems_(ctrls, "tanks", data["items"].as<JsonArrayConst>());
+            copyItems_(ctrls, "tanks", data["items"].as<JsonArrayConst>(), first_part);
         else if (part == StackPart::Septic)
-            copyItems_(ctrls, "septic", data["items"].as<JsonArrayConst>());
+            copyItems_(ctrls, "septic", data["items"].as<JsonArrayConst>(), first_part);
+        else if (part == StackPart::Watering)
+            copyItems_(ctrls, "watering", data["items"].as<JsonArrayConst>(), first_part);
         else if (part == StackPart::SecurityStatus)
         {
             JsonObject sec = ctrls["security"].to<JsonObject>();
@@ -875,7 +955,7 @@ private:
             JsonObject sec = ctrls["security"].to<JsonObject>();
             if (sec.isNull())
                 sec = ctrls.createNestedObject("security");
-            copyItems_(sec, "sensors", data["items"].as<JsonArrayConst>());
+            copyItems_(sec, "sensors", data["items"].as<JsonArrayConst>(), first_part);
         }
         else if (part == StackPart::Ring)
         {
@@ -891,8 +971,10 @@ private:
         }
     }
 
-    static void copyItems_(JsonObject &dst_parent, const char *key, JsonArrayConst items)
+    static void copyItems_(JsonObject &dst_parent, const char *key, JsonArrayConst items, bool reset)
     {
+        if (reset)
+            dst_parent.remove(key);
         JsonArray dst = dst_parent[key].to<JsonArray>();
         if (dst.isNull())
             dst = dst_parent.createNestedArray(key);
@@ -973,6 +1055,7 @@ private:
         fillThermo_(out.createNestedArray("thermo"));
         fillTanks_(out.createNestedArray("tanks"));
         fillSeptic_(out.createNestedArray("septic"));
+        fillWatering_(out.createNestedArray("watering"));
         fillSecurity_(out.createNestedObject("security"));
         fillRing_(out.createNestedObject("ring"));
     }
@@ -1121,6 +1204,53 @@ private:
                 o["relay_alarm"] = cfg->relay_alarm;
             o["warning"] = st->warning;
             o["alarm"] = st->alarm;
+        }
+    }
+
+    void fillWatering_(JsonArray out)
+    {
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+            const auto *cfg = _controllers.watering().configByIndex(i);
+            const auto *st = _controllers.watering().stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            JsonObject o = out.add<JsonObject>();
+            o["id"] = (unsigned)cfg->id;
+            o["enabled"] = cfg->enabled;
+            o["status"] = st->status;
+            if (cfg->name.length())
+                o["name"] = cfg->name;
+            if (cfg->port != WateringController::kInvalidPort)
+                o["port"] = cfg->port;
+            if (cfg->tank_id)
+                o["tank"] = cfg->tank_id;
+            if (cfg->weekdays_mask)
+                o["weekdays_mask"] = cfg->weekdays_mask;
+            if (cfg->duration_sec && cfg->hour <= 23 && cfg->minute <= 59)
+            {
+                o["hour"] = cfg->hour;
+                o["minute"] = cfg->minute;
+                o["duration_s"] = cfg->duration_sec;
+            }
+            if (cfg->duration2_sec && cfg->hour2 <= 23 && cfg->minute2 <= 59)
+            {
+                o["hour2"] = cfg->hour2;
+                o["minute2"] = cfg->minute2;
+                o["duration2_s"] = cfg->duration2_sec;
+            }
+            if (cfg->duration3_sec && cfg->hour3 <= 23 && cfg->minute3 <= 59)
+            {
+                o["hour3"] = cfg->hour3;
+                o["minute3"] = cfg->minute3;
+                o["duration3_s"] = cfg->duration3_sec;
+            }
+            o["resume"] = cfg->resume_after_refill;
+            o["resume_level"] = cfg->resume_level;
+            o["active"] = st->active;
+            o["paused"] = st->paused;
+            if (st->remaining_ms)
+                o["remaining_ms"] = st->remaining_ms;
         }
     }
 
@@ -1288,6 +1418,7 @@ private:
                 c.cmd_id = cmd_id;
                 c.pending_idx = (uint8_t)(p - _pending);
                 c.part = part;
+                c.started = false;
                 return;
             }
         }
@@ -1333,6 +1464,8 @@ private:
             return StackPart::Tanks;
         if (feature == StackFeature::Septic)
             return StackPart::Septic;
+        if (feature == StackFeature::Watering)
+            return StackPart::Watering;
         if (feature == StackFeature::Security && strcmp(action, "status") == 0)
             return StackPart::SecurityStatus;
         if (feature == StackFeature::Security && strcmp(action, "get") == 0)

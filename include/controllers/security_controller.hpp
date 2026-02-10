@@ -19,21 +19,23 @@
 #include "core/network/telegram/telegram_allowed_users.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
 #include "core/network/gsm_modem.hpp"
-#include "clients/rfid_reader.hpp"
+#include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
 #include "hal/gpio/gpio.hpp"
 #include "hal/gpio/portio.hpp"
 #include "hal/ibutton.hpp"
+#include "hal/pn532.hpp"
 #include "core/eeprom_storage.hpp"
 #include "utils/logger.hpp"
+#include "utils/users_registry.hpp"
 
 class SecurityController
 {
 public:
     static constexpr size_t kSensorCount = 72;
-    static constexpr size_t kKeyCount = 10;
-    static constexpr size_t kRfidKeyCount = 10;
-    static constexpr size_t kPhoneCount = 10;
+    static constexpr size_t kKeyCount = UsersRegistry::kMaxUsers;
+    static constexpr size_t kRfidKeyCount = UsersRegistry::kMaxUsers;
+    static constexpr size_t kPhoneCount = UsersRegistry::kMaxUsers;
     static constexpr uint8_t kInvalidPort = 0xFF;
 
     enum class SensorType : uint8_t
@@ -63,6 +65,8 @@ public:
     using AlarmStateHandler = void (*)(void *ctx, bool alarm_on);
     using ClearDetectHandler = void (*)(void *ctx);
     using DetectHandler = void (*)(void *ctx, uint8_t sensor_id, const String &name, bool silent);
+    using RfidUidHandler = bool (*)(void *ctx, const String &uid);
+    using IButtonSerialHandler = bool (*)(void *ctx, const String &serial);
 
     SecurityController(Gpio &gpio, OneWireManager &ow, Logger &logs,
                        TelegramBot &bot, TelegramAllowedUsersProvider &users)
@@ -80,6 +84,7 @@ public:
         }
         setupOutputs_();
         initIButton_();
+        initRfid_();
         for (size_t i = 0; i < kSensorCount; ++i)
         {
             SensorConfig &cfg = _cfg[i];
@@ -100,6 +105,7 @@ public:
         if (!_controller_enabled)
             return;
         handleIButton_();
+        handleRfid_();
         if (!_armed)
         {
             updateBuzzer_();
@@ -197,30 +203,30 @@ public:
 
     void applyKeys(JsonArrayConst keys)
     {
-        clearKeys_();
+        if (!_users)
+            return;
+        for (size_t i = 0; i < _users->size(); ++i)
+            _users->user(i).ibutton_key = "";
         size_t idx = 0;
         for (JsonVariantConst v : keys)
         {
             if (idx >= kKeyCount)
                 break;
+            UsersRegistry::User &u = _users->user(idx);
             if (v.is<const char *>())
             {
-                if (parseHexAddr_(v.as<const char *>(), _keys[idx]))
-                    _key_set[idx] = true;
+                u.ibutton_key = UsersRegistry::normalizeHex(v.as<const char *>(), 16);
             }
             else if (v.is<JsonObjectConst>())
             {
                 JsonObjectConst obj = v.as<JsonObjectConst>();
                 uint16_t id = (uint16_t)(idx + 1);
                 bool enabled = true;
-                String name;
                 const char *serial = nullptr;
                 if (obj["id"].is<unsigned>())
                     id = (uint16_t)obj["id"].as<unsigned>();
                 if (obj["enabled"].is<bool>())
                     enabled = obj["enabled"].as<bool>();
-                if (obj["name"].is<const char *>())
-                    name = obj["name"].as<const char *>();
                 if (obj["serial"].is<const char *>())
                     serial = obj["serial"].as<const char *>();
                 else if (obj["addr"].is<const char *>())
@@ -231,16 +237,10 @@ public:
                     continue;
                 }
                 const size_t dst = (size_t)(id - 1);
-                if (serial && enabled && parseHexAddr_(serial, _keys[dst]))
-                {
-                    _key_set[dst] = true;
-                    _key_names[dst] = name;
-                }
+                if (serial && enabled)
+                    _users->user(dst).ibutton_key = UsersRegistry::normalizeHex(serial, 16);
                 else if (serial && !enabled)
-                {
-                    _key_set[dst] = false;
-                    _key_names[dst] = name;
-                }
+                    _users->user(dst).ibutton_key = "";
             }
             ++idx;
         }
@@ -248,31 +248,30 @@ public:
 
     void applyRfidKeys(JsonArrayConst keys)
     {
-        clearRfidKeys_();
+        if (!_users)
+            return;
+        for (size_t i = 0; i < _users->size(); ++i)
+            _users->user(i).rfid_key = "";
         size_t idx = 0;
         for (JsonVariantConst v : keys)
         {
             if (idx >= kRfidKeyCount)
                 break;
+            UsersRegistry::User &u = _users->user(idx);
             if (v.is<const char *>())
             {
-                RfidReader::Uid uid;
-                if (parseRfidUid_(v.as<const char *>(), uid))
-                    setRfidKeySlot_(idx, uid, true, "");
+                u.rfid_key = UsersRegistry::normalizeHex(v.as<const char *>(), 20);
             }
             else if (v.is<JsonObjectConst>())
             {
                 JsonObjectConst obj = v.as<JsonObjectConst>();
                 uint16_t id = (uint16_t)(idx + 1);
                 bool enabled = true;
-                String name;
                 const char *uid_str = nullptr;
                 if (obj["id"].is<unsigned>())
                     id = (uint16_t)obj["id"].as<unsigned>();
                 if (obj["enabled"].is<bool>())
                     enabled = obj["enabled"].as<bool>();
-                if (obj["name"].is<const char *>())
-                    name = obj["name"].as<const char *>();
                 if (obj["serial"].is<const char *>())
                     uid_str = obj["serial"].as<const char *>();
                 else if (obj["uid"].is<const char *>())
@@ -284,15 +283,9 @@ public:
                 }
                 const size_t dst = (size_t)(id - 1);
                 if (uid_str && enabled)
-                {
-                    RfidReader::Uid uid;
-                    if (parseRfidUid_(uid_str, uid))
-                        setRfidKeySlot_(dst, uid, true, name);
-                }
+                    _users->user(dst).rfid_key = UsersRegistry::normalizeHex(uid_str, 20);
                 else if (uid_str && !enabled)
-                {
-                    setRfidKeySlot_(dst, RfidReader::Uid{}, false, name);
-                }
+                    _users->user(dst).rfid_key = "";
             }
             ++idx;
         }
@@ -300,7 +293,14 @@ public:
 
     void applyPhones(JsonArrayConst phones)
     {
-        clearPhones_();
+        if (!_users)
+            return;
+        for (size_t i = 0; i < _users->size(); ++i)
+        {
+            _users->user(i).gsm_phone = "";
+            _users->user(i).gsm_sms = false;
+            _users->user(i).gsm_call = false;
+        }
         size_t idx = 0;
         for (JsonVariantConst v : phones)
         {
@@ -338,12 +338,13 @@ public:
                 continue;
             }
             const size_t dst = (size_t)(id - 1);
-            _phones[dst] = normalizePhone_(number);
-            _phone_enabled[dst] = enabled;
+            UsersRegistry::User &u = _users->user(dst);
+            u.gsm_phone = enabled ? UsersRegistry::normalizePhone(number) : String();
             if (name.length())
-                _phone_names[dst] = name;
-            _phone_notify[dst] = notify;
-            _phone_call[dst] = call;
+                u.username = name;
+            u.gsm_sms = notify;
+            u.gsm_call = call;
+            u.enabled = enabled;
             ++idx;
         }
     }
@@ -376,51 +377,62 @@ public:
 
     void serializeKeys(JsonArray out) const
     {
-        for (size_t i = 0; i < kKeyCount; ++i)
+        if (!_users)
+            return;
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_key_set[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled)
                 continue;
-            char hex[17] = {};
-            IButton::toHex(_keys[i], hex);
+            if (u.ibutton_key.length() == 0)
+                continue;
             JsonObject obj = out.add<JsonObject>();
             obj["id"] = (unsigned)(i + 1);
             obj["enabled"] = true;
-            obj["serial"] = hex;
-            if (_key_names[i].length())
-                obj["name"] = _key_names[i];
+            obj["serial"] = u.ibutton_key;
+            if (u.username.length())
+                obj["name"] = u.username;
         }
     }
 
     void serializeRfidKeys(JsonArray out) const
     {
-        for (size_t i = 0; i < kRfidKeyCount; ++i)
+        if (!_users)
+            return;
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_rfid_key_set[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled)
+                continue;
+            if (u.rfid_key.length() == 0)
                 continue;
             JsonObject obj = out.add<JsonObject>();
             obj["id"] = (unsigned)(i + 1);
             obj["enabled"] = true;
-            obj["serial"] = rfidUidToString_(_rfid_keys[i], _rfid_len[i]);
-            if (_rfid_key_names[i].length())
-                obj["name"] = _rfid_key_names[i];
+            obj["serial"] = u.rfid_key;
+            if (u.username.length())
+                obj["name"] = u.username;
         }
     }
 
     void serializePhones(JsonArray out) const
     {
-        for (size_t i = 0; i < kPhoneCount; ++i)
+        if (!_users)
+            return;
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_phone_enabled[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled)
                 continue;
             JsonObject obj = out.add<JsonObject>();
             obj["id"] = (unsigned)(i + 1);
-            obj["enabled"] = _phone_enabled[i];
-            obj["notify"] = _phone_notify[i];
-            obj["call"] = _phone_call[i];
-            if (_phones[i].length())
-                obj["number"] = _phones[i];
-            if (_phone_names[i].length())
-                obj["name"] = _phone_names[i];
+            obj["enabled"] = u.enabled;
+            obj["notify"] = u.gsm_sms;
+            obj["call"] = u.gsm_call;
+            if (u.gsm_phone.length())
+                obj["number"] = u.gsm_phone;
+            if (u.username.length())
+                obj["name"] = u.username;
         }
     }
 
@@ -469,7 +481,27 @@ public:
         _detect_ctx = ctx;
     }
 
-    bool processRfidUid(const RfidReader::Uid &uid, const char *src = "rfid")
+    void setRfidUidHandler(RfidUidHandler cb, void *ctx)
+    {
+        _rfid_uid_cb = cb;
+        _rfid_uid_ctx = ctx;
+    }
+    void setIButtonSerialHandler(IButtonSerialHandler cb, void *ctx)
+    {
+        _ibutton_serial_cb = cb;
+        _ibutton_serial_ctx = ctx;
+    }
+
+    void setRfidI2c(I2CManager *i2c)
+    {
+        _rfid_i2c = i2c;
+    }
+    void setUsersRegistry(UsersRegistry &users)
+    {
+        _users = &users;
+    }
+
+    bool processRfidUid(const PN532::UID &uid, const char *src = "rfid")
     {
         if (!_controller_enabled)
             return false;
@@ -486,16 +518,65 @@ public:
             startBeep_(kBeepRejectCount, kBeepRejectOnMs, kBeepRejectOffMs);
             return false;
         }
-        toggleArm_(src ? src : "rfid", user);
+        if (!_armed)
+        {
+            const char *who = user.length() ? user.c_str() : "unknown";
+            _logs.info(F("SECURITY"), F("RFID match while disarmed: owner: %s uid: %s"), who, uid_str.c_str());
+            startBeep_(1, kBeepShortMs, 0);
+            // Keep stack units in sync: a valid RFID key always enforces disarmed state cluster-wide.
+            notifyArmState_(false);
+            return true;
+        }
+        const char *who = user.length() ? user.c_str() : "unknown";
+        _logs.info(F("SECURITY"), F("disarmed by RFID key: owner: %s uid: %s"), who, uid_str.c_str());
+        disarm_(false, src ? src : "rfid", user);
         return true;
     }
 
     bool processRfidUidString(const char *uid_str, const char *src = "rfid")
     {
-        RfidReader::Uid uid;
+        PN532::UID uid;
         if (!parseRfidUid_(uid_str, uid))
             return false;
         return processRfidUid(uid, src);
+    }
+
+    bool processIButtonAddr(const uint8_t addr[8], const char *src = "ibutton")
+    {
+        if (!_controller_enabled || !addr)
+            return false;
+        if (isKeyRepeat_(addr))
+            return false;
+        char serial[17] = {};
+        IButton::toHex(addr, serial);
+        _logs.info(F("SECURITY"), F("Detected iButton key: %s"), serial);
+        String user;
+        if (!matchKey_(addr, user))
+        {
+            _logs.warn(F("SECURITY"), F("iButton key is not valid"));
+            startBeep_(kBeepRejectCount, kBeepRejectOnMs, kBeepRejectOffMs);
+            return false;
+        }
+        if (!_armed)
+        {
+            const char *who = user.length() ? user.c_str() : "unknown";
+            _logs.info(F("SECURITY"), F("iButton match while disarmed: owner: %s serial: %s"), who, serial);
+            startBeep_(1, kBeepShortMs, 0);
+            notifyArmState_(false);
+            return true;
+        }
+        const char *who = user.length() ? user.c_str() : "unknown";
+        _logs.info(F("SECURITY"), F("disarmed by iButton key: owner: %s serial: %s"), who, serial);
+        disarm_(false, src ? src : "ibutton", user);
+        return true;
+    }
+
+    bool processIButtonSerialString(const char *serial, const char *src = "ibutton")
+    {
+        uint8_t addr[8] = {};
+        if (!parseHexAddr_(serial, addr))
+            return false;
+        return processIButtonAddr(addr, src);
     }
 
     void setNotifyEnabled(bool enabled)
@@ -530,12 +611,14 @@ public:
             disarm_(true);
             for (size_t i = 0; i < kSensorCount; ++i)
                 _state[i] = SensorState{};
+            _rfid_ready = false;
             reset_();
             return;
         }
         _logs.info(F("SECURITY"), F("controller: enabled"));
         setupOutputs_();
         initIButton_();
+        initRfid_();
         for (size_t i = 0; i < kSensorCount; ++i)
         {
             SensorConfig &cfg = _cfg[i];
@@ -764,44 +847,51 @@ public:
     }
     bool addKey(const uint8_t addr[8], const String &name)
     {
-        if (!addr)
+        if (!addr || !_users)
             return false;
-        for (size_t i = 0; i < kKeyCount; ++i)
+        char hex[17] = {};
+        IButton::toHex(addr, hex);
+        const String serial = UsersRegistry::normalizeHex(hex, 16);
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (_key_set[i] && memcmp(_keys[i], addr, 8) == 0)
+            if (_users->user(i).ibutton_key == serial)
                 return true;
         }
-        for (size_t i = 0; i < kKeyCount; ++i)
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (_key_set[i])
+            UsersRegistry::User &u = _users->user(i);
+            if (u.ibutton_key.length())
                 continue;
-            memcpy(_keys[i], addr, 8);
-            _key_set[i] = true;
-            _key_names[i] = name;
+            u.ibutton_key = serial;
+            if (name.length())
+                u.username = name;
             return true;
         }
         return false;
     }
     bool removeKey(const uint8_t addr[8])
     {
-        if (!addr)
+        if (!addr || !_users)
             return false;
-        for (size_t i = 0; i < kKeyCount; ++i)
+        char hex[17] = {};
+        IButton::toHex(addr, hex);
+        const String serial = UsersRegistry::normalizeHex(hex, 16);
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_key_set[i])
+            UsersRegistry::User &u = _users->user(i);
+            if (u.ibutton_key != serial)
                 continue;
-            if (memcmp(_keys[i], addr, 8) != 0)
-                continue;
-            memset(_keys[i], 0, sizeof(_keys[i]));
-            _key_set[i] = false;
-            _key_names[i] = "";
+            u.ibutton_key = "";
             return true;
         }
         return false;
     }
     void clearKeys()
     {
-        clearKeys_();
+        if (!_users)
+            return;
+        for (size_t i = 0; i < _users->size(); ++i)
+            _users->user(i).ibutton_key = "";
     }
     void clearPhones()
     {
@@ -809,96 +899,105 @@ public:
     }
     bool setPhone(size_t idx, const String &number)
     {
-        if (idx >= kPhoneCount)
+        if (!_users || idx >= _users->size())
             return false;
-        _phones[idx] = normalizePhone_(number);
+        _users->user(idx).gsm_phone = UsersRegistry::normalizePhone(number);
         return true;
     }
     bool setPhoneName(size_t idx, const String &name)
     {
-        if (idx >= kPhoneCount)
+        if (!_users || idx >= _users->size())
             return false;
-        _phone_names[idx] = name;
+        _users->user(idx).username = name;
         return true;
     }
     bool setPhoneNotify(size_t idx, bool notify)
     {
-        if (idx >= kPhoneCount)
+        if (!_users || idx >= _users->size())
             return false;
-        _phone_notify[idx] = notify;
+        _users->user(idx).gsm_sms = notify;
         return true;
     }
     bool setPhoneCall(size_t idx, bool call)
     {
-        if (idx >= kPhoneCount)
+        if (!_users || idx >= _users->size())
             return false;
-        _phone_call[idx] = call;
+        _users->user(idx).gsm_call = call;
         return true;
     }
     bool setPhoneEnabled(size_t idx, bool enabled)
     {
-        if (idx >= kPhoneCount)
+        if (!_users || idx >= _users->size())
             return false;
-        _phone_enabled[idx] = enabled;
+        _users->user(idx).enabled = enabled;
         return true;
     }
     bool phoneSlot(size_t idx, String &number, bool &enabled) const
     {
-        if (idx >= kPhoneCount)
+        if (!_users || idx >= _users->size())
             return false;
-        number = _phones[idx];
-        enabled = _phone_enabled[idx];
+        const auto &u = _users->user(idx);
+        number = u.gsm_phone;
+        enabled = u.enabled;
         return true;
     }
     const String &phoneByIndex(size_t idx) const
     {
         static const String empty;
-        if (idx >= kPhoneCount)
+        if (!_users || idx >= _users->size())
             return empty;
-        return _phones[idx];
+        return _users->user(idx).gsm_phone;
     }
     const String &phoneNameByIndex(size_t idx) const
     {
         static const String empty;
-        if (idx >= kPhoneCount)
+        if (!_users || idx >= _users->size())
             return empty;
-        return _phone_names[idx];
+        return _users->user(idx).username;
     }
     bool phoneNotifyByIndex(size_t idx) const
     {
-        if (idx >= kPhoneCount)
+        if (!_users || idx >= _users->size())
             return false;
-        return _phone_notify[idx];
+        return _users->user(idx).gsm_sms;
     }
     bool phoneCallByIndex(size_t idx) const
     {
-        if (idx >= kPhoneCount)
+        if (!_users || idx >= _users->size())
             return false;
-        return _phone_call[idx];
+        return _users->user(idx).gsm_call;
     }
     size_t keyCount() const
     {
         size_t count = 0;
-        for (size_t i = 0; i < kKeyCount; ++i)
+        if (!_users)
+            return 0;
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (_key_set[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled)
+                continue;
+            if (u.ibutton_key.length())
                 ++count;
         }
         return count;
     }
     bool keyByIndex(size_t idx, uint8_t out[8]) const
     {
-        if (!out)
+        if (!out || !_users)
             return false;
         size_t seen = 0;
-        for (size_t i = 0; i < kKeyCount; ++i)
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_key_set[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled)
+                continue;
+            const String serial = u.ibutton_key;
+            if (serial.length() == 0)
                 continue;
             if (seen == idx)
             {
-                memcpy(out, _keys[i], 8);
-                return true;
+                return parseHexAddr_(serial.c_str(), out);
             }
             ++seen;
         }
@@ -907,35 +1006,49 @@ public:
     const String &keyNameByIndex(size_t idx) const
     {
         static const String empty;
-        if (idx >= kKeyCount)
+        if (!_users)
             return empty;
-        return _key_names[idx];
+        size_t seen = 0;
+        for (size_t i = 0; i < _users->size(); ++i)
+        {
+            const auto &u = _users->user(i);
+            if (!u.enabled || u.ibutton_key.length() == 0)
+                continue;
+            if (seen == idx)
+            {
+                const String &name = u.username;
+                return name.length() ? name : empty;
+            }
+            ++seen;
+        }
+        return empty;
     }
     bool setKeyNameByAddr(const uint8_t addr[8], const String &name)
     {
-        if (!addr)
+        if (!addr || !_users)
             return false;
-        for (size_t i = 0; i < kKeyCount; ++i)
+        char hex[17] = {};
+        IButton::toHex(addr, hex);
+        const String serial = UsersRegistry::normalizeHex(hex, 16);
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_key_set[i])
+            UsersRegistry::User &u = _users->user(i);
+            if (u.ibutton_key != serial)
                 continue;
-            if (memcmp(_keys[i], addr, 8) != 0)
-                continue;
-            _key_names[i] = name;
+            u.username = name;
             return true;
         }
         return false;
     }
     bool keySlot(size_t idx, uint8_t out[8], bool &enabled) const
     {
-        if (idx >= kKeyCount)
+        if (!_users || idx >= _users->size())
             return false;
-        enabled = _key_set[idx];
+        const String serial = _users->user(idx).ibutton_key;
+        enabled = serial.length() > 0;
         if (out)
         {
-            if (enabled)
-                memcpy(out, _keys[idx], 8);
-            else
+            if (!enabled || !parseHexAddr_(serial.c_str(), out))
                 memset(out, 0, 8);
         }
         return true;
@@ -956,57 +1069,81 @@ public:
     }
     bool setKeySlot(size_t idx, const uint8_t addr[8], bool enabled, const String &name)
     {
-        if (idx >= kKeyCount)
+        if (!_users || idx >= _users->size())
             return false;
+        UsersRegistry::User &u = _users->user(idx);
         if (enabled)
         {
-            memcpy(_keys[idx], addr, 8);
-            _key_set[idx] = true;
+            char hex[17] = {};
+            IButton::toHex(addr, hex);
+            u.ibutton_key = UsersRegistry::normalizeHex(hex, 16);
         }
         else
         {
-            memset(_keys[idx], 0, sizeof(_keys[idx]));
-            _key_set[idx] = false;
+            u.ibutton_key = "";
         }
-        _key_names[idx] = name;
+        u.username = name;
         return true;
     }
     bool rfidKeySlot(size_t idx, uint8_t out[10], uint8_t &len, bool &enabled) const
     {
-        if (idx >= kRfidKeyCount)
+        if (!_users || idx >= _users->size())
             return false;
-        enabled = _rfid_key_set[idx];
-        len = _rfid_len[idx];
+        const String serial = _users->user(idx).rfid_key;
+        enabled = serial.length() > 0;
+        len = 0;
         if (out)
         {
-            if (enabled && len > 0)
-                memcpy(out, _rfid_keys[idx], len);
-            else
-                memset(out, 0, 10);
+            memset(out, 0, 10);
+        }
+        if (enabled)
+        {
+            PN532::UID uid;
+            if (parseRfidUid_(serial.c_str(), uid))
+            {
+                len = uid.len;
+                if (out && len > 0)
+                    memcpy(out, uid.bytes, len);
+            }
         }
         return true;
     }
     const String &rfidKeyNameByIndex(size_t idx) const
     {
         static const String empty;
-        if (idx >= kRfidKeyCount)
+        if (!_users)
             return empty;
-        return _rfid_key_names[idx];
+        size_t seen = 0;
+        for (size_t i = 0; i < _users->size(); ++i)
+        {
+            const auto &u = _users->user(i);
+            if (!u.enabled || u.rfid_key.length() == 0)
+                continue;
+            if (seen == idx)
+            {
+                const String &name = u.username;
+                return name.length() ? name : empty;
+            }
+            ++seen;
+        }
+        return empty;
     }
     bool setRfidKeySlot(size_t idx, const uint8_t *bytes, uint8_t len, bool enabled, const String &name)
     {
-        if (idx >= kRfidKeyCount)
+        if (!_users || idx >= _users->size())
             return false;
-        RfidReader::Uid uid;
-        uid.len = len;
-        if (bytes && len > 0)
-            memcpy(uid.bytes, bytes, len);
-        return setRfidKeySlot_(idx, uid, enabled, name);
+        UsersRegistry::User &u = _users->user(idx);
+        if (enabled && bytes && len > 0)
+            u.rfid_key = UsersRegistry::normalizeHex(rfidUidToString_(bytes, len), 20);
+        else
+            u.rfid_key = "";
+        u.username = name;
+        return true;
     }
 
     static bool parseRfidSerial(const char *s, uint8_t out[10], uint8_t &len)
     {
-        RfidReader::Uid uid;
+        PN532::UID uid;
         if (!parseRfidUid_(s, uid))
             return false;
         len = uid.len;
@@ -1054,27 +1191,22 @@ private:
     GsmModem *_gsm = nullptr;
     IButton _ibutton;
     bool _ibutton_ready = false;
+    I2CManager *_rfid_i2c = nullptr;
+    PN532 _rfid;
+    bool _rfid_ready = false;
+    UsersRegistry *_users = nullptr;
+    RfidUidHandler _rfid_uid_cb = nullptr;
+    void *_rfid_uid_ctx = nullptr;
+    IButtonSerialHandler _ibutton_serial_cb = nullptr;
+    void *_ibutton_serial_ctx = nullptr;
 
     SensorConfig _cfg[kSensorCount]{};
     SensorState _state[kSensorCount]{};
-    uint8_t _keys[kKeyCount][8]{};
-    bool _key_set[kKeyCount]{};
     uint8_t _last_key[8]{};
     uint32_t _last_key_ms = 0;
-    uint8_t _rfid_keys[kRfidKeyCount][10]{};
-    uint8_t _rfid_len[kRfidKeyCount]{};
-    bool _rfid_key_set[kRfidKeyCount]{};
     uint8_t _last_rfid[10]{};
     uint8_t _last_rfid_len = 0;
     uint32_t _last_rfid_ms = 0;
-    String _phones[kPhoneCount]{};
-    bool _phone_enabled[kPhoneCount]{};
-    String _phone_names[kPhoneCount]{};
-    bool _phone_notify[kPhoneCount]{};
-    bool _phone_call[kPhoneCount]{};
-    String _key_names[kKeyCount]{};
-    String _rfid_key_names[kRfidKeyCount]{};
-
     bool _controller_enabled = false;
     bool _armed = false;
     bool _alarm_on = false;
@@ -1113,57 +1245,57 @@ private:
 
     void clearKeys_()
     {
-        memset(_keys, 0, sizeof(_keys));
-        memset(_key_set, 0, sizeof(_key_set));
+        if (_users)
+        {
+            for (size_t i = 0; i < _users->size(); ++i)
+                _users->user(i).ibutton_key = "";
+        }
         memset(_last_key, 0, sizeof(_last_key));
         _last_key_ms = 0;
-        for (size_t i = 0; i < kKeyCount; ++i)
-            _key_names[i] = "";
     }
 
     void clearRfidKeys_()
     {
-        memset(_rfid_keys, 0, sizeof(_rfid_keys));
-        memset(_rfid_len, 0, sizeof(_rfid_len));
-        memset(_rfid_key_set, 0, sizeof(_rfid_key_set));
+        if (_users)
+        {
+            for (size_t i = 0; i < _users->size(); ++i)
+                _users->user(i).rfid_key = "";
+        }
         memset(_last_rfid, 0, sizeof(_last_rfid));
         _last_rfid_len = 0;
         _last_rfid_ms = 0;
-        for (size_t i = 0; i < kRfidKeyCount; ++i)
-            _rfid_key_names[i] = "";
     }
 
-    bool setRfidKeySlot_(size_t idx, const RfidReader::Uid &uid, bool enabled, const String &name)
+    bool setRfidKeySlot_(size_t idx, const PN532::UID &uid, bool enabled, const String &name)
     {
-        if (idx >= kRfidKeyCount)
+        if (!_users || idx >= _users->size())
             return false;
+        UsersRegistry::User &u = _users->user(idx);
         if (enabled)
         {
-            if (uid.len == 0 || uid.len > sizeof(_rfid_keys[idx]))
+            if (uid.len == 0 || uid.len > 10)
                 return false;
-            memcpy(_rfid_keys[idx], uid.bytes, uid.len);
-            _rfid_len[idx] = uid.len;
-            _rfid_key_set[idx] = true;
+            u.rfid_key = UsersRegistry::normalizeHex(rfidUidToString_(uid.bytes, uid.len), 20);
         }
         else
         {
-            memset(_rfid_keys[idx], 0, sizeof(_rfid_keys[idx]));
-            _rfid_len[idx] = 0;
-            _rfid_key_set[idx] = false;
+            u.rfid_key = "";
         }
-        _rfid_key_names[idx] = name;
+        u.username = name;
         return true;
     }
 
     void clearPhones_()
     {
-        for (size_t i = 0; i < kPhoneCount; ++i)
-            _phones[i] = "";
-        memset(_phone_enabled, 0, sizeof(_phone_enabled));
-        for (size_t i = 0; i < kPhoneCount; ++i)
-            _phone_names[i] = "";
-        memset(_phone_notify, 0, sizeof(_phone_notify));
-        memset(_phone_call, 0, sizeof(_phone_call));
+        if (!_users)
+            return;
+        for (size_t i = 0; i < _users->size(); ++i)
+        {
+            auto &u = _users->user(i);
+            u.gsm_phone = "";
+            u.gsm_sms = false;
+            u.gsm_call = false;
+        }
     }
 
     static bool indexById_(uint8_t id, size_t &out)
@@ -1285,6 +1417,54 @@ private:
         _ibutton_ready = true;
     }
 
+    void initRfid_()
+    {
+        _rfid_ready = false;
+        if (!_rfid_i2c)
+        {
+            _logs.warn(F("SECURITY"), F("RFID I2C not set"));
+            return;
+        }
+        const uint8_t i2c_index = ActiveBoardProfile::RFID_I2C_INDEX;
+        if (i2c_index >= ActiveBoardProfile::I2C_COUNT)
+        {
+            _logs.warn(F("SECURITY"), F("RFID I2C index invalid"));
+            return;
+        }
+        const auto cfg = ActiveBoardProfile::I2CS[i2c_index];
+        TwoWire *wire = _rfid_i2c->wirePtr(cfg.bus_num);
+        if (!wire)
+        {
+            _logs.warn(F("SECURITY"), F("RFID I2C bus unavailable"));
+            return;
+        }
+        uint8_t sda_gpio = 0;
+        uint8_t scl_gpio = 0;
+        if (!portToGpio_(cfg.sda, sda_gpio) || !portToGpio_(cfg.scl, scl_gpio))
+        {
+            _logs.warn(F("SECURITY"), F("RFID SDA/SCL port mapping failed"));
+            return;
+        }
+        _rfid_ready = _rfid.begin(*wire, sda_gpio, scl_gpio, cfg.freq, kRfidI2cAddr, -1, -1);
+        if (!_rfid_ready)
+            _logs.warn(F("SECURITY"), F("RFID init failed"));
+    }
+
+    void handleRfid_()
+    {
+        if (!_rfid_ready)
+            return;
+        PN532::UID uid{};
+        if (_rfid.readPassiveTargetID(uid, kRfidReadTimeoutMs) != PN532::Status::Ok)
+            return;
+        if (isRfidRepeat_(uid))
+            return;
+        const String uid_str = rfidUidToString_(uid.bytes, uid.len);
+        if (_rfid_uid_cb && _rfid_uid_cb(_rfid_uid_ctx, uid_str))
+            return;
+        processRfidUid(uid, "rfid");
+    }
+
     void handleIButton_()
     {
         if (!_ibutton_ready)
@@ -1292,27 +1472,23 @@ private:
         uint8_t addr[8] = {};
         if (!_ibutton.readSerial(addr))
             return;
-        if (isKeyRepeat_(addr))
-            return;
         char hex[17] = {};
         IButton::toHex(addr, hex);
-        _logs.info(F("SECURITY"), F("Detected iButton key: %s"), hex);
-        String user;
-        if (!matchKey_(addr, user))
-        {
-            _logs.warn(F("SECURITY"), F("iButton key is not valid"));
+        if (_ibutton_serial_cb && _ibutton_serial_cb(_ibutton_serial_ctx, String(hex)))
             return;
-        }
-        toggleArm_("ibutton", user);
+        processIButtonAddr(addr, "ibutton");
     }
 
     bool isAllowedKey_(const uint8_t addr[8]) const
     {
-        for (size_t i = 0; i < kKeyCount; ++i)
+        if (!_users)
+            return false;
+        char hex[17] = {};
+        IButton::toHex(addr, hex);
+        const String serial = UsersRegistry::normalizeHex(hex, 16);
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_key_set[i])
-                continue;
-            if (memcmp(_keys[i], addr, 8) == 0)
+            if (_users->user(i).ibutton_key == serial)
                 return true;
         }
         return false;
@@ -1331,7 +1507,7 @@ private:
         return false;
     }
 
-    bool isRfidRepeat_(const RfidReader::Uid &uid)
+    bool isRfidRepeat_(const PN532::UID &uid)
     {
         const uint32_t now = millis();
         if (uid.len == _last_rfid_len &&
@@ -1344,6 +1520,19 @@ private:
         memcpy(_last_rfid, uid.bytes, uid.len);
         _last_rfid_ms = now;
         return false;
+    }
+
+    static bool portToGpio_(uint8_t port, uint8_t &out_gpio)
+    {
+        if (port >= PortIO::PORT_COUNT)
+            return false;
+        const auto &desc = ActiveBoardProfile::PORTS[port];
+        if (desc.backend != PortIO::Backend::Esp32)
+            return false;
+        if (desc.u.esp.gpio == 0xFF)
+            return false;
+        out_gpio = desc.u.esp.gpio;
+        return true;
     }
 
     void toggleArm_()
@@ -1773,16 +1962,19 @@ private:
 
     bool isAllowedPhone_(const String &number) const
     {
-        const String norm = normalizePhone_(number);
+        if (!_users)
+            return false;
+        const String norm = UsersRegistry::normalizePhone(number);
         if (norm.length() == 0)
             return false;
-        for (size_t i = 0; i < kPhoneCount; ++i)
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_phone_enabled[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled)
                 continue;
-            if (_phones[i].length() == 0)
+            if (u.gsm_phone.length() == 0)
                 continue;
-            if (_phones[i] == norm)
+            if (u.gsm_phone == norm)
                 return true;
         }
         return false;
@@ -1790,40 +1982,30 @@ private:
 
     bool matchPhone_(const String &number, String &user) const
     {
-        const String norm = normalizePhone_(number);
+        if (!_users)
+            return false;
+        const String norm = UsersRegistry::normalizePhone(number);
         if (norm.length() == 0)
             return false;
-        for (size_t i = 0; i < kPhoneCount; ++i)
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_phone_enabled[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled)
                 continue;
-            if (_phones[i].length() == 0)
+            if (u.gsm_phone.length() == 0)
                 continue;
-            if (_phones[i] == norm)
+            if (u.gsm_phone == norm)
             {
-                user = _phone_names[i];
+                user = u.username;
                 return true;
             }
         }
         return false;
     }
 
-    static String normalizePhone_(const String &number)
-    {
-        String out;
-        out.reserve(number.length());
-        for (size_t i = 0; i < number.length(); ++i)
-        {
-            const char c = number.charAt(i);
-            if (c >= '0' && c <= '9')
-                out += c;
-        }
-        return out;
-    }
-
     void sendSmsNotify_(const SensorConfig &cfg)
     {
-        if (!_gsm)
+        if (!_gsm || !_users)
             return;
         String msg = F("ALARM sensor ");
         msg += String((unsigned)cfg.id);
@@ -1833,27 +2015,29 @@ private:
             msg += cfg.name;
             msg += F(")");
         }
-        for (size_t i = 0; i < kPhoneCount; ++i)
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_phone_enabled[i] || !_phone_notify[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled || !u.gsm_sms)
                 continue;
-            if (_phones[i].length() == 0)
+            if (u.gsm_phone.length() == 0)
                 continue;
-            _gsm->sendSms(_phones[i], msg);
+            _gsm->sendSms(u.gsm_phone, msg);
         }
-        for (size_t i = 0; i < kPhoneCount; ++i)
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_phone_enabled[i] || !_phone_call[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled || !u.gsm_call)
                 continue;
-            if (_phones[i].length() == 0)
+            if (u.gsm_phone.length() == 0)
                 continue;
-            _gsm->driver().dial(_phones[i]);
+            _gsm->driver().dial(u.gsm_phone);
         }
     }
 
     void sendSmsNotify_(uint8_t sensor_id, const String &name)
     {
-        if (!_gsm)
+        if (!_gsm || !_users)
             return;
         String msg = F("ALARM sensor ");
         msg += String((unsigned)sensor_id);
@@ -1863,51 +2047,63 @@ private:
             msg += name;
             msg += F(")");
         }
-        for (size_t i = 0; i < kPhoneCount; ++i)
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_phone_enabled[i] || !_phone_notify[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled || !u.gsm_sms)
                 continue;
-            if (_phones[i].length() == 0)
+            if (u.gsm_phone.length() == 0)
                 continue;
-            _gsm->sendSms(_phones[i], msg);
+            _gsm->sendSms(u.gsm_phone, msg);
         }
-        for (size_t i = 0; i < kPhoneCount; ++i)
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_phone_enabled[i] || !_phone_call[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled || !u.gsm_call)
                 continue;
-            if (_phones[i].length() == 0)
+            if (u.gsm_phone.length() == 0)
                 continue;
-            _gsm->driver().dial(_phones[i]);
+            _gsm->driver().dial(u.gsm_phone);
         }
     }
 
     bool matchKey_(const uint8_t addr[8], String &user) const
     {
-        for (size_t i = 0; i < kKeyCount; ++i)
+        if (!_users)
+            return false;
+        char hex[17] = {};
+        IButton::toHex(addr, hex);
+        const String serial = UsersRegistry::normalizeHex(hex, 16);
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_key_set[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled)
                 continue;
-            if (memcmp(_keys[i], addr, 8) != 0)
+            if (u.ibutton_key.length() == 0)
                 continue;
-            user = _key_names[i];
+            if (u.ibutton_key != serial)
+                continue;
+            user = u.username.length() ? u.username : u.tg_username;
             return true;
         }
         return false;
     }
 
-    bool matchRfidKey_(const RfidReader::Uid &uid, String &user) const
+    bool matchRfidKey_(const PN532::UID &uid, String &user) const
     {
-        if (uid.len == 0 || uid.len > sizeof(_rfid_keys[0]))
+        if (uid.len == 0 || uid.len > 10 || !_users)
             return false;
-        for (size_t i = 0; i < kRfidKeyCount; ++i)
+        const String serial = UsersRegistry::normalizeHex(rfidUidToString_(uid.bytes, uid.len), 20);
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (!_rfid_key_set[i])
+            const auto &u = _users->user(i);
+            if (!u.enabled)
                 continue;
-            if (_rfid_len[i] != uid.len)
+            if (u.rfid_key.length() == 0)
                 continue;
-            if (memcmp(_rfid_keys[i], uid.bytes, uid.len) != 0)
+            if (u.rfid_key != serial)
                 continue;
-            user = _rfid_key_names[i];
+            user = u.username.length() ? u.username : u.tg_username;
             return true;
         }
         return false;
@@ -1977,7 +2173,7 @@ private:
         return true;
     }
 
-    static bool parseRfidUid_(const char *s, RfidReader::Uid &out)
+    static bool parseRfidUid_(const char *s, PN532::UID &out)
     {
         if (!s)
             return false;
@@ -2034,6 +2230,8 @@ private:
     static constexpr uint16_t kBeepRejectOnMs = 60;
     static constexpr uint16_t kBeepRejectOffMs = 80;
     static constexpr uint16_t kAlarmBuzzMs = 500;
+    static constexpr uint8_t kRfidI2cAddr = 0x24;
+    static constexpr uint16_t kRfidReadTimeoutMs = 50;
 
     bool _alarm_buzz_state = false;
     uint32_t _alarm_buzz_next_ms = 0;
@@ -2049,4 +2247,5 @@ private:
     void *_detect_ctx = nullptr;
     bool _notify_enabled = true;
 };
+
 

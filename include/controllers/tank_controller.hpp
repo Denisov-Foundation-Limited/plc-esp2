@@ -53,6 +53,7 @@ public:
         bool pump_on = false;
         bool alarm_on = false;
         bool last_empty = false;
+        uint32_t last_empty_event_ms = 0;
     };
 
     using DetectHandler = void (*)(void *ctx, uint8_t tank_id, const String &name, bool empty);
@@ -122,8 +123,15 @@ public:
             const bool empty = isEmpty_(st);
             if (empty && !st.last_empty)
             {
-                notifyDetectEvent_(cfg, true);
-                notifyEmpty_(cfg);
+                const uint32_t now = millis();
+                const bool allow_event = (st.last_empty_event_ms == 0) ||
+                                         ((uint32_t)(now - st.last_empty_event_ms) >= kEmptyEventDebounceMs);
+                if (allow_event)
+                {
+                    notifyDetectEvent_(cfg, true);
+                    notifyEmpty_(cfg);
+                    st.last_empty_event_ms = now;
+                }
             }
             st.last_empty = empty;
         }
@@ -758,4 +766,5 @@ private:
 
     static constexpr bool kLevelPullup = true;
     static constexpr uint32_t kLevelErrLogMs = 5000;
+    static constexpr uint32_t kEmptyEventDebounceMs = 10000;
 };

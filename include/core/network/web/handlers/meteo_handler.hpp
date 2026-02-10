@@ -18,8 +18,38 @@ class MeteoHandler
 public:
     static void registerRoutes(WebInterface &web, AsyncWebServer &server)
     {
+        server.on("/meteo/remote_sources", HTTP_GET,
+                  [&web](AsyncWebServerRequest *request) { handleRemoteSources(web, request); });
         server.on("/meteo", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleMeteoSave(web, request); });
         server.on("/meteo", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleMeteo(web, request); });
+    }
+
+    static void handleRemoteSources(WebInterface &web, AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!web.checkAuth_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (web.isStackMeteoView_(node_id))
+        {
+            web.sendText_(request, 200, "text/html; charset=utf-8", "", set_cookie);
+            return;
+        }
+        if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
+        {
+            web._stack_slave->requestRemoteMeteoAll();
+        }
+        else if (web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_master)
+        {
+            const size_t count = web._stack_master->nodeCount();
+            for (size_t i = 0; i < count; ++i)
+            {
+                const uint32_t id = web._stack_master->nodeIdAt(i);
+                if (id != 0)
+                    web.requestStackMeteo_(id);
+            }
+        }
+        web.sendText_(request, 200, "text/html; charset=utf-8", web.meteoRemoteSensorOptionsHtml_(0, 0), set_cookie);
     }
 
     static void handleMeteo(WebInterface &web, AsyncWebServerRequest *request)

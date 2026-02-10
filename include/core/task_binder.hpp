@@ -14,8 +14,6 @@
 #include "core/task_manager.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
-#include "clients/rfid_reader.hpp"
-#include "clients/ring_client.hpp"
 #include "core/display.hpp"
 #include "hal/gpio/extender.hpp"
 #include "controllers/controllers.hpp"
@@ -27,16 +25,14 @@ class TaskBinder
 {
 public:
     TaskBinder(TaskManager<N> &tm, WifiManager &wifi, TelegramBot &tgbot, Extender &ext,
-               Controllers &controllers, MeteoHistory &meteo_history, RfidReader &rfid_reader,
-               RingClient &ring_client, Display &display, PlcControl &plc)
+               Controllers &controllers, MeteoHistory &meteo_history,
+               Display &display, PlcControl &plc)
         : _tm(tm),
           _wifi(wifi),
           _tgbot(tgbot),
           _ext(ext),
           _controllers(controllers),
           _meteo_history(meteo_history),
-          _rfid_reader(rfid_reader),
-          _ring_client(ring_client),
           _display(display),
           _plc(plc)
     {
@@ -48,8 +44,6 @@ public:
         bindTgbot();
         bindExtender();
         bindControllers();
-        bindRfidReader_();
-        bindRingClient_();
         bindMeteoHistory_();
         bindDisplay_();
         bindPlc_();
@@ -116,14 +110,10 @@ private:
     Extender &_ext;
     Controllers &_controllers;
     MeteoHistory &_meteo_history;
-    RfidReader &_rfid_reader;
-    RingClient &_ring_client;
     Display &_display;
     PlcControl &_plc;
     typename TaskManager<N>::Handle _ftest_task{};
     typename TaskManager<N>::Handle _ext_task{};
-    typename TaskManager<N>::Handle _rfid_task{};
-    typename TaskManager<N>::Handle _ring_task{};
     typename TaskManager<N>::Handle _display_task{};
 
     void tgbotTask_()
@@ -132,28 +122,10 @@ private:
             _tgbot.task();
     }
 
-    typename TaskManager<N>::Handle bindRfidReader_()
-    {
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 100;
-        opt.priority = TaskManager<N>::Priority::Low;
-        _rfid_task = _tm.template add<&RfidReader::task>(_rfid_reader, opt);
-        return _rfid_task;
-    }
-
-    typename TaskManager<N>::Handle bindRingClient_()
-    {
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Low;
-        _ring_task = _tm.template add<&RingClient::task>(_ring_client, opt);
-        return _ring_task;
-    }
-
     typename TaskManager<N>::Handle bindDisplay_()
     {
         typename TaskManager<N>::Options opt;
-        opt.interval_ms = 5000;
+        opt.interval_ms = 1000;
         opt.priority = TaskManager<N>::Priority::Low;
         _display_task = _tm.template add<&Display::task>(_display, opt);
         return _display_task;

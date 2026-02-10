@@ -236,7 +236,7 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
       if (kind === 'socket' || kind === 'light') return 'ON  ';
       if (kind === 'meteo') return field === 'hum' ? '45%' : '23C ';
       if (kind === 'thermo') return 'IDL ';
-      if (kind === 'tank') return 'MID ';
+      if (kind === 'tank') return '66% ';
       if (kind === 'septic') return 'ALM ';
       if (kind === 'security') return 'ARM ';
       if (kind === 'text') return pad4(text || '');

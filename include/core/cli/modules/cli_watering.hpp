@@ -72,10 +72,22 @@ public:
         _c._io->println(F(" <mon,tue,...|all|none> - set weekdays"));
         _c._io->print(F("    time <id>"));
         printIdRangeInline_();
-        _c._io->println(F(" <HH:MM>       - set start time"));
+        _c._io->println(F(" <HH:MM>       - set start time slot 1"));
+        _c._io->print(F("    time2 <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <HH:MM>      - set start time slot 2"));
+        _c._io->print(F("    time3 <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <HH:MM>      - set start time slot 3"));
         _c._io->print(F("    duration <id>"));
         printIdRangeInline_();
-        _c._io->println(F(" <min>        - set duration (minutes)"));
+        _c._io->println(F(" <min>        - set duration slot 1 (minutes)"));
+        _c._io->print(F("    duration2 <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <min>       - set duration slot 2 (minutes)"));
+        _c._io->print(F("    duration3 <id>"));
+        printIdRangeInline_();
+        _c._io->println(F(" <min>       - set duration slot 3 (minutes)"));
         _c._io->print(F("    resume <id>"));
         printIdRangeInline_();
         _c._io->println(F(" <on|off>      - resume after refill"));
@@ -178,9 +190,17 @@ public:
             return true;
         if (handleDays_(cmd, lower))
             return true;
-        if (handleTime_(cmd, lower))
+        if (handleTimeSlot_(cmd, lower, "time", 0))
             return true;
-        if (handleDuration_(cmd, lower))
+        if (handleTimeSlot_(cmd, lower, "time2", 1))
+            return true;
+        if (handleTimeSlot_(cmd, lower, "time3", 2))
+            return true;
+        if (handleDurationSlot_(cmd, lower, "duration", 0))
+            return true;
+        if (handleDurationSlot_(cmd, lower, "duration2", 1))
+            return true;
+        if (handleDurationSlot_(cmd, lower, "duration3", 2))
             return true;
         if (handleResume_(cmd, lower))
             return true;
@@ -353,7 +373,7 @@ private:
 
     void printHeader_()
     {
-        _c._io->println(F("  id  en  mon  port  tank  days           time   dur_m  act  res  lvl  name"));
+        _c._io->println(F("  id  en  mon  port  tank  days           t1     d1  t2     d2  t3     d3  act  res  lvl  name"));
     }
 
     void printRow_(const WateringController::RuleConfig &cfg, const WateringController::RuleState &st)
@@ -387,7 +407,7 @@ private:
         formatWeekdays_(cfg.weekdays_mask, days, sizeof(days));
         _c.printPadStr_(days, 14);
         _c._io->print(F("  "));
-        if (cfg.weekdays_mask)
+        if (cfg.weekdays_mask && cfg.duration_sec && cfg.hour <= 23 && cfg.minute <= 59)
             snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour, (unsigned)cfg.minute);
         else
             strncpy(buf, "--:--", sizeof(buf) - 1);
@@ -398,6 +418,30 @@ private:
         else
             strncpy(buf, "--", sizeof(buf) - 1);
         _c.printPadStr_(buf, 6);
+        _c._io->print(F("  "));
+        if (cfg.weekdays_mask && cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
+            snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour2, (unsigned)cfg.minute2);
+        else
+            strncpy(buf, "--:--", sizeof(buf) - 1);
+        _c.printPadStr_(buf, 5);
+        _c._io->print(F("  "));
+        if (cfg.duration2_sec)
+            snprintf(buf, sizeof(buf), "%lu", (unsigned long)((cfg.duration2_sec + 59) / 60));
+        else
+            strncpy(buf, "--", sizeof(buf) - 1);
+        _c.printPadStr_(buf, 3);
+        _c._io->print(F("  "));
+        if (cfg.weekdays_mask && cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
+            snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour3, (unsigned)cfg.minute3);
+        else
+            strncpy(buf, "--:--", sizeof(buf) - 1);
+        _c.printPadStr_(buf, 5);
+        _c._io->print(F("  "));
+        if (cfg.duration3_sec)
+            snprintf(buf, sizeof(buf), "%lu", (unsigned long)((cfg.duration3_sec + 59) / 60));
+        else
+            strncpy(buf, "--", sizeof(buf) - 1);
+        _c.printPadStr_(buf, 3);
         _c._io->print(F("  "));
         _c.printPadStr_(st.active ? F("on") : F("off"), 3);
         _c._io->print(F("  "));
@@ -635,16 +679,19 @@ private:
         return true;
     }
 
-    bool handleTime_(const String &cmd, const String &lower)
+    bool handleTimeSlot_(const String &cmd, const String &lower, const char *name, uint8_t slot)
     {
-        if (!lower.startsWith("time "))
+        const String prefix = String(name) + " ";
+        if (!lower.startsWith(prefix))
             return false;
-        String rest = cmd.substring(5);
+        String rest = cmd.substring(prefix.length());
         rest.trim();
         const int space = rest.indexOf(' ');
         if (space <= 0)
         {
-            _c._io->print(F("Usage: time <id> <HH:MM>"));
+            _c._io->print(F("Usage: "));
+            _c._io->print(name);
+            _c._io->print(F(" <id> <HH:MM>"));
             return true;
         }
         String id_str = rest.substring(0, space);
@@ -664,23 +711,26 @@ private:
             _c._io->println(F("Invalid time"));
             return true;
         }
-        if (!_watering.setStartTime(id, h, m))
+        if (!_watering.setStartTimeSlot(id, slot, h, m))
             _c._io->println(F("Failed"));
         else
             _c._io->println(F("OK"));
         return true;
     }
 
-    bool handleDuration_(const String &cmd, const String &lower)
+    bool handleDurationSlot_(const String &cmd, const String &lower, const char *name, uint8_t slot)
     {
-        if (!lower.startsWith("duration "))
+        const String prefix = String(name) + " ";
+        if (!lower.startsWith(prefix))
             return false;
-        String rest = cmd.substring(9);
+        String rest = cmd.substring(prefix.length());
         rest.trim();
         const int space = rest.indexOf(' ');
         if (space <= 0)
         {
-            _c._io->print(F("Usage: duration <id> <min>"));
+            _c._io->print(F("Usage: "));
+            _c._io->print(name);
+            _c._io->print(F(" <id> <min>"));
             return true;
         }
         String id_str = rest.substring(0, space);
@@ -699,7 +749,7 @@ private:
             _c._io->println(F("Invalid duration"));
             return true;
         }
-        if (!_watering.setDuration(id, dur_min * 60u))
+        if (!_watering.setDurationSlot(id, slot, dur_min * 60u))
             _c._io->println(F("Failed"));
         else
             _c._io->println(F("OK"));

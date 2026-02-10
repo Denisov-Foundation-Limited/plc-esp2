@@ -36,6 +36,7 @@ public:
         bool has_button = false;
         bool has_relay = false;
         uint32_t cooldown_until_ms = 0;
+        uint32_t stack_hold_until_ms = 0;
         uint8_t last_source = 0;
     };
 
@@ -68,6 +69,7 @@ public:
             return;
         }
         handleButton_();
+        pollStackHoldTimeout_();
     }
 
     void applyConfig(JsonObjectConst obj)
@@ -180,6 +182,7 @@ private:
             _st.relay_on = false;
             writeRelay_(false);
         }
+        _st.stack_hold_until_ms = 0;
     }
 
     void handleButton_()
@@ -199,12 +202,14 @@ private:
                 return;
             }
             _st.last_source = static_cast<uint8_t>(Source::Button);
+            _st.stack_hold_until_ms = 0;
             setHoldActive_(true, true);
         }
         else if (_st.last_button)
         {
             setHoldActive_(false, true);
             _st.cooldown_until_ms = now + kReleaseCooldownMs;
+            _st.stack_hold_until_ms = 0;
         }
         _st.last_button = pressed;
     }
@@ -230,12 +235,37 @@ private:
             if (_st.cooldown_until_ms != 0 && (int32_t)(now - _st.cooldown_until_ms) < 0)
                 return false;
             _st.last_source = static_cast<uint8_t>(source);
+            if (source == Source::Stack)
+                _st.stack_hold_until_ms = now + kStackHoldTimeoutMs;
+            else
+                _st.stack_hold_until_ms = 0;
         }
         const bool was_on = _st.hold_active;
         setHoldActive_(on, notify);
-        if (!on && was_on)
-            _st.cooldown_until_ms = now + kReleaseCooldownMs;
+        if (!on)
+        {
+            if (was_on)
+                _st.cooldown_until_ms = now + kReleaseCooldownMs;
+            _st.stack_hold_until_ms = 0;
+        }
         return true;
+    }
+
+    void pollStackHoldTimeout_()
+    {
+        if (!_st.hold_active)
+            return;
+        if (_st.last_source != static_cast<uint8_t>(Source::Stack))
+            return;
+        if (_st.stack_hold_until_ms == 0)
+            return;
+        const uint32_t now = millis();
+        if ((int32_t)(now - _st.stack_hold_until_ms) < 0)
+            return;
+        _logs.warn(F("RING"), F("failsafe timeout: source: stack"));
+        setHoldActive_(false, true);
+        _st.cooldown_until_ms = now + kReleaseCooldownMs;
+        _st.stack_hold_until_ms = 0;
     }
 
     bool setupButton_()
@@ -303,4 +333,5 @@ private:
     static constexpr bool kRelayInvert = false;
     static constexpr bool kButtonPullup = true;
     static constexpr uint32_t kReleaseCooldownMs = 1000;
+    static constexpr uint32_t kStackHoldTimeoutMs = 10000;
 };

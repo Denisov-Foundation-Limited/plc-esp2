@@ -265,6 +265,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -277,6 +278,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -293,6 +295,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -308,6 +311,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -344,6 +348,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -356,6 +361,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -431,6 +437,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -443,6 +450,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -480,6 +488,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -492,6 +501,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -515,6 +525,12 @@ public:
         uint8_t hour = 0;
         uint8_t minute = 0;
         uint32_t duration_sec = 0;
+        uint8_t hour2 = 0;
+        uint8_t minute2 = 0;
+        uint32_t duration2_sec = 0;
+        uint8_t hour3 = 0;
+        uint8_t minute3 = 0;
+        uint32_t duration3_sec = 0;
         bool resume_after_refill = false;
         uint8_t resume_level = 0;
         bool active = false;
@@ -1313,10 +1329,24 @@ private:
                         o["tank"] = it.tank_id;
                     if (it.weekdays_mask)
                         o["weekdays_mask"] = it.weekdays_mask;
-                    o["hour"] = it.hour;
-                    o["minute"] = it.minute;
-                    if (it.duration_sec)
+                    if (it.duration_sec && it.hour <= 23 && it.minute <= 59)
+                    {
+                        o["hour"] = it.hour;
+                        o["minute"] = it.minute;
                         o["duration_s"] = it.duration_sec;
+                    }
+                    if (it.duration2_sec && it.hour2 <= 23 && it.minute2 <= 59)
+                    {
+                        o["hour2"] = it.hour2;
+                        o["minute2"] = it.minute2;
+                        o["duration2_s"] = it.duration2_sec;
+                    }
+                    if (it.duration3_sec && it.hour3 <= 23 && it.minute3 <= 59)
+                    {
+                        o["hour3"] = it.hour3;
+                        o["minute3"] = it.minute3;
+                        o["duration3_s"] = it.duration3_sec;
+                    }
                     o["resume"] = it.resume_after_refill;
                     o["resume_level"] = it.resume_level;
                     o["active"] = it.active;
@@ -1359,103 +1389,167 @@ private:
             !thermo_cache && !septic_cache && !tanks_cache && !watering_cache && !i2c_cache && !ow_cache && !status_cache)
             return;
         const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (doc["ok"] | false);
-        JsonArrayConst items = doc["data"]["items"].as<JsonArrayConst>();
+        JsonObjectConst data_obj = doc["data"].as<JsonObjectConst>();
+        JsonArrayConst items = data_obj["items"].as<JsonArrayConst>();
 
         if (sock_cache)
         {
-            sock_cache->pending = false;
             sock_cache->updated_ms = millis();
-            sock_cache->last_ok = false;
-            sock_cache->last_error = "";
             if (!ok)
             {
+                sock_cache->pending = false;
+                sock_cache->last_ok = false;
+                sock_cache->last_error = "";
                 sock_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                sock_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                const uint16_t part = data_obj["part"] | 1;
+                const uint16_t parts = data_obj["parts"] | 1;
+                const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (sock_cache->item_count >= SocketController::kSocketCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackSocketItem &dst = sock_cache->items[sock_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.state = item["state"] | false;
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    sock_cache->item_count = 0;
+                    sock_cache->has_data = false;
+                    sock_cache->last_ok = false;
+                    sock_cache->last_error = "";
                 }
-                sock_cache->has_data = true;
-                sock_cache->last_ok = true;
-                sock_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (sock_cache->item_count >= SocketController::kSocketCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackSocketItem &dst = sock_cache->items[sock_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.state = item["state"] | false;
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    }
+                }
+                if (done)
+                {
+                    sock_cache->pending = false;
+                    sock_cache->has_data = true;
+                    sock_cache->last_ok = true;
+                    sock_cache->node_id = node_id;
+                }
+                else
+                {
+                    sock_cache->pending = true;
+                }
             }
         }
 
         if (light_cache)
         {
-            light_cache->pending = false;
             light_cache->updated_ms = millis();
-            light_cache->last_ok = false;
-            light_cache->last_error = "";
             if (!ok)
             {
+                light_cache->pending = false;
+                light_cache->last_ok = false;
+                light_cache->last_error = "";
                 light_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                light_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                const uint16_t part = data_obj["part"] | 1;
+                const uint16_t parts = data_obj["parts"] | 1;
+                const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (light_cache->item_count >= SocketController::kLightCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackLightItem &dst = light_cache->items[light_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.state = item["state"] | false;
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    light_cache->item_count = 0;
+                    light_cache->has_data = false;
+                    light_cache->last_ok = false;
+                    light_cache->last_error = "";
                 }
-                light_cache->has_data = true;
-                light_cache->last_ok = true;
-                light_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (light_cache->item_count >= SocketController::kLightCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackLightItem &dst = light_cache->items[light_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.state = item["state"] | false;
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    }
+                }
+                if (done)
+                {
+                    light_cache->pending = false;
+                    light_cache->has_data = true;
+                    light_cache->last_ok = true;
+                    light_cache->node_id = node_id;
+                }
+                else
+                {
+                    light_cache->pending = true;
+                }
             }
         }
 
         if (ports_cache)
         {
-            ports_cache->pending = false;
             ports_cache->updated_ms = millis();
-            ports_cache->last_ok = false;
-            ports_cache->last_error = "";
             if (!ok)
             {
+                ports_cache->pending = false;
+                ports_cache->last_ok = false;
+                ports_cache->last_error = "";
                 ports_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                ports_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                const uint16_t part = data_obj["part"] | 1;
+                const uint16_t parts = data_obj["parts"] | 1;
+                const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
+                JsonArrayConst port_items = data_obj["ports"].as<JsonArrayConst>();
+                if (port_items.isNull())
+                    port_items = items;
+                if (!port_items.isNull())
                 {
-                    if (ports_cache->item_count >= PortIO::PORT_COUNT)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackPortItem &dst = ports_cache->items[ports_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.ctrl = item["ctrl"] | false;
-                    dst.is_extender = item["ext"] | false;
-                    dst.dev = item["dev"] | -1;
-                    dst.pin = item["pin"] | -1;
-                    copyStr_(dst.backend, sizeof(dst.backend), item["backend"].as<const char *>());
-                    copyStr_(dst.loc, sizeof(dst.loc), item["loc"].as<const char *>());
-                    copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
-                    copyStr_(dst.hw, sizeof(dst.hw), item["hw"].as<const char *>());
+                    if (part <= 1)
+                    {
+                        ports_cache->item_count = 0;
+                        ports_cache->has_data = false;
+                        ports_cache->last_ok = false;
+                        ports_cache->last_error = "";
+                    }
+                    for (JsonObjectConst item : port_items)
+                    {
+                        if (ports_cache->item_count >= PortIO::PORT_COUNT)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackPortItem &dst = ports_cache->items[ports_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.ctrl = item["ctrl"] | false;
+                        dst.is_extender = item["ext"] | false;
+                        dst.dev = item["dev"] | -1;
+                        dst.pin = item["pin"] | -1;
+                        copyStr_(dst.backend, sizeof(dst.backend), item["backend"].as<const char *>());
+                        copyStr_(dst.loc, sizeof(dst.loc), item["loc"].as<const char *>());
+                        copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
+                        copyStr_(dst.hw, sizeof(dst.hw), item["hw"].as<const char *>());
+                    }
+                    if (done)
+                    {
+                        ports_cache->pending = false;
+                        ports_cache->has_data = true;
+                        ports_cache->last_ok = true;
+                        ports_cache->node_id = node_id;
+                    }
+                    else
+                    {
+                        ports_cache->pending = true;
+                    }
                 }
-                ports_cache->has_data = true;
-                ports_cache->last_ok = true;
-                ports_cache->node_id = node_id;
             }
         }
 
@@ -1493,23 +1587,32 @@ private:
 
         if (sec_cache)
         {
-            sec_cache->pending = false;
             sec_cache->updated_ms = millis();
-            sec_cache->last_ok = false;
-            sec_cache->last_error = "";
             if (!ok)
             {
+                sec_cache->pending = false;
+                sec_cache->pending_since_ms = 0;
+                sec_cache->last_ok = false;
+                sec_cache->last_error = "";
                 sec_cache->last_error = doc["error"] | "error";
             }
             else
             {
-                JsonObjectConst data = doc["data"];
-                sec_cache->enabled = data["enabled"] | false;
-                sec_cache->armed = data["armed"] | false;
-                sec_cache->alarm = data["alarm"] | false;
-                if (!items.isNull())
+                const uint16_t part = data_obj["part"] | 1;
+                const uint16_t parts = data_obj["parts"] | 1;
+                const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
+                sec_cache->enabled = data_obj["enabled"] | false;
+                sec_cache->armed = data_obj["armed"] | false;
+                sec_cache->alarm = data_obj["alarm"] | false;
+                if (part <= 1)
                 {
                     sec_cache->item_count = 0;
+                    sec_cache->has_data = false;
+                    sec_cache->last_ok = false;
+                    sec_cache->last_error = "";
+                }
+                if (!items.isNull())
+                {
                     for (JsonObjectConst item : items)
                     {
                         if (sec_cache->item_count >= SecurityController::kSensorCount)
@@ -1526,15 +1629,25 @@ private:
                         copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
                     }
                 }
-                sec_cache->has_data = true;
-                sec_cache->last_ok = true;
-                sec_cache->node_id = node_id;
+                if (done)
+                {
+                    sec_cache->pending = false;
+                    sec_cache->pending_since_ms = 0;
+                    sec_cache->has_data = true;
+                    sec_cache->last_ok = true;
+                    sec_cache->node_id = node_id;
+                }
+                else
+                {
+                    sec_cache->pending = true;
+                }
             }
         }
 
         if (sec_prearm_cache)
         {
             sec_prearm_cache->pending = false;
+            sec_prearm_cache->pending_since_ms = 0;
             sec_prearm_cache->updated_ms = millis();
             sec_prearm_cache->last_ok = false;
             sec_prearm_cache->last_error = "";
@@ -1567,163 +1680,249 @@ private:
 
         if (meteo_cache)
         {
-            meteo_cache->pending = false;
             meteo_cache->updated_ms = millis();
-            meteo_cache->last_ok = false;
-            meteo_cache->last_error = "";
             if (!ok)
             {
+                meteo_cache->pending = false;
+                meteo_cache->pending_since_ms = 0;
+                meteo_cache->last_ok = false;
+                meteo_cache->last_error = "";
                 meteo_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                meteo_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                const uint16_t part = data_obj["part"] | 1;
+                const uint16_t parts = data_obj["parts"] | 1;
+                const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (meteo_cache->item_count >= MeteoController::kSensorCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackMeteoItem &dst = meteo_cache->items[meteo_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.ok = item["ok"] | false;
-                    dst.has_temp = item["has_temp"] | false;
-                    dst.has_hum = item["has_hum"] | false;
-                    dst.temp_c = item["temp_c"] | 0.0f;
-                    dst.hum = item["hum"] | 0.0f;
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
-                    copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
-                    copyStr_(dst.addr, sizeof(dst.addr), item["addr"].as<const char *>());
-                    if (item["pin"].is<int>() || item["pin"].is<unsigned>())
-                        dst.pin = item["pin"].as<int>();
-                    else
-                        dst.pin = -1;
+                    meteo_cache->item_count = 0;
+                    meteo_cache->has_data = false;
+                    meteo_cache->last_ok = false;
+                    meteo_cache->last_error = "";
                 }
-                meteo_cache->has_data = true;
-                meteo_cache->last_ok = true;
-                meteo_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (meteo_cache->item_count >= MeteoController::kSensorCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackMeteoItem &dst = meteo_cache->items[meteo_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.ok = item["ok"] | false;
+                        dst.has_temp = item["has_temp"] | false;
+                        dst.has_hum = item["has_hum"] | false;
+                        dst.temp_c = item["temp_c"] | 0.0f;
+                        dst.hum = item["hum"] | 0.0f;
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                        copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
+                        copyStr_(dst.addr, sizeof(dst.addr), item["addr"].as<const char *>());
+                        if (item["pin"].is<int>() || item["pin"].is<unsigned>())
+                            dst.pin = item["pin"].as<int>();
+                        else
+                            dst.pin = -1;
+                    }
+                }
+                if (done)
+                {
+                    meteo_cache->pending = false;
+                    meteo_cache->pending_since_ms = 0;
+                    meteo_cache->has_data = true;
+                    meteo_cache->last_ok = true;
+                    meteo_cache->node_id = node_id;
+                }
+                else
+                {
+                    meteo_cache->pending = true;
+                }
             }
         }
 
         if (thermo_cache)
         {
-            thermo_cache->pending = false;
             thermo_cache->updated_ms = millis();
-            thermo_cache->last_ok = false;
-            thermo_cache->last_error = "";
             if (!ok)
             {
+                thermo_cache->pending = false;
+                thermo_cache->last_ok = false;
+                thermo_cache->last_error = "";
                 thermo_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                thermo_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                const uint16_t part = data_obj["part"] | 1;
+                const uint16_t parts = data_obj["parts"] | 1;
+                const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (thermo_cache->item_count >= ThermoController::kDeviceCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackThermoItem &dst = thermo_cache->items[thermo_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.power_on = item["power_on"] | false;
-                    dst.heat_on = item["heat_on"] | false;
-                    dst.cool_on = item["cool_on"] | false;
-                    dst.sensor = (uint8_t)(item["sensor"] | 0u);
-                    dst.sensor_node = (uint32_t)(item["sensor_node"] | 0u);
-                    dst.target = item["target"] | 0.0f;
-                    dst.hyst = item["hyst"] | 0.0f;
-                    dst.heat = (uint8_t)(item["heat"] | ThermoController::kInvalidPort);
-                    dst.cool = (uint8_t)(item["cool"] | ThermoController::kInvalidPort);
-                    dst.button = (uint8_t)(item["button"] | ThermoController::kInvalidPort);
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
-                    copyStr_(dst.mode, sizeof(dst.mode), item["mode"].as<const char *>());
+                    thermo_cache->item_count = 0;
+                    thermo_cache->has_data = false;
+                    thermo_cache->last_ok = false;
+                    thermo_cache->last_error = "";
                 }
-                thermo_cache->has_data = true;
-                thermo_cache->last_ok = true;
-                thermo_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (thermo_cache->item_count >= ThermoController::kDeviceCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackThermoItem &dst = thermo_cache->items[thermo_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.power_on = item["power_on"] | false;
+                        dst.heat_on = item["heat_on"] | false;
+                        dst.cool_on = item["cool_on"] | false;
+                        dst.sensor = (uint8_t)(item["sensor"] | 0u);
+                        dst.sensor_node = (uint32_t)(item["sensor_node"] | 0u);
+                        dst.target = item["target"] | 0.0f;
+                        dst.hyst = item["hyst"] | 0.0f;
+                        dst.heat = (uint8_t)(item["heat"] | ThermoController::kInvalidPort);
+                        dst.cool = (uint8_t)(item["cool"] | ThermoController::kInvalidPort);
+                        dst.button = (uint8_t)(item["button"] | ThermoController::kInvalidPort);
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                        copyStr_(dst.mode, sizeof(dst.mode), item["mode"].as<const char *>());
+                    }
+                }
+                if (done)
+                {
+                    thermo_cache->pending = false;
+                    thermo_cache->has_data = true;
+                    thermo_cache->last_ok = true;
+                    thermo_cache->node_id = node_id;
+                }
+                else
+                {
+                    thermo_cache->pending = true;
+                }
             }
         }
 
         if (septic_cache)
         {
-            septic_cache->pending = false;
             septic_cache->updated_ms = millis();
-            septic_cache->last_ok = false;
-            septic_cache->last_error = "";
             if (!ok)
             {
+                septic_cache->pending = false;
+                septic_cache->pending_since_ms = 0;
+                septic_cache->last_ok = false;
+                septic_cache->last_error = "";
                 septic_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                septic_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                const uint16_t part = data_obj["part"] | 1;
+                const uint16_t parts = data_obj["parts"] | 1;
+                const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (septic_cache->item_count >= SepticController::kSepticCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackSepticItem &dst = septic_cache->items[septic_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.monitor = item["monitor"] | false;
-                    dst.warning_port = (uint8_t)(item["warning_port"] | SepticController::kInvalidPort);
-                    dst.alarm_port = (uint8_t)(item["alarm_port"] | SepticController::kInvalidPort);
-                    dst.relay_warning = (uint8_t)(item["relay_warning"] | SepticController::kInvalidPort);
-                    dst.relay_alarm = (uint8_t)(item["relay_alarm"] | SepticController::kInvalidPort);
-                    dst.warning = item["warning"] | false;
-                    dst.alarm = item["alarm"] | false;
+                    septic_cache->item_count = 0;
+                    septic_cache->has_data = false;
+                    septic_cache->last_ok = false;
+                    septic_cache->last_error = "";
                 }
-                septic_cache->has_data = true;
-                septic_cache->last_ok = true;
-                septic_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (septic_cache->item_count >= SepticController::kSepticCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackSepticItem &dst = septic_cache->items[septic_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.monitor = item["monitor"] | false;
+                        dst.warning_port = (uint8_t)(item["warning_port"] | SepticController::kInvalidPort);
+                        dst.alarm_port = (uint8_t)(item["alarm_port"] | SepticController::kInvalidPort);
+                        dst.relay_warning = (uint8_t)(item["relay_warning"] | SepticController::kInvalidPort);
+                        dst.relay_alarm = (uint8_t)(item["relay_alarm"] | SepticController::kInvalidPort);
+                        dst.warning = item["warning"] | false;
+                        dst.alarm = item["alarm"] | false;
+                    }
+                }
+                if (done)
+                {
+                    septic_cache->pending = false;
+                    septic_cache->pending_since_ms = 0;
+                    septic_cache->has_data = true;
+                    septic_cache->last_ok = true;
+                    septic_cache->node_id = node_id;
+                }
+                else
+                {
+                    septic_cache->pending = true;
+                }
             }
         }
 
         if (tanks_cache)
         {
-            tanks_cache->pending = false;
             tanks_cache->updated_ms = millis();
-            tanks_cache->last_ok = false;
-            tanks_cache->last_error = "";
             if (!ok)
             {
+                tanks_cache->pending = false;
+                tanks_cache->pending_since_ms = 0;
+                tanks_cache->last_ok = false;
+                tanks_cache->last_error = "";
                 tanks_cache->last_error = doc["error"] | "error";
             }
-            else if (!items.isNull())
+            else
             {
-                tanks_cache->item_count = 0;
-                for (JsonObjectConst item : items)
+                const uint16_t part = data_obj["part"] | 1;
+                const uint16_t parts = data_obj["parts"] | 1;
+                const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
+                if (part <= 1)
                 {
-                    if (tanks_cache->item_count >= TankController::kTankCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackTankItem &dst = tanks_cache->items[tanks_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.power_on = item["power_on"] | false;
-                    dst.low = (uint8_t)(item["low"] | TankController::kInvalidPort);
-                    dst.mid = (uint8_t)(item["mid"] | TankController::kInvalidPort);
-                    dst.full = (uint8_t)(item["full"] | TankController::kInvalidPort);
-                    dst.valve = (uint8_t)(item["valve"] | TankController::kInvalidPort);
-                    dst.pump = (uint8_t)(item["pump"] | TankController::kInvalidPort);
-                    dst.alarm = (uint8_t)(item["alarm"] | TankController::kInvalidPort);
-                    dst.level_low = item["level_low"] | false;
-                    dst.level_mid = item["level_mid"] | false;
-                    dst.level_full = item["level_full"] | false;
-                    dst.levels_ok = item["levels_ok"] | false;
-                    dst.valve_on = item["valve_on"] | false;
-                    dst.pump_on = item["pump_on"] | false;
-                    dst.alarm_on = item["alarm_on"] | false;
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    tanks_cache->item_count = 0;
+                    tanks_cache->has_data = false;
+                    tanks_cache->last_ok = false;
+                    tanks_cache->last_error = "";
                 }
-                tanks_cache->has_data = true;
-                tanks_cache->last_ok = true;
-                tanks_cache->node_id = node_id;
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (tanks_cache->item_count >= TankController::kTankCount)
+                            break;
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        StackTankItem &dst = tanks_cache->items[tanks_cache->item_count++];
+                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.enabled = item["enabled"] | false;
+                        dst.power_on = item["power_on"] | false;
+                        dst.low = (uint8_t)(item["low"] | TankController::kInvalidPort);
+                        dst.mid = (uint8_t)(item["mid"] | TankController::kInvalidPort);
+                        dst.full = (uint8_t)(item["full"] | TankController::kInvalidPort);
+                        dst.valve = (uint8_t)(item["valve"] | TankController::kInvalidPort);
+                        dst.pump = (uint8_t)(item["pump"] | TankController::kInvalidPort);
+                        dst.alarm = (uint8_t)(item["alarm"] | TankController::kInvalidPort);
+                        dst.level_low = item["level_low"] | false;
+                        dst.level_mid = item["level_mid"] | false;
+                        dst.level_full = item["level_full"] | false;
+                        dst.levels_ok = item["levels_ok"] | false;
+                        dst.valve_on = item["valve_on"] | false;
+                        dst.pump_on = item["pump_on"] | false;
+                        dst.alarm_on = item["alarm_on"] | false;
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    }
+                }
+                if (done)
+                {
+                    tanks_cache->pending = false;
+                    tanks_cache->pending_since_ms = 0;
+                    tanks_cache->has_data = true;
+                    tanks_cache->last_ok = true;
+                    tanks_cache->node_id = node_id;
+                }
+                else
+                {
+                    tanks_cache->pending = true;
+                }
             }
         }
 
@@ -1764,6 +1963,12 @@ private:
                     dst.hour = (uint8_t)(item["hour"] | 0u);
                     dst.minute = (uint8_t)(item["minute"] | 0u);
                     dst.duration_sec = item["duration_s"] | 0u;
+                    dst.hour2 = (uint8_t)(item["hour2"] | 0u);
+                    dst.minute2 = (uint8_t)(item["minute2"] | 0u);
+                    dst.duration2_sec = item["duration2_s"] | 0u;
+                    dst.hour3 = (uint8_t)(item["hour3"] | 0u);
+                    dst.minute3 = (uint8_t)(item["minute3"] | 0u);
+                    dst.duration3_sec = item["duration3_s"] | 0u;
                     dst.resume_after_refill = item["resume"] | false;
                     dst.resume_level = (uint8_t)(item["resume_level"] | 0u);
                     dst.active = item["active"] | false;
@@ -1964,7 +2169,18 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -1981,6 +2197,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         return true;
     }
 
@@ -1995,7 +2212,18 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (!force && cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2012,6 +2240,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         return true;
     }
 
@@ -2026,7 +2255,18 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2043,6 +2283,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         return true;
     }
     bool requestStackThermo_(uint32_t node_id)
@@ -2087,7 +2328,18 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2104,6 +2356,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         return true;
     }
 
@@ -2118,7 +2371,18 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2135,6 +2399,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         return true;
     }
 
@@ -2220,7 +2485,7 @@ private:
         StaticJsonDocument<192> doc;
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Ports;
-        doc["action"] = "get";
+        doc["action"] = "get_state";
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)

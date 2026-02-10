@@ -1278,13 +1278,13 @@ private:
             return true;
         }
 
-        JsonArrayConst items = doc["data"]["items"].as<JsonArrayConst>();
-        if (items.isNull() || items.size() == 0)
-        {
-            finishStackPorts_();
-            _c.refreshPrompt_();
-            return true;
-        }
+        JsonObjectConst data = doc["data"].as<JsonObjectConst>();
+        JsonArrayConst items = data["ports"].as<JsonArrayConst>();
+        if (items.isNull())
+            items = data["items"].as<JsonArrayConst>();
+        const uint16_t part = data["part"] | 1;
+        const uint16_t parts = data["parts"] | 1;
+        const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
 
         const String unit = stackNodeLabel_(node_id);
         for (JsonObjectConst o : items)
@@ -1299,8 +1299,11 @@ private:
             const char *hw = o["hw"] | "--";
             _c.printPortStateRow_(unit, id, backend, loc, type, ctrl, dev, pin, hw);
         }
-        finishStackPorts_();
-        _c.refreshPrompt_();
+        if (done)
+        {
+            finishStackPorts_();
+            _c.refreshPrompt_();
+        }
         return true;
     }
 
@@ -1336,11 +1339,18 @@ private:
             return true;
         }
 
-        JsonArrayConst items = doc["data"]["items"].as<JsonArrayConst>();
+        JsonObjectConst data = doc["data"].as<JsonObjectConst>();
+        const uint16_t part = data["part"] | 1;
+        const uint16_t parts = data["parts"] | 1;
+        const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
+        JsonArrayConst items = data["items"].as<JsonArrayConst>();
         if (items.isNull() || items.size() == 0)
         {
-            finishStackSockets_();
-            _c.refreshPrompt_();
+            if (done)
+            {
+                finishStackSockets_();
+                _c.refreshPrompt_();
+            }
             return true;
         }
 
@@ -1357,7 +1367,8 @@ private:
             const bool state = o["state"] | false;
             _c.printSocketRow_(unit.c_str(), id, enabled, name, button, relay, state);
         }
-        finishStackSockets_();
+        if (done)
+            finishStackSockets_();
         _c.refreshPrompt_();
         return true;
     }
@@ -1394,11 +1405,18 @@ private:
             return true;
         }
 
-        JsonArrayConst items = doc["data"]["items"].as<JsonArrayConst>();
+        JsonObjectConst data = doc["data"].as<JsonObjectConst>();
+        const uint16_t part = data["part"] | 1;
+        const uint16_t parts = data["parts"] | 1;
+        const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
+        JsonArrayConst items = data["items"].as<JsonArrayConst>();
         if (items.isNull() || items.size() == 0)
         {
-            finishStackMeteo_();
-            _c.refreshPrompt_();
+            if (done)
+            {
+                finishStackMeteo_();
+                _c.refreshPrompt_();
+            }
             return true;
         }
 
@@ -1451,7 +1469,8 @@ private:
                 name = o["name"].as<const char *>();
             _c._meteo_cli.printRow(unit.c_str(), id, enabled, name, type, temp_str, hum_str, info);
         }
-        finishStackMeteo_();
+        if (done)
+            finishStackMeteo_();
         _c.refreshPrompt_();
         return true;
     }
@@ -1488,11 +1507,18 @@ private:
             return true;
         }
 
-        JsonArrayConst items = doc["data"]["items"].as<JsonArrayConst>();
+        JsonObjectConst data = doc["data"].as<JsonObjectConst>();
+        const uint16_t part = data["part"] | 1;
+        const uint16_t parts = data["parts"] | 1;
+        const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
+        JsonArrayConst items = data["items"].as<JsonArrayConst>();
         if (items.isNull() || items.size() == 0)
         {
-            finishStackThermo_();
-            _c.refreshPrompt_();
+            if (done)
+            {
+                finishStackThermo_();
+                _c.refreshPrompt_();
+            }
             return true;
         }
 
@@ -1523,7 +1549,8 @@ private:
             st.cool_on = o["cool_on"] | false;
             _c._thermo_cli.printRow(unit.c_str(), cfg, st);
         }
-        finishStackThermo_();
+        if (done)
+            finishStackThermo_();
         _c.refreshPrompt_();
         return true;
     }

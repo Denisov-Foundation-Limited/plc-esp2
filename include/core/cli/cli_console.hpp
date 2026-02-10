@@ -1188,7 +1188,7 @@ private:
             "end",
             "help"}};
 
-        static const std::array<const char *, 15> kConfigWateringCmds = {{
+        static const std::array<const char *, 19> kConfigWateringCmds = {{
             "show",
             "show <id>",
             "name <id> <text>",
@@ -1199,7 +1199,11 @@ private:
             "tank <id> <tank_id|none>",
             "days <id> <mon,tue,...|all|none>",
             "time <id> <HH:MM>",
+            "time2 <id> <HH:MM>",
+            "time3 <id> <HH:MM>",
             "duration <id> <min>",
+            "duration2 <id> <min>",
+            "duration3 <id> <min>",
             "resume <id> <on|off>",
             "resume_level <id> <low|mid|full>",
             "exit",

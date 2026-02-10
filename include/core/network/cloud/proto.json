@@ -182,7 +182,8 @@
       "thermo": "thermo_state[]",
       "tanks": "tank_state[]",
       "septic": "septic_state[]",
-      "security": "security_state[]",
+      "watering": "watering_state[]",
+      "security": "security_state",
       "ring": "ring_state"
     },
     "socket_state": {
@@ -203,6 +204,7 @@
     },
     "meteo_state": {
       "id": "u8",
+      "enabled": "bool",
       "name": "string",
       "type": "string",
       "pin": "u8",
@@ -259,6 +261,29 @@
       "warning": "bool",
       "alarm": "bool"
     },
+    "watering_state": {
+      "id": "u8",
+      "name": "string",
+      "enabled": "bool",
+      "status": "bool",
+      "port": "u8",
+      "tank": "u8",
+      "weekdays_mask": "u8",
+      "hour": "u8",
+      "minute": "u8",
+      "duration_s": "u32",
+      "hour2": "u8",
+      "minute2": "u8",
+      "duration2_s": "u32",
+      "hour3": "u8",
+      "minute3": "u8",
+      "duration3_s": "u32",
+      "resume": "bool",
+      "resume_level": "u8",
+      "active": "bool",
+      "paused": "bool",
+      "remaining_ms": "u32"
+    },
     "security_state": {
       "enabled": "bool",
       "armed": "bool",
@@ -268,9 +293,11 @@
     },
     "security_detect": {
       "id": "u8",
+      "enabled": "bool",
       "name": "string",
       "type": "reed|pir",
       "port": "u8",
+      "silent": "bool",
       "detect": "bool"
     },
     "ring_state": {
@@ -300,10 +327,15 @@
     "septic": [
       { "action": "monitor", "args": { "id": "u8", "state": "on|off" } }
     ],
+    "watering": [
+      { "action": "status", "args": { "id": "u8", "state": "on|off" } }
+    ],
     "security": [
       { "action": "arm", "args": {} },
       { "action": "disarm", "args": {} },
-      { "action": "clear", "args": {} }
+      { "action": "clear", "args": {} },
+      { "action": "rfid", "args": { "uid": "string", "name": "string" } },
+      { "action": "ibutton", "args": { "serial": "string", "name": "string" } }
     ],
     "ring": [
       { "action": "hold", "args": { "state": "on|off" } }
@@ -312,6 +344,10 @@
   "rules": {
     "no_config": true,
     "note": "Configuration is read-only for now; no config update commands are defined.",
+    "stack_notes": [
+      "stack.nodes includes only nodes with slave_controller=true (controller devices).",
+      "stack aggregation from slave replies may be multipart (part/parts/done); cloud sends merged final result."
+    ],
     "auth": [
       {
         "required": true,

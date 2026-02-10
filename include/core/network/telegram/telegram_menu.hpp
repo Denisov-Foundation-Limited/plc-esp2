@@ -33,6 +33,7 @@
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/logger.hpp"
+#include "utils/users_registry.hpp"
 #include "core/network/stack/stack_master.hpp"
 
 class TelegramMenuThermo;
@@ -45,8 +46,9 @@ class TelegramMenuSecurity;
 class TelegramMenu : public TelegramAllowedUsersProvider
 {
 public:
-    TelegramMenu(PlcControl &plc, WifiManager &wifi, RTC &rtc, TelegramBot &bot, Configs &configs, Logger &logs)
-        : _plc(plc), _wifi(wifi), _rtc(rtc), _bot(&bot), _configs(configs), _logs(&logs)
+    TelegramMenu(PlcControl &plc, WifiManager &wifi, RTC &rtc, TelegramBot &bot,
+                 Configs &configs, Logger &logs, UsersRegistry &users)
+        : _plc(plc), _wifi(wifi), _rtc(rtc), _bot(&bot), _configs(configs), _logs(&logs), _users(&users)
     {
     }
 
@@ -91,10 +93,20 @@ public:
 
     void setAllowedUsers(const std::vector<AllowedUser> &users)
     {
-        _allowed_users_count = 0;
+        if (!_users)
+            return;
+        for (size_t i = 0; i < _users->size(); ++i)
+        {
+            auto &dst = _users->user(i);
+            dst.tg_username = "";
+            dst.tg_chat_id = 0;
+            dst.tg_admin = false;
+            dst.tg_notify = false;
+        }
+        size_t next_slot = 0;
         for (size_t i = 0; i < users.size(); ++i)
         {
-            if (_allowed_users_count >= kMaxAllowedUsers)
+            if (next_slot >= _users->size())
                 break;
             AllowedUser u = users[i];
             u.username = normalizeUsername_(u.username);
@@ -103,7 +115,12 @@ public:
             if ((u.username.length() && hasAllowedUsername_(u.username)) ||
                 (u.chat_id != 0 && hasAllowedUserChatId_(u.chat_id)))
                 continue;
-            _allowed_users[_allowed_users_count++] = u;
+            auto &dst = _users->user(next_slot++);
+            dst.enabled = u.enabled;
+            dst.tg_username = u.username;
+            dst.tg_chat_id = u.chat_id;
+            dst.tg_admin = u.is_admin;
+            dst.tg_notify = u.is_notify;
         }
     }
 
@@ -117,6 +134,8 @@ public:
 
     AllowResult addAllowedUser(const AllowedUser &user)
     {
+        if (!_users)
+            return AllowResult::Invalid;
         AllowedUser u = user;
         u.username = normalizeUsername_(u.username);
         if (u.username.length() == 0 && u.chat_id == 0)
@@ -124,38 +143,64 @@ public:
         if ((u.username.length() && hasAllowedUsername_(u.username)) ||
             (u.chat_id != 0 && hasAllowedUserChatId_(u.chat_id)))
             return AllowResult::Exists;
-        if (_allowed_users_count >= kMaxAllowedUsers)
-            return AllowResult::Full;
-        _allowed_users[_allowed_users_count++] = u;
-        return AllowResult::Ok;
+        for (size_t i = 0; i < _users->size(); ++i)
+        {
+            auto &dst = _users->user(i);
+            if (dst.tg_username.length() || dst.tg_chat_id != 0)
+                continue;
+            dst.enabled = u.enabled;
+            dst.tg_username = u.username;
+            dst.tg_chat_id = u.chat_id;
+            dst.tg_admin = u.is_admin;
+            dst.tg_notify = u.is_notify;
+            return AllowResult::Ok;
+        }
+        return AllowResult::Full;
     }
 
     bool removeAllowedUser(const String &user)
     {
+        if (!_users)
+            return false;
         String u = normalizeUsername_(user);
         if (u.length() == 0)
             return false;
-        for (size_t i = 0; i < _allowed_users_count; ++i)
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (_allowed_users[i].username == u)
+            auto &dst = _users->user(i);
+            if (dst.tg_username == u)
             {
-                for (size_t j = i + 1; j < _allowed_users_count; ++j)
-                    _allowed_users[j - 1] = _allowed_users[j];
-                --_allowed_users_count;
+                dst.tg_username = "";
+                dst.tg_chat_id = 0;
+                dst.tg_admin = false;
+                dst.tg_notify = false;
                 return true;
             }
         }
         return false;
     }
 
-    void clearAllowedUsers() { _allowed_users_count = 0; }
+    void clearAllowedUsers()
+    {
+        if (!_users)
+            return;
+        for (size_t i = 0; i < _users->size(); ++i)
+        {
+            auto &dst = _users->user(i);
+            dst.tg_username = "";
+            dst.tg_chat_id = 0;
+            dst.tg_admin = false;
+            dst.tg_notify = false;
+        }
+    }
 
     TelegramAllowedUsersView allowedUsers() const override
     {
-        return TelegramAllowedUsersView{_allowed_users.data(), _allowed_users_count};
+        rebuildAllowedUsersCache_();
+        return TelegramAllowedUsersView{_allowed_users_cache.data(), _allowed_users_cache_count};
     }
 
-    static constexpr size_t kMaxAllowedUsers = 10;
+    static constexpr size_t kMaxAllowedUsers = UsersRegistry::kMaxUsers;
 
 private:
     friend class TelegramMenuThermo;
@@ -172,8 +217,9 @@ private:
     String _admin_password;
     Configs &_configs;
     ConfigsManagerIface *_configs_manager = nullptr;
-    std::array<AllowedUser, kMaxAllowedUsers> _allowed_users{};
-    size_t _allowed_users_count = 0;
+    UsersRegistry *_users = nullptr;
+    mutable std::array<AllowedUser, kMaxAllowedUsers> _allowed_users_cache{};
+    mutable size_t _allowed_users_cache_count = 0;
 
     struct ChatAuth
     {
@@ -503,15 +549,16 @@ private:
             return false;
         if (!requireAdmin_(*_self, bot, u, reply))
             return true;
-        if (_self->_allowed_users_count == 0)
+        const auto users = _self->allowedUsers();
+        if (users.size == 0)
         {
             reply = "Список разрешенных пользователей пуст.";
             return true;
         }
         String out = F("Разрешенные пользователи:");
-        for (size_t i = 0; i < _self->_allowed_users_count; ++i)
+        for (size_t i = 0; i < users.size; ++i)
         {
-            const auto &user = _self->_allowed_users[i];
+            const auto &user = users[i];
             out += F("\n  <b>");
             out += String((unsigned)(i + 1));
             out += F("</b> ");
@@ -556,7 +603,7 @@ private:
         else if (res == AllowResult::Exists)
             reply = "Уже в списке";
         else if (res == AllowResult::Full)
-            reply = "Лимит 10";
+            reply = "Лимит 20";
         else
             reply = "Некорректный username";
         return true;
@@ -1092,11 +1139,35 @@ private:
         return user;
     }
 
+    void rebuildAllowedUsersCache_() const
+    {
+        _allowed_users_cache_count = 0;
+        if (!_users)
+            return;
+        for (size_t i = 0; i < _users->size(); ++i)
+        {
+            const auto &src = _users->user(i);
+            if (src.tg_username.length() == 0 && src.tg_chat_id == 0)
+                continue;
+            if (_allowed_users_cache_count >= _allowed_users_cache.size())
+                break;
+            AllowedUser &dst = _allowed_users_cache[_allowed_users_cache_count++];
+            dst.username = src.tg_username;
+            dst.chat_id = src.tg_chat_id;
+            dst.is_admin = src.tg_admin;
+            dst.is_notify = src.tg_notify;
+            dst.enabled = src.enabled;
+        }
+    }
+
     bool hasAllowedUsername_(const String &user) const
     {
-        for (size_t i = 0; i < _allowed_users_count; ++i)
+        if (!_users)
+            return false;
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (_allowed_users[i].username == user)
+            const auto &u = _users->user(i);
+            if (u.tg_username == user)
                 return true;
         }
         return false;
@@ -1104,9 +1175,12 @@ private:
 
     bool hasAllowedUserChatId_(int64_t chat_id) const
     {
-        for (size_t i = 0; i < _allowed_users_count; ++i)
+        if (!_users)
+            return false;
+        for (size_t i = 0; i < _users->size(); ++i)
         {
-            if (_allowed_users[i].chat_id != 0 && _allowed_users[i].chat_id == chat_id)
+            const auto &u = _users->user(i);
+            if (u.tg_chat_id != 0 && u.tg_chat_id == chat_id)
                 return true;
         }
         return false;
@@ -1114,37 +1188,40 @@ private:
 
     bool isAllowedUser_(const TelegramClient::Update &u) const
     {
-        if (_allowed_users_count == 0)
+        const auto users = allowedUsers();
+        if (users.size == 0)
             return true;
         size_t idx = 0;
         if (u.chat_id != 0 && findAllowedUserByChatId_(u.chat_id, idx))
-            return _allowed_users[idx].enabled;
+            return users[idx].enabled;
         String user = normalizeUsername_(u.from);
         if (user.length() == 0)
             return false;
         if (findAllowedUserByName_(user, idx))
-            return _allowed_users[idx].enabled;
+            return users[idx].enabled;
         return false;
     }
 
     bool isAdminChat_(int64_t chat_id) const
     {
-        if (_allowed_users_count == 0)
+        const auto users = allowedUsers();
+        if (users.size == 0)
             return false;
         size_t idx = 0;
         if (chat_id != 0 && findAllowedUserByChatId_(chat_id, idx))
-            return _allowed_users[idx].enabled && _allowed_users[idx].is_admin;
+            return users[idx].enabled && users[idx].is_admin;
         const ChatAuth *st = findAuth_(chat_id);
         if (st && st->user_id.length() && findAllowedUserByName_(st->user_id, idx))
-            return _allowed_users[idx].enabled && _allowed_users[idx].is_admin;
+            return users[idx].enabled && users[idx].is_admin;
         return false;
     }
 
     bool findAllowedUserByName_(const String &name, size_t &out) const
     {
-        for (size_t i = 0; i < _allowed_users_count; ++i)
+        const auto users = allowedUsers();
+        for (size_t i = 0; i < users.size; ++i)
         {
-            if (_allowed_users[i].username == name)
+            if (users[i].username == name)
             {
                 out = i;
                 return true;
@@ -1155,9 +1232,10 @@ private:
 
     bool findAllowedUserByChatId_(int64_t chat_id, size_t &out) const
     {
-        for (size_t i = 0; i < _allowed_users_count; ++i)
+        const auto users = allowedUsers();
+        for (size_t i = 0; i < users.size; ++i)
         {
-            if (_allowed_users[i].chat_id != 0 && _allowed_users[i].chat_id == chat_id)
+            if (users[i].chat_id != 0 && users[i].chat_id == chat_id)
             {
                 out = i;
                 return true;

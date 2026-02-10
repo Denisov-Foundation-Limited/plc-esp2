@@ -41,9 +41,6 @@ public:
     virtual uint32_t cloudEventIntervalMs() const = 0;
     virtual String cloudApiKey() const = 0;
     virtual String cloudFirmwareVersion() const = 0;
-    virtual bool rfidEnabled() const = 0;
-    virtual bool ringClientEnabled() const = 0;
-    virtual uint8_t ringClientButtonPort() const = 0;
     virtual size_t displaySlotCount() const = 0;
     virtual bool displaySlot(size_t idx, DisplaySlotConfig &out) const = 0;
     virtual void setStackRole(StackRole role) = 0;
@@ -61,9 +58,6 @@ public:
     virtual void setCloudEventIntervalMs(uint32_t ms) = 0;
     virtual void setCloudApiKey(const String &key) = 0;
     virtual void setCloudFirmwareVersion(const String &ver) = 0;
-    virtual void setRfidEnabled(bool enabled) = 0;
-    virtual void setRingClientEnabled(bool enabled) = 0;
-    virtual void setRingClientButtonPort(uint8_t port) = 0;
     virtual void setDisplaySlot(size_t idx, const DisplaySlotConfig &slot) = 0;
     virtual bool save() = 0;
     virtual bool save(const JsonDocument &doc) = 0;

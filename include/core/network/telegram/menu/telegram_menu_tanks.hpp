@@ -113,15 +113,15 @@ public:
         out.push_back(F("Назад"));
     }
 
-    static const char *tankLevelLabel_(const TankController::TankState &st)
+        static const char *tankLevelLabel_(const TankController::TankState &st)
     {
         if (st.level_full)
-            return "полный";
+            return "99%";
         if (st.level_mid)
-            return "средний";
+            return "66%";
         if (st.level_low)
-            return "низкий";
-        return "пусто";
+            return "33%";
+        return "0%";
     }
 
     static String tankListTextHtml_(TelegramMenu &self)

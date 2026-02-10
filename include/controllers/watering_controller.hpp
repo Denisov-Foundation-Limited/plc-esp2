@@ -24,6 +24,7 @@ class WateringController
 public:
     static constexpr size_t kRuleCount = 30;
     static constexpr uint8_t kInvalidPort = 0xFF;
+    static constexpr uint8_t kTimeSlotCount = 3;
 
     struct RuleConfig
     {
@@ -32,9 +33,15 @@ public:
         uint8_t port = kInvalidPort;
         uint8_t tank_id = 0;
         uint8_t weekdays_mask = 0; // bit0=Sun ... bit6=Sat (RTC day_of_week 1..7)
-        uint8_t hour = 0;
-        uint8_t minute = 0;
+        uint8_t hour = 0xFF;
+        uint8_t minute = 0xFF;
         uint32_t duration_sec = 0;
+        uint8_t hour2 = 0xFF;
+        uint8_t minute2 = 0xFF;
+        uint32_t duration2_sec = 0;
+        uint8_t hour3 = 0xFF;
+        uint8_t minute3 = 0xFF;
+        uint32_t duration3_sec = 0;
         uint8_t resume_level = 0; // 0=low,1=mid,2=full
         bool resume_after_refill = false;
         String name;
@@ -122,7 +129,7 @@ public:
                 continue;
             }
 
-            if (!isStartValid_(cfg) || cfg.port == kInvalidPort || cfg.duration_sec == 0)
+            if (!isStartValid_(cfg) || cfg.port == kInvalidPort)
                 continue;
             if (tank_empty)
                 continue;
@@ -136,24 +143,36 @@ public:
 
             if (!isWeekdayAllowed_(cfg, now.day_of_week))
                 continue;
-            if (now.hour != cfg.hour || now.minute != cfg.minute)
-                continue;
+            for (uint8_t slot = 0; slot < kTimeSlotCount; ++slot)
+            {
+                uint8_t slot_hour = 0;
+                uint8_t slot_minute = 0;
+                uint32_t slot_duration_sec = 0;
+                getSlot_(cfg, slot, slot_hour, slot_minute, slot_duration_sec);
+                if (slot_duration_sec == 0)
+                    continue;
+                if (slot_hour > 23 || slot_minute > 59)
+                    continue;
+                if (now.hour != slot_hour || now.minute != slot_minute)
+                    continue;
 
-            const uint32_t key = makeStartKey_(now.year, now.month, now.day, now.hour, now.minute);
-            if (st.last_start_key == key)
-                continue;
+                const uint32_t key = makeStartKey_(now.year, now.month, now.day, slot_hour, slot_minute, slot);
+                if (st.last_start_key == key)
+                    continue;
 
-            st.last_start_key = key;
-            st.active = true;
-            st.paused = false;
-            st.remaining_ms = 0;
-            st.end_ms = millis() + cfg.duration_sec * 1000u;
-            writePort_(cfg.port, true);
-            _logs.info(F("WATER"), F("start: rule: %u port: %u tank: %u duration_s: %lu"),
-                       (unsigned)cfg.id, (unsigned)cfg.port, (unsigned)cfg.tank_id,
-                       (unsigned long)cfg.duration_sec);
-            notifyEvent_(Event::Start, cfg, st);
-            _runtime_dirty = true;
+                st.last_start_key = key;
+                st.active = true;
+                st.paused = false;
+                st.remaining_ms = 0;
+                st.end_ms = millis() + slot_duration_sec * 1000u;
+                writePort_(cfg.port, true);
+                _logs.info(F("WATER"), F("start: rule: %u slot: %u port: %u tank: %u duration_s: %lu"),
+                           (unsigned)cfg.id, (unsigned)(slot + 1u), (unsigned)cfg.port, (unsigned)cfg.tank_id,
+                           (unsigned long)slot_duration_sec);
+                notifyEvent_(Event::Start, cfg, st);
+                _runtime_dirty = true;
+                break;
+            }
         }
     }
 
@@ -251,6 +270,34 @@ public:
             }
             if (obj["duration_s"].is<unsigned long>())
                 cfg.duration_sec = (uint32_t)obj["duration_s"].as<unsigned long>();
+            if (obj["hour2"].is<unsigned>())
+            {
+                const unsigned raw = obj["hour2"].as<unsigned>();
+                if (raw <= 0xFFu)
+                    cfg.hour2 = (uint8_t)raw;
+            }
+            if (obj["minute2"].is<unsigned>())
+            {
+                const unsigned raw = obj["minute2"].as<unsigned>();
+                if (raw <= 0xFFu)
+                    cfg.minute2 = (uint8_t)raw;
+            }
+            if (obj["duration2_s"].is<unsigned long>())
+                cfg.duration2_sec = (uint32_t)obj["duration2_s"].as<unsigned long>();
+            if (obj["hour3"].is<unsigned>())
+            {
+                const unsigned raw = obj["hour3"].as<unsigned>();
+                if (raw <= 0xFFu)
+                    cfg.hour3 = (uint8_t)raw;
+            }
+            if (obj["minute3"].is<unsigned>())
+            {
+                const unsigned raw = obj["minute3"].as<unsigned>();
+                if (raw <= 0xFFu)
+                    cfg.minute3 = (uint8_t)raw;
+            }
+            if (obj["duration3_s"].is<unsigned long>())
+                cfg.duration3_sec = (uint32_t)obj["duration3_s"].as<unsigned long>();
             if (obj["resume_after_refill"].is<bool>())
                 cfg.resume_after_refill = obj["resume_after_refill"].as<bool>();
             if (obj["resume_level"].is<const char *>())
@@ -298,10 +345,24 @@ public:
                 obj["tank_id"] = cfg.tank_id;
             if (cfg.weekdays_mask)
                 obj["weekdays_mask"] = cfg.weekdays_mask;
-            obj["hour"] = cfg.hour;
-            obj["minute"] = cfg.minute;
-            if (cfg.duration_sec)
+            if (cfg.duration_sec && cfg.hour <= 23 && cfg.minute <= 59)
+            {
+                obj["hour"] = cfg.hour;
+                obj["minute"] = cfg.minute;
                 obj["duration_s"] = cfg.duration_sec;
+            }
+            if (cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
+            {
+                obj["hour2"] = cfg.hour2;
+                obj["minute2"] = cfg.minute2;
+                obj["duration2_s"] = cfg.duration2_sec;
+            }
+            if (cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
+            {
+                obj["hour3"] = cfg.hour3;
+                obj["minute3"] = cfg.minute3;
+                obj["duration3_s"] = cfg.duration3_sec;
+            }
             obj["resume_after_refill"] = cfg.resume_after_refill;
             if (cfg.resume_level == 1)
                 obj["resume_level"] = "mid";
@@ -455,11 +516,17 @@ public:
 
     bool setStartTime(size_t id, uint8_t hour, uint8_t minute)
     {
+        return setStartTimeSlot(id, 0, hour, minute);
+    }
+
+    bool setStartTimeSlot(size_t id, uint8_t slot, uint8_t hour, uint8_t minute)
+    {
+        if (slot >= kTimeSlotCount)
+            return false;
         size_t idx = 0;
         if (!indexById_(id, idx))
             return false;
-        _cfg[idx].hour = hour;
-        _cfg[idx].minute = minute;
+        setSlotTime_(slot, _cfg[idx], hour, minute);
         return true;
     }
 
@@ -474,10 +541,17 @@ public:
 
     bool setDuration(size_t id, uint32_t duration_sec)
     {
+        return setDurationSlot(id, 0, duration_sec);
+    }
+
+    bool setDurationSlot(size_t id, uint8_t slot, uint32_t duration_sec)
+    {
+        if (slot >= kTimeSlotCount)
+            return false;
         size_t idx = 0;
         if (!indexById_(id, idx))
             return false;
-        _cfg[idx].duration_sec = duration_sec;
+        setSlotDuration_(slot, _cfg[idx], duration_sec);
         return true;
     }
 
@@ -614,24 +688,88 @@ private:
         {
             _cfg[i] = RuleConfig{};
             _cfg[i].id = (uint8_t)(i + 1);
-            _cfg[i].duration_sec = 60;
+            _cfg[i].duration_sec = 0;
             _state[i] = RuleState{};
         }
     }
 
     static bool isStartValid_(const RuleConfig &cfg)
     {
-        if (cfg.hour > 23 || cfg.minute > 59)
-            return false;
         if (cfg.weekdays_mask == 0)
             return false;
-        return true;
+        for (uint8_t slot = 0; slot < kTimeSlotCount; ++slot)
+        {
+            uint8_t h = 0;
+            uint8_t m = 0;
+            uint32_t d = 0;
+            getSlot_(cfg, slot, h, m, d);
+            if (d == 0)
+                continue;
+            if (h <= 23 && m <= 59)
+                return true;
+        }
+        return false;
     }
 
-    static uint32_t makeStartKey_(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute)
+    static uint32_t makeStartKey_(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t slot)
     {
-        return (uint32_t)year * 100000000u + (uint32_t)month * 1000000u + (uint32_t)day * 10000u +
-               (uint32_t)hour * 100u + (uint32_t)minute;
+        const uint32_t base = (uint32_t)year * 100000000u + (uint32_t)month * 1000000u + (uint32_t)day * 10000u +
+                              (uint32_t)hour * 100u + (uint32_t)minute;
+        return base * 10u + (uint32_t)(slot % kTimeSlotCount);
+    }
+
+    static void getSlot_(const RuleConfig &cfg, uint8_t slot, uint8_t &hour, uint8_t &minute, uint32_t &duration_sec)
+    {
+        if (slot == 0)
+        {
+            hour = cfg.hour;
+            minute = cfg.minute;
+            duration_sec = cfg.duration_sec;
+            return;
+        }
+        if (slot == 1)
+        {
+            hour = cfg.hour2;
+            minute = cfg.minute2;
+            duration_sec = cfg.duration2_sec;
+            return;
+        }
+        hour = cfg.hour3;
+        minute = cfg.minute3;
+        duration_sec = cfg.duration3_sec;
+    }
+
+    static void setSlotTime_(uint8_t slot, RuleConfig &cfg, uint8_t hour, uint8_t minute)
+    {
+        if (slot == 0)
+        {
+            cfg.hour = hour;
+            cfg.minute = minute;
+            return;
+        }
+        if (slot == 1)
+        {
+            cfg.hour2 = hour;
+            cfg.minute2 = minute;
+            return;
+        }
+        cfg.hour3 = hour;
+        cfg.minute3 = minute;
+    }
+
+    static void setSlotDuration_(uint8_t slot, RuleConfig &cfg, uint32_t duration_sec)
+    {
+        if (slot == 0)
+        {
+            cfg.duration_sec = duration_sec;
+            return;
+        }
+        if (slot == 1)
+        {
+            cfg.duration2_sec = duration_sec;
+            return;
+        }
+        cfg.duration3_sec = duration_sec;
     }
 
     static uint8_t calcDow_(uint16_t y, uint8_t m, uint8_t d)

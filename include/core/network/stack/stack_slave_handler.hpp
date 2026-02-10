@@ -73,6 +73,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -86,6 +87,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -111,6 +113,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -123,6 +126,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -147,6 +151,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -159,6 +164,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -182,6 +188,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -194,6 +201,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -220,6 +228,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -232,6 +241,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -257,6 +267,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -269,6 +280,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -297,6 +309,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -312,6 +325,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -363,6 +377,11 @@ public:
         _node = &node;
         node.setFrameHandler(&StackSlaveHandler::onFrame_, this);
         node.setStatusProvider(&StackSlaveHandler::onStatus_, this);
+    }
+    bool nodeConnected() const { return _node && _node->connected(); }
+    bool linkReadyAfterHello() const
+    {
+        return _node && _node->connected() && _node->helloSentCurrentConnection();
     }
     void setConfigsManager(ConfigsManagerIface &cfg) { _configs = &cfg; }
     void initAllocations()
@@ -506,6 +525,7 @@ private:
     RemoteSecurityCache _remote_security_cache[StackMaster::MAX_SESSIONS] = {};
     uint16_t _remote_cmd_id = 0;
     uint16_t _remote_all_cmd_id = 0;
+    uint32_t _remote_all_pending_ms = 0;
     uint32_t _remote_all_updated_ms = 0;
 
     static void *allocMem_(size_t bytes)
@@ -764,7 +784,7 @@ private:
             handleSockets_(cmd_id, action, params);
             break;
         case StackFeature::Meteo:
-            handleMeteo_(cmd_id, action);
+            handleMeteo_(cmd_id, action, params);
             break;
         case StackFeature::Thermo:
             handleThermo_(cmd_id, action, params);
@@ -773,7 +793,7 @@ private:
             handleSeptic_(cmd_id, action, params);
             break;
         case StackFeature::Tanks:
-            handleTanks_(cmd_id, action);
+            handleTanks_(cmd_id, action, params);
             break;
         case StackFeature::Watering:
             handleWatering_(cmd_id, action, params);
@@ -816,20 +836,29 @@ private:
     {
         if (action == "get_state")
         {
-            _tx_doc.clear();
-            JsonDocument &doc = _tx_doc;
-            JsonArray arr = doc["ports"].to<JsonArray>();
-            if (params.is<JsonObjectConst>() && params["ids"].is<JsonArrayConst>())
+            static constexpr size_t kDefaultChunk = 6;
+            static constexpr size_t kMaxChunk = 16;
+            const bool has_ids = params.is<JsonObjectConst>() && params["ids"].is<JsonArrayConst>();
+            const JsonArrayConst ids = has_ids ? params["ids"].as<JsonArrayConst>() : JsonArrayConst();
+            size_t chunk = kDefaultChunk;
+            if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
             {
-                JsonArrayConst ids = params["ids"].as<JsonArrayConst>();
+                const unsigned raw = params["chunk"].as<unsigned>();
+                if (raw > 0)
+                    chunk = raw;
+            }
+            if (chunk == 0)
+                chunk = kDefaultChunk;
+            if (chunk > kMaxChunk)
+                chunk = kMaxChunk;
+
+            size_t total = 0;
+            if (has_ids)
+            {
                 for (JsonVariantConst v : ids)
                 {
-                    if (!v.is<unsigned>())
-                        continue;
-                    const uint8_t id = (uint8_t)v.as<unsigned>();
-                    const bool state = _io.read(id);
-                    JsonObject o = arr.add<JsonObject>();
-                    fillPortItem_(o, id, state);
+                    if (v.is<unsigned>())
+                        ++total;
                 }
             }
             else
@@ -839,11 +868,59 @@ private:
                     const auto &p = ActiveBoardProfile::PORTS[i];
                     if (p.caps == Cap::None)
                         continue;
-                    JsonObject o = arr.add<JsonObject>();
-                    fillPortItem_(o, i, _io.read(i));
+                    ++total;
                 }
             }
-            sendAck_(cmd_id, doc);
+
+            const size_t parts = total ? ((total + chunk - 1) / chunk) : 1;
+            for (size_t part = 0; part < parts; ++part)
+            {
+                const size_t from = part * chunk;
+                const size_t to = from + chunk;
+                _tx_doc.clear();
+                JsonDocument &doc = _tx_doc;
+                JsonArray arr = doc["ports"].to<JsonArray>();
+                size_t pos = 0;
+
+                if (has_ids)
+                {
+                    for (JsonVariantConst v : ids)
+                    {
+                        if (!v.is<unsigned>())
+                            continue;
+                        const uint8_t id = (uint8_t)v.as<unsigned>();
+                        if (pos >= from && pos < to)
+                        {
+                            JsonObject o = arr.add<JsonObject>();
+                            fillPortItem_(o, id, _io.read(id));
+                        }
+                        ++pos;
+                        if (pos >= to)
+                            break;
+                    }
+                }
+                else
+                {
+                    for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
+                    {
+                        const auto &p = ActiveBoardProfile::PORTS[i];
+                        if (p.caps == Cap::None)
+                            continue;
+                        if (pos >= from && pos < to)
+                        {
+                            JsonObject o = arr.add<JsonObject>();
+                            fillPortItem_(o, i, _io.read(i));
+                        }
+                        ++pos;
+                        if (pos >= to)
+                            break;
+                    }
+                }
+                doc["part"] = (unsigned)(part + 1);
+                doc["parts"] = (unsigned)parts;
+                doc["done"] = (part + 1) >= parts;
+                sendAck_(cmd_id, doc);
+            }
             return;
         }
         if (action == "set_state")
@@ -1224,52 +1301,126 @@ private:
     {
         if (action == "get")
         {
-            _tx_doc.clear();
-            JsonDocument &doc = _tx_doc;
-            JsonArray arr = doc["items"].to<JsonArray>();
+            static constexpr size_t kDefaultChunk = 6;
+            static constexpr size_t kMaxChunk = 16;
+            size_t chunk = kDefaultChunk;
+            if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
+            {
+                const unsigned raw = params["chunk"].as<unsigned>();
+                if (raw > 0)
+                    chunk = raw;
+            }
+            if (chunk > kMaxChunk)
+                chunk = kMaxChunk;
+
+            size_t total = 0;
             for (size_t i = 0; i < SocketController::kSocketCount; ++i)
             {
                 const auto *cfg = _sockets.configByIndex(i);
                 const auto *st = _sockets.stateByIndex(i);
-                if (!cfg || !st || !cfg->enabled)
-                    continue;
-                JsonObject o = arr.add<JsonObject>();
-                o["id"] = (unsigned)cfg->id;
-                o["enabled"] = cfg->enabled;
-                if (cfg->name.length())
-                    o["name"] = cfg->name;
-                if (cfg->button_port != SocketController::kInvalidPort)
-                    o["button"] = cfg->button_port;
-                if (cfg->relay_port != SocketController::kInvalidPort)
-                    o["relay"] = cfg->relay_port;
-                o["state"] = st->relay_on;
+                if (cfg && st && cfg->enabled)
+                    ++total;
             }
-            sendAck_(cmd_id, doc);
+
+            const size_t parts = total ? ((total + chunk - 1) / chunk) : 1;
+            for (size_t part = 0; part < parts; ++part)
+            {
+                const size_t from = part * chunk;
+                const size_t to = from + chunk;
+                _tx_doc.clear();
+                JsonDocument &doc = _tx_doc;
+                JsonArray arr = doc["items"].to<JsonArray>();
+                size_t pos = 0;
+                for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+                {
+                    const auto *cfg = _sockets.configByIndex(i);
+                    const auto *st = _sockets.stateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    if (pos >= from && pos < to)
+                    {
+                        JsonObject o = arr.add<JsonObject>();
+                        o["id"] = (unsigned)cfg->id;
+                        o["enabled"] = cfg->enabled;
+                        if (cfg->name.length())
+                            o["name"] = cfg->name;
+                        if (cfg->button_port != SocketController::kInvalidPort)
+                            o["button"] = cfg->button_port;
+                        if (cfg->relay_port != SocketController::kInvalidPort)
+                            o["relay"] = cfg->relay_port;
+                        o["state"] = st->relay_on;
+                    }
+                    ++pos;
+                    if (pos >= to)
+                        break;
+                }
+                doc["part"] = (unsigned)(part + 1);
+                doc["parts"] = (unsigned)parts;
+                doc["done"] = (part + 1) >= parts;
+                sendAck_(cmd_id, doc);
+            }
             return;
         }
         if (action == "get_lights")
         {
-            _tx_doc.clear();
-            JsonDocument &doc = _tx_doc;
-            JsonArray arr = doc["items"].to<JsonArray>();
+            static constexpr size_t kDefaultChunk = 6;
+            static constexpr size_t kMaxChunk = 16;
+            size_t chunk = kDefaultChunk;
+            if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
+            {
+                const unsigned raw = params["chunk"].as<unsigned>();
+                if (raw > 0)
+                    chunk = raw;
+            }
+            if (chunk > kMaxChunk)
+                chunk = kMaxChunk;
+
+            size_t total = 0;
             for (size_t i = 0; i < SocketController::kLightCount; ++i)
             {
                 const auto *cfg = _sockets.lightConfigByIndex(i);
                 const auto *st = _sockets.lightStateByIndex(i);
-                if (!cfg || !st || !cfg->enabled)
-                    continue;
-                JsonObject o = arr.add<JsonObject>();
-                o["id"] = (unsigned)cfg->id;
-                o["enabled"] = cfg->enabled;
-                if (cfg->name.length())
-                    o["name"] = cfg->name;
-                if (cfg->button_port != SocketController::kInvalidPort)
-                    o["button"] = cfg->button_port;
-                if (cfg->relay_port != SocketController::kInvalidPort)
-                    o["relay"] = cfg->relay_port;
-                o["state"] = st->relay_on;
+                if (cfg && st && cfg->enabled)
+                    ++total;
             }
-            sendAck_(cmd_id, doc);
+
+            const size_t parts = total ? ((total + chunk - 1) / chunk) : 1;
+            for (size_t part = 0; part < parts; ++part)
+            {
+                const size_t from = part * chunk;
+                const size_t to = from + chunk;
+                _tx_doc.clear();
+                JsonDocument &doc = _tx_doc;
+                JsonArray arr = doc["items"].to<JsonArray>();
+                size_t pos = 0;
+                for (size_t i = 0; i < SocketController::kLightCount; ++i)
+                {
+                    const auto *cfg = _sockets.lightConfigByIndex(i);
+                    const auto *st = _sockets.lightStateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    if (pos >= from && pos < to)
+                    {
+                        JsonObject o = arr.add<JsonObject>();
+                        o["id"] = (unsigned)cfg->id;
+                        o["enabled"] = cfg->enabled;
+                        if (cfg->name.length())
+                            o["name"] = cfg->name;
+                        if (cfg->button_port != SocketController::kInvalidPort)
+                            o["button"] = cfg->button_port;
+                        if (cfg->relay_port != SocketController::kInvalidPort)
+                            o["relay"] = cfg->relay_port;
+                        o["state"] = st->relay_on;
+                    }
+                    ++pos;
+                    if (pos >= to)
+                        break;
+                }
+                doc["part"] = (unsigned)(part + 1);
+                doc["parts"] = (unsigned)parts;
+                doc["done"] = (part + 1) >= parts;
+                sendAck_(cmd_id, doc);
+            }
             return;
         }
         if (action == "set")
@@ -1345,83 +1496,157 @@ private:
         sendErr_(cmd_id, "unsupported");
     }
 
-    void handleMeteo_(uint16_t cmd_id, const String &action)
+    void handleMeteo_(uint16_t cmd_id, const String &action, JsonVariantConst params)
     {
         if (action != "get")
         {
             sendErr_(cmd_id, "unsupported");
             return;
         }
-        _tx_doc.clear();
-        JsonDocument &doc = _tx_doc;
-        JsonArray arr = doc["items"].to<JsonArray>();
+        static constexpr size_t kDefaultChunk = 6;
+        static constexpr size_t kMaxChunk = 16;
+        size_t chunk = kDefaultChunk;
+        if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
+        {
+            const unsigned raw = params["chunk"].as<unsigned>();
+            if (raw > 0)
+                chunk = raw;
+        }
+        if (chunk > kMaxChunk)
+            chunk = kMaxChunk;
+
+        size_t total = 0;
         for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
         {
             const auto *cfg = _meteo.configByIndex(i);
             const auto *st = _meteo.stateByIndex(i);
-            if (!cfg || !st || !cfg->enabled)
-                continue;
-            JsonObject o = arr.add<JsonObject>();
-            o["id"] = (unsigned)cfg->id;
-            o["enabled"] = cfg->enabled;
-            if (cfg->name.length())
-                o["name"] = cfg->name;
-            o["type"] = MeteoController::typeName(cfg->type);
-            if (cfg->type == MeteoController::SensorType::Dht22 &&
-                cfg->dht_pin != MeteoController::kInvalidPin)
-                o["pin"] = cfg->dht_pin;
-            if (cfg->type == MeteoController::SensorType::Ds18b20 && cfg->ds18_addr_set)
-            {
-                char hex[17] = {};
-                MeteoController::formatHexAddr(cfg->ds18_addr, hex);
-                o["addr"] = hex;
-            }
-            if (st->has_temp)
-                o["temp_c"] = st->temp_c;
-            if (st->has_humidity)
-                o["hum"] = st->humidity;
-            o["has_temp"] = st->has_temp;
-            o["has_hum"] = st->has_humidity;
-            o["ok"] = st->ok;
+            if (cfg && st && cfg->enabled)
+                ++total;
         }
-        sendAck_(cmd_id, doc);
+
+        const size_t parts = total ? ((total + chunk - 1) / chunk) : 1;
+        for (size_t part = 0; part < parts; ++part)
+        {
+            const size_t from = part * chunk;
+            const size_t to = from + chunk;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            JsonArray arr = doc["items"].to<JsonArray>();
+            size_t pos = 0;
+            for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+            {
+                const auto *cfg = _meteo.configByIndex(i);
+                const auto *st = _meteo.stateByIndex(i);
+                if (!cfg || !st || !cfg->enabled)
+                    continue;
+                if (pos >= from && pos < to)
+                {
+                    JsonObject o = arr.add<JsonObject>();
+                    o["id"] = (unsigned)cfg->id;
+                    o["enabled"] = cfg->enabled;
+                    if (cfg->name.length())
+                        o["name"] = cfg->name;
+                    o["type"] = MeteoController::typeName(cfg->type);
+                    if (cfg->type == MeteoController::SensorType::Dht22 &&
+                        cfg->dht_pin != MeteoController::kInvalidPin)
+                        o["pin"] = cfg->dht_pin;
+                    if (cfg->type == MeteoController::SensorType::Ds18b20 && cfg->ds18_addr_set)
+                    {
+                        char hex[17] = {};
+                        MeteoController::formatHexAddr(cfg->ds18_addr, hex);
+                        o["addr"] = hex;
+                    }
+                    if (st->has_temp)
+                        o["temp_c"] = st->temp_c;
+                    if (st->has_humidity)
+                        o["hum"] = st->humidity;
+                    o["has_temp"] = st->has_temp;
+                    o["has_hum"] = st->has_humidity;
+                    o["ok"] = st->ok;
+                }
+                ++pos;
+                if (pos >= to)
+                    break;
+            }
+            doc["part"] = (unsigned)(part + 1);
+            doc["parts"] = (unsigned)parts;
+            doc["done"] = (part + 1) >= parts;
+            sendAck_(cmd_id, doc);
+        }
     }
 
     void handleThermo_(uint16_t cmd_id, const String &action, JsonVariantConst params)
     {
         if (action == "get")
         {
-            _tx_doc.clear();
-            JsonDocument &doc = _tx_doc;
-            JsonArray arr = doc["items"].to<JsonArray>();
+            static constexpr size_t kDefaultChunk = 6;
+            static constexpr size_t kMaxChunk = 16;
+            size_t chunk = kDefaultChunk;
+            if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
+            {
+                const unsigned raw = params["chunk"].as<unsigned>();
+                if (raw > 0)
+                    chunk = raw;
+            }
+            if (chunk > kMaxChunk)
+                chunk = kMaxChunk;
+
+            size_t total = 0;
             for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
             {
                 const auto *cfg = _thermo.configByIndex(i);
                 const auto *st = _thermo.stateByIndex(i);
-                if (!cfg || !st || !cfg->enabled)
-                    continue;
-                JsonObject o = arr.add<JsonObject>();
-                o["id"] = (unsigned)cfg->id;
-                o["enabled"] = cfg->enabled;
-                if (cfg->name.length())
-                    o["name"] = cfg->name;
-                o["sensor"] = (unsigned)cfg->sensor_id;
-                if (cfg->sensor_node_id != 0)
-                    o["sensor_node"] = (unsigned long)cfg->sensor_node_id;
-                o["mode"] = ThermoController::modeName(cfg->mode);
-                o["target"] = cfg->target_c;
-                o["hyst"] = cfg->hysteresis;
-                if (cfg->heat_port != ThermoController::kInvalidPort)
-                    o["heat"] = cfg->heat_port;
-                if (cfg->cool_port != ThermoController::kInvalidPort)
-                    o["cool"] = cfg->cool_port;
-                if (cfg->button_port != ThermoController::kInvalidPort)
-                    o["button"] = cfg->button_port;
-                o["power_on"] = st->power_on;
-                o["heat_on"] = st->heat_on;
-                o["cool_on"] = st->cool_on;
+                if (cfg && st && cfg->enabled)
+                    ++total;
             }
-            sendAck_(cmd_id, doc);
+
+            const size_t parts = total ? ((total + chunk - 1) / chunk) : 1;
+            for (size_t part = 0; part < parts; ++part)
+            {
+                const size_t from = part * chunk;
+                const size_t to = from + chunk;
+                _tx_doc.clear();
+                JsonDocument &doc = _tx_doc;
+                JsonArray arr = doc["items"].to<JsonArray>();
+                size_t pos = 0;
+                for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+                {
+                    const auto *cfg = _thermo.configByIndex(i);
+                    const auto *st = _thermo.stateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    if (pos >= from && pos < to)
+                    {
+                        JsonObject o = arr.add<JsonObject>();
+                        o["id"] = (unsigned)cfg->id;
+                        o["enabled"] = cfg->enabled;
+                        if (cfg->name.length())
+                            o["name"] = cfg->name;
+                        o["sensor"] = (unsigned)cfg->sensor_id;
+                        if (cfg->sensor_node_id != 0)
+                            o["sensor_node"] = (unsigned long)cfg->sensor_node_id;
+                        o["mode"] = ThermoController::modeName(cfg->mode);
+                        o["target"] = cfg->target_c;
+                        o["hyst"] = cfg->hysteresis;
+                        if (cfg->heat_port != ThermoController::kInvalidPort)
+                            o["heat"] = cfg->heat_port;
+                        if (cfg->cool_port != ThermoController::kInvalidPort)
+                            o["cool"] = cfg->cool_port;
+                        if (cfg->button_port != ThermoController::kInvalidPort)
+                            o["button"] = cfg->button_port;
+                        o["power_on"] = st->power_on;
+                        o["heat_on"] = st->heat_on;
+                        o["cool_on"] = st->cool_on;
+                    }
+                    ++pos;
+                    if (pos >= to)
+                        break;
+                }
+                doc["part"] = (unsigned)(part + 1);
+                doc["parts"] = (unsigned)parts;
+                doc["done"] = (part + 1) >= parts;
+                sendAck_(cmd_id, doc);
+            }
             return;
         }
         if (action == "set")
@@ -1481,30 +1706,67 @@ private:
         }
         if (action == "get")
         {
-            _tx_doc.clear();
-            JsonDocument &doc = _tx_doc;
-            doc["enabled"] = _security.controllerEnabled();
-            doc["armed"] = _security.armed();
-            doc["alarm"] = _security.alarmOn();
-            JsonArray arr = doc["items"].to<JsonArray>();
+            static constexpr size_t kDefaultChunk = 6;
+            static constexpr size_t kMaxChunk = 16;
+            size_t chunk = kDefaultChunk;
+            if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
+            {
+                const unsigned raw = params["chunk"].as<unsigned>();
+                if (raw > 0)
+                    chunk = raw;
+            }
+            if (chunk > kMaxChunk)
+                chunk = kMaxChunk;
+
+            size_t total = 0;
             for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
             {
                 const auto *cfg = _security.configByIndex(i);
                 const auto *st = _security.stateByIndex(i);
-                if (!cfg || !st || !cfg->enabled)
-                    continue;
-                JsonObject o = arr.add<JsonObject>();
-                o["id"] = (unsigned)cfg->id;
-                o["enabled"] = cfg->enabled;
-                o["type"] = (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
-                if (cfg->port != SecurityController::kInvalidPort)
-                    o["port"] = cfg->port;
-                o["silent"] = cfg->silent;
-                if (cfg->name.length())
-                    o["name"] = cfg->name;
-                o["detect"] = st->is_detect;
+                if (cfg && st && cfg->enabled)
+                    ++total;
             }
-            sendAck_(cmd_id, doc);
+
+            const size_t parts = total ? ((total + chunk - 1) / chunk) : 1;
+            for (size_t part = 0; part < parts; ++part)
+            {
+                const size_t from = part * chunk;
+                const size_t to = from + chunk;
+                _tx_doc.clear();
+                JsonDocument &doc = _tx_doc;
+                doc["enabled"] = _security.controllerEnabled();
+                doc["armed"] = _security.armed();
+                doc["alarm"] = _security.alarmOn();
+                JsonArray arr = doc["items"].to<JsonArray>();
+                size_t pos = 0;
+                for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+                {
+                    const auto *cfg = _security.configByIndex(i);
+                    const auto *st = _security.stateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    if (pos >= from && pos < to)
+                    {
+                        JsonObject o = arr.add<JsonObject>();
+                        o["id"] = (unsigned)cfg->id;
+                        o["enabled"] = cfg->enabled;
+                        o["type"] = (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
+                        if (cfg->port != SecurityController::kInvalidPort)
+                            o["port"] = cfg->port;
+                        o["silent"] = cfg->silent;
+                        if (cfg->name.length())
+                            o["name"] = cfg->name;
+                        o["detect"] = st->is_detect;
+                    }
+                    ++pos;
+                    if (pos >= to)
+                        break;
+                }
+                doc["part"] = (unsigned)(part + 1);
+                doc["parts"] = (unsigned)parts;
+                doc["done"] = (part + 1) >= parts;
+                sendAck_(cmd_id, doc);
+            }
             return;
         }
         if (action == "prearm")
@@ -1598,6 +1860,38 @@ private:
             sendAck_(cmd_id);
             return;
         }
+        if (action == "ibutton_result")
+        {
+            if (!params.is<JsonObjectConst>())
+            {
+                sendErr_(cmd_id, "missing params");
+                return;
+            }
+            JsonObjectConst obj = params.as<JsonObjectConst>();
+            const bool match = obj["match"].is<bool>() ? obj["match"].as<bool>()
+                                                       : (obj["match"].as<int>() != 0);
+            const String serial = obj["serial"] | "";
+            const String result = obj["result"] | "";
+            const bool armed = obj["armed"].is<bool>() ? obj["armed"].as<bool>()
+                                                       : (obj["armed"].as<int>() != 0);
+            if (match)
+                _logs.info(F("SECURITY"), F("iButton match: %s"), serial.length() ? serial.c_str() : "-");
+            else
+                _logs.warn(F("SECURITY"), F("iButton not match: %s"), serial.length() ? serial.c_str() : "-");
+            if (isSlave_())
+            {
+                if (result == "arm")
+                    beepArm_();
+                else if (result == "disarm")
+                    beepDisarm_();
+                else
+                    beepReject_();
+                updateRfidLeds_(armed);
+                requestSecurityStatus_();
+            }
+            sendAck_(cmd_id);
+            return;
+        }
         sendErr_(cmd_id, "unsupported");
     }
 
@@ -1629,31 +1923,68 @@ private:
         }
         if (action == "get")
         {
-            _tx_doc.clear();
-            JsonDocument &doc = _tx_doc;
-            JsonArray arr = doc["items"].to<JsonArray>();
+            static constexpr size_t kDefaultChunk = 6;
+            static constexpr size_t kMaxChunk = 16;
+            size_t chunk = kDefaultChunk;
+            if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
+            {
+                const unsigned raw = params["chunk"].as<unsigned>();
+                if (raw > 0)
+                    chunk = raw;
+            }
+            if (chunk > kMaxChunk)
+                chunk = kMaxChunk;
+
+            size_t total = 0;
             for (size_t i = 0; i < SepticController::kSepticCount; ++i)
             {
                 const auto *cfg = _septic.configByIndex(i);
                 const auto *st = _septic.stateByIndex(i);
-                if (!cfg || !st || !cfg->enabled)
-                    continue;
-                JsonObject o = arr.add<JsonObject>();
-                o["id"] = (unsigned)cfg->id;
-                o["enabled"] = cfg->enabled;
-                o["monitor"] = cfg->monitoring_on;
-                if (cfg->warning_port != SepticController::kInvalidPort)
-                    o["warning_port"] = cfg->warning_port;
-                if (cfg->alarm_port != SepticController::kInvalidPort)
-                    o["alarm_port"] = cfg->alarm_port;
-                if (cfg->relay_warning != SepticController::kInvalidPort)
-                    o["relay_warning"] = cfg->relay_warning;
-                if (cfg->relay_alarm != SepticController::kInvalidPort)
-                    o["relay_alarm"] = cfg->relay_alarm;
-                o["warning"] = st->warning;
-                o["alarm"] = st->alarm;
+                if (cfg && st && cfg->enabled)
+                    ++total;
             }
-            sendAck_(cmd_id, doc);
+
+            const size_t parts = total ? ((total + chunk - 1) / chunk) : 1;
+            for (size_t part = 0; part < parts; ++part)
+            {
+                const size_t from = part * chunk;
+                const size_t to = from + chunk;
+                _tx_doc.clear();
+                JsonDocument &doc = _tx_doc;
+                JsonArray arr = doc["items"].to<JsonArray>();
+                size_t pos = 0;
+                for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+                {
+                    const auto *cfg = _septic.configByIndex(i);
+                    const auto *st = _septic.stateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    if (pos >= from && pos < to)
+                    {
+                        JsonObject o = arr.add<JsonObject>();
+                        o["id"] = (unsigned)cfg->id;
+                        o["enabled"] = cfg->enabled;
+                        o["monitor"] = cfg->monitoring_on;
+                        if (cfg->warning_port != SepticController::kInvalidPort)
+                            o["warning_port"] = cfg->warning_port;
+                        if (cfg->alarm_port != SepticController::kInvalidPort)
+                            o["alarm_port"] = cfg->alarm_port;
+                        if (cfg->relay_warning != SepticController::kInvalidPort)
+                            o["relay_warning"] = cfg->relay_warning;
+                        if (cfg->relay_alarm != SepticController::kInvalidPort)
+                            o["relay_alarm"] = cfg->relay_alarm;
+                        o["warning"] = st->warning;
+                        o["alarm"] = st->alarm;
+                    }
+                    ++pos;
+                    if (pos >= to)
+                        break;
+                }
+                doc["part"] = (unsigned)(part + 1);
+                doc["parts"] = (unsigned)parts;
+                doc["done"] = (part + 1) >= parts;
+                sendAck_(cmd_id, doc);
+            }
             return;
         }
         if (action == "set")
@@ -1689,115 +2020,212 @@ private:
         sendErr_(cmd_id, "unsupported");
     }
 
-    void handleTanks_(uint16_t cmd_id, const String &action)
+    void handleTanks_(uint16_t cmd_id, const String &action, JsonVariantConst params)
     {
         if (action != "get")
         {
             sendErr_(cmd_id, "unsupported");
             return;
         }
-        _tx_doc.clear();
-        JsonDocument &doc = _tx_doc;
-        JsonArray arr = doc["items"].to<JsonArray>();
+        static constexpr size_t kDefaultChunk = 6;
+        static constexpr size_t kMaxChunk = 16;
+        size_t chunk = kDefaultChunk;
+        if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
+        {
+            const unsigned raw = params["chunk"].as<unsigned>();
+            if (raw > 0)
+                chunk = raw;
+        }
+        if (chunk > kMaxChunk)
+            chunk = kMaxChunk;
+
+        size_t total = 0;
         for (size_t i = 0; i < TankController::kTankCount; ++i)
         {
             const auto *cfg = _tanks.configByIndex(i);
             const auto *st = _tanks.stateByIndex(i);
-            if (!cfg || !st || !cfg->enabled)
-                continue;
-            JsonObject o = arr.add<JsonObject>();
-            o["id"] = (unsigned)cfg->id;
-            o["enabled"] = cfg->enabled;
-            o["power_on"] = cfg->power_on;
-            if (cfg->name.length())
-                o["name"] = cfg->name;
-            if (cfg->level_low != TankController::kInvalidPort)
-                o["low"] = cfg->level_low;
-            if (cfg->level_mid != TankController::kInvalidPort)
-                o["mid"] = cfg->level_mid;
-            if (cfg->level_full != TankController::kInvalidPort)
-                o["full"] = cfg->level_full;
-            if (cfg->relay_valve != TankController::kInvalidPort)
-                o["valve"] = cfg->relay_valve;
-            if (cfg->relay_pump != TankController::kInvalidPort)
-                o["pump"] = cfg->relay_pump;
-            if (cfg->relay_alarm != TankController::kInvalidPort)
-                o["alarm"] = cfg->relay_alarm;
-
-            o["level_low"] = st->level_low;
-            o["level_mid"] = st->level_mid;
-            o["level_full"] = st->level_full;
-            o["levels_ok"] = st->levels_ok;
-            o["valve_on"] = st->valve_on;
-            o["pump_on"] = st->pump_on;
-            o["alarm_on"] = st->alarm_on;
+            if (cfg && st && cfg->enabled)
+                ++total;
         }
-        sendAck_(cmd_id, doc);
+
+        const size_t parts = total ? ((total + chunk - 1) / chunk) : 1;
+        for (size_t part = 0; part < parts; ++part)
+        {
+            const size_t from = part * chunk;
+            const size_t to = from + chunk;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            JsonArray arr = doc["items"].to<JsonArray>();
+            size_t pos = 0;
+            for (size_t i = 0; i < TankController::kTankCount; ++i)
+            {
+                const auto *cfg = _tanks.configByIndex(i);
+                const auto *st = _tanks.stateByIndex(i);
+                if (!cfg || !st || !cfg->enabled)
+                    continue;
+                if (pos >= from && pos < to)
+                {
+                    JsonObject o = arr.add<JsonObject>();
+                    o["id"] = (unsigned)cfg->id;
+                    o["enabled"] = cfg->enabled;
+                    o["power_on"] = cfg->power_on;
+                    if (cfg->name.length())
+                        o["name"] = cfg->name;
+                    if (cfg->level_low != TankController::kInvalidPort)
+                        o["low"] = cfg->level_low;
+                    if (cfg->level_mid != TankController::kInvalidPort)
+                        o["mid"] = cfg->level_mid;
+                    if (cfg->level_full != TankController::kInvalidPort)
+                        o["full"] = cfg->level_full;
+                    if (cfg->relay_valve != TankController::kInvalidPort)
+                        o["valve"] = cfg->relay_valve;
+                    if (cfg->relay_pump != TankController::kInvalidPort)
+                        o["pump"] = cfg->relay_pump;
+                    if (cfg->relay_alarm != TankController::kInvalidPort)
+                        o["alarm"] = cfg->relay_alarm;
+
+                    o["level_low"] = st->level_low;
+                    o["level_mid"] = st->level_mid;
+                    o["level_full"] = st->level_full;
+                    o["levels_ok"] = st->levels_ok;
+                    o["valve_on"] = st->valve_on;
+                    o["pump_on"] = st->pump_on;
+                    o["alarm_on"] = st->alarm_on;
+                }
+                ++pos;
+                if (pos >= to)
+                    break;
+            }
+            doc["part"] = (unsigned)(part + 1);
+            doc["parts"] = (unsigned)parts;
+            doc["done"] = (part + 1) >= parts;
+            sendAck_(cmd_id, doc);
+        }
     }
 
     void handleWatering_(uint16_t cmd_id, const String &action, JsonVariantConst params)
     {
-        if (action != "get")
+        if (action == "get")
         {
-            sendErr_(cmd_id, "unsupported");
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            JsonArray arr = doc["items"].to<JsonArray>();
+            const uint16_t offset = params["offset"] | 0u;
+            const uint16_t limit = params["limit"] | 0u;
+            const uint16_t page_limit = (limit == 0) ? 10u : limit;
+            uint16_t enabled_total = 0;
+            for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+            {
+                const auto *cfg = _watering.configByIndex(i);
+                if (cfg && cfg->enabled)
+                    ++enabled_total;
+            }
+            doc["total"] = enabled_total;
+            doc["offset"] = offset;
+            uint16_t sent = 0;
+            uint16_t skipped = 0;
+            for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+            {
+                const auto *cfg = _watering.configByIndex(i);
+                const auto *st = _watering.stateByIndex(i);
+                if (!cfg || !st || !cfg->enabled)
+                    continue;
+                if (skipped < offset)
+                {
+                    ++skipped;
+                    continue;
+                }
+                if (sent >= page_limit)
+                    break;
+                JsonObject o = arr.add<JsonObject>();
+                o["id"] = (unsigned)cfg->id;
+                o["enabled"] = cfg->enabled;
+                o["status"] = st->status;
+                if (cfg->name.length())
+                    o["name"] = cfg->name;
+                if (cfg->port != WateringController::kInvalidPort)
+                    o["port"] = cfg->port;
+                if (cfg->tank_id)
+                    o["tank"] = cfg->tank_id;
+                if (cfg->weekdays_mask)
+                    o["weekdays_mask"] = cfg->weekdays_mask;
+                if (cfg->duration_sec && cfg->hour <= 23 && cfg->minute <= 59)
+                {
+                    o["hour"] = cfg->hour;
+                    o["minute"] = cfg->minute;
+                    o["duration_s"] = cfg->duration_sec;
+                }
+                if (cfg->duration2_sec && cfg->hour2 <= 23 && cfg->minute2 <= 59)
+                {
+                    o["hour2"] = cfg->hour2;
+                    o["minute2"] = cfg->minute2;
+                    o["duration2_s"] = cfg->duration2_sec;
+                }
+                if (cfg->duration3_sec && cfg->hour3 <= 23 && cfg->minute3 <= 59)
+                {
+                    o["hour3"] = cfg->hour3;
+                    o["minute3"] = cfg->minute3;
+                    o["duration3_s"] = cfg->duration3_sec;
+                }
+                o["resume"] = cfg->resume_after_refill;
+                o["resume_level"] = cfg->resume_level;
+                o["active"] = st->active;
+                o["paused"] = st->paused;
+                if (st->remaining_ms)
+                    o["remaining_ms"] = st->remaining_ms;
+                ++sent;
+            }
+            doc["count"] = sent;
+            sendAck_(cmd_id, doc);
             return;
         }
-        _tx_doc.clear();
-        JsonDocument &doc = _tx_doc;
-        JsonArray arr = doc["items"].to<JsonArray>();
-        const uint16_t offset = params["offset"] | 0u;
-        const uint16_t limit = params["limit"] | 0u;
-        const uint16_t page_limit = (limit == 0) ? 10u : limit;
-        uint16_t enabled_total = 0;
-        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        if (action == "set")
         {
-            const auto *cfg = _watering.configByIndex(i);
-            if (cfg && cfg->enabled)
-                ++enabled_total;
-        }
-        doc["total"] = enabled_total;
-        doc["offset"] = offset;
-        uint16_t sent = 0;
-        uint16_t skipped = 0;
-        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
-        {
-            const auto *cfg = _watering.configByIndex(i);
-            const auto *st = _watering.stateByIndex(i);
-            if (!cfg || !st || !cfg->enabled)
-                continue;
-            if (skipped < offset)
+            if (!params.is<JsonObjectConst>())
             {
-                ++skipped;
-                continue;
+                sendErr_(cmd_id, "missing params");
+                return;
             }
-            if (sent >= page_limit)
-                break;
-            JsonObject o = arr.add<JsonObject>();
-            o["id"] = (unsigned)cfg->id;
-            o["enabled"] = cfg->enabled;
-            o["status"] = st->status;
-            if (cfg->name.length())
-                o["name"] = cfg->name;
-            if (cfg->port != WateringController::kInvalidPort)
-                o["port"] = cfg->port;
-            if (cfg->tank_id)
-                o["tank"] = cfg->tank_id;
-            if (cfg->weekdays_mask)
-                o["weekdays_mask"] = cfg->weekdays_mask;
-            o["hour"] = cfg->hour;
-            o["minute"] = cfg->minute;
-            if (cfg->duration_sec)
-                o["duration_s"] = cfg->duration_sec;
-            o["resume"] = cfg->resume_after_refill;
-            o["resume_level"] = cfg->resume_level;
-            o["active"] = st->active;
-            o["paused"] = st->paused;
-            if (st->remaining_ms)
-                o["remaining_ms"] = st->remaining_ms;
-            ++sent;
+            JsonObjectConst obj = params.as<JsonObjectConst>();
+            const uint8_t id = (uint8_t)(obj["id"] | 0u);
+            if (id == 0 || id > WateringController::kRuleCount)
+            {
+                sendErr_(cmd_id, "invalid id");
+                return;
+            }
+            bool on = false;
+            bool has_state = false;
+            if (obj["status"].is<bool>() || obj["status"].is<int>())
+            {
+                on = obj["status"].is<bool>() ? obj["status"].as<bool>() : (obj["status"].as<int>() != 0);
+                has_state = true;
+            }
+            else if (obj["state"].is<bool>() || obj["state"].is<int>())
+            {
+                on = obj["state"].is<bool>() ? obj["state"].as<bool>() : (obj["state"].as<int>() != 0);
+                has_state = true;
+            }
+            else if (obj["state"].is<const char *>())
+            {
+                String s = obj["state"].as<const char *>();
+                s.toLowerCase();
+                on = (s == "on");
+                has_state = true;
+            }
+            if (!has_state)
+            {
+                sendErr_(cmd_id, "missing state");
+                return;
+            }
+            if (!_watering.setStatus(id, on))
+            {
+                sendErr_(cmd_id, "failed");
+                return;
+            }
+            sendAck_(cmd_id);
+            return;
         }
-        doc["count"] = sent;
-        sendAck_(cmd_id, doc);
+        sendErr_(cmd_id, "unsupported");
     }
 
     void handleRing_(uint16_t cmd_id, const String &action, JsonVariantConst params)
@@ -2167,7 +2595,18 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if ((uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextRemoteCmdId_();
@@ -2190,6 +2629,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         return true;
     }
 
@@ -2201,11 +2641,22 @@ private:
             return false;
         const uint32_t now = millis();
         if (_remote_all_cmd_id != 0)
-            return false;
+        {
+            if (_remote_all_pending_ms && (uint32_t)(now - _remote_all_pending_ms) > 4000u)
+            {
+                _remote_all_cmd_id = 0;
+                _remote_all_pending_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (_remote_all_updated_ms && (uint32_t)(now - _remote_all_updated_ms) < 2000u)
             return false;
         const uint16_t cmd_id = nextRemoteCmdId_();
         _remote_all_cmd_id = cmd_id;
+        _remote_all_pending_ms = now;
         StaticJsonDocument<192> doc;
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Meteo;
@@ -2222,11 +2673,13 @@ private:
         if (len == 0)
         {
             _remote_all_cmd_id = 0;
+            _remote_all_pending_ms = 0;
             return false;
         }
         if (!_node->send((uint8_t)StackMsgType::CmdGet, _tx_payload_buf, len))
         {
             _remote_all_cmd_id = 0;
+            _remote_all_pending_ms = 0;
             return false;
         }
         return true;
@@ -2243,7 +2696,18 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if ((uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextRemoteCmdId_();
@@ -2266,6 +2730,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         return true;
     }
 
@@ -2280,7 +2745,18 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if ((uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextRemoteCmdId_();
@@ -2303,6 +2779,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         return true;
     }
 
@@ -2317,7 +2794,18 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if ((uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextRemoteCmdId_();
@@ -2340,6 +2828,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         return true;
     }
 
@@ -2354,7 +2843,18 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if ((uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextRemoteCmdId_();
@@ -2377,6 +2877,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         return true;
     }
 
@@ -2391,7 +2892,19 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            // Drop stuck pending request to avoid long freezes on display updates.
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if ((uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextRemoteCmdId_();
@@ -2414,6 +2927,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         return true;
     }
 
@@ -2428,7 +2942,18 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if ((uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextRemoteCmdId_();
@@ -2451,6 +2976,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         return true;
     }
 
@@ -2714,6 +3240,7 @@ private:
         if (_remote_all_cmd_id != 0 && cmd_id == _remote_all_cmd_id)
         {
             _remote_all_cmd_id = 0;
+            _remote_all_pending_ms = 0;
             _remote_all_updated_ms = millis();
             const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
             if (!ok)
@@ -2730,6 +3257,7 @@ private:
                 if (!cache || !cache->items)
                     continue;
                 cache->pending = false;
+                cache->pending_since_ms = 0;
                 cache->updated_ms = millis();
                 cache->last_ok = true;
                 cache->last_error = "";
@@ -2769,6 +3297,7 @@ private:
         const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
         JsonArrayConst items = _rx_doc["data"]["items"].as<JsonArrayConst>();
         cache->pending = false;
+        cache->pending_since_ms = 0;
         cache->updated_ms = millis();
         cache->last_ok = false;
         cache->last_error = "";
@@ -2817,6 +3346,7 @@ private:
         const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
         JsonArrayConst items = _rx_doc["data"]["items"].as<JsonArrayConst>();
         cache->pending = false;
+        cache->pending_since_ms = 0;
         cache->updated_ms = millis();
         cache->last_ok = false;
         cache->last_error = "";
@@ -2857,6 +3387,7 @@ private:
         const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
         JsonArrayConst items = _rx_doc["data"]["items"].as<JsonArrayConst>();
         cache->pending = false;
+        cache->pending_since_ms = 0;
         cache->updated_ms = millis();
         cache->last_ok = false;
         cache->last_error = "";
@@ -2897,6 +3428,7 @@ private:
         const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
         JsonArrayConst items = _rx_doc["data"]["items"].as<JsonArrayConst>();
         cache->pending = false;
+        cache->pending_since_ms = 0;
         cache->updated_ms = millis();
         cache->last_ok = false;
         cache->last_error = "";
@@ -2937,6 +3469,7 @@ private:
         const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (_rx_doc["ok"] | false);
         JsonArrayConst items = _rx_doc["data"]["items"].as<JsonArrayConst>();
         cache->pending = false;
+        cache->pending_since_ms = 0;
         cache->updated_ms = millis();
         cache->last_ok = false;
         cache->last_error = "";
@@ -2980,6 +3513,7 @@ private:
         JsonArrayConst items = _rx_doc["data"]["items"].as<JsonArrayConst>();
         cache->pending = false;
         cache->updated_ms = millis();
+        cache->pending_since_ms = 0;
         cache->last_ok = false;
         cache->last_error = "";
         if (!ok)
@@ -3022,6 +3556,7 @@ private:
         JsonObjectConst data = _rx_doc["data"];
         JsonArrayConst items = data["items"].as<JsonArrayConst>();
         cache->pending = false;
+        cache->pending_since_ms = 0;
         cache->updated_ms = millis();
         cache->last_ok = false;
         cache->last_error = "";
