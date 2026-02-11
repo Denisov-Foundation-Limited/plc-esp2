@@ -10,6 +10,8 @@
 /**********************************************************************/
 
 #pragma once
+#include <LittleFS.h>
+#include "utils/configs.hpp"
 
 class WebInterface;
 class AsyncWebServer;
@@ -18,6 +20,11 @@ class AsyncWebServerRequest;
 class ControllersHandler
 {
 public:
+    static bool hasStartupConfig_()
+    {
+        return LittleFS.exists(Configs::kPath);
+    }
+
     static void registerRoutes(WebInterface &web, AsyncWebServer &server)
     {
         server.on("/controllers", HTTP_POST,
@@ -30,40 +37,41 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        const bool has_config = hasStartupConfig_();
         String page = FPSTR(kWebInterfaceControllersHtml);
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", web.navHtml_());
         if (web._controllers)
         {
-            const bool enabled = web._controllers->sockets().controllerEnabled();
+            const bool enabled = has_config && web._controllers->sockets().controllerEnabled();
             page.replace("%SOCKETS_ENABLED_CHECKED%", enabled ? "checked" : "");
             page.replace("%SOCKETS_ENABLED_LABEL%", enabled ? "включены" : "выключены");
-            const bool lights_enabled = web._controllers->sockets().lightsEnabled();
+            const bool lights_enabled = has_config && web._controllers->sockets().lightsEnabled();
             page.replace("%LIGHTS_ENABLED_CHECKED%", lights_enabled ? "checked" : "");
             page.replace("%LIGHTS_ENABLED_LABEL%", lights_enabled ? "включены" : "выключены");
-            const bool meteo_enabled = web._controllers->meteo().controllerEnabled();
+            const bool meteo_enabled = has_config && web._controllers->meteo().controllerEnabled();
             page.replace("%METEO_ENABLED_CHECKED%", meteo_enabled ? "checked" : "");
             page.replace("%METEO_ENABLED_LABEL%", meteo_enabled ? "включено" : "выключено");
-            const bool thermo_enabled = web._controllers->thermo().controllerEnabled();
+            const bool thermo_enabled = has_config && web._controllers->thermo().controllerEnabled();
             page.replace("%THERMO_ENABLED_CHECKED%", thermo_enabled ? "checked" : "");
             page.replace("%THERMO_ENABLED_LABEL%", thermo_enabled ? "включено" : "выключено");
-            const bool tanks_enabled = web._controllers->tanks().controllerEnabled();
+            const bool tanks_enabled = has_config && web._controllers->tanks().controllerEnabled();
             page.replace("%TANKS_ENABLED_CHECKED%", tanks_enabled ? "checked" : "");
             page.replace("%TANKS_ENABLED_LABEL%", tanks_enabled ? "включены" : "выключены");
-            const bool septic_enabled = web._controllers->septic().controllerEnabled();
+            const bool septic_enabled = has_config && web._controllers->septic().controllerEnabled();
             page.replace("%SEPTIC_ENABLED_CHECKED%", septic_enabled ? "checked" : "");
             page.replace("%SEPTIC_ENABLED_LABEL%", septic_enabled ? "включены" : "выключены");
-            const bool ring_enabled = web._controllers->ring().controllerEnabled();
+            const bool ring_enabled = has_config && web._controllers->ring().controllerEnabled();
             page.replace("%RING_ENABLED_CHECKED%", ring_enabled ? "checked" : "");
             page.replace("%RING_ENABLED_LABEL%", ring_enabled ? "включен" : "выключен");
-            const bool security_enabled = web._controllers->security().controllerEnabled();
+            const bool security_enabled = has_config && web._controllers->security().controllerEnabled();
             page.replace("%SECURITY_ENABLED_CHECKED%", security_enabled ? "checked" : "");
-            const bool watering_enabled = web._controllers->watering().controllerEnabled();
+            const bool watering_enabled = has_config && web._controllers->watering().controllerEnabled();
             page.replace("%WATERING_ENABLED_CHECKED%", watering_enabled ? "checked" : "");
-            const bool avr_enabled = web._controllers->avr().controllerEnabled();
+            const bool avr_enabled = has_config && web._controllers->avr().controllerEnabled();
             page.replace("%AVR_ENABLED_CHECKED%", avr_enabled ? "checked" : "");
             page.replace("%AVR_ENABLED_LABEL%", avr_enabled ? "включен" : "выключен");
-            const bool leak_enabled = web._controllers->leak().controllerEnabled();
+            const bool leak_enabled = has_config && web._controllers->leak().controllerEnabled();
             page.replace("%LEAK_ENABLED_CHECKED%", leak_enabled ? "checked" : "");
             page.replace("%LEAK_ENABLED_LABEL%", leak_enabled ? "включены" : "выключены");
             page.replace("%SECURITY_ENABLED_LABEL%", security_enabled ? "включена" : "выключена");
@@ -105,6 +113,8 @@ public:
         page.replace("%WATERING_STATUS%", web._watering_status);
         page.replace("%AVR_STATUS%", web._avr_status);
         page.replace("%LEAK_STATUS%", web._leak_status);
+        page.replace("%CONTROLLERS_SWITCH_DISABLED%", has_config ? "" : "disabled");
+        page.replace("%CONTROLLERS_SWITCH_LOCK%", has_config ? "0" : "1");
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -114,6 +124,12 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        if (!hasStartupConfig_())
+        {
+            web._controllers_status = "Недоступно до сохранения startup-config";
+            web.sendRedirect_(request, "/controllers", set_cookie);
+            return;
+        }
         if (!web._controllers)
         {
             web._controllers_status = "Контроллеры недоступны";

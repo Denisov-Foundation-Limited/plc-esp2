@@ -325,7 +325,41 @@ private:
         const StackCache::StackLeakCache *stack_cache = nullptr;
         if (stack_view && web._stack_cache)
             stack_cache = web.stackCache().leakCache(node_id);
-        for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+        size_t render_count = LeakController::kZoneCount ? 1u : 0u;
+        if (stack_view)
+        {
+            if (stack_cache && stack_cache->has_data && stack_cache->items && stack_cache->item_count)
+            {
+                size_t last_enabled_id = 0;
+                for (size_t i = 0; i < stack_cache->item_count; ++i)
+                {
+                    const auto &it = stack_cache->items[i];
+                    if (it.enabled && it.id > last_enabled_id)
+                        last_enabled_id = it.id;
+                }
+                if (last_enabled_id > 0)
+                {
+                    const size_t count = last_enabled_id + 1u;
+                    render_count = count > LeakController::kZoneCount ? LeakController::kZoneCount : count;
+                }
+            }
+        }
+        else
+        {
+            size_t last_enabled_idx = SIZE_MAX;
+            for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+            {
+                const LeakController::ZoneConfig *cfg = leak.configByIndex(i);
+                if (cfg && cfg->enabled)
+                    last_enabled_idx = i;
+            }
+            if (last_enabled_idx != SIZE_MAX)
+            {
+                const size_t count = last_enabled_idx + 2u;
+                render_count = count > LeakController::kZoneCount ? LeakController::kZoneCount : count;
+            }
+        }
+        for (size_t i = 0; i < render_count; ++i)
         {
             const size_t id = i + 1;
             bool cfg_enabled = false;

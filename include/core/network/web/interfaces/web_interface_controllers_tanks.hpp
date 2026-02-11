@@ -1,5 +1,23 @@
 #pragma once
 
+    size_t tanksLocalRenderCount_() const
+    {
+        if (!_controllers)
+            return 0;
+        TankController &tanks = _controllers->tanks();
+        size_t last_enabled_idx = SIZE_MAX;
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = tanks.configByIndex(i);
+            if (cfg && cfg->enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            return TankController::kTankCount ? 1u : 0u;
+        const size_t count = last_enabled_idx + 2u;
+        return count > TankController::kTankCount ? TankController::kTankCount : count;
+    }
+
     String tanksDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
     {
         if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
@@ -105,7 +123,21 @@
         if (reserve < 8192u)
             reserve = 8192u;
         items.reserve(reserve);
+        size_t render_count = cache->item_count;
+        size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            if (cache->items[i].enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            render_count = cache->item_count ? 1u : 0u;
+        else
+        {
+            const size_t count = last_enabled_idx + 2u;
+            render_count = count > cache->item_count ? cache->item_count : count;
+        }
+        for (size_t i = 0; i < render_count; ++i)
         {
             const StackTankItem &cfg = cache->items[i];
             const char *level = "0%";
@@ -308,26 +340,15 @@
             items += "</div></div></div>";
         };
 
-        const TankController::TankConfig *first_disabled = nullptr;
-        const TankController::TankState *first_disabled_state = nullptr;
-        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        const size_t render_count = tanksLocalRenderCount_();
+        for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = tanks.configByIndex(i);
             const auto *st = tanks.stateByIndex(i);
             if (!cfg || !st)
                 continue;
-            if (cfg->enabled)
-            {
-                appendRow(*cfg, *st, true);
-            }
-            else if (!first_disabled)
-            {
-                first_disabled = cfg;
-                first_disabled_state = st;
-            }
+            appendRow(*cfg, *st, cfg->enabled);
         }
-        if (first_disabled && first_disabled_state)
-            appendRow(*first_disabled, *first_disabled_state, false);
         if (items.length() == 0)
             items = "<div class=\"tile\" style=\"color:#94a3b8\"><strong>Баки отсутствуют</strong></div>";
         return items;

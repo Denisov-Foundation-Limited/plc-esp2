@@ -140,7 +140,9 @@ private:
         Watering,
         SecurityStatus,
         SecuritySensors,
-        Ring
+        Ring,
+        Avr,
+        Leak
     };
 
     struct PendingStackCmd
@@ -432,6 +434,10 @@ private:
             ok = handleCmdSecurity_(action, args);
         else if (ctrl == "ring")
             ok = handleCmdRing_(action, args);
+        else if (ctrl == "avr")
+            ok = handleCmdAvr_(action, args);
+        else if (ctrl == "leak")
+            ok = handleCmdLeak_(action, args);
 
         sendAck_(req_id, ok, ok ? "" : "failed");
     }
@@ -554,6 +560,49 @@ private:
             stack_action = "set";
             params["state"] = (String(args["state"] | "") == "on");
         }
+        else if (ctrl == "avr")
+        {
+            feature = StackFeature::Avr;
+            stack_action = "set";
+            if (action == "auto")
+                params["auto_mode"] = (String(args["state"] | "") == "on");
+            else if (action == "source")
+                params["manual_source"] = args["source"] | "off";
+            else if (action == "clear_fault")
+                params["clear_fault"] = true;
+            else
+            {
+                sendError_(req_id, "unsupported action");
+                return;
+            }
+        }
+        else if (ctrl == "leak")
+        {
+            feature = StackFeature::Leak;
+            stack_action = "set";
+            if (action == "power")
+            {
+                JsonArray zones = params["zones"].to<JsonArray>();
+                JsonObject z = zones.add<JsonObject>();
+                z["id"] = (unsigned)(args["id"] | 0);
+                z["power_on"] = (String(args["state"] | "") == "on");
+            }
+            else if (action == "ack_all")
+            {
+                params["ack_all"] = true;
+            }
+            else if (action == "ack")
+            {
+                // Stack leak API supports only ack_all. Keep a dedicated action for cloud API;
+                // remote execution falls back to ack_all.
+                params["ack_all"] = true;
+            }
+            else
+            {
+                sendError_(req_id, "unsupported action");
+                return;
+            }
+        }
         else
         {
             sendError_(req_id, "unknown controller");
@@ -669,6 +718,49 @@ private:
         return _controllers.ring().setHoldRelayWithSource(on, RingController::Source::Web);
     }
 
+    bool handleCmdAvr_(const String &action, JsonObjectConst args)
+    {
+        if (action == "auto")
+            return _controllers.avr().setAutoMode((String(args["state"] | "") == "on"));
+        if (action == "source")
+        {
+            String src = args["source"] | "";
+            src.toLowerCase();
+            if (src == "main")
+                return _controllers.avr().setManualSource(AvrController::Source::Main);
+            if (src == "reserve")
+                return _controllers.avr().setManualSource(AvrController::Source::Reserve);
+            return _controllers.avr().setManualSource(AvrController::Source::Off);
+        }
+        if (action == "clear_fault")
+        {
+            _controllers.avr().clearFault();
+            return true;
+        }
+        return false;
+    }
+
+    bool handleCmdLeak_(const String &action, JsonObjectConst args)
+    {
+        if (action == "ack_all")
+            return _controllers.leak().ackAll();
+        if (action == "ack")
+        {
+            const uint8_t id = (uint8_t)(args["id"] | 0);
+            if (id == 0)
+                return false;
+            return _controllers.leak().ack(id);
+        }
+        if (action == "power")
+        {
+            const uint8_t id = (uint8_t)(args["id"] | 0);
+            if (id == 0)
+                return false;
+            return _controllers.leak().setPower(id, (String(args["state"] | "") == "on"));
+        }
+        return false;
+    }
+
     void sendAck_(const String &reply_to, bool ok, const char *error)
     {
         DynamicJsonDocument doc(256);
@@ -748,6 +840,8 @@ private:
         p->pending_mask |= maskFor_(StackPart::SecurityStatus);
         p->pending_mask |= maskFor_(StackPart::SecuritySensors);
         p->pending_mask |= maskFor_(StackPart::Ring);
+        p->pending_mask |= maskFor_(StackPart::Avr);
+        p->pending_mask |= maskFor_(StackPart::Leak);
 
         sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Sockets, "get");
         sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Sockets, "get_lights");
@@ -762,6 +856,8 @@ private:
         sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Security, "status");
         sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Security, "get");
         sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Ring, "get");
+        sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Avr, "get");
+        sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Leak, "get");
     }
 
     void sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
@@ -969,6 +1065,40 @@ private:
                 ring["relay"] = data["relay"].as<unsigned>();
             ring["relay_on"] = data["relay_on"] | false;
         }
+        else if (part == StackPart::Avr)
+        {
+            JsonObject avr = ctrls["avr"].to<JsonObject>();
+            if (avr.isNull())
+                avr = ctrls.createNestedObject("avr");
+            avr["enabled"] = data["enabled"] | false;
+            avr["auto_mode"] = data["auto_mode"] | true;
+            avr["prefer_main"] = data["prefer_main"] | true;
+            avr["auto_return_main"] = data["auto_return_main"] | true;
+            if (data["main_ok_port"].is<unsigned>())
+                avr["main_ok_port"] = data["main_ok_port"].as<unsigned>();
+            if (data["reserve_ok_port"].is<unsigned>())
+                avr["reserve_ok_port"] = data["reserve_ok_port"].as<unsigned>();
+            if (data["relay_main_port"].is<unsigned>())
+                avr["relay_main_port"] = data["relay_main_port"].as<unsigned>();
+            if (data["relay_reserve_port"].is<unsigned>())
+                avr["relay_reserve_port"] = data["relay_reserve_port"].as<unsigned>();
+            if (data["feedback_main_port"].is<unsigned>())
+                avr["feedback_main_port"] = data["feedback_main_port"].as<unsigned>();
+            if (data["feedback_reserve_port"].is<unsigned>())
+                avr["feedback_reserve_port"] = data["feedback_reserve_port"].as<unsigned>();
+            avr["main_ok"] = data["main_ok"] | false;
+            avr["reserve_ok"] = data["reserve_ok"] | false;
+            avr["relay_main_on"] = data["relay_main_on"] | false;
+            avr["relay_reserve_on"] = data["relay_reserve_on"] | false;
+            avr["active_source"] = data["active_source"] | "";
+            avr["target_source"] = data["target_source"] | "";
+            avr["fault"] = data["fault"] | "";
+            avr["transfer"] = data["transfer"] | false;
+        }
+        else if (part == StackPart::Leak)
+        {
+            copyItems_(ctrls, "leak", data["items"].as<JsonArrayConst>(), first_part);
+        }
     }
 
     static void copyItems_(JsonObject &dst_parent, const char *key, JsonArrayConst items, bool reset)
@@ -1058,6 +1188,8 @@ private:
         fillWatering_(out.createNestedArray("watering"));
         fillSecurity_(out.createNestedObject("security"));
         fillRing_(out.createNestedObject("ring"));
+        fillAvr_(out.createNestedObject("avr"));
+        fillLeak_(out.createNestedArray("leak"));
     }
 
     void fillSockets_(JsonArray out, bool lights)
@@ -1193,6 +1325,8 @@ private:
             JsonObject o = out.add<JsonObject>();
             o["id"] = (unsigned)cfg->id;
             o["enabled"] = cfg->enabled;
+            if (cfg->name.length())
+                o["name"] = cfg->name;
             o["monitor"] = cfg->monitoring_on;
             if (cfg->warning_port != SepticController::kInvalidPort)
                 o["warning_port"] = cfg->warning_port;
@@ -1277,6 +1411,7 @@ private:
                 o["port"] = cfg->port;
             if (cfg->name.length())
                 o["name"] = cfg->name;
+            o["silent"] = cfg->silent;
             o["detect"] = st->is_detect;
         }
     }
@@ -1291,6 +1426,62 @@ private:
         if (cfg.relay_port != RingController::kInvalidPort)
             out["relay"] = cfg.relay_port;
         out["relay_on"] = st.relay_on;
+    }
+
+    void fillAvr_(JsonObject out)
+    {
+        const auto &cfg = _controllers.avr().config();
+        const auto &st = _controllers.avr().state();
+        out["enabled"] = cfg.enabled;
+        out["auto_mode"] = cfg.auto_mode;
+        out["prefer_main"] = cfg.prefer_main;
+        out["auto_return_main"] = cfg.auto_return_main;
+        if (cfg.main_ok_port != AvrController::kInvalidPort)
+            out["main_ok_port"] = cfg.main_ok_port;
+        if (cfg.reserve_ok_port != AvrController::kInvalidPort)
+            out["reserve_ok_port"] = cfg.reserve_ok_port;
+        if (cfg.relay_main_port != AvrController::kInvalidPort)
+            out["relay_main_port"] = cfg.relay_main_port;
+        if (cfg.relay_reserve_port != AvrController::kInvalidPort)
+            out["relay_reserve_port"] = cfg.relay_reserve_port;
+        if (cfg.feedback_main_port != AvrController::kInvalidPort)
+            out["feedback_main_port"] = cfg.feedback_main_port;
+        if (cfg.feedback_reserve_port != AvrController::kInvalidPort)
+            out["feedback_reserve_port"] = cfg.feedback_reserve_port;
+        out["main_ok"] = st.main_ok;
+        out["reserve_ok"] = st.reserve_ok;
+        out["relay_main_on"] = st.relay_main_on;
+        out["relay_reserve_on"] = st.relay_reserve_on;
+        out["active_source"] = AvrController::sourceName(st.active_source);
+        out["target_source"] = AvrController::sourceName(st.target_source);
+        out["fault"] = AvrController::faultName(st.fault);
+        out["transfer"] = st.transfer_in_progress;
+    }
+
+    void fillLeak_(JsonArray out)
+    {
+        for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+        {
+            const auto *cfg = _controllers.leak().configByIndex(i);
+            const auto *st = _controllers.leak().stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            JsonObject o = out.add<JsonObject>();
+            o["id"] = (unsigned)cfg->id;
+            o["enabled"] = cfg->enabled;
+            o["power_on"] = cfg->power_on;
+            o["sensor_active_low"] = cfg->sensor_active_low;
+            if (cfg->sensor_port != LeakController::kInvalidPort)
+                o["sensor"] = cfg->sensor_port;
+            if (cfg->valve_port != LeakController::kInvalidPort)
+                o["valve"] = cfg->valve_port;
+            if (cfg->alarm_port != LeakController::kInvalidPort)
+                o["alarm"] = cfg->alarm_port;
+            if (cfg->name.length())
+                o["name"] = cfg->name;
+            o["wet"] = st->wet;
+            o["alarm_latched"] = st->alarm_latched;
+        }
     }
 
     void fillStackInfo_(JsonObject out)
@@ -1472,6 +1663,10 @@ private:
             return StackPart::SecuritySensors;
         if (feature == StackFeature::Ring)
             return StackPart::Ring;
+        if (feature == StackFeature::Avr && strcmp(action, "get") == 0)
+            return StackPart::Avr;
+        if (feature == StackFeature::Leak && strcmp(action, "get") == 0)
+            return StackPart::Leak;
         return StackPart::None;
     }
 

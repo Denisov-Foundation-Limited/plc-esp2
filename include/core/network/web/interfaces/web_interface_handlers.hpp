@@ -25,3 +25,4 @@
 #include "core/network/web/handlers/tank_handler.hpp"
 #include "core/network/web/handlers/avr_handler.hpp"
 #include "core/network/web/handlers/leak_handler.hpp"
+#include "core/network/web/handlers/rules_handler.hpp"

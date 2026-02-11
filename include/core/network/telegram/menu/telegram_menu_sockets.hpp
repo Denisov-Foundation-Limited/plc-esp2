@@ -42,17 +42,12 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_sockets)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_sockets)
         {
             reply = "Розетки недоступны";
             return true;
         }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
-        {
-            reply = "Список доступен только для локального устройства";
-            return true;
-        }
-        const String text = TelegramMenuSockets::socketListTextHtml_(*TelegramMenu::_self, false);
+        const String text = TelegramMenuSockets::socketListTextHtml_(*TelegramMenu::_self, u.chat_id, false);
         bot.sendText(u.chat_id, text, "", "HTML");
         return true;
     }
@@ -153,11 +148,80 @@ public:
         out.push_back(F("Назад"));
     }
 
-    static String socketListTextHtml_(TelegramMenu &self, bool lights_only = false)
+    static String socketListTextHtml_(TelegramMenu &self, int64_t chat_id, bool lights_only = false)
     {
         String out = lights_only ? F("<b>Свет:</b>") : F("<b>Розетки:</b>");
         out.reserve(512);
-        if (!self._sockets)
+        if (self.isLocalSelected_(chat_id))
+        {
+            if (!self._sockets)
+            {
+                out += F("\n  недоступны");
+                return out;
+            }
+            bool any = false;
+            if (lights_only)
+            {
+                for (size_t i = 0; i < SocketController::kLightCount; ++i)
+                {
+                    const auto *cfg = self._sockets->lightConfigByIndex(i);
+                    const auto *st = self._sockets->lightStateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    any = true;
+                    out += "\n  ";
+                    out += st->relay_on ? F("💡 ") : F("⚪ ");
+                    out += String((unsigned)cfg->id);
+                    out += ": ";
+                    if (cfg->name.length())
+                    {
+                        out += "<b>";
+                        out += self.escapeHtml_(cfg->name);
+                        out += "</b>";
+                    }
+                    else
+                    {
+                        out += "-";
+                    }
+                }
+            }
+            else
+            {
+                for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+                {
+                    const auto *cfg = self._sockets->configByIndex(i);
+                    const auto *st = self._sockets->stateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    any = true;
+                    out += "\n  ";
+                    out += st->relay_on ? F("🟢 ") : F("⚪ ");
+                    out += String((unsigned)cfg->id);
+                    out += ": ";
+                    if (cfg->name.length())
+                    {
+                        out += "<b>";
+                        out += self.escapeHtml_(cfg->name);
+                        out += "</b>";
+                    }
+                    else
+                    {
+                        out += "-";
+                    }
+                }
+            }
+            if (!any)
+                out += F("\n  пусто");
+            return out;
+        }
+
+        if (!self._stack_cache)
+        {
+            out += F("\n  недоступны");
+            return out;
+        }
+        const uint32_t node_id = self.selectedNodeId_(chat_id);
+        if (node_id == 0)
         {
             out += F("\n  недоступны");
             return out;
@@ -165,51 +229,65 @@ public:
         bool any = false;
         if (lights_only)
         {
-            for (size_t i = 0; i < SocketController::kLightCount; ++i)
+            const auto *cache = self._stack_cache->lightsCache(node_id);
+            if (!cache || !cache->has_data)
             {
-                const auto *cfg = self._sockets->lightConfigByIndex(i);
-                const auto *st = self._sockets->lightStateByIndex(i);
-                if (!cfg || !st || !cfg->enabled)
-                    continue;
-                any = true;
-                out += "\n  ";
-                out += st->relay_on ? F("🟢 ") : F("🔴 ");
-                out += String((unsigned)cfg->id);
-                out += ": ";
-                if (cfg->name.length())
+                self._stack_cache->requestLights(node_id);
+            }
+            else
+            {
+                for (size_t i = 0; i < cache->item_count; ++i)
                 {
-                    out += "<b>";
-                    out += self.escapeHtml_(cfg->name);
-                    out += "</b>";
-                }
-                else
-                {
-                    out += "-";
+                    const auto &it = cache->items[i];
+                    if (!it.enabled)
+                        continue;
+                    any = true;
+                    out += "\n  ";
+                    out += it.state ? F("💡 ") : F("⚪ ");
+                    out += String((unsigned)it.id);
+                    out += ": ";
+                    if (it.name[0])
+                    {
+                        out += "<b>";
+                        out += self.escapeHtml_(String(it.name));
+                        out += "</b>";
+                    }
+                    else
+                    {
+                        out += "-";
+                    }
                 }
             }
         }
         else
         {
-            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+            const auto *cache = self._stack_cache->socketsCache(node_id);
+            if (!cache || !cache->has_data)
             {
-                const auto *cfg = self._sockets->configByIndex(i);
-                const auto *st = self._sockets->stateByIndex(i);
-                if (!cfg || !st || !cfg->enabled)
-                    continue;
-                any = true;
-                out += "\n  ";
-                out += st->relay_on ? F("🟢 ") : F("🔴 ");
-                out += String((unsigned)cfg->id);
-                out += ": ";
-                if (cfg->name.length())
+                self._stack_cache->requestSockets(node_id);
+            }
+            else
+            {
+                for (size_t i = 0; i < cache->item_count; ++i)
                 {
-                    out += "<b>";
-                    out += self.escapeHtml_(cfg->name);
-                    out += "</b>";
-                }
-                else
-                {
-                    out += "-";
+                    const auto &it = cache->items[i];
+                    if (!it.enabled)
+                        continue;
+                    any = true;
+                    out += "\n  ";
+                    out += it.state ? F("🟢 ") : F("⚪ ");
+                    out += String((unsigned)it.id);
+                    out += ": ";
+                    if (it.name[0])
+                    {
+                        out += "<b>";
+                        out += self.escapeHtml_(String(it.name));
+                        out += "</b>";
+                    }
+                    else
+                    {
+                        out += "-";
+                    }
                 }
             }
         }
@@ -222,11 +300,6 @@ public:
     {
         if (!self._bot)
             return;
-        if (!self.isLocalSelected_(chat_id))
-        {
-            self._bot->sendText(chat_id, F("Список доступен только для локального устройства"));
-            return;
-        }
         TelegramMenu::ChatAuth *st = self.ensureAuth_(chat_id);
         if (st)
         {
@@ -234,9 +307,68 @@ public:
             st->socket_action = 0;
         }
         std::vector<String> labels;
-        TelegramMenuSockets::buildSocketLabels_(self, labels, lights_only);
+        if (self.isLocalSelected_(chat_id))
+        {
+            TelegramMenuSockets::buildSocketLabels_(self, labels, lights_only);
+        }
+        else if (self._stack_cache)
+        {
+            const uint32_t node_id = self.selectedNodeId_(chat_id);
+            if (node_id != 0)
+            {
+                if (lights_only)
+                {
+                    const auto *cache = self._stack_cache->lightsCache(node_id);
+                    if (!cache || !cache->has_data)
+                    {
+                        self._stack_cache->requestLights(node_id);
+                    }
+                    else
+                    {
+                        for (size_t i = 0; i < cache->item_count; ++i)
+                        {
+                            const auto &it = cache->items[i];
+                            if (!it.enabled)
+                                continue;
+                            String label;
+                            label += String((unsigned)it.id);
+                            label += ": ";
+                            label += it.name[0] ? String(it.name) : String("Свет");
+                            labels.push_back(label);
+                        }
+                    }
+                }
+                else
+                {
+                    const auto *cache = self._stack_cache->socketsCache(node_id);
+                    if (!cache || !cache->has_data)
+                    {
+                        self._stack_cache->requestSockets(node_id);
+                    }
+                    else
+                    {
+                        for (size_t i = 0; i < cache->item_count; ++i)
+                        {
+                            const auto &it = cache->items[i];
+                            if (!it.enabled)
+                                continue;
+                            String label;
+                            label += String((unsigned)it.id);
+                            label += ": ";
+                            label += it.name[0] ? String(it.name) : String("Розетка");
+                            labels.push_back(label);
+                        }
+                    }
+                }
+            }
+            labels.push_back(F("Назад"));
+        }
+        else
+        {
+            labels.push_back(F("Назад"));
+        }
         const String markup = TelegramMenu::buildKeyboardMarkup_(labels);
-        const String list = TelegramMenuSockets::socketListTextHtml_(self, lights_only);
+        const String list = TelegramMenuSockets::socketListTextHtml_(self, chat_id, lights_only);
         self._bot->setMenu(chat_id, lights_only ? "lights" : "sockets");
         self._bot->sendText(chat_id, list, markup, "HTML");
     }
@@ -264,43 +396,66 @@ public:
             self._bot->sendText(u.chat_id, lights_only ? F("Неизвестный свет") : F("Неизвестная розетка"));
             return true;
         }
-        if (!self._sockets)
+        if (self.isLocalSelected_(u.chat_id) && !self._sockets)
         {
             self._bot->sendText(u.chat_id, lights_only ? F("Свет недоступен") : F("Розетки недоступны"));
             return true;
         }
-        if (!self.isLocalSelected_(u.chat_id))
+        bool ok = false;
+        if (self.isLocalSelected_(u.chat_id))
         {
-            self._bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
-            return true;
-        }
-        if (lights_only)
-        {
-            const auto *cfg = self._sockets->lightConfig(id);
-            if (!cfg)
+            if (lights_only)
             {
-                self._bot->sendText(u.chat_id, F("Неизвестный свет"));
-                return true;
+                const auto *cfg = self._sockets->lightConfig(id);
+                if (!cfg)
+                {
+                    self._bot->sendText(u.chat_id, F("Неизвестный свет"));
+                    return true;
+                }
+                ok = self._sockets->toggleLightRelayById(id);
             }
-            if (!self._sockets->toggleLightRelayById(id))
+            else
             {
-                self._bot->sendText(u.chat_id, F("Не удалось"));
-                return true;
+                const auto *cfg = self._sockets->config(id);
+                if (!cfg)
+                {
+                    self._bot->sendText(u.chat_id, F("Неизвестная розетка"));
+                    return true;
+                }
+                ok = self._sockets->toggleRelayById(id);
             }
         }
         else
         {
-            const auto *cfg = self._sockets->config(id);
-            if (!cfg)
+            const uint32_t node_id = self.selectedNodeId_(u.chat_id);
+            if (node_id != 0 && self._stack_master)
             {
-                self._bot->sendText(u.chat_id, F("Неизвестная розетка"));
-                return true;
+                DynamicJsonDocument doc(256);
+                doc["feature"] = (uint8_t)StackFeature::Sockets;
+                doc["action"] = lights_only ? "set_lights" : "set";
+                JsonObject params = doc["params"].to<JsonObject>();
+                JsonArray items = params["items"].to<JsonArray>();
+                JsonObject item = items.add<JsonObject>();
+                item["id"] = (unsigned)id;
+                item["toggle"] = true;
+                char payload[256] = {};
+                const size_t n = serializeJson(doc, payload, sizeof(payload));
+                if (n > 0)
+                    ok = self._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                    reinterpret_cast<const uint8_t *>(payload), n);
+                if (ok && self._stack_cache)
+                {
+                    if (lights_only)
+                        self._stack_cache->requestLights(node_id);
+                    else
+                        self._stack_cache->requestSockets(node_id);
+                }
             }
-            if (!self._sockets->toggleRelayById(id))
-            {
-                self._bot->sendText(u.chat_id, F("Не удалось"));
-                return true;
-            }
+        }
+        if (!ok)
+        {
+            self._bot->sendText(u.chat_id, F("Не удалось"));
+            return true;
         }
         TelegramMenuSockets::sendSocketMenu_(self, u.chat_id, lights_only);
         return true;

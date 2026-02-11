@@ -1,5 +1,23 @@
 #pragma once
 
+    size_t lightsLocalRenderCount_() const
+    {
+        if (!_controllers)
+            return 0;
+        SocketController &sockets = _controllers->sockets();
+        size_t last_enabled_idx = SIZE_MAX;
+        for (size_t i = 0; i < SocketController::kLightCount; ++i)
+        {
+            const auto *cfg = sockets.lightConfigByIndex(i);
+            if (cfg && cfg->enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            return SocketController::kLightCount ? 1u : 0u;
+        const size_t count = last_enabled_idx + 2u;
+        return count > SocketController::kLightCount ? SocketController::kLightCount : count;
+    }
+
     String lightsDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
     {
         if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
@@ -267,7 +285,8 @@
             items += "</div></div>";
         };
 
-        for (size_t i = 0; i < SocketController::kLightCount; ++i)
+        const size_t render_count = lightsLocalRenderCount_();
+        for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = sockets.lightConfigByIndex(i);
             if (!cfg)
@@ -294,7 +313,21 @@
         if (reserve < 8192u)
             reserve = 8192u;
         items.reserve(reserve);
+        size_t render_count = cache->item_count;
+        size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            if (cache->items[i].enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            render_count = cache->item_count ? 1u : 0u;
+        else
+        {
+            const size_t count = last_enabled_idx + 2u;
+            render_count = count > cache->item_count ? cache->item_count : count;
+        }
+        for (size_t i = 0; i < render_count; ++i)
         {
             const StackLightItem &cfg = cache->items[i];
             const bool on = cfg.state;

@@ -2510,6 +2510,7 @@ sendRedirect_(request, "/", set_cookie);
         nav += F("<a href=\"/\">FCPLC</a> | <a href=\"/wifi\">Сеть</a> | ");
         nav += F("<a href=\"/manage\">Прошивка и файлы</a> | <a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a> | ");
         nav += F("<a href=\"/stack\">Стек</a> | <a href=\"/controllers\">Контроллеры</a> | <a href=\"/users\">Пользователи</a> | <a href=\"/display\">Дисплей</a> | ");
+        nav += F("<a href=\"/rules\">Правила</a> | ");
         nav += F("<a href=\"/telegram\">Telegram</a> | <a href=\"/cloud\">Облако</a> | ");
         nav += F("<a href=\"/admin\">Система</a> | <a href=\"/logs\">Logs</a>");
         nav += F("</div>");

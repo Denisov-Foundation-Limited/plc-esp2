@@ -25,3 +25,4 @@
 #include "core/network/web/pages/web_interface_lights.hpp"
 #include "core/network/web/pages/web_interface_avr.hpp"
 #include "core/network/web/pages/web_interface_leak.hpp"
+#include "core/network/web/pages/web_interface_rules.hpp"

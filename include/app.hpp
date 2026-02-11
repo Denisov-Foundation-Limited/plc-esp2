@@ -27,6 +27,7 @@
 #include "core/cli/cli_console.hpp"
 #include "core/network/web/web_interface.hpp"
 #include "core/plc_scan.hpp"
+#include "core/rules_controller.hpp"
 
 #include "hal/at24lc512.hpp"
 #include "hal/dht22.hpp"
@@ -147,6 +148,7 @@ struct ControlContext
     UsersRegistry users;
     TelegramMenu telegram_menu;
     Controllers controllers;
+    RulesController rules;
     MeteoHistory meteo_history;
 
     TaskBinder<TASK_MGR_TSK_COUNT> task_binder;
@@ -158,6 +160,7 @@ struct ControlContext
           telegram_menu(hw.plc, comms.wifi, hw.rtc, comms.telegram_bot, core.configs, core.logs, users),
           controllers(hw.gpio, hw.ow, hw.eeprom_storage, core.logs, comms.telegram_bot, telegram_menu, comms.gsm,
                       hw.rtc),
+          rules(),
           meteo_history(hw.rtc, controllers.meteo()),
           task_binder(core.tm, comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history,
                       hw.display, hw.plc),
@@ -189,7 +192,7 @@ struct NetworkContext
         : web(ActiveBoardProfile::WEB_PORT),
           fw_upgrade(web, ui.console, comms.wifi, core.configs, hw.plc, hw.rtc, comms.telegram,
                      comms.telegram_bot, control.telegram_menu, core.logs, hw.ext, hw.i2c, hw.ow,
-                     control.controllers),
+                     control.controllers, control.rules),
           network(core.logs, comms.wifi, comms.gsm, comms.telegram, comms.telegram_bot, control.telegram_menu,
                   fw_upgrade, web, comms.telegram_wifi_client, control.controllers, hw.plc, hw.rtc),
           stack_slave(hw.io, hw.ds18b20, hw.ow, hw.i2c, hw.plc, hw.rtc, comms.telegram, core.logs, hw.ext,
@@ -208,7 +211,7 @@ struct ConfigContext
     ConfigContext(CoreContext &core, HardwareContext &hw, CommsContext &comms,
                   ControlContext &control, UiContext &ui, NetworkContext &network)
         : configs_manager(core.configs, comms.wifi, comms.telegram, network.network, ui.console,
-                          control.telegram_menu, hw.plc, control.controllers, comms.gsm, control.users)
+                          control.telegram_menu, hw.plc, control.controllers, control.rules, comms.gsm, control.users)
     {
     }
 };
@@ -241,12 +244,18 @@ struct App
 
         control.telegram_menu.setConfigsManager(cfg.configs_manager);
         control.telegram_menu.setStackMaster(net.network.stackMaster());
+        control.telegram_menu.setStackCache(stack_cache);
         control.telegram_menu.setSockets(control.controllers.sockets());
         control.telegram_menu.setMeteo(control.controllers.meteo());
         control.telegram_menu.setThermo(control.controllers.thermo());
         control.telegram_menu.setTanks(control.controllers.tanks());
         control.telegram_menu.setSeptic(control.controllers.septic());
         control.telegram_menu.setSecurity(control.controllers.security());
+        control.telegram_menu.setAvr(control.controllers.avr());
+        control.telegram_menu.setLeak(control.controllers.leak());
+        control.telegram_menu.setRing(control.controllers.ring());
+        control.telegram_menu.setWatering(control.controllers.watering());
+        control.telegram_menu.setRules(control.rules);
 
         stack_cache.setLogger(&core.logs);
         net.fw_upgrade.setStackCache(stack_cache);
@@ -256,6 +265,7 @@ struct App
         net.fw_upgrade.setGsmModem(comms.gsm);
         net.fw_upgrade.setCloudClient(net.network.cloudClient());
         net.fw_upgrade.setUsersRegistry(control.users);
+        net.fw_upgrade.setRules(control.rules);
         net.network.setStackConfig(cfg.configs_manager);
         control.controllers.thermo().setRemoteMeteoProvider(&App::onRemoteMeteo_, this);
         control.controllers.meteo().setRemoteMeteoProvider(&App::onRemoteMeteoProxy_, this);
@@ -2891,7 +2901,7 @@ private:
     }
 
     static constexpr uint32_t kPreArmFreshMs = 8000;
-    static constexpr uint32_t kPreArmWaitMs = 900;
+    static constexpr uint32_t kPreArmWaitMs = 2500;
     static constexpr uint32_t kPreArmPollMs = 1000;
     static constexpr uint32_t kStackNodeStaleMs = 15000;
     static constexpr uint32_t kDisplayNoDataErrMs = 30000;

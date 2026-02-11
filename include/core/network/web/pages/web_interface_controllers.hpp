@@ -133,7 +133,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
             <div class="tile-head">
               <a href="/sockets">Розетки</a>
               <label class="switch">
-                <input type="checkbox" id="sockets-enabled" name="sockets_enabled" %SOCKETS_ENABLED_CHECKED%>
+                <input type="checkbox" id="sockets-enabled" name="sockets_enabled" %SOCKETS_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
@@ -148,7 +148,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
             <div class="tile-head">
               <a href="/lights">Свет</a>
               <label class="switch">
-                <input type="checkbox" id="lights-enabled" name="lights_enabled" %LIGHTS_ENABLED_CHECKED%>
+                <input type="checkbox" id="lights-enabled" name="lights_enabled" %LIGHTS_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
@@ -163,7 +163,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
             <div class="tile-head">
               <a href="/meteo">Метео</a>
               <label class="switch">
-                <input type="checkbox" id="meteo-enabled" name="meteo_enabled" %METEO_ENABLED_CHECKED%>
+                <input type="checkbox" id="meteo-enabled" name="meteo_enabled" %METEO_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
@@ -178,7 +178,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
             <div class="tile-head">
               <a href="/thermo">Термо</a>
               <label class="switch">
-                <input type="checkbox" id="thermo-enabled" name="thermo_enabled" %THERMO_ENABLED_CHECKED%>
+                <input type="checkbox" id="thermo-enabled" name="thermo_enabled" %THERMO_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
@@ -193,7 +193,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
             <div class="tile-head">
               <a href="/tanks">Баки</a>
               <label class="switch">
-                <input type="checkbox" id="tanks-enabled" name="tanks_enabled" %TANKS_ENABLED_CHECKED%>
+                <input type="checkbox" id="tanks-enabled" name="tanks_enabled" %TANKS_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
@@ -208,7 +208,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
             <div class="tile-head">
               <a href="/watering">Полив</a>
               <label class="switch">
-                <input type="checkbox" id="watering-enabled" name="watering_enabled" %WATERING_ENABLED_CHECKED%>
+                <input type="checkbox" id="watering-enabled" name="watering_enabled" %WATERING_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
@@ -223,7 +223,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
             <div class="tile-head">
               <a href="/septic">Септик</a>
               <label class="switch">
-                <input type="checkbox" id="septic-enabled" name="septic_enabled" %SEPTIC_ENABLED_CHECKED%>
+                <input type="checkbox" id="septic-enabled" name="septic_enabled" %SEPTIC_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
@@ -238,7 +238,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
             <div class="tile-head">
               <a href="/ring">Звонок</a>
               <label class="switch">
-                <input type="checkbox" id="ring-enabled" name="ring_enabled" %RING_ENABLED_CHECKED%>
+                <input type="checkbox" id="ring-enabled" name="ring_enabled" %RING_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
@@ -253,7 +253,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
             <div class="tile-head">
               <a href="/security">Охрана</a>
               <label class="switch">
-                <input type="checkbox" id="security-enabled" name="security_enabled" %SECURITY_ENABLED_CHECKED%>
+                <input type="checkbox" id="security-enabled" name="security_enabled" %SECURITY_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
@@ -268,12 +268,12 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
             <div class="tile-head">
               <a href="/avr">АВР</a>
               <label class="switch">
-                <input type="checkbox" id="avr-enabled" name="avr_enabled" %AVR_ENABLED_CHECKED%>
+                <input type="checkbox" id="avr-enabled" name="avr_enabled" %AVR_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
-          <span>АВР</span>
+          <span>Автоматический ввод резерва</span>
           <span class="status">АВР: <strong>%AVR_ENABLED_LABEL%</strong></span>
           <span class="status">%AVR_STATUS%</span>
         </div>
@@ -283,7 +283,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
             <div class="tile-head">
               <a href="/leak">Протечки</a>
               <label class="switch">
-                <input type="checkbox" id="leak-enabled" name="leak_enabled" %LEAK_ENABLED_CHECKED%>
+                <input type="checkbox" id="leak-enabled" name="leak_enabled" %LEAK_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
@@ -296,6 +296,10 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
     </div>
   </div>
   <script>
+    const controllersLock = "%CONTROLLERS_SWITCH_LOCK%" === "1";
+    if (controllersLock) {
+      document.querySelectorAll('input[type="checkbox"][id$="-enabled"]').forEach((el) => { el.disabled = true; });
+    }
     const socketsToggle = document.getElementById('sockets-enabled');
     const socketsForm = document.getElementById('sockets-form');
     if (socketsToggle && socketsForm) {

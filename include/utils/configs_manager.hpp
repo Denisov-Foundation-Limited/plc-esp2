@@ -28,6 +28,7 @@
 #include "utils/users_registry.hpp"
 #include "core/display_slots.hpp"
 #include "plc/plc_control.hpp"
+#include "core/rules_controller.hpp"
 
 class ConfigsManager : public ConfigsManagerIface
 {
@@ -37,7 +38,7 @@ public:
 
     ConfigsManager(Configs &configs, WifiManager &wifi, TelegramClient &telegram,
                    Network &network, CliConsole &console, TelegramMenu &telegram_menu, PlcControl &plc,
-                   Controllers &controllers, GsmModem &gsm, UsersRegistry &users)
+                   Controllers &controllers, RulesController &rules, GsmModem &gsm, UsersRegistry &users)
         : _configs(configs),
           _wifi(wifi),
           _telegram(telegram),
@@ -46,6 +47,7 @@ public:
           _telegram_menu(telegram_menu),
           _plc(plc),
           _controllers(controllers),
+          _rules(rules),
           _gsm(gsm),
           _users(users)
     {
@@ -206,6 +208,8 @@ public:
 
         JsonObject ctrl = _doc["controllers"].to<JsonObject>();
         _controllers.serialize(ctrl);
+        JsonArray rules = _doc["rules"].to<JsonArray>();
+        _rules.serialize(rules);
 
         JsonObject g = _doc["gsm"].to<JsonObject>();
         g["enabled"] = _gsm.enabled();
@@ -615,6 +619,10 @@ private:
         {
             _controllers.applyConfig(doc["controllers"].as<JsonObjectConst>());
         }
+        if (doc["rules"].is<JsonArrayConst>())
+        {
+            _rules.applyConfig(doc["rules"].as<JsonArrayConst>());
+        }
     }
 
     static String sanitizeUtf8_(const String &in)
@@ -723,6 +731,7 @@ private:
     TelegramMenu &_telegram_menu;
     PlcControl &_plc;
     Controllers &_controllers;
+    RulesController &_rules;
     GsmModem &_gsm;
     UsersRegistry &_users;
     StackRole _stack_role = StackRole::Master;

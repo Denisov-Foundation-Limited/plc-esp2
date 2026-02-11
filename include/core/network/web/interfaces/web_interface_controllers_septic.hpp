@@ -1,5 +1,23 @@
 #pragma once
 
+    size_t septicLocalRenderCount_() const
+    {
+        if (!_controllers)
+            return 0;
+        SepticController &septic = _controllers->septic();
+        size_t last_enabled_idx = SIZE_MAX;
+        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        {
+            const auto *cfg = septic.configByIndex(i);
+            if (cfg && cfg->enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            return SepticController::kSepticCount ? 1u : 0u;
+        const size_t count = last_enabled_idx + 2u;
+        return count > SepticController::kSepticCount ? SepticController::kSepticCount : count;
+    }
+
     String septicDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
     {
         if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
@@ -105,7 +123,21 @@
         if (reserve < 4096u)
             reserve = 4096u;
         items.reserve(reserve);
+        size_t render_count = cache->item_count;
+        size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            if (cache->items[i].enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            render_count = cache->item_count ? 1u : 0u;
+        else
+        {
+            const size_t count = last_enabled_idx + 2u;
+            render_count = count > cache->item_count ? cache->item_count : count;
+        }
+        for (size_t i = 0; i < render_count; ++i)
         {
             const StackSepticItem &cfg = cache->items[i];
             const bool warn = cfg.warning;
@@ -162,7 +194,8 @@
         String items;
         items.reserve(2048);
         SepticController &septic = _controllers->septic();
-        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        const size_t render_count = septicLocalRenderCount_();
+        for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = septic.configByIndex(i);
             const auto *st = septic.stateByIndex(i);

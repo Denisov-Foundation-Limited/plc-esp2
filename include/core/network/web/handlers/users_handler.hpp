@@ -33,12 +33,12 @@ public:
         String page = FPSTR(kWebInterfaceUsersHtml);
         page.replace("%NAV%", web.navHtml_());
         if (!web._users_status.length())
-            web._users_status = "Р“РѕС‚РѕРІРѕ";
+            web._users_status = "Готово";
         page.replace("%USERS_STATUS%", web._users_status);
         page.replace("%USERS_CARDS%", usersCards_(web, read_only));
         page.replace("%USERS_FORM_DISABLED%", read_only ? "disabled" : "");
         page.replace("%USERS_READONLY_NOTE%",
-                     read_only ? "<p class=\"status\">Р РµРґР°РєС‚РёСЂРѕРІР°РЅРёРµ РґРѕСЃС‚СѓРїРЅРѕ С‚РѕР»СЊРєРѕ РЅР° master-СѓСЃС‚СЂРѕР№СЃС‚РІРµ</p>" : "");
+                     read_only ? "<p class=\"status\">Редактирование доступно только на master-устройстве</p>" : "");
         page.replace("%USERS_IBUTTON_DATALIST%", ibuttonDatalist_(web));
         page.replace("%USERS_RFID_DATALIST%", rfidDatalist_(web));
         web.sendHtml_(request, page, set_cookie);
@@ -51,13 +51,13 @@ public:
             return;
         if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave)
         {
-            web._users_status = "Р РµРґР°РєС‚РёСЂРѕРІР°РЅРёРµ РґРѕСЃС‚СѓРїРЅРѕ С‚РѕР»СЊРєРѕ РЅР° master-СѓСЃС‚СЂРѕР№СЃС‚РІРµ";
+            web._users_status = "Редактирование доступно только на master-устройстве";
             web.sendRedirect_(request, "/users", set_cookie);
             return;
         }
         if (!web._users)
         {
-            web._users_status = "Р РµРµСЃС‚СЂ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№ РЅРµРґРѕСЃС‚СѓРїРµРЅ";
+            web._users_status = "Реестр пользователей недоступен";
             web.sendRedirect_(request, "/users", set_cookie);
             return;
         }
@@ -87,9 +87,9 @@ public:
             u.rfid_key = UsersRegistry::normalizeHex(web.paramValue_(request, k_rfid), 20);
         }
         if (web._configs_manager && !web._configs_manager->save())
-            web._users_status = "РћС€РёР±РєР° СЃРѕС…СЂР°РЅРµРЅРёСЏ";
+            web._users_status = "Ошибка сохранения";
         else
-            web._users_status = "РЎРѕС…СЂР°РЅРµРЅРѕ";
+            web._users_status = "Сохранено";
         web.sendRedirect_(request, "/users", set_cookie);
     }
 
@@ -97,7 +97,7 @@ private:
     static String usersCards_(WebInterface &web, bool read_only)
     {
         if (!web._users)
-            return "<div class=\"tile empty\"><strong>Р РµРµСЃС‚СЂ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№ РЅРµРґРѕСЃС‚СѓРїРµРЅ</strong></div>";
+            return "<div class=\"tile empty\"><strong>Реестр пользователей недоступен</strong></div>";
 
         String out;
         out.reserve(16384);
@@ -152,7 +152,7 @@ private:
 
             out += "<div class=\"grid\">";
 
-            out += "<div class=\"form-row full\"><label>РРјСЏ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ</label><input class=\"field\" name=\"u";
+            out += "<div class=\"form-row full\"><label>Имя пользователя</label><input class=\"field\" name=\"u";
             out += p;
             out += "_username\" value=\"";
             WebInterface::appendHtmlEscaped_(out, u.username.c_str());
@@ -160,7 +160,7 @@ private:
             out += disabled;
             out += "></div>";
 
-            out += "<div class=\"form-row full\"><label>Telegram Р»РѕРіРёРЅ</label><input class=\"field\" name=\"u";
+            out += "<div class=\"form-row full\"><label>Telegram логин</label><input class=\"field\" name=\"u";
             out += p;
             out += "_tg_username\" value=\"";
             WebInterface::appendHtmlEscaped_(out, u.tg_username.c_str());
@@ -168,7 +168,7 @@ private:
             out += disabled;
             out += "></div>";
 
-            out += "<div class=\"form-row\"><label>РђРґРјРёРЅ Telegram</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
+            out += "<div class=\"form-row\"><label>Админ Telegram</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
             out += p;
             out += "_tg_admin\"";
             if (u.tg_admin)
@@ -176,7 +176,7 @@ private:
             out += disabled;
             out += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
 
-            out += "<div class=\"form-row\"><label>РЈРІРµРґРѕРјР»РµРЅРёСЏ Telegram</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
+            out += "<div class=\"form-row\"><label>Уведомления Telegram</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
             out += p;
             out += "_tg_notify\"";
             if (u.tg_notify)
@@ -185,7 +185,7 @@ private:
             out += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
 
 
-            out += "<div class=\"form-row full\"><label>РљР»СЋС‡ iButton</label><input class=\"field\" list=\"users-ibutton-last\" name=\"u";
+            out += "<div class=\"form-row full\"><label>Ключ iButton</label><input class=\"field\" list=\"users-ibutton-last\" name=\"u";
             out += p;
             out += "_ibutton\" value=\"";
             WebInterface::appendHtmlEscaped_(out, u.ibutton_key.c_str());
@@ -193,14 +193,14 @@ private:
             out += disabled;
             out += "></div>";
 
-            out += "<div class=\"form-row full\"><label>РљР»СЋС‡ RFID</label><input class=\"field\" list=\"users-rfid-last\" name=\"u";
+            out += "<div class=\"form-row full\"><label>Ключ RFID</label><input class=\"field\" list=\"users-rfid-last\" name=\"u";
             out += p;
             out += "_rfid\" value=\"";
             WebInterface::appendHtmlEscaped_(out, u.rfid_key.c_str());
             out += "\"";
             out += disabled;
             out += "></div>";
-            out += "<div class=\"form-row full\"><label>РўРµР»РµС„РѕРЅ (GSM)</label><input class=\"field\" name=\"u";
+            out += "<div class=\"form-row full\"><label>Телефон (GSM)</label><input class=\"field\" name=\"u";
             out += p;
             out += "_gsm_phone\" value=\"";
             WebInterface::appendHtmlEscaped_(out, u.gsm_phone.c_str());
@@ -216,7 +216,7 @@ private:
             out += disabled;
             out += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
 
-            out += "<div class=\"form-row\"><label>Р—РІРѕРЅРѕРє</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
+            out += "<div class=\"form-row\"><label>Звонок</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
             out += p;
             out += "_gsm_call\"";
             if (u.gsm_call)

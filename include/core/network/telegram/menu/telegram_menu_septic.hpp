@@ -21,14 +21,9 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_septic)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_septic)
         {
             reply = "Септик недоступен";
-            return true;
-        }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
-        {
-            reply = "Список доступен только для локального устройства";
             return true;
         }
         TelegramMenuSeptic::sendSepticMenu_(*TelegramMenu::_self, u.chat_id);
@@ -41,17 +36,12 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_septic)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_septic)
         {
             reply = "Септик недоступен";
             return true;
         }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
-        {
-            reply = "Доступно только для локального устройства";
-            return true;
-        }
-        reply = TelegramMenuSeptic::septicStatusText_(*TelegramMenu::_self);
+        reply = TelegramMenuSeptic::septicStatusText_(*TelegramMenu::_self, u.chat_id);
         return true;
     }
 
@@ -61,17 +51,12 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_septic)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_septic)
         {
             reply = "Септик недоступен";
             return true;
         }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
-        {
-            reply = "Список доступен только для локального устройства";
-            return true;
-        }
-        const String text = TelegramMenuSeptic::septicListTextHtml_(*TelegramMenu::_self);
+        const String text = TelegramMenuSeptic::septicListTextHtml_(*TelegramMenu::_self, u.chat_id);
         bot.sendText(u.chat_id, text, "", "HTML");
         return true;
     }
@@ -83,14 +68,9 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_septic)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_septic)
         {
             reply = "Септик недоступен";
-            return true;
-        }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
-        {
-            reply = "Доступно только для локального устройства";
             return true;
         }
         const char *cmd = "/septic_monitor";
@@ -118,118 +98,192 @@ public:
             reply = "Неверное значение (on/off)";
             return true;
         }
+        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
+        {
+            const uint32_t node_id = TelegramMenu::_self->selectedNodeId_(u.chat_id);
+            if (node_id == 0 || !TelegramMenu::_self->_stack_master)
+            {
+                reply = "Септик недоступен";
+                return true;
+            }
+            DynamicJsonDocument doc(256);
+            doc["feature"] = (uint8_t)StackFeature::Septic;
+            doc["action"] = "set";
+            JsonObject params = doc["params"].to<JsonObject>();
+            params["id"] = (unsigned)id;
+            params["monitor"] = on;
+            char payload[256] = {};
+            const size_t n = serializeJson(doc, payload, sizeof(payload));
+            const bool ok = (n > 0) && TelegramMenu::_self->_stack_master->sendTo(
+                                         node_id, (uint8_t)StackMsgType::CmdSet,
+                                         reinterpret_cast<const uint8_t *>(payload), n);
+            if (ok && TelegramMenu::_self->_stack_cache)
+                TelegramMenu::_self->_stack_cache->requestSeptic(node_id);
+            reply = ok ? (on ? "Питание: 🟢" : "Питание: ⚪") : "Не удалось";
+            return true;
+        }
         if (!TelegramMenu::_self->_septic->setMonitoring(id, on))
         {
             reply = "Не удалось";
             return true;
         }
-        reply = on ? "Мониторинг включен" : "Мониторинг выключен";
+        reply = on ? "Питание: 🟢" : "Питание: ⚪";
         return true;
     }
 
-    static String septicStatusText_(TelegramMenu &self)
+    static String septicStatusText_(TelegramMenu &self, int64_t chat_id)
     {
+        if (!self.isLocalSelected_(chat_id))
+        {
+            if (!self._stack_cache)
+                return "Септик недоступен";
+            const uint32_t node_id = self.selectedNodeId_(chat_id);
+            if (node_id == 0)
+                return "Септик недоступен";
+            const auto *cache = self._stack_cache->septicCache(node_id);
+            if (!cache || !cache->has_data)
+            {
+                self._stack_cache->requestSeptic(node_id);
+                return "Септик:\n  обновление...";
+            }
+            if (cache->item_count == 0)
+                return "Септик:\n  пусто";
+            const StackCache::StackSepticItem &it = cache->items[0];
+            String out = F("Септик:\n");
+            out += F("  Питание: ");
+            out += it.monitor ? "🟢" : "⚪";
+            out += F("\n  Предупреждение: ");
+            out += it.warning ? "🟢" : "⚪";
+            out += F("\n  Тревога: ");
+            out += it.alarm ? "🟢" : "⚪";
+            return out;
+        }
         if (!self._septic)
             return "Септик недоступен";
         String out = F("Септик:\n");
-        out += F("  Контроллер: ");
-        out += self._septic->controllerEnabled() ? "включен" : "выключен";
         const auto *cfg = self._septic->configByIndex(0);
         const auto *st = self._septic->stateByIndex(0);
         if (cfg && st)
         {
-            out += F("\n  Мониторинг: ");
-            out += cfg->monitoring_on ? "вкл" : "выкл";
-            out += F("\n  Warning: ");
-            out += st->warning ? "on" : "off";
-            out += F("\n  Alarm: ");
-            out += st->alarm ? "on" : "off";
-            out += F("\n  W port: ");
-            if (cfg->warning_port != SepticController::kInvalidPort)
-                out += String((unsigned)cfg->warning_port);
-            else
-                out += "none";
-            out += F("\n  A port: ");
-            if (cfg->alarm_port != SepticController::kInvalidPort)
-                out += String((unsigned)cfg->alarm_port);
-            else
-                out += "none";
+            out += F("\n  Питание: ");
+            out += cfg->monitoring_on ? "🟢" : "⚪";
+            out += F("\n  Предупреждение: ");
+            out += st->warning ? "🟢" : "⚪";
+            out += F("\n  Тревога: ");
+            out += st->alarm ? "🟢" : "⚪";
         }
         return out;
     }
 
-    static String septicListTextHtml_(TelegramMenu &self)
+    static String septicListTextHtml_(TelegramMenu &self, int64_t chat_id)
     {
+        if (!self.isLocalSelected_(chat_id))
+        {
+            if (!self._stack_cache)
+                return "Септик недоступен";
+            const uint32_t node_id = self.selectedNodeId_(chat_id);
+            if (node_id == 0)
+                return "Септик недоступен";
+            const auto *cache = self._stack_cache->septicCache(node_id);
+            if (!cache || !cache->has_data)
+            {
+                self._stack_cache->requestSeptic(node_id);
+                return "<b>Септик:</b>\nобновление...";
+            }
+            String out = F("<b>Септик:</b>");
+            bool any = false;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                if (!it.enabled)
+                    continue;
+                any = true;
+                out += F("\n  ");
+                out += String((unsigned)it.id);
+                out += F(": <b>Септик ");
+                out += String((unsigned)it.id);
+                out += F("</b>");
+                out += F("\n    питание: <b>");
+                out += it.monitor ? "🟢" : "⚪";
+                out += F("</b>\n    предупреждение: <b>");
+                out += it.warning ? "🟢" : "⚪";
+                out += F("</b>\n    тревога: <b>");
+                out += it.alarm ? "🟢" : "⚪";
+                out += F("</b>");
+            }
+            if (!any)
+                out += F("\n  пусто");
+            return out;
+        }
         if (!self._septic)
             return "Септик недоступен";
-        String out = F("<b>Септик:</b>\n");
-        out += F("ID  Mon  Warn  Alarm  W.Port  A.Port  Name\n");
-        out += F("-----------------------------------------\n");
+        String out = F("<b>Септик:</b>");
+        bool any = false;
         for (size_t i = 0; i < SepticController::kSepticCount; ++i)
         {
             const auto *cfg = self._septic->configByIndex(i);
             const auto *st = self._septic->stateByIndex(i);
             if (!cfg || !st || !cfg->enabled)
                 continue;
+            any = true;
+            out += F("\n  ");
             out += String((unsigned)cfg->id);
-            out += F("  ");
-            out += cfg->monitoring_on ? "on" : "off";
-            out += F("  ");
-            out += st->warning ? "on" : "off";
-            out += F("  ");
-            out += st->alarm ? "on" : "off";
-            out += F("  ");
+            out += F(": <b>");
+            if (cfg->name.length())
+                out += self.escapeHtml_(cfg->name);
+            else
+                out += F("-");
+            out += F("</b>");
+            out += F("\n    питание: <b>");
+            out += cfg->monitoring_on ? "🟢" : "⚪";
+            out += F("</b>\n    предупреждение: <b>");
+            out += st->warning ? "🟢" : "⚪";
+            out += F("</b>\n    тревога: <b>");
+            out += st->alarm ? "🟢" : "⚪";
+            out += F("</b>\n    w port: <b>");
             if (cfg->warning_port != SepticController::kInvalidPort)
                 out += String((unsigned)cfg->warning_port);
             else
-                out += F("--");
-            out += F("  ");
+                out += F("none");
+            out += F("</b>\n    a port: <b>");
             if (cfg->alarm_port != SepticController::kInvalidPort)
                 out += String((unsigned)cfg->alarm_port);
             else
-                out += F("--");
-            out += F("  ");
-            if (cfg->name.length())
-                out += self.escapeHtml_(cfg->name);
-            out += F("\n");
+                out += F("none");
+            out += F("</b>");
         }
+        if (!any)
+            out += F("\n  пусто");
         return out;
     }
 
-    static String septicControlMarkup_(TelegramMenu &self)
+    static String septicControlMarkup_(TelegramMenu &self, int64_t chat_id)
     {
-        std::vector<String> labels;
-        labels.reserve(4);
-        bool monitoring_on = true;
-        if (self._septic)
-        {
-            const auto *cfg = self._septic->configByIndex(0);
-            if (cfg)
-                monitoring_on = cfg->monitoring_on;
-        }
-        labels.push_back(F("Статус"));
-        labels.push_back(F("Список"));
-        labels.push_back(monitoring_on ? F("Мониторинг Выкл") : F("Мониторинг Вкл"));
-        labels.push_back(F("Назад"));
-        return TelegramMenu::buildKeyboardMarkup_(labels);
+        (void)self;
+        (void)chat_id;
+        String out = F("{\"keyboard\":[[\"");
+        out += TelegramMenu::escapeJson_(F("Питание 🟢"));
+        out += F("\",\"");
+        out += TelegramMenu::escapeJson_(F("Питание ⚪"));
+        out += F("\"],[\"");
+        out += TelegramMenu::escapeJson_(F("Статус"));
+        out += F("\"],[\"");
+        out += TelegramMenu::escapeJson_(F("Назад"));
+        out += F("\"]],\"resize_keyboard\":true,\"one_time_keyboard\":false}");
+        return out;
     }
 
     static void sendSepticMenu_(TelegramMenu &self, int64_t chat_id)
     {
         if (!self._bot)
             return;
-        if (!self.isLocalSelected_(chat_id))
-        {
-            self._bot->sendText(chat_id, F("Список доступен только для локального устройства"));
-            return;
-        }
-        if (!self._septic)
+        if (self.isLocalSelected_(chat_id) && !self._septic)
         {
             self._bot->sendText(chat_id, F("Септик недоступен"));
             return;
         }
-        const String markup = TelegramMenuSeptic::septicControlMarkup_(self);
-        const String text = TelegramMenuSeptic::septicStatusText_(self);
+        const String markup = TelegramMenuSeptic::septicControlMarkup_(self, chat_id);
+        const String text = TelegramMenuSeptic::septicStatusText_(self, chat_id);
         self._bot->setMenu(chat_id, "septic");
         self._bot->sendText(chat_id, text, markup);
     }
@@ -248,14 +302,9 @@ public:
             self._bot->enterMenu(u.chat_id, "device");
             return true;
         }
-        if (!self._septic)
+        if (self.isLocalSelected_(u.chat_id) && !self._septic)
         {
             self._bot->sendText(u.chat_id, F("Септик недоступен"));
-            return true;
-        }
-        if (!self.isLocalSelected_(u.chat_id))
-        {
-            self._bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
             return true;
         }
         if (u.text == F("Статус"))
@@ -263,21 +312,57 @@ public:
             TelegramMenuSeptic::sendSepticMenu_(self, u.chat_id);
             return true;
         }
-        if (u.text == F("Список"))
+        if (u.text == F("Питание 🟢") || u.text == F("Питание ⚪") ||
+            u.text == F("Мониторинг 🟢") || u.text == F("Мониторинг ⚪") ||
+            u.text == F("Мониторинг Вкл") || u.text == F("Мониторинг Выкл"))
         {
-            const String text = TelegramMenuSeptic::septicListTextHtml_(self);
-            self._bot->sendText(u.chat_id, text, "", "HTML");
-            return true;
-        }
-        if (u.text == F("Мониторинг Вкл") || u.text == F("Мониторинг Выкл"))
-        {
+            const bool on = (u.text == F("Питание 🟢") ||
+                             u.text == F("Мониторинг 🟢") || u.text == F("Мониторинг Вкл"));
+            if (!self.isLocalSelected_(u.chat_id))
+            {
+                const uint32_t node_id = self.selectedNodeId_(u.chat_id);
+                if (node_id == 0 || !self._stack_master)
+                {
+                    self._bot->sendText(u.chat_id, F("Септик недоступен"));
+                    return true;
+                }
+                uint8_t id = 1;
+                if (self._stack_cache)
+                {
+                    const auto *cache = self._stack_cache->septicCache(node_id);
+                    if (!cache || !cache->has_data)
+                    {
+                        self._stack_cache->requestSeptic(node_id);
+                    }
+                    else if (cache->item_count > 0 && cache->items[0].id > 0)
+                    {
+                        id = cache->items[0].id;
+                    }
+                }
+                DynamicJsonDocument doc(256);
+                doc["feature"] = (uint8_t)StackFeature::Septic;
+                doc["action"] = "set";
+                JsonObject params = doc["params"].to<JsonObject>();
+                params["id"] = (unsigned)id;
+                params["monitor"] = on;
+                char payload[256] = {};
+                const size_t n = serializeJson(doc, payload, sizeof(payload));
+                const bool ok = (n > 0) && self._stack_master->sendTo(
+                                             node_id, (uint8_t)StackMsgType::CmdSet,
+                                             reinterpret_cast<const uint8_t *>(payload), n);
+                if (ok && self._stack_cache)
+                    self._stack_cache->requestSeptic(node_id);
+                if (!ok)
+                    self._bot->sendText(u.chat_id, F("Не удалось"));
+                TelegramMenuSeptic::sendSepticMenu_(self, u.chat_id);
+                return true;
+            }
             const auto *cfg = self._septic->configByIndex(0);
             if (!cfg)
             {
                 self._bot->sendText(u.chat_id, F("Септик не настроен"));
                 return true;
             }
-            const bool on = (u.text == F("Мониторинг Вкл"));
             self._septic->setMonitoring(cfg->id, on);
             TelegramMenuSeptic::sendSepticMenu_(self, u.chat_id);
             return true;

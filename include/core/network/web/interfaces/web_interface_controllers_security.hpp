@@ -1,5 +1,23 @@
 #pragma once
 
+    size_t securityLocalRenderCount_() const
+    {
+        if (!_controllers)
+            return 0;
+        SecurityController &sec = _controllers->security();
+        size_t last_enabled_idx = SIZE_MAX;
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+            const auto *cfg = sec.configByIndex(i);
+            if (cfg && cfg->enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            return SecurityController::kSensorCount ? 1u : 0u;
+        const size_t count = last_enabled_idx + 2u;
+        return count > SecurityController::kSensorCount ? SecurityController::kSensorCount : count;
+    }
+
     String securityDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
     {
         if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
@@ -302,7 +320,10 @@
             items += "</div></div></div>";
         };
 
-        const size_t max_idx = SecurityController::kSensorCount ? (SecurityController::kSensorCount - 1) : 0;
+        const size_t render_count = securityLocalRenderCount_();
+        if (render_count == 0)
+            return "<div class=\"tile empty\"><strong>Датчики отсутствуют</strong></div>";
+        const size_t max_idx = render_count - 1;
         if (start_idx > max_idx)
             start_idx = (uint8_t)max_idx;
         if (end_idx > max_idx)
@@ -333,7 +354,21 @@
         if (reserve < 8192u)
             reserve = 8192u;
         items.reserve(reserve);
+        size_t render_count = cache->item_count;
+        size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            if (cache->items[i].enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            render_count = cache->item_count ? 1u : 0u;
+        else
+        {
+            const size_t count = last_enabled_idx + 2u;
+            render_count = count > cache->item_count ? cache->item_count : count;
+        }
+        for (size_t i = 0; i < render_count; ++i)
         {
             const StackSecuritySensorItem &cfg = cache->items[i];
             items += "<div class=\"tile\">";

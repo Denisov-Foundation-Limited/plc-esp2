@@ -1,5 +1,23 @@
 #pragma once
 
+    size_t socketsLocalRenderCount_() const
+    {
+        if (!_controllers)
+            return 0;
+        SocketController &sockets = _controllers->sockets();
+        size_t last_enabled_idx = SIZE_MAX;
+        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+        {
+            const auto *cfg = sockets.configByIndex(i);
+            if (cfg && cfg->enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            return SocketController::kSocketCount ? 1u : 0u;
+        const size_t count = last_enabled_idx + 2u;
+        return count > SocketController::kSocketCount ? SocketController::kSocketCount : count;
+    }
+
     String listSocketsHtml_(uint8_t start_id, uint8_t end_id)
     {
         if (!_controllers)
@@ -94,7 +112,8 @@
             items += "</div></div>";
         };
 
-        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+        const size_t render_count = socketsLocalRenderCount_();
+        for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = sockets.configByIndex(i);
             if (!cfg)
@@ -121,7 +140,21 @@
         if (reserve < 8192u)
             reserve = 8192u;
         items.reserve(reserve);
+        size_t render_count = cache->item_count;
+        size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            if (cache->items[i].enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            render_count = cache->item_count ? 1u : 0u;
+        else
+        {
+            const size_t count = last_enabled_idx + 2u;
+            render_count = count > cache->item_count ? cache->item_count : count;
+        }
+        for (size_t i = 0; i < render_count; ++i)
         {
             const StackSocketItem &cfg = cache->items[i];
             const bool on = cfg.state;

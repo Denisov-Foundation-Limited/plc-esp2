@@ -184,7 +184,9 @@
       "septic": "septic_state[]",
       "watering": "watering_state[]",
       "security": "security_state",
-      "ring": "ring_state"
+      "ring": "ring_state",
+      "avr": "avr_state",
+      "leak": "leak_state[]"
     },
     "socket_state": {
       "id": "u8",
@@ -305,6 +307,38 @@
       "button": "u8",
       "relay": "u8",
       "relay_on": "bool"
+    },
+    "avr_state": {
+      "enabled": "bool",
+      "auto_mode": "bool",
+      "prefer_main": "bool",
+      "auto_return_main": "bool",
+      "main_ok_port": "u8",
+      "reserve_ok_port": "u8",
+      "relay_main_port": "u8",
+      "relay_reserve_port": "u8",
+      "feedback_main_port": "u8",
+      "feedback_reserve_port": "u8",
+      "main_ok": "bool",
+      "reserve_ok": "bool",
+      "relay_main_on": "bool",
+      "relay_reserve_on": "bool",
+      "active_source": "off|main|reserve",
+      "target_source": "off|main|reserve",
+      "fault": "none|no_source|transfer_timeout|interlock|feedback_mismatch",
+      "transfer": "bool"
+    },
+    "leak_state": {
+      "id": "u8",
+      "name": "string",
+      "enabled": "bool",
+      "power_on": "bool",
+      "sensor_active_low": "bool",
+      "sensor": "u8",
+      "valve": "u8",
+      "alarm": "u8",
+      "wet": "bool",
+      "alarm_latched": "bool"
     }
   },
   "controller_commands": {
@@ -339,6 +373,16 @@
     ],
     "ring": [
       { "action": "hold", "args": { "state": "on|off" } }
+    ],
+    "avr": [
+      { "action": "auto", "args": { "state": "on|off" } },
+      { "action": "source", "args": { "source": "off|main|reserve" } },
+      { "action": "clear_fault", "args": {} }
+    ],
+    "leak": [
+      { "action": "power", "args": { "id": "u8", "state": "on|off" } },
+      { "action": "ack", "args": { "id": "u8" } },
+      { "action": "ack_all", "args": {} }
     ]
   },
   "rules": {

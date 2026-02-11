@@ -1,5 +1,23 @@
 #pragma once
 
+    size_t thermoLocalRenderCount_() const
+    {
+        if (!_controllers)
+            return 0;
+        ThermoController &thermo = _controllers->thermo();
+        size_t last_enabled_idx = SIZE_MAX;
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = thermo.configByIndex(i);
+            if (cfg && cfg->enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            return ThermoController::kDeviceCount ? 1u : 0u;
+        const size_t count = last_enabled_idx + 2u;
+        return count > ThermoController::kDeviceCount ? ThermoController::kDeviceCount : count;
+    }
+
     String thermoDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
     {
         if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
@@ -106,7 +124,21 @@
             reserve = 8192u;
         items.reserve(reserve);
         const StackMeteoCache *meteo_cache = findStackMeteoCache_(node_id, false);
+        size_t render_count = cache->item_count;
+        size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            if (cache->items[i].enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            render_count = cache->item_count ? 1u : 0u;
+        else
+        {
+            const size_t count = last_enabled_idx + 2u;
+            render_count = count > cache->item_count ? cache->item_count : count;
+        }
+        for (size_t i = 0; i < render_count; ++i)
         {
             const StackThermoItem &cfg = cache->items[i];
             const bool mode_off = strcmp(cfg.mode, "off") == 0;
@@ -525,26 +557,15 @@
             items += "</div></div>";
         };
 
-        const ThermoController::DeviceConfig *first_disabled = nullptr;
-        const ThermoController::DeviceState *first_disabled_state = nullptr;
-        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        const size_t render_count = thermoLocalRenderCount_();
+        for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = thermo.configByIndex(i);
             const auto *st = thermo.stateByIndex(i);
             if (!cfg || !st)
                 continue;
-            if (cfg->enabled)
-            {
-                appendTile(*cfg, *st, true);
-            }
-            else if (!first_disabled)
-            {
-                first_disabled = cfg;
-                first_disabled_state = st;
-            }
+            appendTile(*cfg, *st, cfg->enabled);
         }
-        if (first_disabled && first_disabled_state)
-            appendTile(*first_disabled, *first_disabled_state, false);
         if (items.length() == 0)
             items = "<div class=\"tile empty\"><strong>Thermo empty</strong></div>";
         return items;

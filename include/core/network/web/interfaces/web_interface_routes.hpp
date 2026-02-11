@@ -20,6 +20,7 @@ inline void WebInterface::registerRoutes()
     TankHandler::registerRoutes(*this, _server);
     AvrHandler::registerRoutes(*this, _server);
     LeakHandler::registerRoutes(*this, _server);
+    RulesHandler::registerRoutes(*this, _server);
     SepticHandler::registerRoutes(*this, _server);
     RingHandler::registerRoutes(*this, _server);
     SecurityHandler::registerRoutes(*this, _server);

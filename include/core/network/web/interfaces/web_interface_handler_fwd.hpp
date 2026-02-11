@@ -25,3 +25,4 @@ class TankHandler;
 class WateringHandler;
 class AvrHandler;
 class LeakHandler;
+class RulesHandler;

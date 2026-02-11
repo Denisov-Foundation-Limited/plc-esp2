@@ -21,14 +21,9 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_thermo)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_thermo)
         {
             reply = "Термо недоступно";
-            return true;
-        }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
-        {
-            reply = "Список доступен только для локального устройства";
             return true;
         }
         TelegramMenuThermo::sendThermoMenu_(*TelegramMenu::_self, u.chat_id);
@@ -42,17 +37,12 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_thermo)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_thermo)
         {
             reply = "Термо недоступно";
             return true;
         }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
-        {
-            reply = "Список доступен только для локального устройства";
-            return true;
-        }
-        reply = TelegramMenuThermo::thermoListTextHtml_(*TelegramMenu::_self);
+        reply = TelegramMenuThermo::thermoListTextHtml_(*TelegramMenu::_self, u.chat_id);
         return true;
     }
 
@@ -62,14 +52,9 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_thermo)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_thermo)
         {
             reply = "Термо недоступно";
-            return true;
-        }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
-        {
-            reply = "Доступно только для локального устройства";
             return true;
         }
         const char *cmd = "/thermo_show";
@@ -117,26 +102,126 @@ public:
         out.push_back(F("Назад"));
     }
 
-    static String thermoListTextHtml_(TelegramMenu &self)
+    static String thermoListTextHtml_(TelegramMenu &self, int64_t chat_id)
     {
         String out = F("<b>Термо:</b>");
         out.reserve(768);
-        if (!self._thermo)
+        if (self.isLocalSelected_(chat_id))
+        {
+            if (!self._thermo)
+            {
+                out += F("\n  недоступно");
+                return out;
+            }
+            bool any = false;
+            for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+            {
+                const auto *cfg = self._thermo->configByIndex(i);
+                const auto *st = self._thermo->stateByIndex(i);
+                if (!cfg || !st || !cfg->enabled)
+                    continue;
+                any = true;
+                out += "\n  ";
+                out += String((unsigned)cfg->id);
+                out += ": ";
+                if (cfg->name.length())
+                {
+                    out += "<b>";
+                    out += self.escapeHtml_(cfg->name);
+                    out += "</b>";
+                }
+                else
+                {
+                    out += "<b>-</b>";
+                }
+                out += "\n   режим: <b>";
+                out += TelegramMenuThermo::thermoModeLabel_(cfg->mode);
+                out += "</b>";
+                out += "\n   питание: <b>";
+                out += st->power_on ? F("🟢") : F("⚪");
+                out += "</b>";
+                out += "\n   статус: <b>";
+                if (st->heat_on)
+                    out += F("🔥");
+                else if (st->cool_on)
+                    out += F("❄️");
+                else
+                    out += F("⏳");
+                out += "</b>";
+            }
+            if (!any)
+                out += F("\n  пусто");
+            return out;
+        }
+        if (!self._stack_cache)
         {
             out += F("\n  недоступно");
             return out;
         }
-        bool any = false;
-        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        const uint32_t node_id = self.selectedNodeId_(chat_id);
+        if (node_id == 0)
         {
-            const auto *cfg = self._thermo->configByIndex(i);
-            const auto *st = self._thermo->stateByIndex(i);
-            if (!cfg || !st || !cfg->enabled)
+            out += F("\n  недоступно");
+            return out;
+        }
+        const auto *cache = self._stack_cache->thermoCache(node_id);
+        if (!cache || !cache->has_data)
+        {
+            self._stack_cache->requestThermo(node_id);
+            out += F("\n  обновление...");
+            return out;
+        }
+        bool any = false;
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const auto &it = cache->items[i];
+            if (!it.enabled)
                 continue;
             any = true;
             out += "\n  ";
-            out += String((unsigned)cfg->id);
+            out += String((unsigned)it.id);
             out += ": ";
+            out += it.name[0] ? String("<b>") + self.escapeHtml_(String(it.name)) + "</b>" : String("<b>-</b>");
+            out += "\n   режим: <b>";
+            if (strcmp(it.mode, "heat") == 0)
+                out += "🔥";
+            else if (strcmp(it.mode, "cool") == 0)
+                out += "❄️";
+            else if (strcmp(it.mode, "auto") == 0)
+                out += "🤖";
+            else
+                out += "Выкл";
+            out += "</b>";
+            out += "\n   питание: <b>";
+            out += it.power_on ? "🟢" : "⚪";
+            out += "</b>";
+            out += "\n   статус: <b>";
+            if (it.heat_on)
+                out += "🔥";
+            else if (it.cool_on)
+                out += "❄️";
+            else
+                out += "⏳";
+            out += "</b>";
+        }
+        if (!any)
+            out += F("\n  пусто");
+        return out;
+    }
+
+    static String thermoDeviceTextHtml_(TelegramMenu &self, int64_t chat_id, uint8_t id)
+    {
+        if (self.isLocalSelected_(chat_id))
+        {
+            if (!self._thermo)
+                return F("Термо недоступно");
+            const auto *cfg = self._thermo->config(id);
+            const auto *st = self._thermo->state(id);
+            if (!cfg || !st)
+                return F("Неверное устройство");
+            String out = F("<b>Термо устройство:</b>");
+            out.reserve(512);
+            out += "\n  имя: ";
             if (cfg->name.length())
             {
                 out += "<b>";
@@ -147,99 +232,116 @@ public:
             {
                 out += "<b>-</b>";
             }
-            out += "\n   режим: <b>";
+            out += "\n  режим: ";
+            out += "<b>";
             out += TelegramMenuThermo::thermoModeLabel_(cfg->mode);
             out += "</b>";
-            out += "\n   питание: <b>";
-            out += st->power_on ? F("🟢") : F("⚪");
-            out += "</b>";
-            out += "\n   статус: <b>";
-            if (st->heat_on)
-                out += F("🔥");
-            else if (st->cool_on)
-                out += F("❄️");
-            else
-                out += F("⏸");
-            out += "</b>";
-        }
-        if (!any)
-            out += F("\n  пусто");
-        return out;
-    }
-
-    static String thermoDeviceTextHtml_(TelegramMenu &self, uint8_t id)
-    {
-        if (!self._thermo)
-            return F("Термо недоступно");
-        const auto *cfg = self._thermo->config(id);
-        const auto *st = self._thermo->state(id);
-        if (!cfg || !st)
-            return F("Неверное устройство");
-        String out = F("<b>Термо устройство:</b>");
-        out.reserve(512);
-        out += "\n  имя: ";
-        if (cfg->name.length())
-        {
-            out += "<b>";
-            out += self.escapeHtml_(cfg->name);
-            out += "</b>";
-        }
-        else
-        {
-            out += "<b>-</b>";
-        }
-        out += "\n  включен: ";
-        out += "<b>";
-        out += cfg->enabled ? "1" : "0";
-        out += "</b>";
-        out += "\n  режим: ";
-        out += "<b>";
-        out += TelegramMenuThermo::thermoModeLabel_(cfg->mode);
-        out += "</b>";
-        out += "\n  темп: ";
-        if (self._meteo && cfg->sensor_id)
-        {
-            const auto *st = self._meteo->state(cfg->sensor_id);
-            if (st && st->has_temp)
+            out += "\n  темп: ";
+            if (self._meteo && cfg->sensor_id)
             {
-                char buf[10] = {};
-                dtostrf(st->temp_c, 0, 1, buf);
-                out += "<b>";
-                out += buf;
-                out += "°";
-                out += "</b>";
+                const auto *st = self._meteo->state(cfg->sensor_id);
+                if (st && st->has_temp)
+                {
+                    char buf[10] = {};
+                    dtostrf(st->temp_c, 0, 1, buf);
+                    out += "<b>";
+                    out += buf;
+                    out += "°";
+                    out += "</b>";
+                }
+                else
+                {
+                    out += "-";
+                }
             }
             else
             {
                 out += "-";
             }
+            out += "\n  цель: ";
+            out += "<b>";
+            out += String(cfg->target_c, 1);
+            out += "°";
+            out += "</b>";
+            out += "\n  гист: ";
+            out += "<b>";
+            out += String(cfg->hysteresis, 1);
+            out += "°";
+            out += "</b>";
+            out += "\n  статус: ";
+            out += "<b>";
+            if (st->heat_on)
+                out += F("🔥");
+            else if (st->cool_on)
+                out += F("❄️");
+            else
+                out += F("⏳");
+            out += "</b>";
+            out += "\n  питание: ";
+            out += "<b>";
+            out += st->power_on ? F("🟢") : F("⚪");
+            out += "</b>";
+            return out;
         }
-        else
+
+        if (!self._stack_cache)
+            return F("Термо недоступно");
+        const uint32_t node_id = self.selectedNodeId_(chat_id);
+        if (node_id == 0)
+            return F("Термо недоступно");
+        const auto *cache = self._stack_cache->thermoCache(node_id);
+        if (!cache || !cache->has_data)
         {
-            out += "-";
+            self._stack_cache->requestThermo(node_id);
+            return F("Обновление данных...");
         }
+        const StackCache::StackThermoItem *found = nullptr;
+        for (size_t i = 0; i < cache->item_count; ++i)
+            if (cache->items[i].id == id && cache->items[i].enabled)
+            {
+                found = &cache->items[i];
+                break;
+            }
+        if (!found)
+            return F("Неверное устройство");
+        String out = F("<b>Термо устройство:</b>");
+        out.reserve(420);
+        out += "\n  имя: <b>";
+        out += found->name[0] ? self.escapeHtml_(String(found->name)) : String("-");
+        out += "</b>";
+        out += "\n  режим: <b>";
+        if (strcmp(found->mode, "heat") == 0)
+            out += "🔥";
+        else if (strcmp(found->mode, "cool") == 0)
+            out += "❄️";
+        else if (strcmp(found->mode, "auto") == 0)
+            out += "🤖";
+        else
+            out += "Выкл";
+        out += "</b>";
+        out += "\n  темп: -";
         out += "\n  цель: ";
         out += "<b>";
-        out += String(cfg->target_c, 1);
+        out += String(found->target, 1);
         out += "°";
         out += "</b>";
         out += "\n  гист: ";
         out += "<b>";
-        out += String(cfg->hysteresis, 1);
+        out += String(found->hyst, 1);
         out += "°";
         out += "</b>";
         out += "\n  статус: ";
         out += "<b>";
-        if (st->heat_on)
+        if (found->heat_on)
             out += F("🔥");
-        else if (st->cool_on)
+        else if (found->cool_on)
             out += F("❄️");
         else
-            out += F("⏸");
+            out += F("⏳");
         out += "</b>";
         out += "\n  питание: ";
         out += "<b>";
-        out += st->power_on ? F("🟢") : F("⚪");
+        out += found->power_on ? F("🟢") : F("⚪");
         out += "</b>";
         return out;
     }
@@ -249,11 +351,11 @@ public:
         switch (mode)
         {
         case ThermoController::Mode::Heat:
-            return "Нагрев";
+            return "🔥";
         case ThermoController::Mode::Cool:
-            return "Охлаждение";
+            return "❄️";
         case ThermoController::Mode::Auto:
-            return "Авто";
+            return "🤖";
         case ThermoController::Mode::Off:
         default:
             return "Выкл";
@@ -264,11 +366,6 @@ public:
     {
         if (!self._bot)
             return;
-        if (!self.isLocalSelected_(chat_id))
-        {
-            self._bot->sendText(chat_id, F("Список доступен только для локального устройства"));
-            return;
-        }
         TelegramMenu::ChatAuth *st = self.ensureAuth_(chat_id);
         if (st)
         {
@@ -276,9 +373,41 @@ public:
             st->selected_thermo_id = 0;
         }
         std::vector<String> labels;
-        TelegramMenuThermo::buildThermoLabels_(self, labels);
+        if (self.isLocalSelected_(chat_id))
+        {
+            TelegramMenuThermo::buildThermoLabels_(self, labels);
+        }
+        else if (self._stack_cache)
+        {
+            const uint32_t node_id = self.selectedNodeId_(chat_id);
+            if (node_id != 0)
+            {
+                const auto *cache = self._stack_cache->thermoCache(node_id);
+                if (!cache || !cache->has_data)
+                {
+                    self._stack_cache->requestThermo(node_id);
+                }
+                else
+                {
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        String label = String((unsigned)it.id) + ": ";
+                        label += it.name[0] ? String(it.name) : String("-");
+                        labels.push_back(label);
+                    }
+                }
+            }
+            labels.push_back(F("Назад"));
+        }
+        else
+        {
+            labels.push_back(F("Назад"));
+        }
         const String markup = TelegramMenu::buildKeyboardMarkup_(labels);
-        const String list = TelegramMenuThermo::thermoListTextHtml_(self);
+        const String list = TelegramMenuThermo::thermoListTextHtml_(self, chat_id);
         self._bot->setMenu(chat_id, "thermo");
         self._bot->sendText(chat_id, list, markup, "HTML");
     }
@@ -287,14 +416,9 @@ public:
     {
         if (!self._bot)
             return;
-        if (!self._thermo)
+        if (self.isLocalSelected_(chat_id) && !self._thermo)
         {
             self._bot->sendText(chat_id, F("Термо недоступно"));
-            return;
-        }
-        if (!self.isLocalSelected_(chat_id))
-        {
-            self._bot->sendText(chat_id, F("Доступно только для локального устройства"));
             return;
         }
         TelegramMenu::ChatAuth *st = self.ensureAuth_(chat_id);
@@ -303,7 +427,7 @@ public:
             st->awaiting_thermo = true;
             st->selected_thermo_id = id;
         }
-        const String text = TelegramMenuThermo::thermoDeviceTextHtml_(self, id);
+        const String text = TelegramMenuThermo::thermoDeviceTextHtml_(self, chat_id, id);
         const String markup = TelegramMenuThermo::thermoControlMarkup_();
         self._bot->sendText(chat_id, text, markup, "HTML");
     }
@@ -316,11 +440,11 @@ public:
         labels.push_back(F("Темп -"));
         labels.push_back(F("Гист +"));
         labels.push_back(F("Гист -"));
-        labels.push_back(F("Питание Вкл"));
-        labels.push_back(F("Питание Выкл"));
-        labels.push_back(F("Авто"));
-        labels.push_back(F("Нагрев"));
-        labels.push_back(F("Охлаждение"));
+        labels.push_back(F("Питание 🟢"));
+        labels.push_back(F("Питание ⚪"));
+        labels.push_back(F("Режим 🤖"));
+        labels.push_back(F("Режим 🔥"));
+        labels.push_back(F("Режим ❄️"));
         labels.push_back(F("Назад"));
         return TelegramMenu::buildKeyboardMarkup_(labels);
     }
@@ -339,14 +463,9 @@ public:
             TelegramMenuThermo::sendThermoMenu_(self, u.chat_id);
             return true;
         }
-        if (!self._thermo)
+        if (self.isLocalSelected_(u.chat_id) && !self._thermo)
         {
             self._bot->sendText(u.chat_id, F("Термо недоступно"));
-            return true;
-        }
-        if (!self.isLocalSelected_(u.chat_id))
-        {
-            self._bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
             return true;
         }
         const uint8_t id = st->selected_thermo_id;
@@ -356,7 +475,123 @@ public:
             return true;
         }
         bool handled = true;
-        if (u.text == F("Темп +"))
+        if (!self.isLocalSelected_(u.chat_id))
+        {
+            const uint32_t node_id = self.selectedNodeId_(u.chat_id);
+            if (node_id == 0 || !self._stack_master)
+                handled = false;
+            else
+            {
+                float cur_target = 0.0f;
+                float cur_hyst = 0.0f;
+                bool has_cur = false;
+                if (self._stack_cache)
+                {
+                    const auto *cache = self._stack_cache->thermoCache(node_id);
+                    if (cache && cache->has_data)
+                    {
+                        for (size_t i = 0; i < cache->item_count; ++i)
+                        {
+                            const auto &it = cache->items[i];
+                            if (it.id != id || !it.enabled)
+                                continue;
+                            cur_target = it.target;
+                            cur_hyst = it.hyst;
+                            has_cur = true;
+                            break;
+                        }
+                    }
+                }
+                DynamicJsonDocument doc(256);
+                doc["feature"] = (uint8_t)StackFeature::Thermo;
+                doc["action"] = "set";
+                JsonObject params = doc["params"].to<JsonObject>();
+                JsonArray items = params["items"].to<JsonArray>();
+                JsonObject it = items.add<JsonObject>();
+                it["id"] = (unsigned)id;
+                if (u.text == F("Питание 🟢") || u.text == F("Питание Вкл"))
+                {
+                    it["power"] = true;
+                }
+                else if (u.text == F("Питание ⚪") || u.text == F("Питание 🔴") || u.text == F("Питание Выкл"))
+                {
+                    it["power"] = false;
+                }
+                else if (u.text == F("Режим 🤖") || u.text == F("Авто"))
+                {
+                    it["mode"] = "auto";
+                }
+                else if (u.text == F("Режим 🔥") || u.text == F("Статус 🔥") || u.text == F("Нагрев"))
+                {
+                    it["mode"] = "heat";
+                }
+                else if (u.text == F("Режим ❄️") || u.text == F("Статус ❄️") || u.text == F("Охлаждение"))
+                {
+                    it["mode"] = "cool";
+                }
+                else if (u.text == F("Темп +"))
+                {
+                    if (!has_cur)
+                    {
+                        if (self._stack_cache)
+                            self._stack_cache->requestThermo(node_id);
+                        self._bot->sendText(u.chat_id, F("Нет актуальных данных. Повторите через пару секунд."));
+                        return true;
+                    }
+                    it["target"] = cur_target + TelegramMenu::kThermoTargetStep;
+                }
+                else if (u.text == F("Темп -"))
+                {
+                    if (!has_cur)
+                    {
+                        if (self._stack_cache)
+                            self._stack_cache->requestThermo(node_id);
+                        self._bot->sendText(u.chat_id, F("Нет актуальных данных. Повторите через пару секунд."));
+                        return true;
+                    }
+                    it["target"] = cur_target - TelegramMenu::kThermoTargetStep;
+                }
+                else if (u.text == F("Гист +"))
+                {
+                    if (!has_cur)
+                    {
+                        if (self._stack_cache)
+                            self._stack_cache->requestThermo(node_id);
+                        self._bot->sendText(u.chat_id, F("Нет актуальных данных. Повторите через пару секунд."));
+                        return true;
+                    }
+                    it["hyst"] = cur_hyst + TelegramMenu::kThermoHystStep;
+                }
+                else if (u.text == F("Гист -"))
+                {
+                    if (!has_cur)
+                    {
+                        if (self._stack_cache)
+                            self._stack_cache->requestThermo(node_id);
+                        self._bot->sendText(u.chat_id, F("Нет актуальных данных. Повторите через пару секунд."));
+                        return true;
+                    }
+                    float h = cur_hyst - TelegramMenu::kThermoHystStep;
+                    if (h < 0.0f)
+                        h = 0.0f;
+                    it["hyst"] = h;
+                }
+                else
+                {
+                    handled = false;
+                }
+                if (handled)
+                {
+                    char payload[256] = {};
+                    const size_t n = serializeJson(doc, payload, sizeof(payload));
+                    handled = (n > 0) && self._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                                     reinterpret_cast<const uint8_t *>(payload), n);
+                    if (handled && self._stack_cache)
+                        self._stack_cache->requestThermo(node_id);
+                }
+            }
+        }
+        else if (u.text == F("Темп +"))
         {
             const auto *cfg = self._thermo->config(id);
             if (cfg)
@@ -385,23 +620,23 @@ public:
                 self._thermo->setHysteresis(id, h);
             }
         }
-        else if (u.text == F("Питание Вкл"))
+        else if (u.text == F("Питание 🟢") || u.text == F("Питание Вкл"))
         {
             self._thermo->setPower(id, true, "tgbot");
         }
-        else if (u.text == F("Питание Выкл"))
+        else if (u.text == F("Питание ⚪") || u.text == F("Питание 🔴") || u.text == F("Питание Выкл"))
         {
             self._thermo->setPower(id, false, "tgbot");
         }
-        else if (u.text == F("Авто"))
+        else if (u.text == F("Режим 🤖") || u.text == F("Авто"))
         {
             self._thermo->setMode(id, ThermoController::Mode::Auto);
         }
-        else if (u.text == F("Нагрев"))
+        else if (u.text == F("Режим 🔥") || u.text == F("Статус 🔥") || u.text == F("Нагрев"))
         {
             self._thermo->setMode(id, ThermoController::Mode::Heat);
         }
-        else if (u.text == F("Охлаждение"))
+        else if (u.text == F("Режим ❄️") || u.text == F("Статус ❄️") || u.text == F("Охлаждение"))
         {
             self._thermo->setMode(id, ThermoController::Mode::Cool);
         }
@@ -438,14 +673,9 @@ public:
             self._bot->sendText(u.chat_id, F("Неизвестное устройство"));
             return true;
         }
-        if (!self._thermo)
+        if (self.isLocalSelected_(u.chat_id) && !self._thermo)
         {
             self._bot->sendText(u.chat_id, F("Термо недоступно"));
-            return true;
-        }
-        if (!self.isLocalSelected_(u.chat_id))
-        {
-            self._bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
             return true;
         }
         TelegramMenuThermo::sendThermoDevice_(self, u.chat_id, id);
@@ -522,4 +752,3 @@ public:
         return TelegramMenuThermo::parseThermoIdFromText_(t, out);
     }
 };
-

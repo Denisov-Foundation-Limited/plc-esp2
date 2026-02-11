@@ -1704,6 +1704,46 @@ private:
                     const bool on = item["state"].is<bool>() ? item["state"].as<bool>()
                                                              : (item["state"].as<int>() != 0);
                     _thermo.setPower(id, on, "stack");
+                    continue;
+                }
+                if (item["mode"].is<const char *>())
+                {
+                    const char *mode = item["mode"].as<const char *>();
+                    if (mode)
+                    {
+                        String m(mode);
+                        m.toLowerCase();
+                        if (m == "off")
+                            _thermo.setMode(id, ThermoController::Mode::Off);
+                        else if (m == "heat")
+                            _thermo.setMode(id, ThermoController::Mode::Heat);
+                        else if (m == "cool")
+                            _thermo.setMode(id, ThermoController::Mode::Cool);
+                        else if (m == "auto")
+                            _thermo.setMode(id, ThermoController::Mode::Auto);
+                    }
+                    continue;
+                }
+                if (item["mode"].is<unsigned>() || item["mode"].is<int>())
+                {
+                    const int raw = item["mode"].is<unsigned>() ? (int)item["mode"].as<unsigned>()
+                                                                : item["mode"].as<int>();
+                    if (raw >= (int)ThermoController::Mode::Off && raw <= (int)ThermoController::Mode::Auto)
+                        _thermo.setMode(id, (ThermoController::Mode)raw);
+                    continue;
+                }
+                if (item["target"].is<float>() || item["target"].is<double>() || item["target"].is<int>())
+                {
+                    const float target = item["target"].is<int>() ? (float)item["target"].as<int>()
+                                                                   : item["target"].as<float>();
+                    _thermo.setTarget(id, target);
+                    continue;
+                }
+                if (item["hyst"].is<float>() || item["hyst"].is<double>() || item["hyst"].is<int>())
+                {
+                    const float hyst = item["hyst"].is<int>() ? (float)item["hyst"].as<int>()
+                                                               : item["hyst"].as<float>();
+                    _thermo.setHysteresis(id, hyst);
                 }
             }
             sendAck_(cmd_id);
@@ -2044,85 +2084,132 @@ private:
 
     void handleTanks_(uint16_t cmd_id, const String &action, JsonVariantConst params)
     {
-        if (action != "get")
+        if (action == "get")
         {
-            sendErr_(cmd_id, "unsupported");
-            return;
-        }
-        static constexpr size_t kDefaultChunk = 6;
-        static constexpr size_t kMaxChunk = 16;
-        size_t chunk = kDefaultChunk;
-        if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
-        {
-            const unsigned raw = params["chunk"].as<unsigned>();
-            if (raw > 0)
-                chunk = raw;
-        }
-        if (chunk > kMaxChunk)
-            chunk = kMaxChunk;
+            static constexpr size_t kDefaultChunk = 6;
+            static constexpr size_t kMaxChunk = 16;
+            size_t chunk = kDefaultChunk;
+            if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
+            {
+                const unsigned raw = params["chunk"].as<unsigned>();
+                if (raw > 0)
+                    chunk = raw;
+            }
+            if (chunk > kMaxChunk)
+                chunk = kMaxChunk;
 
-        size_t total = 0;
-        for (size_t i = 0; i < TankController::kTankCount; ++i)
-        {
-            const auto *cfg = _tanks.configByIndex(i);
-            const auto *st = _tanks.stateByIndex(i);
-            if (cfg && st && cfg->enabled)
-                ++total;
-        }
-
-        const size_t parts = total ? ((total + chunk - 1) / chunk) : 1;
-        for (size_t part = 0; part < parts; ++part)
-        {
-            const size_t from = part * chunk;
-            const size_t to = from + chunk;
-            _tx_doc.clear();
-            JsonDocument &doc = _tx_doc;
-            JsonArray arr = doc["items"].to<JsonArray>();
-            size_t pos = 0;
+            size_t total = 0;
             for (size_t i = 0; i < TankController::kTankCount; ++i)
             {
                 const auto *cfg = _tanks.configByIndex(i);
                 const auto *st = _tanks.stateByIndex(i);
-                if (!cfg || !st || !cfg->enabled)
-                    continue;
-                if (pos >= from && pos < to)
-                {
-                    JsonObject o = arr.add<JsonObject>();
-                    o["id"] = (unsigned)cfg->id;
-                    o["enabled"] = cfg->enabled;
-                    o["power_on"] = cfg->power_on;
-                    if (cfg->name.length())
-                        o["name"] = cfg->name;
-                    if (cfg->level_low != TankController::kInvalidPort)
-                        o["low"] = cfg->level_low;
-                    if (cfg->level_mid != TankController::kInvalidPort)
-                        o["mid"] = cfg->level_mid;
-                    if (cfg->level_full != TankController::kInvalidPort)
-                        o["full"] = cfg->level_full;
-                    if (cfg->relay_valve != TankController::kInvalidPort)
-                        o["valve"] = cfg->relay_valve;
-                    if (cfg->relay_pump != TankController::kInvalidPort)
-                        o["pump"] = cfg->relay_pump;
-                    if (cfg->relay_alarm != TankController::kInvalidPort)
-                        o["alarm"] = cfg->relay_alarm;
-
-                    o["level_low"] = st->level_low;
-                    o["level_mid"] = st->level_mid;
-                    o["level_full"] = st->level_full;
-                    o["levels_ok"] = st->levels_ok;
-                    o["valve_on"] = st->valve_on;
-                    o["pump_on"] = st->pump_on;
-                    o["alarm_on"] = st->alarm_on;
-                }
-                ++pos;
-                if (pos >= to)
-                    break;
+                if (cfg && st && cfg->enabled)
+                    ++total;
             }
-            doc["part"] = (unsigned)(part + 1);
-            doc["parts"] = (unsigned)parts;
-            doc["done"] = (part + 1) >= parts;
-            sendAck_(cmd_id, doc);
+
+            const size_t parts = total ? ((total + chunk - 1) / chunk) : 1;
+            for (size_t part = 0; part < parts; ++part)
+            {
+                const size_t from = part * chunk;
+                const size_t to = from + chunk;
+                _tx_doc.clear();
+                JsonDocument &doc = _tx_doc;
+                JsonArray arr = doc["items"].to<JsonArray>();
+                size_t pos = 0;
+                for (size_t i = 0; i < TankController::kTankCount; ++i)
+                {
+                    const auto *cfg = _tanks.configByIndex(i);
+                    const auto *st = _tanks.stateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    if (pos >= from && pos < to)
+                    {
+                        JsonObject o = arr.add<JsonObject>();
+                        o["id"] = (unsigned)cfg->id;
+                        o["enabled"] = cfg->enabled;
+                        o["power_on"] = cfg->power_on;
+                        if (cfg->name.length())
+                            o["name"] = cfg->name;
+                        if (cfg->level_low != TankController::kInvalidPort)
+                            o["low"] = cfg->level_low;
+                        if (cfg->level_mid != TankController::kInvalidPort)
+                            o["mid"] = cfg->level_mid;
+                        if (cfg->level_full != TankController::kInvalidPort)
+                            o["full"] = cfg->level_full;
+                        if (cfg->relay_valve != TankController::kInvalidPort)
+                            o["valve"] = cfg->relay_valve;
+                        if (cfg->relay_pump != TankController::kInvalidPort)
+                            o["pump"] = cfg->relay_pump;
+                        if (cfg->relay_alarm != TankController::kInvalidPort)
+                            o["alarm"] = cfg->relay_alarm;
+
+                        o["level_low"] = st->level_low;
+                        o["level_mid"] = st->level_mid;
+                        o["level_full"] = st->level_full;
+                        o["levels_ok"] = st->levels_ok;
+                        o["valve_on"] = st->valve_on;
+                        o["pump_on"] = st->pump_on;
+                        o["alarm_on"] = st->alarm_on;
+                    }
+                    ++pos;
+                    if (pos >= to)
+                        break;
+                }
+                doc["part"] = (unsigned)(part + 1);
+                doc["parts"] = (unsigned)parts;
+                doc["done"] = (part + 1) >= parts;
+                sendAck_(cmd_id, doc);
+            }
+            return;
         }
+        if (action == "set")
+        {
+            if (!params.is<JsonObjectConst>() || !params["items"].is<JsonArrayConst>())
+            {
+                sendErr_(cmd_id, "missing items");
+                return;
+            }
+            JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            for (JsonVariantConst v : items)
+            {
+                if (!v.is<JsonObjectConst>())
+                    continue;
+                JsonObjectConst item = v.as<JsonObjectConst>();
+                if (!item["id"].is<unsigned>())
+                    continue;
+                const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
+                {
+                    const auto *cfg = _tanks.config(id);
+                    if (cfg)
+                        _tanks.setPower(id, !cfg->power_on);
+                    continue;
+                }
+                if (item["power_on"].is<bool>() || item["power_on"].is<int>())
+                {
+                    const bool on = item["power_on"].is<bool>() ? item["power_on"].as<bool>()
+                                                                : (item["power_on"].as<int>() != 0);
+                    _tanks.setPower(id, on);
+                    continue;
+                }
+                if (item["power"].is<bool>() || item["power"].is<int>())
+                {
+                    const bool on = item["power"].is<bool>() ? item["power"].as<bool>()
+                                                             : (item["power"].as<int>() != 0);
+                    _tanks.setPower(id, on);
+                    continue;
+                }
+                if (item["state"].is<bool>() || item["state"].is<int>())
+                {
+                    const bool on = item["state"].is<bool>() ? item["state"].as<bool>()
+                                                             : (item["state"].as<int>() != 0);
+                    _tanks.setPower(id, on);
+                }
+            }
+            sendAck_(cmd_id);
+            return;
+        }
+        sendErr_(cmd_id, "unsupported");
     }
 
     void handleWatering_(uint16_t cmd_id, const String &action, JsonVariantConst params)

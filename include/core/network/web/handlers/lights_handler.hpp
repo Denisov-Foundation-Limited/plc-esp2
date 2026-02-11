@@ -57,7 +57,8 @@ public:
         uint8_t end = SocketController::kLightCount;
         if (!stack_view)
         {
-            max_pages = (uint8_t)((SocketController::kLightCount + page_size - 1) / page_size);
+            const size_t visible = web.lightsLocalRenderCount_();
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
             if (page_idx >= max_pages)
                 page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
             start = (uint8_t)(page_idx * page_size + 1);

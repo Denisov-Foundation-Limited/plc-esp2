@@ -1,5 +1,23 @@
 #pragma once
 
+    size_t meteoLocalRenderCount_() const
+    {
+        if (!_controllers)
+            return 0;
+        MeteoController &meteo = _controllers->meteo();
+        size_t last_enabled_idx = SIZE_MAX;
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = meteo.configByIndex(i);
+            if (cfg && cfg->enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            return MeteoController::kSensorCount ? 1u : 0u;
+        const size_t count = last_enabled_idx + 2u;
+        return count > MeteoController::kSensorCount ? MeteoController::kSensorCount : count;
+    }
+
     String meteoDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
     {
         if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
@@ -105,7 +123,21 @@
         if (reserve < 8192u)
             reserve = 8192u;
         items.reserve(reserve);
+        size_t render_count = cache->item_count;
+        size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            if (cache->items[i].enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            render_count = cache->item_count ? 1u : 0u;
+        else
+        {
+            const size_t count = last_enabled_idx + 2u;
+            render_count = count > cache->item_count ? cache->item_count : count;
+        }
+        for (size_t i = 0; i < render_count; ++i)
         {
             const StackMeteoItem &cfg = cache->items[i];
             char temp_buf[12] = {};
@@ -434,26 +466,15 @@
             items += "</div></div>";
         };
 
-        const MeteoController::SensorConfig *first_disabled = nullptr;
-        const MeteoController::SensorState *first_disabled_state = nullptr;
-        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        const size_t render_count = meteoLocalRenderCount_();
+        for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = meteo.configByIndex(i);
             const auto *st = meteo.stateByIndex(i);
             if (!cfg || !st)
                 continue;
-            if (cfg->enabled)
-            {
-                appendRow(*cfg, *st, true);
-            }
-            else if (!first_disabled)
-            {
-                first_disabled = cfg;
-                first_disabled_state = st;
-            }
+            appendRow(*cfg, *st, cfg->enabled);
         }
-        if (first_disabled && first_disabled_state)
-            appendRow(*first_disabled, *first_disabled_state, false);
         if (items.length() == 0)
             items = "<div class=\"tile empty\"><strong>Датчики отсутствуют</strong></div>";
         return items;

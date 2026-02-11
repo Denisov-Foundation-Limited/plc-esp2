@@ -21,14 +21,9 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_security)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_security)
         {
             reply = "Охрана недоступна";
-            return true;
-        }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
-        {
-            reply = "Доступно только для локального устройства";
             return true;
         }
         TelegramMenuSecurity::sendSecurityMenu_(*TelegramMenu::_self, u.chat_id);
@@ -41,17 +36,12 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_security)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_security)
         {
             reply = "Охрана недоступна";
             return true;
         }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
-        {
-            reply = "Доступно только для локального устройства";
-            return true;
-        }
-        reply = TelegramMenuSecurity::securityStatusText_(*TelegramMenu::_self);
+        reply = TelegramMenuSecurity::securityStatusText_(*TelegramMenu::_self, u.chat_id);
         return true;
     }
 
@@ -61,17 +51,12 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_security)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_security)
         {
             reply = "Охрана недоступна";
             return true;
         }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
-        {
-            reply = "Доступно только для локального устройства";
-            return true;
-        }
-        const String text = TelegramMenuSecurity::securityListTextHtml_(*TelegramMenu::_self);
+        const String text = TelegramMenuSecurity::securityListTextHtml_(*TelegramMenu::_self, u.chat_id);
         bot.sendText(u.chat_id, text, "", "HTML");
         return true;
     }
@@ -82,21 +67,42 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_security)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_security)
         {
             reply = "Охрана недоступна";
             return true;
         }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id))
         {
-            reply = "Доступно только для локального устройства";
-            return true;
+            const String user = TelegramMenuSecurity::userFromChat_(*TelegramMenu::_self, u);
+            if (TelegramMenu::_self->_security->armFrom("telegram", user))
+                reply = "Охрана включена";
+            else
+                reply = "Контроллер охраны выключен";
         }
-        const String user = TelegramMenuSecurity::userFromChat_(*TelegramMenu::_self, u);
-        if (TelegramMenu::_self->_security->armFrom("telegram", user))
-            reply = "Охрана включена";
         else
-            reply = "Контроллер охраны выключен";
+        {
+            const uint32_t node_id = TelegramMenu::_self->selectedNodeId_(u.chat_id);
+            if (node_id == 0 || !TelegramMenu::_self->_stack_master)
+            {
+                reply = "Охрана недоступна";
+                return true;
+            }
+            DynamicJsonDocument doc(256);
+            doc["feature"] = (uint8_t)StackFeature::Security;
+            doc["action"] = "set";
+            JsonObject params = doc["params"].to<JsonObject>();
+            params["armed"] = true;
+            params["user"] = TelegramMenuSecurity::userFromChat_(*TelegramMenu::_self, u);
+            char payload[256] = {};
+            const size_t n = serializeJson(doc, payload, sizeof(payload));
+            const bool ok = (n > 0) && TelegramMenu::_self->_stack_master->sendTo(
+                                         node_id, (uint8_t)StackMsgType::CmdSet,
+                                         reinterpret_cast<const uint8_t *>(payload), n);
+            if (ok && TelegramMenu::_self->_stack_cache)
+                TelegramMenu::_self->_stack_cache->requestSecurity(node_id);
+            reply = ok ? "Команда отправлена" : "Не удалось";
+        }
         return true;
     }
 
@@ -106,19 +112,40 @@ public:
             return false;
         if (!TelegramMenu::requireAdmin_(*TelegramMenu::_self, bot, u, reply))
             return true;
-        if (!TelegramMenu::_self->_security)
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id) && !TelegramMenu::_self->_security)
         {
             reply = "Охрана недоступна";
             return true;
         }
-        if (!TelegramMenu::_self->isLocalSelected_(u.chat_id))
+        if (TelegramMenu::_self->isLocalSelected_(u.chat_id))
         {
-            reply = "Доступно только для локального устройства";
-            return true;
+            const String user = TelegramMenuSecurity::userFromChat_(*TelegramMenu::_self, u);
+            TelegramMenu::_self->_security->disarmFrom("telegram", user);
+            reply = "Охрана выключена";
         }
-        const String user = TelegramMenuSecurity::userFromChat_(*TelegramMenu::_self, u);
-        TelegramMenu::_self->_security->disarmFrom("telegram", user);
-        reply = "Охрана выключена";
+        else
+        {
+            const uint32_t node_id = TelegramMenu::_self->selectedNodeId_(u.chat_id);
+            if (node_id == 0 || !TelegramMenu::_self->_stack_master)
+            {
+                reply = "Охрана недоступна";
+                return true;
+            }
+            DynamicJsonDocument doc(256);
+            doc["feature"] = (uint8_t)StackFeature::Security;
+            doc["action"] = "set";
+            JsonObject params = doc["params"].to<JsonObject>();
+            params["armed"] = false;
+            params["user"] = TelegramMenuSecurity::userFromChat_(*TelegramMenu::_self, u);
+            char payload[256] = {};
+            const size_t n = serializeJson(doc, payload, sizeof(payload));
+            const bool ok = (n > 0) && TelegramMenu::_self->_stack_master->sendTo(
+                                         node_id, (uint8_t)StackMsgType::CmdSet,
+                                         reinterpret_cast<const uint8_t *>(payload), n);
+            if (ok && TelegramMenu::_self->_stack_cache)
+                TelegramMenu::_self->_stack_cache->requestSecurity(node_id);
+            reply = ok ? "Команда отправлена" : "Не удалось";
+        }
         return true;
     }
 
@@ -173,8 +200,58 @@ public:
         return true;
     }
 
-    static String securityStatusText_(TelegramMenu &self)
+    static String securityStatusText_(TelegramMenu &self, int64_t chat_id)
     {
+        if (!self.isLocalSelected_(chat_id))
+        {
+            if (!self._stack_cache)
+                return "Охрана недоступна";
+            const uint32_t node_id = self.selectedNodeId_(chat_id);
+            if (node_id == 0)
+                return "Охрана недоступна";
+            const auto *cache = self._stack_cache->securityCache(node_id);
+            if (!cache || !cache->has_data)
+            {
+                self._stack_cache->requestSecurity(node_id);
+                return "Охрана:\n  обновление...";
+            }
+            String out = F("Охрана:\n");
+            out += F("  Статус: ");
+            out += cache->armed ? "🟢" : "⚪";
+            out += F("\n  Тревога: ");
+            out += cache->alarm ? "🔴" : "⚪";
+            out += F("\n  Датчики:\n");
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                if (!it.enabled)
+                    continue;
+                out += F("    ");
+                out += it.detect ? "🔴 " : "🟢 ";
+                out += it.name[0] ? String(it.name) : String(F("датчик ")) + String((unsigned)it.id);
+                String type_label;
+                if (it.type[0])
+                {
+                    String t = String(it.type);
+                    String tl = t;
+                    tl.toLowerCase();
+                    if (tl == "reed")
+                        type_label = "Reed";
+                    else if (tl == "pir")
+                        type_label = "PIR";
+                    else
+                        type_label = t;
+                }
+                if (type_label.length())
+                {
+                    out += F(" [");
+                    out += type_label;
+                    out += F("]");
+                }
+                out += F("\n");
+            }
+            return out;
+        }
         if (!self._security)
             return "Охрана недоступна";
         String out = F("Охрана:\n");
@@ -195,13 +272,53 @@ public:
                 out += cfg->name;
             else
                 out += String(F("датчик ")) + String((unsigned)cfg->id);
+            out += F(" [");
+            out += (cfg->type == SecurityController::SensorType::Reed) ? F("Reed") : F("PIR");
+            out += F("]");
             out += F("\n");
         }
         return out;
     }
 
-    static String securityListTextHtml_(TelegramMenu &self)
+    static String securityListTextHtml_(TelegramMenu &self, int64_t chat_id)
     {
+        if (!self.isLocalSelected_(chat_id))
+        {
+            if (!self._stack_cache)
+                return "Охрана недоступна";
+            const uint32_t node_id = self.selectedNodeId_(chat_id);
+            if (node_id == 0)
+                return "Охрана недоступна";
+            const auto *cache = self._stack_cache->securityCache(node_id);
+            if (!cache || !cache->has_data)
+            {
+                self._stack_cache->requestSecurity(node_id);
+                return "Охрана: обновление...";
+            }
+            String out = F("<b>Охрана:</b>\n");
+            out += F("ID  Type  Port  Silent  Detect  Name\n");
+            out += F("-----------------------------------\n");
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                if (!it.enabled)
+                    continue;
+                out += String((unsigned)it.id);
+                out += F("  ");
+                out += it.type[0] ? String(it.type) : String("--");
+                out += F("  ");
+                out += (it.port != SecurityController::kInvalidPort) ? String((unsigned)it.port) : String("--");
+                out += F("  ");
+                out += it.silent ? "yes" : "no";
+                out += F("  ");
+                out += it.detect ? "yes" : "no";
+                out += F("  ");
+                if (it.name[0])
+                    out += self.escapeHtml_(String(it.name));
+                out += F("\n");
+            }
+            return out;
+        }
         if (!self._security)
             return "Охрана недоступна";
         String out = F("<b>Охрана:</b>\n");
@@ -236,11 +353,10 @@ public:
     static String securityControlMarkup_()
     {
         std::vector<String> labels;
-        labels.reserve(6);
-        labels.push_back(F("Статус"));
+        labels.reserve(5);
         labels.push_back(F("Взять под охрану"));
         labels.push_back(F("Снять с охраны"));
-        labels.push_back(F("Список датчиков"));
+        labels.push_back(F("Статус"));
         labels.push_back(F("Сбросить детекты"));
         labels.push_back(F("Назад"));
         return TelegramMenu::buildKeyboardMarkup_(labels);
@@ -250,18 +366,13 @@ public:
     {
         if (!self._bot)
             return;
-        if (!self.isLocalSelected_(chat_id))
-        {
-            self._bot->sendText(chat_id, F("Доступно только для локального устройства"));
-            return;
-        }
-        if (!self._security)
+        if (self.isLocalSelected_(chat_id) && !self._security)
         {
             self._bot->sendText(chat_id, F("Охрана недоступна"));
             return;
         }
         const String markup = TelegramMenuSecurity::securityControlMarkup_();
-        const String text = TelegramMenuSecurity::securityStatusText_(self);
+        const String text = TelegramMenuSecurity::securityStatusText_(self, chat_id);
         self._bot->setMenu(chat_id, "security");
         self._bot->sendText(chat_id, text, markup);
     }
@@ -280,14 +391,9 @@ public:
             self._bot->enterMenu(u.chat_id, "device");
             return true;
         }
-        if (!self._security)
+        if (self.isLocalSelected_(u.chat_id) && !self._security)
         {
             self._bot->sendText(u.chat_id, F("Охрана недоступна"));
-            return true;
-        }
-        if (!self.isLocalSelected_(u.chat_id))
-        {
-            self._bot->sendText(u.chat_id, F("Доступно только для локального устройства"));
             return true;
         }
         if (u.text == F("Статус"))
@@ -297,27 +403,89 @@ public:
         }
         if (u.text == F("Взять под охрану"))
         {
-            const String user = TelegramMenuSecurity::userFromChat_(self, u);
-            self._security->armFrom("telegram", user);
+            if (self.isLocalSelected_(u.chat_id))
+            {
+                const String user = TelegramMenuSecurity::userFromChat_(self, u);
+                self._security->armFrom("telegram", user);
+            }
+            else
+            {
+                const uint32_t node_id = self.selectedNodeId_(u.chat_id);
+                if (node_id != 0 && self._stack_master)
+                {
+                    DynamicJsonDocument doc(256);
+                    doc["feature"] = (uint8_t)StackFeature::Security;
+                    doc["action"] = "set";
+                    JsonObject p = doc["params"].to<JsonObject>();
+                    p["armed"] = true;
+                    p["user"] = TelegramMenuSecurity::userFromChat_(self, u);
+                    char payload[256] = {};
+                    const size_t n = serializeJson(doc, payload, sizeof(payload));
+                    if (n > 0)
+                        self._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                   reinterpret_cast<const uint8_t *>(payload), n);
+                    if (self._stack_cache)
+                        self._stack_cache->requestSecurity(node_id);
+                }
+            }
             TelegramMenuSecurity::sendSecurityMenu_(self, u.chat_id);
             return true;
         }
         if (u.text == F("Снять с охраны"))
         {
-            const String user = TelegramMenuSecurity::userFromChat_(self, u);
-            self._security->disarmFrom("telegram", user);
+            if (self.isLocalSelected_(u.chat_id))
+            {
+                const String user = TelegramMenuSecurity::userFromChat_(self, u);
+                self._security->disarmFrom("telegram", user);
+            }
+            else
+            {
+                const uint32_t node_id = self.selectedNodeId_(u.chat_id);
+                if (node_id != 0 && self._stack_master)
+                {
+                    DynamicJsonDocument doc(256);
+                    doc["feature"] = (uint8_t)StackFeature::Security;
+                    doc["action"] = "set";
+                    JsonObject p = doc["params"].to<JsonObject>();
+                    p["armed"] = false;
+                    p["user"] = TelegramMenuSecurity::userFromChat_(self, u);
+                    char payload[256] = {};
+                    const size_t n = serializeJson(doc, payload, sizeof(payload));
+                    if (n > 0)
+                        self._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                   reinterpret_cast<const uint8_t *>(payload), n);
+                    if (self._stack_cache)
+                        self._stack_cache->requestSecurity(node_id);
+                }
+            }
             TelegramMenuSecurity::sendSecurityMenu_(self, u.chat_id);
-            return true;
-        }
-        if (u.text == F("Список датчиков"))
-        {
-            const String text = TelegramMenuSecurity::securityListTextHtml_(self);
-            self._bot->sendText(u.chat_id, text, "", "HTML");
             return true;
         }
         if (u.text == F("Сбросить детекты"))
         {
-            self._security->clearDetect();
+            if (self.isLocalSelected_(u.chat_id))
+            {
+                self._security->clearDetect();
+            }
+            else
+            {
+                const uint32_t node_id = self.selectedNodeId_(u.chat_id);
+                if (node_id != 0 && self._stack_master)
+                {
+                    DynamicJsonDocument doc(256);
+                    doc["feature"] = (uint8_t)StackFeature::Security;
+                    doc["action"] = "set";
+                    JsonObject p = doc["params"].to<JsonObject>();
+                    p["clear"] = true;
+                    char payload[256] = {};
+                    const size_t n = serializeJson(doc, payload, sizeof(payload));
+                    if (n > 0)
+                        self._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                   reinterpret_cast<const uint8_t *>(payload), n);
+                    if (self._stack_cache)
+                        self._stack_cache->requestSecurity(node_id);
+                }
+            }
             TelegramMenuSecurity::sendSecurityMenu_(self, u.chat_id);
             return true;
         }

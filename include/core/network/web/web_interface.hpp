@@ -53,6 +53,7 @@
 #include "hal/bus/onewire.hpp"
 #include "hal/ibutton.hpp"
 #include "controllers/controllers.hpp"
+#include "core/rules_controller.hpp"
 #include "core/network/web/interfaces/web_interface_assets.hpp"
 
 class WebInterface
@@ -61,7 +62,7 @@ public:
     WebInterface(AsyncWebServer &server, CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
                  RTC &rtc, TelegramClient &tgbot, TelegramBot &tgbot_bot, TelegramMenu &tgbot_menu, Logger &logs,
                  Extender &ext,
-                 I2CManager &i2c, OneWireManager &ow, Controllers &controllers)
+                 I2CManager &i2c, OneWireManager &ow, Controllers &controllers, RulesController &rules)
         : _server(server),
           _cli_auth(&cli),
           _wifi(wifi),
@@ -72,6 +73,7 @@ public:
           _tgbot_bot(&tgbot_bot),
           _tgbot_menu(&tgbot_menu),
           _controllers(&controllers),
+          _rules(&rules),
           _ext(&ext),
           _i2c(&i2c),
           _ow(&ow),
@@ -128,6 +130,7 @@ public:
     }
     void setStackSlave(StackSlaveHandler *slave) { _stack_slave = slave; }
     void setCloudClient(CloudClient &client) { _cloud = &client; }
+    void setRules(RulesController &rules) { _rules = &rules; }
 
     StackCache &stackCache() { return *_stack_cache; }
     const StackCache &stackCache() const { return *_stack_cache; }
@@ -165,6 +168,7 @@ private:
     friend class WateringHandler;
     friend class AvrHandler;
     friend class LeakHandler;
+    friend class RulesHandler;
     struct StackSocketItem;
     struct StackSocketsCache;
     struct StackLightItem;
@@ -1252,6 +1256,7 @@ private:
         hashAdd_(hash, _avr_status);
         hashAdd_(hash, _leak_status);
         hashAdd_(hash, _security_status);
+        hashAdd_(hash, _rules_status);
 
         if (path == "/" || path == "/index")
         {
@@ -1314,6 +1319,43 @@ private:
                 hashAdd_(hash, _controllers->avr().controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, _controllers->leak().controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, _controllers->security().controllerEnabled() ? 1u : 0u);
+            }
+            return hash;
+        }
+        if (path == "/rules")
+        {
+            if (_rules)
+            {
+                for (size_t i = 1; i <= RulesController::kRuleCount; ++i)
+                {
+                    const auto *r = _rules->rule(i);
+                    if (!r)
+                        continue;
+                    hashAdd_(hash, (uint32_t)r->id);
+                    hashAdd_(hash, r->enabled ? 1u : 0u);
+                    hashAdd_(hash, r->name);
+                    hashAdd_(hash, r->condition_enabled ? 1u : 0u);
+                    hashAdd_(hash, r->condition_node_id);
+                    hashAdd_(hash, r->condition_controller);
+                    hashAdd_(hash, (uint32_t)r->condition_item_id);
+                    hashAdd_(hash, r->condition_parameter);
+                    hashAdd_(hash, r->condition_op);
+                    hashAdd_(hash, r->condition_value);
+                    for (size_t j = 1; j <= RulesController::kActionCount; ++j)
+                    {
+                        const auto *a = _rules->action(i, j);
+                        if (!a)
+                            continue;
+                        hashAdd_(hash, (uint32_t)a->id);
+                        hashAdd_(hash, a->enabled ? 1u : 0u);
+                        hashAdd_(hash, (uint32_t)a->kind);
+                        hashAdd_(hash, (uint32_t)a->delay_ms);
+                        hashAdd_(hash, a->node_id);
+                        hashAdd_(hash, a->controller);
+                        hashAdd_(hash, a->parameter);
+                        hashAdd_(hash, a->value);
+                    }
+                }
             }
             return hash;
         }
@@ -2143,6 +2185,7 @@ private:
     TelegramBot *_tgbot_bot = nullptr;
     TelegramMenu *_tgbot_menu = nullptr;
     Controllers *_controllers = nullptr;
+    RulesController *_rules = nullptr;
     GsmModem *_gsm = nullptr;
     I2CManager *_i2c = nullptr;
     OneWireManager *_ow = nullptr;
@@ -2520,6 +2563,7 @@ private:
     String _avr_status;
     String _leak_status;
     String _security_status;
+    String _rules_status;
     String _users_status;
     String _display_status;
     bool _auth_enabled = false;

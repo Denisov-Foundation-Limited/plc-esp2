@@ -1,5 +1,23 @@
 #pragma once
 
+    size_t wateringLocalRenderCount_() const
+    {
+        if (!_controllers)
+            return 0;
+        WateringController &watering = _controllers->watering();
+        size_t last_enabled_idx = SIZE_MAX;
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+            const auto *cfg = watering.configByIndex(i);
+            if (cfg && cfg->enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            return WateringController::kRuleCount ? 1u : 0u;
+        const size_t count = last_enabled_idx + 2u;
+        return count > WateringController::kRuleCount ? WateringController::kRuleCount : count;
+    }
+
     String wateringDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
     {
         if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
@@ -108,7 +126,21 @@
         if (reserve < 8192u)
             reserve = 8192u;
         items.reserve(reserve);
+        size_t render_count = cache->item_count;
+        size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            if (cache->items[i].enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx == SIZE_MAX)
+            render_count = cache->item_count ? 1u : 0u;
+        else
+        {
+            const size_t count = last_enabled_idx + 2u;
+            render_count = count > cache->item_count ? cache->item_count : count;
+        }
+        for (size_t i = 0; i < render_count; ++i)
         {
             const StackWateringItem &cfg = cache->items[i];
             const char *state_label = cfg.active ? "активно" : (cfg.paused ? "пауза" : "ожидание");
@@ -317,6 +349,12 @@
                 items += buf;
             }
             items += "\"></div>";
+            items += "<div class=\"form-row\"><label>Длит. (мин)</label><input class=\"field mini\" type=\"number\" min=\"1\" step=\"1\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_dur\" value=\"";
+            if (cfg.duration_sec)
+                items += String((unsigned long)((cfg.duration_sec + 59) / 60));
+            items += "\"></div>";
             items += "<div class=\"form-row\"><label>Время 2</label><input class=\"field mini\" type=\"time\" name=\"w";
             items += String((unsigned)cfg.id);
             items += "_time2\" value=\"";
@@ -326,6 +364,12 @@
                 snprintf(buf2, sizeof(buf2), "%02u:%02u", (unsigned)cfg.hour2, (unsigned)cfg.minute2);
                 items += buf2;
             }
+            items += "\"></div>";
+            items += "<div class=\"form-row\"><label>Длит.2 (мин)</label><input class=\"field mini\" type=\"number\" min=\"0\" step=\"1\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_dur2\" value=\"";
+            if (cfg.duration2_sec)
+                items += String((unsigned long)((cfg.duration2_sec + 59) / 60));
             items += "\"></div>";
             items += "<div class=\"form-row\"><label>Время 3</label><input class=\"field mini\" type=\"time\" name=\"w";
             items += String((unsigned)cfg.id);
@@ -337,30 +381,18 @@
                 items += buf3;
             }
             items += "\"></div>";
-            items += "<div class=\"form-row\"><label>Бак</label><select class=\"field mini watering-select\" data-type=\"tank\" data-selected=\"";
-            if (cfg.tank_id)
-                items += String((unsigned)cfg.tank_id);
-            items += "\" name=\"w";
-            items += String((unsigned)cfg.id);
-            items += "_tank\"></select></div>";
-            items += "<div class=\"form-row\"><label>Длит. (мин)</label><input class=\"field mini\" type=\"number\" min=\"1\" step=\"1\" name=\"w";
-            items += String((unsigned)cfg.id);
-            items += "_dur\" value=\"";
-            if (cfg.duration_sec)
-                items += String((unsigned long)((cfg.duration_sec + 59) / 60));
-            items += "\"></div>";
-            items += "<div class=\"form-row\"><label>Длит.2 (мин)</label><input class=\"field mini\" type=\"number\" min=\"0\" step=\"1\" name=\"w";
-            items += String((unsigned)cfg.id);
-            items += "_dur2\" value=\"";
-            if (cfg.duration2_sec)
-                items += String((unsigned long)((cfg.duration2_sec + 59) / 60));
-            items += "\"></div>";
             items += "<div class=\"form-row\"><label>Длит.3 (мин)</label><input class=\"field mini\" type=\"number\" min=\"0\" step=\"1\" name=\"w";
             items += String((unsigned)cfg.id);
             items += "_dur3\" value=\"";
             if (cfg.duration3_sec)
                 items += String((unsigned long)((cfg.duration3_sec + 59) / 60));
             items += "\"></div>";
+            items += "<div class=\"form-row\"><label>Бак</label><select class=\"field mini watering-select\" data-type=\"tank\" data-selected=\"";
+            if (cfg.tank_id)
+                items += String((unsigned)cfg.tank_id);
+            items += "\" name=\"w";
+            items += String((unsigned)cfg.id);
+            items += "_tank\"></select></div>";
             items += "<div class=\"form-row tank-dependent\"><label>Продолжать</label><label class=\"switch\"><input type=\"checkbox\" name=\"w";
             items += String((unsigned)cfg.id);
             items += "_resume\"";
@@ -382,26 +414,15 @@
             items += "</div></div></div>";
         };
 
-        const WateringController::RuleConfig *first_disabled = nullptr;
-        const WateringController::RuleState *first_disabled_state = nullptr;
-        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        const size_t render_count = wateringLocalRenderCount_();
+        for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = watering.configByIndex(i);
             const auto *st = watering.stateByIndex(i);
             if (!cfg || !st)
                 continue;
-            if (cfg->enabled)
-            {
-                appendRule(*cfg, *st);
-            }
-            else if (!first_disabled)
-            {
-                first_disabled = cfg;
-                first_disabled_state = st;
-            }
+            appendRule(*cfg, *st);
         }
-        if (first_disabled && first_disabled_state)
-            appendRule(*first_disabled, *first_disabled_state);
         return items;
     }
 
