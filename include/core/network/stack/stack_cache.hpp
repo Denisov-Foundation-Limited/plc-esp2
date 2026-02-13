@@ -1857,7 +1857,7 @@ private:
             {
                 sec_prearm_cache->last_error = doc["error"] | "error";
                 if (_log)
-                    _log->warn(F("STACK"), F("security prearm err: node=0x%08lX err=%s"),
+                    _log->warn(F("STACK"), F("security prearm err: unit=0x%08lX err=%s"),
                                (unsigned long)node_id,
                                sec_prearm_cache->last_error.length() ? sec_prearm_cache->last_error.c_str() : "error");
             }
@@ -3727,3 +3727,4 @@ private:
     StackNodeStatusCache _stack_status_cache[StackMaster::MAX_SESSIONS] = {};
     uint16_t _stack_cmd_id = 0;
 };
+

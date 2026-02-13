@@ -163,7 +163,7 @@ struct ControlContext
           rules(),
           meteo_history(hw.rtc, controllers.meteo()),
           task_binder(core.tm, comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history,
-                      hw.display, hw.plc),
+                      hw.display, hw.plc, core.logs),
           ftest(core.logs, hw.io, hw.ow, hw.ibutton, hw.ds18b20, hw.i2c, hw.rtc, hw.ext, core.tm, task_binder),
           plc_scan(hw.io)
     {
@@ -271,6 +271,7 @@ struct App
         control.controllers.meteo().setRemoteMeteoProvider(&App::onRemoteMeteoProxy_, this);
         control.controllers.meteo().setRemoteNodeNameProvider(&App::onRemoteNodeName_, this);
         control.controllers.meteo().setRemoteSensorNameProvider(&App::onRemoteSensorName_, this);
+        control.controllers.meteo().setRemoteSensorTypeProvider(&App::onRemoteSensorType_, this);
         control.controllers.meteo().setAlarmHandler(&App::onMeteoAlarm_, this);
         control.controllers.security().setArmStateHandler(&App::onSecurityArmState_, this);
         control.controllers.security().setPreArmCheckHandler(&App::onSecurityPreArmCheck_, this);
@@ -409,7 +410,8 @@ struct App
         {
             const auto cfg = ActiveBoardProfile::EEPROM;
             TwoWire *wire = hw.i2c.wirePtr(cfg.bus_num);
-            const bool eeprom_ok = wire && hw.eeprom.begin(*wire, cfg.addr);
+            const bool eeprom_present = wire && hw.i2c.probeAddress(cfg.bus_num, cfg.addr);
+            const bool eeprom_ok = eeprom_present && hw.eeprom.begin(*wire, cfg.addr);
             hw.eeprom_storage.setReady(eeprom_ok);
             if (!eeprom_ok)
                 core.logs.warn(F("APP"), F("EEPROM init failed"));
@@ -514,7 +516,11 @@ struct App
             ok = false;
         }
 
-        control.controllers.begin();
+        if (!control.controllers.begin())
+        {
+            core.logs.error(F("APP"), F("Controllers init failed"));
+            ok = false;
+        }
 
         if (ok)
             core.logs.info(F("APP"), F("Application init [OK]"));
@@ -799,6 +805,7 @@ private:
     {
         if (!stackMasterActive_())
             return;
+        logLocalInventory_();
         StackMaster &master = net.network.stackMaster();
         const size_t count = master.nodeCount();
         if (count == 0)
@@ -814,13 +821,200 @@ private:
             return;
         if (!master.nodeIsOnline(node_id, kStackNodeStaleMs))
             return;
+        logStackNodeInventory_(node_id);
+        stack_cache.requestSockets(node_id);
+        stack_cache.requestLights(node_id);
         stack_cache.requestSecurity(node_id);
         stack_cache.requestSecurityPrearm(node_id);
+        stack_cache.requestThermo(node_id);
         stack_cache.requestSeptic(node_id);
         stack_cache.requestTanks(node_id);
         stack_cache.requestMeteo(node_id);
+        stack_cache.requestWatering(node_id);
         stack_cache.requestAvr(node_id);
         stack_cache.requestLeak(node_id);
+    }
+
+    void logLocalInventory_()
+    {
+        if (_local_inventory_logged)
+            return;
+        const String node = hw.plc.deviceName().length() ? hw.plc.deviceName() : String("master");
+        auto &sockets = control.controllers.sockets();
+        size_t enabled = 0;
+        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+        {
+            const auto *cfg = sockets.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            ++enabled;
+        }
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: sockets enabled: %u"), node.c_str(), (unsigned)enabled);
+        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+        {
+            const auto *cfg = sockets.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            core.logs.info(F("STACK"), F("Sync master unit: %s item: sockets id: %u name: %s"),
+                           node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-");
+        }
+
+        enabled = 0;
+        for (size_t i = 0; i < SocketController::kLightCount; ++i)
+        {
+            const auto *cfg = sockets.lightConfigByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            ++enabled;
+        }
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: lights enabled: %u"), node.c_str(), (unsigned)enabled);
+        for (size_t i = 0; i < SocketController::kLightCount; ++i)
+        {
+            const auto *cfg = sockets.lightConfigByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            core.logs.info(F("STACK"), F("Sync master unit: %s item: lights id: %u name: %s"),
+                           node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-");
+        }
+
+        auto &meteo = control.controllers.meteo();
+        enabled = 0;
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = meteo.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            ++enabled;
+        }
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: meteo enabled: %u"), node.c_str(), (unsigned)enabled);
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = meteo.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            core.logs.info(F("STACK"), F("Sync master unit: %s item: meteo id: %u name: %s type: %s"),
+                           node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-",
+                           MeteoController::typeName(cfg->type));
+        }
+
+        auto &thermo = control.controllers.thermo();
+        enabled = 0;
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = thermo.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            ++enabled;
+        }
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: thermo enabled: %u"), node.c_str(), (unsigned)enabled);
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = thermo.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            core.logs.info(F("STACK"), F("Sync master unit: %s item: thermo id: %u name: %s mode: %s"),
+                           node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-",
+                           ThermoController::modeName(cfg->mode));
+        }
+
+        auto &tanks = control.controllers.tanks();
+        enabled = 0;
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = tanks.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            ++enabled;
+        }
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: tanks enabled: %u"), node.c_str(), (unsigned)enabled);
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = tanks.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            core.logs.info(F("STACK"), F("Sync master unit: %s item: tanks id: %u name: %s"),
+                           node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-");
+        }
+
+        auto &septic = control.controllers.septic();
+        enabled = 0;
+        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        {
+            const auto *cfg = septic.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            ++enabled;
+        }
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: septic enabled: %u"), node.c_str(), (unsigned)enabled);
+        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        {
+            const auto *cfg = septic.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            core.logs.info(F("STACK"), F("Sync master unit: %s item: septic id: %u"), node.c_str(), (unsigned)cfg->id);
+        }
+
+        auto &security = control.controllers.security();
+        enabled = 0;
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+            const auto *cfg = security.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            ++enabled;
+        }
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: security enabled: %u"), node.c_str(), (unsigned)enabled);
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+            const auto *cfg = security.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            const char *type = (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
+            core.logs.info(F("STACK"), F("Sync master unit: %s item: security id: %u name: %s type: %s"),
+                           node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-", type);
+        }
+
+        auto &watering = control.controllers.watering();
+        enabled = 0;
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+            const auto *cfg = watering.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            ++enabled;
+        }
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: watering enabled: %u"), node.c_str(), (unsigned)enabled);
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+            const auto *cfg = watering.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            core.logs.info(F("STACK"), F("Sync master unit: %s item: watering id: %u name: %s"),
+                           node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-");
+        }
+
+        auto &leak = control.controllers.leak();
+        enabled = 0;
+        for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+        {
+            const auto *cfg = leak.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            ++enabled;
+        }
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: leak enabled: %u"), node.c_str(), (unsigned)enabled);
+        for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+        {
+            const auto *cfg = leak.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            core.logs.info(F("STACK"), F("Sync master unit: %s item: leak id: %u name: %s"),
+                           node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-");
+        }
+
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: avr enabled: %s"), node.c_str(),
+                       control.controllers.avr().controllerEnabled() ? "true" : "false");
+        _local_inventory_logged = true;
     }
 
     static bool onRemoteMeteo_(void *ctx, uint32_t node_id, uint8_t sensor_id, float &temp_c, bool &has_temp)
@@ -945,6 +1139,59 @@ private:
         return false;
     }
 
+    static bool onRemoteSensorType_(void *ctx, uint32_t node_id, uint8_t sensor_id,
+                                    MeteoController::SensorType &out)
+    {
+        out = MeteoController::SensorType::None;
+        if (!ctx || node_id == 0 || sensor_id == 0)
+            return false;
+        App *self = static_cast<App *>(ctx);
+        auto parseType = [](const char *type) -> MeteoController::SensorType {
+            if (!type || !type[0])
+                return MeteoController::SensorType::None;
+            String t(type);
+            t.toLowerCase();
+            if (t == "ds18b20")
+                return MeteoController::SensorType::Ds18b20;
+            if (t == "dht22")
+                return MeteoController::SensorType::Dht22;
+            return MeteoController::SensorType::None;
+        };
+        if (self->stackMasterActive_())
+        {
+            const auto *cache = self->stack_cache.meteoCache(node_id);
+            if (!cache || !cache->has_data)
+            {
+                self->stack_cache.requestMeteo(node_id);
+                return false;
+            }
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                if (it.id != sensor_id)
+                    continue;
+                out = parseType(it.type);
+                return out != MeteoController::SensorType::None;
+            }
+            return false;
+        }
+        const auto *cache = self->net.stack_slave.remoteMeteoCache(node_id);
+        if (!cache || !cache->has_data || !cache->items)
+        {
+            self->net.stack_slave.requestRemoteMeteoAll();
+            return false;
+        }
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const auto &it = cache->items[i];
+            if (it.id != sensor_id)
+                continue;
+            out = parseType(it.type);
+            return out != MeteoController::SensorType::None;
+        }
+        return false;
+    }
+
     static void onMeteoAlarm_(void *ctx, uint32_t node_id, uint8_t sensor_id, bool alarm)
     {
         if (!ctx || sensor_id == 0 || sensor_id > 32)
@@ -982,6 +1229,7 @@ private:
         if (!ctx || node_id == 0)
             return;
         App *self = static_cast<App *>(ctx);
+        self->clearInventoryLogState_(node_id);
         String name;
         String ip;
         uint16_t fw_ver = 0;
@@ -990,14 +1238,25 @@ private:
         const char *ip_c = ip.length() ? ip.c_str() : "n/a";
         if (online)
         {
-            self->core.logs.info(F("STACK"), F("node online: %s ip: %s fw: %u"),
+            self->comms.wifi.task();
+            self->core.logs.info(F("STACK"), F("Unit online: %s ip: %s fw: %u"),
                                  label.c_str(), ip_c, (unsigned)fw_ver);
             self->sendSecurityStateToNode_(node_id, self->control.controllers.security().armed(), true);
+            self->stack_cache.requestSockets(node_id);
+            self->stack_cache.requestLights(node_id);
+            self->stack_cache.requestSecurity(node_id);
             self->stack_cache.requestSecurityPrearm(node_id);
+            self->stack_cache.requestMeteo(node_id);
+            self->stack_cache.requestThermo(node_id);
+            self->stack_cache.requestSeptic(node_id);
+            self->stack_cache.requestTanks(node_id);
+            self->stack_cache.requestWatering(node_id);
+            self->stack_cache.requestAvr(node_id);
+            self->stack_cache.requestLeak(node_id);
         }
         else
         {
-            self->core.logs.warn(F("STACK"), F("node offline: %s ip: %s fw: %u"),
+            self->core.logs.warn(F("STACK"), F("Unit offline: %s ip: %s fw: %u"),
                                  label.c_str(), ip_c, (unsigned)fw_ver);
         }
     }
@@ -1363,28 +1622,28 @@ private:
         const RingController::Source src = control.controllers.ring().lastSource();
         if (src == RingController::Source::Button)
         {
-            const String tg_msg = F("Звонок включен по кнопке");
+            const String tg_msg = F("Р вЂ”Р Р†Р С•Р Р…Р С•Р С” Р Р†Р С”Р В»РЎР‹РЎвЂЎР ВµР Р… Р С—Р С• Р С”Р Р…Р С•Р С—Р С”Р Вµ");
             core.logs.info(F("RING"), F("Ring enabled by button"));
             sendTelegramNotify_(tg_msg);
             return;
         }
         if (src == RingController::Source::Web)
         {
-            const String tg_msg = F("Звонок включен из веб-интерфейса");
+            const String tg_msg = F("Р вЂ”Р Р†Р С•Р Р…Р С•Р С” Р Р†Р С”Р В»РЎР‹РЎвЂЎР ВµР Р… Р С‘Р В· Р Р†Р ВµР В±-Р С‘Р Р…РЎвЂљР ВµРЎР‚РЎвЂћР ВµР в„–РЎРѓР В°");
             core.logs.info(F("RING"), F("Ring enabled from web"));
             sendTelegramNotify_(tg_msg);
             return;
         }
         if (src == RingController::Source::Cli)
         {
-            const String tg_msg = F("Звонок включен из CLI");
+            const String tg_msg = F("Р вЂ”Р Р†Р С•Р Р…Р С•Р С” Р Р†Р С”Р В»РЎР‹РЎвЂЎР ВµР Р… Р С‘Р В· CLI");
             core.logs.info(F("RING"), F("Ring enabled from CLI"));
             sendTelegramNotify_(tg_msg);
             return;
         }
         if (src == RingController::Source::Stack)
         {
-            const String tg_msg = F("Звонок включен из стека");
+            const String tg_msg = F("Р вЂ”Р Р†Р С•Р Р…Р С•Р С” Р Р†Р С”Р В»РЎР‹РЎвЂЎР ВµР Р… Р С‘Р В· РЎРѓРЎвЂљР ВµР С”Р В°");
             core.logs.info(F("RING"), F("Ring enabled from stack"));
             sendTelegramNotify_(tg_msg);
             return;
@@ -1431,7 +1690,7 @@ private:
                 const String name = params["name"] | "";
                 const bool silent = params["silent"] | false;
                 const String source = stackNodeLabel_(node_id);
-                core.logs.warn(F("SECURITY"), F("remote detect: node: %s id: %u name: %s silent: %u"),
+                core.logs.warn(F("SECURITY"), F("remote detect: unit: %s id: %u name: %s silent: %u"),
                                source.c_str(),
                                (unsigned)sensor_id,
                                name.length() ? name.c_str() : "",
@@ -1455,7 +1714,7 @@ private:
                 if (!uid.length())
                     return;
                 const String source = params["name"] | stackNodeLabel_(node_id);
-                core.logs.info(F("SECURITY"), F("remote RFID: node: %s uid: %s"),
+                core.logs.info(F("SECURITY"), F("remote RFID: unit: %s uid: %s"),
                                source.c_str(), uid.c_str());
                 SecurityController &sec = control.controllers.security();
                 const bool matched = sec.processRfidUidString(uid.c_str(), source.c_str());
@@ -1470,7 +1729,7 @@ private:
                 if (!serial.length())
                     return;
                 const String source = params["name"] | stackNodeLabel_(node_id);
-                core.logs.info(F("SECURITY"), F("remote iButton: node: %s serial: %s"),
+                core.logs.info(F("SECURITY"), F("remote iButton: unit: %s serial: %s"),
                                source.c_str(), serial.c_str());
                 SecurityController &sec = control.controllers.security();
                 const bool matched = sec.processIButtonSerialString(serial.c_str(), source.c_str());
@@ -1532,7 +1791,7 @@ private:
         const uint8_t septic_id = (uint8_t)(params["id"] | 0);
         const String name = params["name"] | "";
         const String source = stackNodeLabel_(node_id);
-        core.logs.warn(F("SEPTIC"), F("remote %s: node: %s id: %u name: %s"),
+        core.logs.warn(F("SEPTIC"), F("remote %s: unit: %s id: %u name: %s"),
                        is_alarm ? "alarm" : "warning",
                        source.c_str(),
                        (unsigned)septic_id,
@@ -1556,7 +1815,7 @@ private:
         const uint8_t tank_id = (uint8_t)(params["id"] | 0);
         const String name = params["name"] | "";
         const String source = stackNodeLabel_(node_id);
-        core.logs.warn(F("TANK"), F("remote empty: node: %s id: %u name: %s"),
+        core.logs.warn(F("TANK"), F("remote empty: unit: %s id: %u name: %s"),
                        source.c_str(),
                        (unsigned)tank_id,
                        name.length() ? name.c_str() : "");
@@ -1594,7 +1853,7 @@ private:
             msg += reason;
             msg += ")";
         }
-        core.logs.info(F("WATER"), F("%s: node: %s rule: %u name: %s port: %u tank: %u rem_ms: %lu resume_lvl: %u"),
+        core.logs.info(F("WATER"), F("%s: unit: %s rule: %u name: %s port: %u tank: %u rem_ms: %lu resume_lvl: %u"),
                        msg.c_str(),
                        source.c_str(),
                        (unsigned)rule_id,
@@ -2760,13 +3019,13 @@ private:
                 const String label = stackNodeLabel_(node_id);
                 if (out.length())
                     out += F("\n");
-                out += F("ожидание данных: ");
+                out += F("Р С•Р В¶Р С‘Р Т‘Р В°Р Р…Р С‘Р Вµ Р Т‘Р В°Р Р…Р Р…РЎвЂ№РЎвЂ¦: ");
                 out += escapeHtml_(label);
                 if (plain_out)
                 {
                     if (plain_out->length())
                         *plain_out += F(", ");
-                    *plain_out += F("ожидание данных: ");
+                    *plain_out += F("Р С•Р В¶Р С‘Р Т‘Р В°Р Р…Р С‘Р Вµ Р Т‘Р В°Р Р…Р Р…РЎвЂ№РЎвЂ¦: ");
                     *plain_out += label;
                 }
                 core.logs.warn(F("SECURITY"), F("prearm waiting data from %s"), label.c_str());
@@ -2900,11 +3159,288 @@ private:
         return -1;
     }
 
+    void logStackNodeInventory_(uint32_t node_id)
+    {
+        if (node_id == 0 || !stackMasterActive_())
+            return;
+        if (!net.network.stackMaster().nodeIsOnline(node_id, kStackNodeStaleMs))
+            return;
+        StackInventoryLogState *state = inventoryLogState_(node_id, true);
+        if (!state)
+            return;
+        const String node = stackNodeLabel_(node_id);
+        auto cacheReady = [](const auto *cache) -> bool {
+            return cache && (cache->has_data || cache->last_ok || cache->updated_ms != 0 || cache->last_error.length());
+        };
+
+        if ((state->logged_mask & kInvSockets) == 0)
+        {
+            const auto *cache = stack_cache.socketsCache(node_id);
+            if (cacheReady(cache))
+            {
+                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                {
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: sockets id: %u name: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    }
+                }
+                state->logged_mask |= kInvSockets;
+            }
+        }
+
+        if ((state->logged_mask & kInvLights) == 0)
+        {
+            const auto *cache = stack_cache.lightsCache(node_id);
+            if (cacheReady(cache))
+            {
+                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                {
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: lights id: %u name: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    }
+                }
+                state->logged_mask |= kInvLights;
+            }
+        }
+
+        if ((state->logged_mask & kInvMeteo) == 0)
+        {
+            const auto *cache = stack_cache.meteoCache(node_id);
+            if (cacheReady(cache))
+            {
+                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                {
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: meteo id: %u name: %s type: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
+                                       it.type[0] ? it.type : "none");
+                    }
+                }
+                state->logged_mask |= kInvMeteo;
+            }
+        }
+
+        if ((state->logged_mask & kInvThermo) == 0)
+        {
+            const auto *cache = stack_cache.thermoCache(node_id);
+            if (cacheReady(cache))
+            {
+                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                {
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: thermo id: %u name: %s mode: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
+                                       it.mode[0] ? it.mode : "-");
+                    }
+                }
+                state->logged_mask |= kInvThermo;
+            }
+        }
+
+        if ((state->logged_mask & kInvTanks) == 0)
+        {
+            const auto *cache = stack_cache.tanksCache(node_id);
+            if (cacheReady(cache))
+            {
+                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                {
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: tanks id: %u name: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    }
+                }
+                state->logged_mask |= kInvTanks;
+            }
+        }
+
+        if ((state->logged_mask & kInvSeptic) == 0)
+        {
+            const auto *cache = stack_cache.septicCache(node_id);
+            if (cacheReady(cache))
+            {
+                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                {
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: septic id: %u"),
+                                       node.c_str(), (unsigned)it.id);
+                    }
+                }
+                state->logged_mask |= kInvSeptic;
+            }
+        }
+
+        if ((state->logged_mask & kInvSecurity) == 0)
+        {
+            const auto *cache = stack_cache.securityCache(node_id);
+            if (cacheReady(cache))
+            {
+                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                {
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"),
+                                       F("Sync slave unit: %s item: security id: %u name: %s type: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
+                                       it.type[0] ? it.type : "-");
+                    }
+                }
+                state->logged_mask |= kInvSecurity;
+            }
+        }
+
+        if ((state->logged_mask & kInvWatering) == 0)
+        {
+            const auto *cache = stack_cache.wateringCache(node_id);
+            if (cacheReady(cache))
+            {
+                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                {
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: watering id: %u name: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    }
+                }
+                state->logged_mask |= kInvWatering;
+            }
+        }
+
+        if ((state->logged_mask & kInvLeak) == 0)
+        {
+            const auto *cache = stack_cache.leakCache(node_id);
+            if (cacheReady(cache))
+            {
+                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                {
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: leak id: %u name: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    }
+                }
+                state->logged_mask |= kInvLeak;
+            }
+        }
+
+        if ((state->logged_mask & kInvAvr) == 0)
+        {
+            const auto *cache = stack_cache.avrCache(node_id);
+            if (cacheReady(cache))
+            {
+                state->logged_mask |= kInvAvr;
+            }
+        }
+
+        if (!state->sync_complete_logged && state->logged_mask == kInvAll)
+        {
+            const String unit = stackNodeLabel_(node_id);
+            core.logs.info(F("STACK"), F("Sync unit: %s complete"), unit.c_str());
+            state->sync_complete_logged = true;
+        }
+    }
+
+    struct StackInventoryLogState
+    {
+        uint32_t node_id = 0;
+        uint16_t logged_mask = 0;
+        bool sync_complete_logged = false;
+    };
+
+    StackInventoryLogState *inventoryLogState_(uint32_t node_id, bool create)
+    {
+        if (node_id == 0)
+            return nullptr;
+        for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
+        {
+            if (_stack_inventory_log[i].node_id == node_id)
+                return &_stack_inventory_log[i];
+        }
+        if (!create)
+            return nullptr;
+        for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
+        {
+            if (_stack_inventory_log[i].node_id == 0)
+            {
+                _stack_inventory_log[i].node_id = node_id;
+                _stack_inventory_log[i].logged_mask = 0;
+                _stack_inventory_log[i].sync_complete_logged = false;
+                return &_stack_inventory_log[i];
+            }
+        }
+        _stack_inventory_log[0].node_id = node_id;
+        _stack_inventory_log[0].logged_mask = 0;
+        _stack_inventory_log[0].sync_complete_logged = false;
+        return &_stack_inventory_log[0];
+    }
+
+    void clearInventoryLogState_(uint32_t node_id)
+    {
+        if (node_id == 0)
+            return;
+        for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
+        {
+            if (_stack_inventory_log[i].node_id != node_id)
+                continue;
+            _stack_inventory_log[i].node_id = 0;
+            _stack_inventory_log[i].logged_mask = 0;
+            _stack_inventory_log[i].sync_complete_logged = false;
+            return;
+        }
+    }
+
     static constexpr uint32_t kPreArmFreshMs = 8000;
     static constexpr uint32_t kPreArmWaitMs = 2500;
     static constexpr uint32_t kPreArmPollMs = 1000;
     static constexpr uint32_t kStackNodeStaleMs = 15000;
     static constexpr uint32_t kDisplayNoDataErrMs = 30000;
+    static constexpr uint16_t kInvSockets = 1u << 0;
+    static constexpr uint16_t kInvLights = 1u << 1;
+    static constexpr uint16_t kInvMeteo = 1u << 2;
+    static constexpr uint16_t kInvThermo = 1u << 3;
+    static constexpr uint16_t kInvTanks = 1u << 4;
+    static constexpr uint16_t kInvSeptic = 1u << 5;
+    static constexpr uint16_t kInvSecurity = 1u << 6;
+    static constexpr uint16_t kInvWatering = 1u << 7;
+    static constexpr uint16_t kInvLeak = 1u << 8;
+    static constexpr uint16_t kInvAvr = 1u << 9;
+    static constexpr uint16_t kInvAll =
+        kInvSockets | kInvLights | kInvMeteo | kInvThermo | kInvTanks |
+        kInvSeptic | kInvSecurity | kInvWatering | kInvLeak | kInvAvr;
 
     void broadcastSecurityAlarm_(bool alarm_on)
     {
@@ -3047,7 +3583,14 @@ private:
     bool _stack_master_effective = false;
     bool _master_led_initialized = false;
     bool _master_led_state = false;
+    bool _local_inventory_logged = false;
     uint32_t _last_stack_poll_ms = 0;
     size_t _stack_poll_index = 0;
+    StackInventoryLogState _stack_inventory_log[StackMaster::MAX_SESSIONS]{};
     DisplaySlotConfig _display_slots[Display::kSlotCount]{};
 };
+
+
+
+
+

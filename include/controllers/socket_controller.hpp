@@ -166,10 +166,7 @@ public:
     bool begin()
     {
         if (!_controller_enabled && !_lights_enabled)
-        {
-            _logs.info(F("SOCKET"), F("Controller disabled"));
             return true;
-        }
         if (_controller_enabled)
         {
             for (size_t i = 0; i < kSocketCount; ++i)

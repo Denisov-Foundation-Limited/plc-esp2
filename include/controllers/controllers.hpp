@@ -55,61 +55,72 @@ public:
     bool begin()
     {
         _logs.info(F("CTRL"), F("Init begin"));
-        _logs.info(F("CTRL"), F("Sockets init"));
+        const bool sockets_enabled = _sockets.controllerEnabled() || _sockets.lightsEnabled();
+        if (sockets_enabled)
+            _logs.info(F("CTRL"), F("Sockets init"));
         if (!_sockets.begin())
         {
             _logs.error(F("CTRL"), F("Sockets init failed"));
             return false;
         }
-        _logs.info(F("CTRL"), F("Meteo init"));
+        if (_meteo.controllerEnabled())
+            _logs.info(F("CTRL"), F("Meteo init"));
         if (!_meteo.begin())
         {
             _logs.error(F("CTRL"), F("Meteo init failed"));
             return false;
         }
-        _logs.info(F("CTRL"), F("Thermo init"));
+        if (_thermo.controllerEnabled())
+            _logs.info(F("CTRL"), F("Thermo init"));
         if (!_thermo.begin())
         {
             _logs.error(F("CTRL"), F("Thermo init failed"));
             return false;
         }
-        _logs.info(F("CTRL"), F("Tanks init"));
+        if (_tanks.controllerEnabled())
+            _logs.info(F("CTRL"), F("Tanks init"));
         if (!_tanks.begin())
         {
             _logs.error(F("CTRL"), F("Tanks init failed"));
             return false;
         }
-        _logs.info(F("CTRL"), F("Septic init"));
+        if (_septic.controllerEnabled())
+            _logs.info(F("CTRL"), F("Septic init"));
         if (!_septic.begin())
         {
             _logs.error(F("CTRL"), F("Septic init failed"));
             return false;
         }
-        _logs.info(F("CTRL"), F("Security init"));
+        if (_security.controllerEnabled())
+            _logs.info(F("CTRL"), F("Security init"));
         if (!_security.begin())
         {
             _logs.error(F("CTRL"), F("Security init failed"));
             return false;
         }
-        _logs.info(F("CTRL"), F("Ring init"));
+        if (_ring.controllerEnabled())
+            _logs.info(F("CTRL"), F("Ring init"));
         if (!_ring.begin())
         {
             _logs.error(F("CTRL"), F("Ring init failed"));
             return false;
         }
-        _logs.info(F("CTRL"), F("Watering init"));
+        if (_watering.controllerEnabled())
+            _logs.info(F("CTRL"), F("Watering init"));
         if (!_watering.begin())
         {
             _logs.error(F("CTRL"), F("Watering init failed"));
             return false;
         }
-        _logs.info(F("CTRL"), F("AVR init"));
+        if (_avr.controllerEnabled())
+            _logs.info(F("CTRL"), F("AVR init"));
         if (!_avr.begin())
         {
             _logs.error(F("CTRL"), F("AVR init failed"));
             return false;
         }
-        _logs.info(F("CTRL"), F("Leak init"));
+        if (_leak.controllerEnabled())
+            _logs.info(F("CTRL"), F("Leak init"));
         if (!_leak.begin())
         {
             _logs.error(F("CTRL"), F("Leak init failed"));
@@ -122,16 +133,6 @@ public:
 
     void task()
     {
-        _sockets.task();
-        _meteo.task();
-        _thermo.task();
-        _tanks.task();
-        _septic.task();
-        _security.task();
-        _ring.task();
-        _watering.task();
-        _avr.task();
-        _leak.task();
         saveIfNeeded_();
     }
 

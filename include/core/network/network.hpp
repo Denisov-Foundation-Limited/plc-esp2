@@ -14,6 +14,8 @@
 #include <Arduino.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <type_traits>
+#include <utility>
 
 #include "boards/board_profile_base.hpp"
 #include "utils/logger.hpp"
@@ -174,6 +176,27 @@ public:
     void setCloudEventIntervalMs(uint32_t ms) { _cloud.setAutoEventIntervalMs(ms); }
 
 private:
+    template <typename T, typename = void>
+    struct HasSetBufferSizes_ : std::false_type
+    {
+    };
+
+    template <typename T>
+    struct HasSetBufferSizes_<T, std::void_t<decltype(std::declval<T &>().setBufferSizes(0, 0))>> : std::true_type
+    {
+    };
+
+    template <typename T>
+    static void tuneTlsClientBuffers_(T &client)
+    {
+#if defined(ESP32)
+        if constexpr (HasSetBufferSizes_<T>::value)
+            client.setBufferSizes(2048, 512);
+#else
+        (void)client;
+#endif
+    }
+
     Logger &_logs;
     WifiManager &_wifi;
     GsmModem &_gsm;
@@ -194,7 +217,7 @@ private:
     uint16_t _proxy_port = 0;
     String _proxy_path;
     bool _started = false;
-    static constexpr uint32_t kTelegramPollIntervalMs = 1000;
+    static constexpr uint32_t kTelegramPollIntervalMs = 5000;
     static constexpr uint16_t kTelegramPollTimeoutSec = 2;
 
     static constexpr uint16_t kStackPort = 9010;
@@ -247,6 +270,10 @@ private:
         switch (kind)
         {
         case TelegramNetCfg::ClientKind::WifiSecure:
+#if defined(ESP32)
+            // Reduce TLS RAM footprint for Telegram API calls/uploads.
+            tuneTlsClientBuffers_(_wifi_client);
+#endif
             _tgbot.setClientSecure(_wifi_client);
             return true;
         case TelegramNetCfg::ClientKind::TinyGsm:

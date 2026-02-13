@@ -66,11 +66,11 @@ public:
         if (_host.length() == 0 || _port == 0)
         {
             if (_log)
-                _log->warn(F("STACK"), F("Node begin skipped, host/port missing"));
+                _log->warn(F("STACK"), F("Unit begin skipped, host/port missing"));
             return;
         }
         if (_log)
-            _log->info(F("STACK"), F("Node begin: %s:%u"), _host.c_str(), (unsigned)_port);
+            _log->info(F("STACK"), F("Unit begin: %s:%u"), _host.c_str(), (unsigned)_port);
         setupClient_();
         connect_();
     }
@@ -230,3 +230,4 @@ private:
             send((uint8_t)StackMsgType::Status, _tx_payload_buf, payload_len);
     }
 };
+

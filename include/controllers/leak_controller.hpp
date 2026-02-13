@@ -59,10 +59,7 @@ public:
     bool begin()
     {
         if (!_controller_enabled)
-        {
-            _logs.info(F("LEAK"), F("Controller disabled"));
             return true;
-        }
         for (size_t i = 0; i < kZoneCount; ++i)
             setupZone_(_cfg[i], _state[i]);
         _logs.info(F("LEAK"), F("Init done"));

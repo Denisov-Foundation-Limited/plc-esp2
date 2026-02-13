@@ -60,10 +60,7 @@ public:
     bool begin()
     {
         if (!_controller_enabled)
-        {
-            _logs.info(F("SEPTIC"), F("Controller disabled"));
             return true;
-        }
         for (size_t i = 0; i < kSepticCount; ++i)
         {
             SepticConfig &cfg = _cfg[i];

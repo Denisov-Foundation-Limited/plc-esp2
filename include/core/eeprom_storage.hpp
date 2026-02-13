@@ -118,7 +118,7 @@ public:
 
     bool saveSockets(const SocketSnapshot &snap)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         uint16_t slot = 0;
         uint32_t seq = 1;
@@ -148,7 +148,7 @@ public:
 
     bool loadSockets(SocketSnapshot &out)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         StorageHeader best_hdr{};
         uint16_t best_slot = 0;
@@ -189,7 +189,7 @@ public:
 
     bool saveLights(const LightSnapshot &snap)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         uint16_t slot = 0;
         uint32_t seq = 1;
@@ -219,7 +219,7 @@ public:
 
     bool loadLights(LightSnapshot &out)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         LightHeader best_hdr{};
         uint16_t best_slot = 0;
@@ -258,7 +258,7 @@ public:
 
     bool saveThermo(const ThermoSnapshot &snap)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         uint16_t slot = 0;
         uint32_t seq = 1;
@@ -289,7 +289,7 @@ public:
 
     bool loadThermo(ThermoSnapshot &out)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         ThermoHeader best_hdr{};
         uint16_t best_slot = 0;
@@ -329,7 +329,7 @@ public:
 
     bool saveTanks(const TankSnapshot &snap)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         uint16_t slot = 0;
         uint32_t seq = 1;
@@ -357,7 +357,7 @@ public:
 
     bool loadTanks(TankSnapshot &out)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         TankHeader best_hdr{};
         uint16_t best_slot = 0;
@@ -394,7 +394,7 @@ public:
 
     bool saveSecurity(const SecuritySnapshot &snap)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         uint16_t slot = 0;
         uint32_t seq = 1;
@@ -421,7 +421,7 @@ public:
 
     bool loadSecurity(SecuritySnapshot &out)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         SecurityHeader best_hdr{};
         uint16_t best_slot = 0;
@@ -458,7 +458,7 @@ public:
 
     bool saveWatering(const WateringSnapshot &snap)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         uint16_t slot = 0;
         uint32_t seq = 1;
@@ -486,7 +486,7 @@ public:
 
     bool loadWatering(WateringSnapshot &out)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         WateringHeader best_hdr{};
         uint16_t best_slot = 0;
@@ -521,7 +521,7 @@ public:
 
     bool saveWateringRuntime(const WateringRuntimeSnapshot &snap)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         uint16_t slot = 0;
         uint32_t seq = 1;
@@ -558,7 +558,7 @@ public:
 
     bool loadWateringRuntime(WateringRuntimeSnapshot &out)
     {
-        if (!_eeprom)
+        if (!available_())
             return false;
         WateringRuntimeHeader best_hdr{};
         uint16_t best_slot = 0;
@@ -600,6 +600,8 @@ public:
     }
 
 private:
+    bool available_() const { return _ready && _eeprom; }
+
     struct StorageHeader
     {
         uint32_t magic = 0;
@@ -844,6 +846,8 @@ private:
 
     bool loadLegacy_(SocketSnapshot &out)
     {
+        if (!available_())
+            return false;
         StorageHeader hdr{};
         const uint16_t base = _base;
         if (!_eeprom->read(base, reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)))

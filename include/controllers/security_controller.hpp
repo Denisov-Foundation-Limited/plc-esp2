@@ -78,13 +78,11 @@ public:
     bool begin()
     {
         if (!_controller_enabled)
-        {
-            _logs.info(F("SECURITY"), F("Controller disabled"));
             return true;
-        }
+        _rfid_disabled_startup_missing = false;
         setupOutputs_();
         initIButton_();
-        initRfid_();
+        initRfid_(true);
         for (size_t i = 0; i < kSensorCount; ++i)
         {
             SensorConfig &cfg = _cfg[i];
@@ -102,6 +100,7 @@ public:
     void task()
     {
         handleGsm_();
+        processTgNotifyQueue_();
         if (!_controller_enabled)
             return;
         handleIButton_();
@@ -1182,18 +1181,31 @@ public:
     }
 
 private:
+    struct TgNotifyItem
+    {
+        String msg;
+        String parse_mode;
+        uint16_t next_user = 0;
+    };
+
     Gpio &_gpio;
     OneWireManager &_ow;
     Logger &_logs;
     TelegramBot &_tgbot;
     TelegramAllowedUsersProvider &_tgusers;
     uint32_t _tg_last_send_ms = 0;
+    static constexpr uint8_t kTgQueueDepth = 8;
+    TgNotifyItem _tg_queue[kTgQueueDepth]{};
+    uint8_t _tg_q_head = 0;
+    uint8_t _tg_q_tail = 0;
+    uint8_t _tg_q_size = 0;
     GsmModem *_gsm = nullptr;
     IButton _ibutton;
     bool _ibutton_ready = false;
     I2CManager *_rfid_i2c = nullptr;
     PN532 _rfid;
     bool _rfid_ready = false;
+    bool _rfid_disabled_startup_missing = false;
     UsersRegistry *_users = nullptr;
     RfidUidHandler _rfid_uid_cb = nullptr;
     void *_rfid_uid_ctx = nullptr;
@@ -1207,6 +1219,7 @@ private:
     uint8_t _last_rfid[10]{};
     uint8_t _last_rfid_len = 0;
     uint32_t _last_rfid_ms = 0;
+    uint32_t _last_rfid_poll_ms = 0;
     bool _controller_enabled = false;
     bool _armed = false;
     bool _alarm_on = false;
@@ -1417,9 +1430,11 @@ private:
         _ibutton_ready = true;
     }
 
-    void initRfid_()
+    void initRfid_(bool startup = false)
     {
         _rfid_ready = false;
+        if (_rfid_disabled_startup_missing)
+            return;
         if (!_rfid_i2c)
         {
             _logs.warn(F("SECURITY"), F("RFID I2C not set"));
@@ -1438,6 +1453,13 @@ private:
             _logs.warn(F("SECURITY"), F("RFID I2C bus unavailable"));
             return;
         }
+        if (!_rfid_i2c->probeAddress(cfg.bus_num, kRfidI2cAddr))
+        {
+            if (startup)
+                _rfid_disabled_startup_missing = true;
+            _logs.warn(F("SECURITY"), F("RFID not found on I2C"));
+            return;
+        }
         uint8_t sda_gpio = 0;
         uint8_t scl_gpio = 0;
         if (!portToGpio_(cfg.sda, sda_gpio) || !portToGpio_(cfg.scl, scl_gpio))
@@ -1452,10 +1474,41 @@ private:
 
     void handleRfid_()
     {
-        if (!_rfid_ready)
+        if (_rfid_disabled_startup_missing)
             return;
+        if (!_rfid_i2c)
+            return;
+        const uint32_t now = millis();
+        if ((uint32_t)(now - _last_rfid_poll_ms) < kRfidPollMs)
+            return;
+        _last_rfid_poll_ms = now;
+        const uint8_t i2c_index = ActiveBoardProfile::RFID_I2C_INDEX;
+        if (i2c_index >= ActiveBoardProfile::I2C_COUNT)
+            return;
+        const auto cfg = ActiveBoardProfile::I2CS[i2c_index];
+        if (!_rfid_i2c->probeAddress(cfg.bus_num, kRfidI2cAddr))
+        {
+            if (_rfid_ready)
+            {
+                _rfid_ready = false;
+                _logs.warn(F("SECURITY"), F("RFID I2C lost"));
+            }
+            return;
+        }
+        if (!_rfid_ready)
+        {
+            initRfid_();
+            if (!_rfid_ready)
+                return;
+        }
         PN532::UID uid{};
-        if (_rfid.readPassiveTargetID(uid, kRfidReadTimeoutMs) != PN532::Status::Ok)
+        const PN532::Status st = _rfid.readPassiveTargetID(uid, kRfidReadTimeoutMs);
+        if (st == PN532::Status::I2cError)
+        {
+            _rfid_ready = false;
+            return;
+        }
+        if (st != PN532::Status::Ok)
             return;
         if (isRfidRepeat_(uid))
             return;
@@ -1940,22 +1993,70 @@ private:
 
     void sendTgNotify_(const String &msg, const String &parse_mode = "")
     {
-        const auto users = _tgusers.allowedUsers();
-        for (size_t i = 0; i < users.size; ++i)
+        enqueueTgNotify_(msg, parse_mode);
+    }
+
+    bool enqueueTgNotify_(const String &msg, const String &parse_mode)
+    {
+        if (_tg_q_size > 0)
         {
-            const auto &u = users[i];
-            if (!u.enabled || !u.is_notify || u.chat_id == 0)
-                continue;
-            const uint32_t now = millis();
-            const int32_t delta = (int32_t)(now - _tg_last_send_ms);
-            if (_tg_last_send_ms != 0 && delta < (int32_t)kTgSendGapMs)
-                delay((uint32_t)((int32_t)kTgSendGapMs - delta));
-            if (parse_mode.length())
-                _tgbot.sendText(u.chat_id, msg, "", parse_mode);
-            else
-                _tgbot.sendText(u.chat_id, msg);
-            _tg_last_send_ms = millis();
-            delay(kTgBetweenUsersMs);
+            const uint8_t last = (uint8_t)((_tg_q_tail + kTgQueueDepth - 1) % kTgQueueDepth);
+            const TgNotifyItem &prev = _tg_queue[last];
+            if (prev.msg == msg && prev.parse_mode == parse_mode)
+                return true;
+        }
+        if (_tg_q_size >= kTgQueueDepth)
+        {
+            _logs.warn(F("SECURITY"), F("notify queue full, drop oldest"));
+            popTgNotify_();
+        }
+        TgNotifyItem &item = _tg_queue[_tg_q_tail];
+        item.msg = msg;
+        item.parse_mode = parse_mode;
+        item.next_user = 0;
+        _tg_q_tail = (uint8_t)((_tg_q_tail + 1) % kTgQueueDepth);
+        ++_tg_q_size;
+        return true;
+    }
+
+    void popTgNotify_()
+    {
+        if (_tg_q_size == 0)
+            return;
+        TgNotifyItem &item = _tg_queue[_tg_q_head];
+        item.msg = "";
+        item.parse_mode = "";
+        item.next_user = 0;
+        _tg_q_head = (uint8_t)((_tg_q_head + 1) % kTgQueueDepth);
+        --_tg_q_size;
+    }
+
+    void processTgNotifyQueue_()
+    {
+        if (_tg_q_size == 0)
+            return;
+        const uint32_t now = millis();
+        const int32_t delta = (int32_t)(now - _tg_last_send_ms);
+        if (_tg_last_send_ms != 0 && delta < (int32_t)kTgSendGapMs)
+            return;
+
+        const auto users = _tgusers.allowedUsers();
+        while (_tg_q_size > 0)
+        {
+            TgNotifyItem &item = _tg_queue[_tg_q_head];
+            while (item.next_user < users.size)
+            {
+                const auto &u = users[item.next_user++];
+                if (!u.enabled || !u.is_notify || u.chat_id == 0)
+                    continue;
+                if (item.parse_mode.length())
+                    _tgbot.sendText(u.chat_id, item.msg, "", item.parse_mode);
+                else
+                    _tgbot.sendText(u.chat_id, item.msg);
+                _tg_last_send_ms = millis();
+                return;
+            }
+            popTgNotify_();
         }
     }
 
@@ -2222,7 +2323,6 @@ private:
 
     static constexpr uint32_t kKeyRepeatMs = 2000;
     static constexpr uint32_t kTgSendGapMs = 800;
-    static constexpr uint16_t kTgBetweenUsersMs = 200;
     static constexpr uint16_t kBeepShortMs = 120;
     static constexpr uint16_t kBeepGapMs = 120;
     static constexpr uint16_t kBeepLongMs = 500;
@@ -2232,6 +2332,7 @@ private:
     static constexpr uint16_t kAlarmBuzzMs = 500;
     static constexpr uint8_t kRfidI2cAddr = 0x24;
     static constexpr uint16_t kRfidReadTimeoutMs = 50;
+    static constexpr uint16_t kRfidPollMs = 250;
 
     bool _alarm_buzz_state = false;
     uint32_t _alarm_buzz_next_ms = 0;

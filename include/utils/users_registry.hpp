@@ -116,6 +116,8 @@ public:
         for (size_t i = 0; i < kMaxUsers; ++i)
         {
             const User &u = _users[i];
+            if (!u.enabled)
+                continue;
             JsonObject obj = out.add<JsonObject>();
             obj["id"] = (unsigned)u.id;
             obj["enabled"] = u.enabled;

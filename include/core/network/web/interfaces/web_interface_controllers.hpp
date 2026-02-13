@@ -2373,21 +2373,6 @@ sendRedirect_(request, "/", set_cookie);
                 sendRedirect_(request, "/admin", false);
                 return false;
             }
-            const bool auth_present = request->hasHeader("Authorization");
-            size_t auth_len = 0;
-            String auth_scheme;
-            if (auth_present)
-            {
-                const AsyncWebHeader *h = request->getHeader("Authorization");
-                if (h)
-                {
-                    String v = h->value();
-                    auth_len = v.length();
-                    const int sp = v.indexOf(' ');
-                    auth_scheme = (sp > 0) ? v.substring(0, sp) : v;
-                }
-            }
-
             String user;
             String pass;
             if (parseBasicAuth_(request, user, pass))

@@ -14,6 +14,12 @@
 #include <Arduino.h>
 #include <stdlib.h>
 #include <vector>
+#include <HTTPClient.h>
+
+#if defined(ARDUINO_ARCH_ESP32)
+#include "esp32-hal-psram.h"
+#include "esp_heap_caps.h"
+#endif
 
 #include "core/network/telegram/telegram.hpp"
 #include "core/network/telegram/telegram_menu.hpp"
@@ -39,6 +45,8 @@ public:
         _c._io->println(F("    allow del <username>    - remove allowed user"));
         _c._io->println(F("    allow clear             - clear allowed list"));
         _c._io->println(F("    send <text>             - send message"));
+#if !defined(FB_NO_FILE) && (defined(ESP8266) || defined(ESP32))
+#endif
         _c._io->println(F("    poll                    - poll commands"));
         _c._io->println(F("    show                    - show settings"));
     }
@@ -55,6 +63,8 @@ public:
         _c._io->println(F("  allow del <username>    - remove allowed user"));
         _c._io->println(F("  allow clear             - clear allowed list"));
         _c._io->println(F("  send <text>             - send message"));
+#if !defined(FB_NO_FILE) && (defined(ESP8266) || defined(ESP32))
+#endif
         _c._io->println(F("  poll                    - poll commands"));
         _c._io->println(F("  show                    - show settings"));
     }
@@ -191,6 +201,20 @@ public:
             _c.printPrompt_();
             return true;
         }
+#if !defined(FB_NO_FILE) && (defined(ESP8266) || defined(ESP32))
+        if (lower.startsWith("snapdoc "))
+        {
+            _c._io->println(F("Camera commands are disabled"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("snapphoto "))
+        {
+            _c._io->println(F("Camera commands are disabled"));
+            _c.printPrompt_();
+            return true;
+        }
+#endif
         if (lower == "poll")
         {
             std::vector<TelegramClient::Update> updates;
@@ -235,6 +259,141 @@ public:
 
 private:
     ConsoleT &_c;
+#if !defined(FB_NO_FILE) && (defined(ESP8266) || defined(ESP32))
+    static constexpr size_t kSnapshotMaxBytes = 4u * 1024u * 1024u;
+
+    bool sendSnapshotToTelegram_(const String &url, bool as_photo, String &err)
+    {
+        if (url.length() == 0)
+        {
+            err = F("URL is empty");
+            return false;
+        }
+        if (!url.startsWith("http://") && !url.startsWith("https://"))
+        {
+            err = F("Only http:// and https:// supported");
+            return false;
+        }
+
+        HTTPClient http;
+        if (!http.begin(url))
+        {
+            err = F("HTTP begin failed");
+            return false;
+        }
+        http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+        const int code = http.GET();
+        if (code != HTTP_CODE_OK)
+        {
+            err = String(F("HTTP code: ")) + String(code);
+            http.end();
+            return false;
+        }
+
+        int content_len = http.getSize();
+        if (content_len > 0 && (size_t)content_len > kSnapshotMaxBytes)
+        {
+            err = F("Snapshot too large");
+            http.end();
+            return false;
+        }
+
+        const size_t cap = (content_len > 0) ? (size_t)content_len : kSnapshotMaxBytes;
+        if (cap == 0)
+        {
+            err = F("Invalid snapshot size");
+            http.end();
+            return false;
+        }
+
+        uint8_t *buf = allocSnapshotBuf_(cap);
+        if (!buf)
+        {
+            err = F("Buffer alloc failed");
+            http.end();
+            return false;
+        }
+
+        WiFiClient *stream = http.getStreamPtr();
+        size_t used = 0;
+        uint32_t last_rx_ms = millis();
+        while (http.connected())
+        {
+            const int avail = stream->available();
+            if (avail <= 0)
+            {
+                delay(1);
+                if (content_len >= 0 && used >= (size_t)content_len)
+                    break;
+                if ((uint32_t)(millis() - last_rx_ms) > 10000u)
+                    break;
+                continue;
+            }
+            size_t take = (size_t)avail;
+            if (take > cap - used)
+                take = cap - used;
+            if (take == 0)
+                break;
+            const size_t read_n = stream->readBytes((char *)(buf + used), take);
+            if (read_n == 0)
+                break;
+            used += read_n;
+            last_rx_ms = millis();
+            if (used >= cap)
+                break;
+        }
+        http.end();
+
+        bool ok = false;
+        if (used > 0)
+        {
+            if (content_len > 0 && used != (size_t)content_len)
+            {
+                err = F("Incomplete snapshot data");
+            }
+            const String name = guessFileName_(url);
+            if (err.length() == 0)
+            {
+                ok = as_photo ? _c._tgbot.sendPhotoFromBuffer(buf, used, name)
+                              : _c._tgbot.sendDocumentFromBuffer(buf, used, name);
+            }
+        }
+        else
+        {
+            err = F("No data from camera");
+        }
+
+        free(buf);
+        return ok;
+    }
+
+    static String guessFileName_(const String &url)
+    {
+        int slash = url.lastIndexOf('/');
+        String name = (slash >= 0) ? url.substring(slash + 1) : String();
+        int q = name.indexOf('?');
+        if (q >= 0)
+            name = name.substring(0, q);
+        name.trim();
+        if (name.length() == 0)
+            return String("snapshot.jpg");
+        return name;
+    }
+
+    static uint8_t *allocSnapshotBuf_(size_t bytes)
+    {
+#if defined(ARDUINO_ARCH_ESP32)
+        if (psramFound())
+        {
+            uint8_t *p = (uint8_t *)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (p)
+                return p;
+        }
+#endif
+        return (uint8_t *)malloc(bytes);
+    }
+#endif
 
     static bool parseAllowedUser_(const String &input, TelegramMenu::AllowedUser &out)
     {

@@ -1254,6 +1254,7 @@ private:
         hashAdd_(hash, _septic_status);
         hashAdd_(hash, _ring_status);
         hashAdd_(hash, _avr_status);
+        hashAdd_(hash, _camera_status);
         hashAdd_(hash, _leak_status);
         hashAdd_(hash, _security_status);
         hashAdd_(hash, _rules_status);
@@ -2561,6 +2562,11 @@ private:
     String _septic_status;
     String _ring_status;
     String _avr_status;
+    String _camera_status;
+    uint8_t *_camera_preview_buf = nullptr;
+    size_t _camera_preview_size = 0;
+    uint8_t _camera_preview_id = 0;
+    uint32_t _camera_preview_ver = 0;
     String _leak_status;
     String _security_status;
     String _rules_status;

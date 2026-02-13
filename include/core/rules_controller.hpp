@@ -161,6 +161,29 @@ public:
         if (!_rules)
             return;
         resetDefaults();
+        for (size_t i = 0; i < kRuleCount; ++i)
+        {
+            Rule &r = _rules[i];
+            r.enabled = false;
+            r.condition_enabled = false;
+            r.condition_node_id = 0;
+            r.condition_controller = "";
+            r.condition_item_id = 0;
+            r.condition_parameter = "";
+            r.condition_op = "";
+            r.condition_value = "";
+            for (size_t a = 0; a < kActionCount; ++a)
+            {
+                RuleAction &act = r.actions[a];
+                act.enabled = false;
+                act.kind = ActionKind::Controller;
+                act.delay_ms = 0;
+                act.node_id = 0;
+                act.controller = "";
+                act.parameter = "";
+                act.value = "";
+            }
+        }
         for (JsonVariantConst v : arr)
         {
             if (!v.is<JsonObjectConst>())
@@ -246,6 +269,8 @@ public:
         for (size_t i = 0; i < kRuleCount; ++i)
         {
             const Rule &r = _rules[i];
+            if (!r.enabled)
+                continue;
             JsonObject ro = out.add<JsonObject>();
             ro["id"] = (unsigned)r.id;
             ro["enabled"] = r.enabled;

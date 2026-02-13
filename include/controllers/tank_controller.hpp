@@ -67,10 +67,7 @@ public:
     bool begin()
     {
         if (!_controller_enabled)
-        {
-            _logs.info(F("TANK"), F("Controller disabled"));
             return true;
-        }
         for (size_t i = 0; i < kTankCount; ++i)
         {
             TankConfig &cfg = _cfg[i];

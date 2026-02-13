@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -359,6 +359,8 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+
 
 
 

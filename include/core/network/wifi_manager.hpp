@@ -113,14 +113,14 @@ public:
 private:
     static const char *statusToString_(wl_status_t st)
     {
-        static const char kIdle[] PROGMEM = "IDLE";
-        static const char kNoSsid[] PROGMEM = "NO_SSID";
-        static const char kScanDone[] PROGMEM = "SCAN_DONE";
-        static const char kConnected[] PROGMEM = "CONNECTED";
-        static const char kConnectFailed[] PROGMEM = "CONNECT_FAILED";
-        static const char kConnectionLost[] PROGMEM = "CONNECTION_LOST";
-        static const char kDisconnected[] PROGMEM = "DISCONNECTED";
-        static const char kUnknown[] PROGMEM = "UNKNOWN";
+        static const char kIdle[] PROGMEM = "Idle";
+        static const char kNoSsid[] PROGMEM = "No SSID";
+        static const char kScanDone[] PROGMEM = "Scan done";
+        static const char kConnected[] PROGMEM = "Connected";
+        static const char kConnectFailed[] PROGMEM = "Connect failed";
+        static const char kConnectionLost[] PROGMEM = "Connection lost";
+        static const char kDisconnected[] PROGMEM = "Disconnected";
+        static const char kUnknown[] PROGMEM = "Unknown";
 
         switch (st)
         {

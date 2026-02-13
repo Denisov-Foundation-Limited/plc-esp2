@@ -17,6 +17,7 @@
 #include <WiFiClientSecure.h>
 #include <array>
 #include <vector>
+#include <FS.h>
 
 #include <FastBot2Client.h>
 #include "utils/logger.hpp"
@@ -162,6 +163,8 @@ public:
         if (_fb)
             applyPollConfig_();
     }
+    bool autoPollEnabled() const { return _auto_poll; }
+    uint16_t autoPollTimeoutSec() const { return _auto_poll_timeout_s; }
 
     uint32_t lastUpdateId() const { return _last_update_id; }
     int64_t lastIncomingChatId() const { return _last_incoming_chat_id; }
@@ -209,6 +212,124 @@ public:
     {
         return sendCommand_(F("sendMessage"), payload);
     }
+
+#if !defined(FB_NO_FILE) && (defined(ESP8266) || defined(ESP32))
+    bool sendDocumentFromBuffer(const uint8_t *data, size_t length,
+                                const String &filename = String("snapshot.jpg"),
+                                const String &caption = String(),
+                                int64_t chat_id = 0)
+    {
+        if (!_fb)
+        {
+            _last_error = F("bot not set");
+            logError_(String("Request failed: ") + _last_error);
+            return false;
+        }
+        if (!data || length == 0)
+        {
+            _last_error = F("empty buffer");
+            return false;
+        }
+        const int64_t target_chat = chat_id ? chat_id : _chat_id;
+        if (target_chat == 0)
+        {
+            _last_error = F("chat_id not set");
+            return false;
+        }
+        fb::File msg(filename, fb::File::Type::document, data, length, false);
+        msg.multipart.setBlockSize(kUploadBlockSize);
+        msg.chatID = fb::ID((long long)target_chat);
+        msg.caption = caption;
+        return sendFile_(msg);
+    }
+
+    bool sendPhotoFromBuffer(const uint8_t *data, size_t length,
+                             const String &filename = String("snapshot.jpg"),
+                             const String &caption = String(),
+                             int64_t chat_id = 0)
+    {
+        if (!_fb)
+        {
+            _last_error = F("bot not set");
+            logError_(String("Request failed: ") + _last_error);
+            return false;
+        }
+        if (!data || length == 0)
+        {
+            _last_error = F("empty buffer");
+            return false;
+        }
+        const int64_t target_chat = chat_id ? chat_id : _chat_id;
+        if (target_chat == 0)
+        {
+            _last_error = F("chat_id not set");
+            return false;
+        }
+        fb::File msg(filename, fb::File::Type::photo, data, length, false);
+        msg.multipart.setBlockSize(kUploadBlockSize);
+        msg.chatID = fb::ID((long long)target_chat);
+        msg.caption = caption;
+        return sendFile_(msg);
+    }
+
+    bool sendDocumentFromFile(File &file,
+                              const String &filename = String("snapshot.jpg"),
+                              const String &caption = String(),
+                              int64_t chat_id = 0)
+    {
+        if (!_fb)
+        {
+            _last_error = F("bot not set");
+            logError_(String("Request failed: ") + _last_error);
+            return false;
+        }
+        if (!file || file.size() == 0)
+        {
+            _last_error = F("empty file");
+            return false;
+        }
+        const int64_t target_chat = chat_id ? chat_id : _chat_id;
+        if (target_chat == 0)
+        {
+            _last_error = F("chat_id not set");
+            return false;
+        }
+        fb::File msg(filename, fb::File::Type::document, file);
+        msg.multipart.setBlockSize(kUploadBlockSize);
+        msg.chatID = fb::ID((long long)target_chat);
+        msg.caption = caption;
+        return sendFile_(msg);
+    }
+
+    bool sendPhotoFromFile(File &file,
+                           const String &filename = String("snapshot.jpg"),
+                           const String &caption = String(),
+                           int64_t chat_id = 0)
+    {
+        if (!_fb)
+        {
+            _last_error = F("bot not set");
+            logError_(String("Request failed: ") + _last_error);
+            return false;
+        }
+        if (!file || file.size() == 0)
+        {
+            _last_error = F("empty file");
+            return false;
+        }
+        const int64_t target_chat = chat_id ? chat_id : _chat_id;
+        if (target_chat == 0)
+        {
+            _last_error = F("chat_id not set");
+            return false;
+        }
+        fb::File msg(filename, fb::File::Type::photo, file);
+        msg.multipart.setBlockSize(kUploadBlockSize);
+        msg.chatID = fb::ID((long long)target_chat);
+        msg.caption = caption;
+        return sendFile_(msg);
+    }
+#endif
 
     bool startLongPoll(uint16_t timeout_s, uint32_t offset = 0, uint16_t limit = 0)
     {
@@ -377,5 +498,31 @@ private:
         return !res.isEmpty();
     }
 
+#if !defined(FB_NO_FILE) && (defined(ESP8266) || defined(ESP32))
+    bool sendFile_(const fb::File &msg)
+    {
+        // File uploads may take significantly longer than simple JSON commands.
+        const uint16_t prev_timeout_ms = (uint16_t)min<uint32_t>(_auto_poll_timeout_s ? (_auto_poll_timeout_s * 1000u) : 2000u, 60000u);
+        _fb->setTimeout(kSendFileTimeoutMs);
+        fb::Result res = _fb->sendFile(msg, true);
+        _fb->setTimeout(prev_timeout_ms);
+        if (res.isError())
+        {
+            String err;
+            res.getError().toString(err);
+            if (!err.length())
+                err = "unknown error";
+            _last_error = err;
+            logError_(String("API error: ") + _last_error);
+            return false;
+        }
+        return !res.isEmpty();
+    }
+#endif
+
     static constexpr uint16_t kSendTimeoutMs = 1500;
+#if !defined(FB_NO_FILE) && (defined(ESP8266) || defined(ESP32))
+    static constexpr uint16_t kSendFileTimeoutMs = 25000;
+    static constexpr size_t kUploadBlockSize = 2048;
+#endif
 };

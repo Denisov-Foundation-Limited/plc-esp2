@@ -106,6 +106,8 @@ public:
 
     bool begin()
     {
+        if (!_cfg.enabled)
+            return true;
         setupHardware_();
         setRelays_(false, false);
         _st.active_source = Source::Off;
@@ -261,6 +263,17 @@ public:
             _st.transfer_state = TransferState::Idle;
             _st.transfer_in_progress = false;
             _st.fault = Fault::None;
+            _main_state_known = false;
+            _last_main_ok = false;
+        }
+        else
+        {
+            setupHardware_();
+            setRelays_(false, false);
+            _st.active_source = Source::Off;
+            _st.target_source = Source::Off;
+            _st.transfer_state = TransferState::Idle;
+            _st.transfer_in_progress = false;
             _main_state_known = false;
             _last_main_ok = false;
         }

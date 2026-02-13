@@ -33,7 +33,7 @@
 class ConfigsManager : public ConfigsManagerIface
 {
 public:
-    static constexpr size_t kConfigDocCapacity = 12288;
+    static constexpr size_t kConfigDocCapacity = 32768;
     static constexpr size_t kDisplaySlotCount = 8;
 
     ConfigsManager(Configs &configs, WifiManager &wifi, TelegramClient &telegram,
@@ -245,6 +245,9 @@ public:
             c["fw_version"] = _cloud_fw_version;
         if (_cloud_event_ms)
             c["event_ms"] = (unsigned)_cloud_event_ms;
+
+        if (_doc.overflowed())
+            return false;
 
         return _configs.save(_doc);
     }

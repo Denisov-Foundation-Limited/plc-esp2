@@ -364,7 +364,7 @@ private:
                 {
                     // Node reconnected: release old session to avoid binding to a stale client.
                     if (_log)
-                        _log->info(F("STACK"), F("node reconnected: %s node_id: 0x%08lX"),
+                        _log->info(F("STACK"), F("Unit reconnected: %s unit_id: 0x%08lX"),
                                    hello.name.length() ? hello.name.c_str() : "-",
                                    (unsigned long)hello.node_id);
                     freeSession_(s);
@@ -447,3 +447,4 @@ private:
             }
     }
 };
+

@@ -55,6 +55,7 @@ public:
         bool has_temp = false;
         bool has_humidity = false;
         bool ok = false;
+        bool had_success = false;
         uint8_t fail_count = 0;
         uint32_t last_read_ms = 0;
     };
@@ -64,6 +65,7 @@ public:
                                          float &temp_c, bool &has_temp, float &hum, bool &has_hum, bool &ok);
     using RemoteNodeNameProvider = bool (*)(void *ctx, uint32_t node_id, String &out);
     using RemoteSensorNameProvider = bool (*)(void *ctx, uint32_t node_id, uint8_t sensor_id, String &out);
+    using RemoteSensorTypeProvider = bool (*)(void *ctx, uint32_t node_id, uint8_t sensor_id, SensorType &out);
     using AlarmHandler = void (*)(void *ctx, uint32_t node_id, uint8_t sensor_id, bool alarm);
     void setRemoteMeteoProvider(RemoteMeteoProvider cb, void *ctx)
     {
@@ -79,6 +81,11 @@ public:
     {
         _remote_sensor_name_cb = cb;
         _remote_sensor_name_ctx = ctx;
+    }
+    void setRemoteSensorTypeProvider(RemoteSensorTypeProvider cb, void *ctx)
+    {
+        _remote_sensor_type_cb = cb;
+        _remote_sensor_type_ctx = ctx;
     }
     void setAlarmHandler(AlarmHandler cb, void *ctx)
     {
@@ -482,6 +489,8 @@ private:
     void *_remote_name_ctx = nullptr;
     RemoteSensorNameProvider _remote_sensor_name_cb = nullptr;
     void *_remote_sensor_name_ctx = nullptr;
+    RemoteSensorTypeProvider _remote_sensor_type_cb = nullptr;
+    void *_remote_sensor_type_ctx = nullptr;
     AlarmHandler _alarm_cb = nullptr;
     void *_alarm_ctx = nullptr;
 
@@ -662,6 +671,20 @@ private:
         }
     }
 
+    static const char *typeNameLog_(SensorType type)
+    {
+        switch (type)
+        {
+        case SensorType::Ds18b20:
+            return "DS18B20";
+        case SensorType::Dht22:
+            return "DHT22";
+        case SensorType::None:
+        default:
+            return "None";
+        }
+    }
+
     static int hexNibble_(char c)
     {
         if (c >= '0' && c <= '9')
@@ -718,12 +741,21 @@ private:
                 name += buf;
             }
         }
-        const char *type = typeName_(cfg.type);
+        SensorType log_type = cfg.type;
+        if (log_type == SensorType::None && cfg.source_node_id && cfg.source_sensor_id && _remote_sensor_type_cb)
+        {
+            SensorType remote_type = SensorType::None;
+            if (_remote_sensor_type_cb(_remote_sensor_type_ctx, cfg.source_node_id, cfg.source_sensor_id,
+                                       remote_type) &&
+                remote_type != SensorType::None)
+                log_type = remote_type;
+        }
+        const char *type = typeNameLog_(log_type);
         if (st.ok)
-            _logs.info(F("METEO"), F("sensor ok: id: %u name: %s type: %s"),
+            _logs.info(F("METEO"), F("Sensor ok: id: %u name: %s type: %s"),
                        (unsigned)cfg.id, name.c_str(), type);
         else
-            _logs.warn(F("METEO"), F("sensor error: id: %u name: %s type: %s"),
+            _logs.warn(F("METEO"), F("Sensor error: id: %u name: %s type: %s"),
                        (unsigned)cfg.id, name.c_str(), type);
         if (_alarm_cb)
             _alarm_cb(_alarm_ctx, cfg.source_node_id, cfg.id, !st.ok);
@@ -735,13 +767,17 @@ private:
         const bool was_error = (st.fail_count >= kFailThreshold);
         if (ok)
         {
+            const bool first_remote_success =
+                !st.had_success && (cfg.type == SensorType::None) &&
+                (cfg.source_node_id != 0) && (cfg.source_sensor_id != 0);
             st.temp_c = temp_c;
             st.humidity = hum;
             st.has_temp = has_temp;
             st.has_humidity = has_hum;
             st.fail_count = 0;
             st.ok = true;
-            if (was_error)
+            st.had_success = true;
+            if (was_error || first_remote_success)
                 logMeteoStateChange_(cfg, st, false);
             return;
         }
@@ -753,7 +789,10 @@ private:
             st.ok = false;
             st.has_temp = false;
             st.has_humidity = false;
-            if (!was_error)
+            const bool suppress_initial_remote_error =
+                (cfg.type == SensorType::None) && (cfg.source_node_id != 0) && (cfg.source_sensor_id != 0) &&
+                !st.had_success;
+            if (!was_error && !suppress_initial_remote_error)
                 logMeteoStateChange_(cfg, st, true);
             return;
         }
