@@ -103,7 +103,7 @@ public:
         _rules[1].enabled = true;
         _rules[1].name = "Собираюсь";
         _rules[2].enabled = true;
-        _rules[2].name = "Ушёл";
+        _rules[2].name = "Ушел";
         _rules[2].actions[0].enabled = true;
         _rules[2].actions[0].kind = ActionKind::Controller;
         _rules[2].actions[0].controller = "security";

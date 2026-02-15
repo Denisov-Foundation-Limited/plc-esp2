@@ -30,6 +30,8 @@ public:
         if (!web.checkAuth_(request, &set_cookie))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Meteo, node_id))
+            return;
         if (web.isStackMeteoView_(node_id))
         {
             web.sendText_(request, 200, "text/html; charset=utf-8", "", set_cookie);
@@ -58,6 +60,8 @@ public:
         if (!web.checkAuth_(request, &set_cookie))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Meteo, node_id))
+            return;
         const bool stack_view = web.isStackMeteoView_(node_id);
         if (stack_view)
             web.requestStackMeteo_(node_id);
@@ -87,7 +91,8 @@ public:
         page.replace("%SENSOR_USED_JSON%",
                      stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Sensor));
         page.replace("%METEO_DEVICE_SELECT%", web.meteoDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%METEO_SAVE_BTN%", stack_view ? "" : "<button class=\"btn\" type=\"submit\">Сохранить</button>");
+        page.replace("%METEO_SAVE_BTN%",
+                     (stack_view || !web.webSessionIsAdmin_()) ? "" : "<button class=\"btn\" type=\"submit\">Сохранить</button>");
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -96,6 +101,10 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Meteo))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackMeteoView_(node_id))
@@ -133,6 +142,12 @@ public:
                                  request->hasParam(src_key, true);
             if (!has_any)
                 continue;
+            if (!web.webAclCanControlItem_(UsersRegistry::AclController::Meteo, cfg->id))
+            {
+                web._meteo_status = String("ACL deny item: ") + idx;
+                web.sendRedirect_(request, "/meteo", set_cookie);
+                return;
+            }
 
             const bool enabled = request->hasParam(en_key, true);
             String name = web.paramValue_(request, name_key);

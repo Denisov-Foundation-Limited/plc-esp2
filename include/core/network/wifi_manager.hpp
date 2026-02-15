@@ -145,8 +145,8 @@ private:
 
     String _ssid;
     String _password;
-    bool _ap = false;
-    String _ap_ssid;
+    bool _ap = true;
+    String _ap_ssid = "FCPLC";
     String _ap_password;
 
     wl_status_t _last_status = (wl_status_t)0xFF;

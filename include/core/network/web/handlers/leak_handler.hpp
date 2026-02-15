@@ -30,6 +30,8 @@ public:
         if (!web.checkAuth_(request, &set_cookie))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Leak, node_id))
+            return;
         const bool stack_view = isStackLeakView_(web, node_id);
         if (stack_view && web._stack_cache)
             web.stackCache().requestLeak(node_id);
@@ -52,6 +54,10 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Leak))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         const bool stack_view = isStackLeakView_(web, node_id);
@@ -103,6 +109,21 @@ public:
             const String sensor_name = paramName_("leak_sensor_", id);
             const String valve_name = paramName_("leak_valve_", id);
             const String alarm_name = paramName_("leak_alarm_", id);
+            const bool has_any = request->hasParam(en_name.c_str(), true) ||
+                                 request->hasParam(pwr_name.c_str(), true) ||
+                                 request->hasParam(al_name.c_str(), true) ||
+                                 request->hasParam(n_name.c_str(), true) ||
+                                 request->hasParam(sensor_name.c_str(), true) ||
+                                 request->hasParam(valve_name.c_str(), true) ||
+                                 request->hasParam(alarm_name.c_str(), true);
+            if (!has_any)
+                continue;
+            if (!web.webAclCanControlItem_(UsersRegistry::AclController::Leak, (uint16_t)id, node_id))
+            {
+                web._leak_status = String("ACL deny item: ") + String((unsigned)id);
+                web.sendRedirect_(request, leakRedirectPath_(node_id, stack_view), set_cookie);
+                return;
+            }
 
             const bool enabled = request->hasParam(en_name.c_str(), true);
             const bool power_on = request->hasParam(pwr_name.c_str(), true);
@@ -362,6 +383,8 @@ private:
         for (size_t i = 0; i < render_count; ++i)
         {
             const size_t id = i + 1;
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Leak, (uint16_t)id, node_id))
+                continue;
             bool cfg_enabled = false;
             bool cfg_power = false;
             bool cfg_active_low = true;

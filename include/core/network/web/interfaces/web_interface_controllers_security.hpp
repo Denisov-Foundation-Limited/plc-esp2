@@ -189,17 +189,20 @@
 
         const SecurityController::SensorConfig *first_disabled = nullptr;
         const SecurityController::SensorState *first_disabled_state = nullptr;
+        const bool can_view_disabled = webSessionIsAdmin_();
         for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
         {
             const auto *cfg = sec.configByIndex(i);
             const auto *st = sec.stateByIndex(i);
             if (!cfg || !st)
                 continue;
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Security, cfg->id))
+                continue;
             if (cfg->enabled)
             {
                 appendRow(*cfg, *st, true);
             }
-            else if (!first_disabled)
+            else if (can_view_disabled && !first_disabled)
             {
                 first_disabled = cfg;
                 first_disabled_state = st;
@@ -334,6 +337,10 @@
             const auto *st = sec.stateByIndex(idx);
             if (!cfg || !st)
                 continue;
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Security, cfg->id))
+                continue;
+            if (!webSessionIsAdmin_() && !cfg->enabled)
+                continue;
             appendTile(*cfg, *st);
         }
         if (items.length() == 0)
@@ -371,6 +378,10 @@
         for (size_t i = 0; i < render_count; ++i)
         {
             const StackSecuritySensorItem &cfg = cache->items[i];
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Security, cfg.id, node_id))
+                continue;
+            if (!webSessionIsAdmin_() && !cfg.enabled)
+                continue;
             items += "<div class=\"tile\">";
             items += "<div class=\"sock-visual\">";
             items += "<span class=\"badge\">#";

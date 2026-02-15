@@ -29,6 +29,8 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
         String page = FPSTR(kWebInterfaceCloudHtml);
         page.reserve(page.length() + 1536);
         page.replace("%NAV%", web.navHtml_());
@@ -54,9 +56,11 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
         if (!web._configs_manager)
         {
-            web._cloud_status = "Config manager missing";
+            web._cloud_status = "Менеджер конфигурации недоступен";
             web.sendRedirect_(request, "/cloud", set_cookie);
             return;
         }
@@ -140,11 +144,11 @@ public:
             save_ok = web.saveWifiConfig_();
 
         if (!changed)
-            web._cloud_status = "No changes";
+            web._cloud_status = "Без изменений";
         else if (!save_ok)
-            web._cloud_status = "Save failed";
+            web._cloud_status = "Ошибка сохранения";
         else
-            web._cloud_status = "Saved";
+            web._cloud_status = "Сохранено";
 
         web.sendRedirect_(request, "/cloud", set_cookie);
     }

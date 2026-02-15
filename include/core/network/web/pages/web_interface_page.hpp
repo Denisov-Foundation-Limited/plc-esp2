@@ -103,12 +103,12 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
       %NAV%
       <h1>FCPLC</h1>
       <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
-      <div class="section">
+      <div class="section" style="%DEVICE_BLOCK_STYLE%">
         <h2>Имя устройства</h2>
         <form method="POST" action="/device" id="device-form">
           <div class="row">
-            <input type="text" name="device_name" value="%DEVICE_NAME%" placeholder="FCPLC">
-            <button type="submit">Сохранить</button>
+            <input type="text" name="device_name" value="%DEVICE_NAME%" placeholder="FCPLC" %DEVICE_NAME_DISABLED%>
+            <button type="submit" %DEVICE_SAVE_DISABLED%>Сохранить</button>
           </div>
           <div class="status">%DEVICE_STATUS%</div>
         </form>

@@ -37,10 +37,68 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        const bool can_edit = web.webSessionIsAdmin_();
         const bool has_config = hasStartupConfig_();
         String page = FPSTR(kWebInterfaceControllersHtml);
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", web.navHtml_());
+        const bool allow_sockets = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Sockets);
+        const bool allow_lights = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Lights);
+        const bool allow_meteo = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Meteo);
+        const bool allow_thermo = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Thermo);
+        const bool allow_tanks = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Tanks);
+        const bool allow_watering = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Watering);
+        const bool allow_septic = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Septic);
+        const bool allow_ring = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Ring);
+        const bool allow_security = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Security);
+        const bool allow_avr = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Avr);
+        const bool allow_leak = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Leak);
+
+        bool show_sockets = allow_sockets;
+        bool show_lights = allow_lights;
+        bool show_meteo = allow_meteo;
+        bool show_thermo = allow_thermo;
+        bool show_tanks = allow_tanks;
+        bool show_watering = allow_watering;
+        bool show_septic = allow_septic;
+        bool show_ring = allow_ring;
+        bool show_security = allow_security;
+        bool show_avr = allow_avr;
+        bool show_leak = allow_leak;
+
+        if (!can_edit)
+        {
+            const bool has_runtime = has_config && web._controllers;
+            show_sockets = allow_sockets && has_runtime && web._controllers->sockets().controllerEnabled();
+            show_lights = allow_lights && has_runtime && web._controllers->sockets().lightsEnabled();
+            show_meteo = allow_meteo && has_runtime && web._controllers->meteo().controllerEnabled();
+            show_thermo = allow_thermo && has_runtime && web._controllers->thermo().controllerEnabled();
+            show_tanks = allow_tanks && has_runtime && web._controllers->tanks().controllerEnabled();
+            show_watering = allow_watering && has_runtime && web._controllers->watering().controllerEnabled();
+            show_septic = allow_septic && has_runtime && web._controllers->septic().controllerEnabled();
+            show_ring = allow_ring && has_runtime && web._controllers->ring().controllerEnabled();
+            show_security = allow_security && has_runtime && web._controllers->security().controllerEnabled();
+            show_avr = allow_avr && has_runtime && web._controllers->avr().controllerEnabled();
+            show_leak = allow_leak && has_runtime && web._controllers->leak().controllerEnabled();
+        }
+
+        const bool any_visible = show_sockets || show_lights || show_meteo || show_thermo || show_tanks ||
+                                 show_watering || show_septic || show_ring || show_security || show_avr || show_leak;
+        page.replace("%CONTROLLERS_EMPTY_HINT%",
+                     (!can_edit && !any_visible)
+                         ? "<p class=\"status\">Нет доступных контроллеров по ACL.</p>"
+                         : "");
+        page.replace("%ACL_HIDE_SOCKETS%", show_sockets ? "" : "display:none;");
+        page.replace("%ACL_HIDE_LIGHTS%", show_lights ? "" : "display:none;");
+        page.replace("%ACL_HIDE_METEO%", show_meteo ? "" : "display:none;");
+        page.replace("%ACL_HIDE_THERMO%", show_thermo ? "" : "display:none;");
+        page.replace("%ACL_HIDE_TANKS%", show_tanks ? "" : "display:none;");
+        page.replace("%ACL_HIDE_WATERING%", show_watering ? "" : "display:none;");
+        page.replace("%ACL_HIDE_SEPTIC%", show_septic ? "" : "display:none;");
+        page.replace("%ACL_HIDE_RING%", show_ring ? "" : "display:none;");
+        page.replace("%ACL_HIDE_SECURITY%", show_security ? "" : "display:none;");
+        page.replace("%ACL_HIDE_AVR%", show_avr ? "" : "display:none;");
+        page.replace("%ACL_HIDE_LEAK%", show_leak ? "" : "display:none;");
         if (web._controllers)
         {
             const bool enabled = has_config && web._controllers->sockets().controllerEnabled();
@@ -113,8 +171,8 @@ public:
         page.replace("%WATERING_STATUS%", web._watering_status);
         page.replace("%AVR_STATUS%", web._avr_status);
         page.replace("%LEAK_STATUS%", web._leak_status);
-        page.replace("%CONTROLLERS_SWITCH_DISABLED%", has_config ? "" : "disabled");
-        page.replace("%CONTROLLERS_SWITCH_LOCK%", has_config ? "0" : "1");
+        page.replace("%CONTROLLERS_SWITCH_DISABLED%", (has_config && can_edit) ? "" : "disabled");
+        page.replace("%CONTROLLERS_SWITCH_LOCK%", (has_config && can_edit) ? "0" : "1");
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -123,6 +181,8 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
             return;
         if (!hasStartupConfig_())
         {
@@ -140,6 +200,12 @@ public:
         bool changed = false;
         if (ctrl.length() == 0 || ctrl == "sockets")
         {
+            if (!web.webAclControllerAllowed_(UsersRegistry::AclController::Sockets))
+            {
+                web._controllers_status = "ACL deny";
+                web.sendRedirect_(request, "/controllers", set_cookie);
+                return;
+            }
             const bool enabled = request->hasParam("sockets_enabled", true);
             if (web._controllers->sockets().controllerEnabled() != enabled)
             {
@@ -149,6 +215,12 @@ public:
         }
         if (ctrl.length() == 0 || ctrl == "lights")
         {
+            if (!web.webAclControllerAllowed_(UsersRegistry::AclController::Lights))
+            {
+                web._controllers_status = "ACL deny";
+                web.sendRedirect_(request, "/controllers", set_cookie);
+                return;
+            }
             const bool lights_enabled = request->hasParam("lights_enabled", true);
             if (web._controllers->sockets().lightsEnabled() != lights_enabled)
             {
@@ -158,6 +230,12 @@ public:
         }
         if (ctrl.length() == 0 || ctrl == "meteo")
         {
+            if (!web.webAclControllerAllowed_(UsersRegistry::AclController::Meteo))
+            {
+                web._controllers_status = "ACL deny";
+                web.sendRedirect_(request, "/controllers", set_cookie);
+                return;
+            }
             const bool meteo_enabled = request->hasParam("meteo_enabled", true);
             if (web._controllers->meteo().controllerEnabled() != meteo_enabled)
             {
@@ -167,6 +245,12 @@ public:
         }
         if (ctrl.length() == 0 || ctrl == "thermo")
         {
+            if (!web.webAclControllerAllowed_(UsersRegistry::AclController::Thermo))
+            {
+                web._controllers_status = "ACL deny";
+                web.sendRedirect_(request, "/controllers", set_cookie);
+                return;
+            }
             const bool thermo_enabled = request->hasParam("thermo_enabled", true);
             if (web._controllers->thermo().controllerEnabled() != thermo_enabled)
             {
@@ -176,6 +260,12 @@ public:
         }
         if (ctrl.length() == 0 || ctrl == "tanks")
         {
+            if (!web.webAclControllerAllowed_(UsersRegistry::AclController::Tanks))
+            {
+                web._controllers_status = "ACL deny";
+                web.sendRedirect_(request, "/controllers", set_cookie);
+                return;
+            }
             const bool tanks_enabled = request->hasParam("tanks_enabled", true);
             if (web._controllers->tanks().controllerEnabled() != tanks_enabled)
             {
@@ -185,6 +275,12 @@ public:
         }
         if (ctrl.length() == 0 || ctrl == "septic")
         {
+            if (!web.webAclControllerAllowed_(UsersRegistry::AclController::Septic))
+            {
+                web._controllers_status = "ACL deny";
+                web.sendRedirect_(request, "/controllers", set_cookie);
+                return;
+            }
             const bool septic_enabled = request->hasParam("septic_enabled", true);
             if (web._controllers->septic().controllerEnabled() != septic_enabled)
             {
@@ -194,6 +290,12 @@ public:
         }
         if (ctrl.length() == 0 || ctrl == "ring")
         {
+            if (!web.webAclControllerAllowed_(UsersRegistry::AclController::Ring))
+            {
+                web._controllers_status = "ACL deny";
+                web.sendRedirect_(request, "/controllers", set_cookie);
+                return;
+            }
             const bool ring_enabled = request->hasParam("ring_enabled", true);
             if (web._controllers->ring().controllerEnabled() != ring_enabled)
             {
@@ -203,6 +305,12 @@ public:
         }
         if (ctrl.length() == 0 || ctrl == "watering")
         {
+            if (!web.webAclControllerAllowed_(UsersRegistry::AclController::Watering))
+            {
+                web._controllers_status = "ACL deny";
+                web.sendRedirect_(request, "/controllers", set_cookie);
+                return;
+            }
             const bool watering_enabled = request->hasParam("watering_enabled", true);
             if (web._controllers->watering().controllerEnabled() != watering_enabled)
             {
@@ -212,6 +320,12 @@ public:
         }
         if (ctrl.length() == 0 || ctrl == "security")
         {
+            if (!web.webAclControllerAllowed_(UsersRegistry::AclController::Security))
+            {
+                web._controllers_status = "ACL deny";
+                web.sendRedirect_(request, "/controllers", set_cookie);
+                return;
+            }
             const bool security_enabled = request->hasParam("security_enabled", true);
             if (web._controllers->security().controllerEnabled() != security_enabled)
             {
@@ -221,6 +335,12 @@ public:
         }
         if (ctrl.length() == 0 || ctrl == "avr")
         {
+            if (!web.webAclControllerAllowed_(UsersRegistry::AclController::Avr))
+            {
+                web._controllers_status = "ACL deny";
+                web.sendRedirect_(request, "/controllers", set_cookie);
+                return;
+            }
             const bool avr_enabled = request->hasParam("avr_enabled", true);
             if (web._controllers->avr().controllerEnabled() != avr_enabled)
             {
@@ -230,6 +350,12 @@ public:
         }
         if (ctrl.length() == 0 || ctrl == "leak")
         {
+            if (!web.webAclControllerAllowed_(UsersRegistry::AclController::Leak))
+            {
+                web._controllers_status = "ACL deny";
+                web.sendRedirect_(request, "/controllers", set_cookie);
+                return;
+            }
             const bool leak_enabled = request->hasParam("leak_enabled", true);
             if (web._controllers->leak().controllerEnabled() != leak_enabled)
             {

@@ -4007,13 +4007,21 @@ private:
     void buzzerOn_(bool on)
     {
         ensureRfidIo_();
-        _io.write(ActiveBoardProfile::BUZZER_PIN, on);
+        _io.write(ActiveBoardProfile::BUZZER_PIN, buzzerEnabled_() ? on : false);
     }
 
     void startBeep_(uint8_t count, uint16_t on_ms, uint16_t off_ms)
     {
         if (count == 0)
             return;
+        if (!buzzerEnabled_())
+        {
+            _beep_active = false;
+            _beep_remaining = 0;
+            _beep_state_on = false;
+            buzzerOn_(false);
+            return;
+        }
         _beep_remaining = count;
         _beep_on_ms = on_ms;
         _beep_off_ms = off_ms;
@@ -4025,6 +4033,14 @@ private:
 
     void updateBuzzer_()
     {
+        if (!buzzerEnabled_())
+        {
+            _beep_active = false;
+            _beep_remaining = 0;
+            _beep_state_on = false;
+            buzzerOn_(false);
+            return;
+        }
         if (!_beep_active || _beep_remaining == 0)
             return;
         const uint32_t now = millis();
@@ -4066,6 +4082,11 @@ private:
     void beepArm_() { startBeep_(2, 120, 120); }
     void beepDisarm_() { startBeep_(1, 420, 0); }
     void beepReject_() { startBeep_(3, 60, 80); }
+
+    bool buzzerEnabled_() const
+    {
+        return _plc.buzzerEnabled();
+    }
 
     void requestSecurityStatus_()
     {

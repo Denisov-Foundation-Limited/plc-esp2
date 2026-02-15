@@ -29,6 +29,8 @@ public:
         if (!web.checkAuth_(request, &set_cookie))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Watering, node_id))
+            return;
         const bool stack_view = web.isStackWateringView_(node_id);
         if (stack_view)
             web.requestStackWatering_(node_id);
@@ -42,7 +44,8 @@ public:
                      stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%WATERING_TANK_JSON%", stack_view ? "[]" : web.wateringTankOptionsJson_());
         page.replace("%WATERING_DEVICE_SELECT%", web.wateringDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%WATERING_SAVE_BTN%", stack_view ? "" : "<button type=\"submit\">Сохранить</button>");
+        page.replace("%WATERING_SAVE_BTN%",
+                     (stack_view || !web.webSessionIsAdmin_()) ? "" : "<button type=\"submit\">Сохранить</button>");
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -51,6 +54,10 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Watering))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackWateringView_(node_id))
@@ -87,6 +94,27 @@ public:
             const String dur3_key = prefix + "dur3";
             const String resume_key = prefix + "resume";
             const String resume_level_key = prefix + "resume_level";
+            const bool has_any = request->hasParam(en_key, true) ||
+                                 request->hasParam(status_key, true) ||
+                                 request->hasParam(name_key, true) ||
+                                 request->hasParam(port_key, true) ||
+                                 request->hasParam(tank_key, true) ||
+                                 request->hasParam(time_key, true) ||
+                                 request->hasParam(time2_key, true) ||
+                                 request->hasParam(time3_key, true) ||
+                                 request->hasParam(dur_key, true) ||
+                                 request->hasParam(dur2_key, true) ||
+                                 request->hasParam(dur3_key, true) ||
+                                 request->hasParam(resume_key, true) ||
+                                 request->hasParam(resume_level_key, true);
+            if (!has_any)
+                continue;
+            if (!web.webAclCanControlItem_(UsersRegistry::AclController::Watering, cfg->id))
+            {
+                web._watering_status = String("ACL deny item: ") + idx;
+                web.sendRedirect_(request, "/watering", set_cookie);
+                return;
+            }
 
             const bool enabled = paramChecked_(request, en_key);
             if (cfg->enabled != enabled)

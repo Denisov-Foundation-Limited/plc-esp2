@@ -30,6 +30,8 @@ public:
         if (!web.checkAuth_(request, &set_cookie))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Septic, node_id))
+            return;
         const bool stack_view = web.isStackSepticView_(node_id);
         if (stack_view)
             web.requestStackSeptic_(node_id);
@@ -39,7 +41,8 @@ public:
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         page.replace("%SEPTIC_STATUS%", stack_view ? web.stackSepticStatusText_(node_id) : web._septic_status);
         page.replace("%SEPTIC_DEVICE_SELECT%", web.septicDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%SEPTIC_SAVE_BTN%", stack_view ? "" : "<button type=\"submit\">Сохранить</button>");
+        page.replace("%SEPTIC_SAVE_BTN%",
+                     (stack_view || !web.webSessionIsAdmin_()) ? "" : "<button type=\"submit\">Сохранить</button>");
         if (!web._controllers)
         {
             page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id) : "");
@@ -114,6 +117,10 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Septic))
+            return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackSepticView_(node_id))
         {
@@ -152,6 +159,12 @@ public:
                                  request->hasParam(monitor_key, true);
             if (!has_any)
                 continue;
+            if (!web.webAclCanControlItem_(UsersRegistry::AclController::Septic, cfg->id))
+            {
+                web._septic_status = String("ACL deny item: ") + idx;
+                web.sendRedirect_(request, "/septic", set_cookie);
+                return;
+            }
             const bool enabled = request->hasParam(en_key, true);
             if (!enabled)
             {

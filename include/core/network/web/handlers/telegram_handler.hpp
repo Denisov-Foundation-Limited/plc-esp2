@@ -29,6 +29,8 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
         String page = FPSTR(kWebInterfaceTelegramHtml);
         page.reserve(page.length() + 4096);
         page.replace("%NAV%", web.navHtml_());
@@ -51,6 +53,8 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
             return;
         bool changed = false;
 

@@ -141,6 +141,10 @@
         for (size_t i = 0; i < render_count; ++i)
         {
             const StackThermoItem &cfg = cache->items[i];
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Thermo, cfg.id, node_id))
+                continue;
+            if (!webSessionIsAdmin_() && !cfg.enabled)
+                continue;
             const bool mode_off = strcmp(cfg.mode, "off") == 0;
             const bool mode_heat = strcmp(cfg.mode, "heat") == 0;
             const bool mode_cool = strcmp(cfg.mode, "cool") == 0;
@@ -312,6 +316,8 @@
 
         auto appendTile = [&](const ThermoController::DeviceConfig &cfg, const ThermoController::DeviceState &st,
                               bool enabled) {
+            const bool can_edit = webSessionIsAdmin_();
+            const bool can_control = webAclCanControlItem_(UsersRegistry::AclController::Thermo, cfg.id);
             const MeteoController::SensorState *sensor_st = nullptr;
             bool remote_has_temp = false;
             float remote_temp_c = 0.0f;
@@ -448,7 +454,7 @@
             }
 
             items += "<div class=\"tile";
-            if (!enabled)
+            if (!enabled || !can_control)
                 items += " disabled";
             items += "\"><div class=\"thermo-left\"><div class=\"thermo-visual\"><div class=\"temp-pill sensor\">Текущая: <span class=\"temp-value\">";
             items += sensor_label;
@@ -482,17 +488,22 @@
             items += "_en\"";
             if (enabled)
                 items += " checked";
+            if (!can_edit)
+                items += " disabled";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div><input class=\"field name\" type=\"text\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
             appendHtmlEscaped_(items, cfg.name.c_str());
-            items += "\"><div class=\"form-grid\"><div class=\"form-row\"><label>Активн.</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
+            items += "\"";
+            if (!can_edit)
+                items += " disabled";
+            items += "><div class=\"form-grid\"><div class=\"form-row\"><label>Активн.</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
             items += String((unsigned)cfg.id);
             items += "_power\"";
             const bool ui_power_on = enabled ? st.power_on : false;
             if (ui_power_on)
                 items += " checked";
-            if (!enabled)
+            if (!enabled || !can_control)
                 items += " disabled";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
             items += "<span class=\"status-dot ";
@@ -511,11 +522,17 @@
             items += "_en_force\" value=\"\">";
             items += "<div class=\"form-row full\"><label>Датчик</label><select class=\"field mini\" name=\"t";
             items += String((unsigned)cfg.id);
-            items += "_sensor\">";
+            items += "_sensor\"";
+            if (!can_edit)
+                items += " disabled";
+            items += ">";
             items += meteoSensorOptionsHtml_(cfg.sensor_id, cfg.sensor_node_id, sensor_used, remote_used, remote_used_count);
             items += "</select></div><div class=\"form-row\"><label>Режим</label><select class=\"field mini\" name=\"t";
             items += String((unsigned)cfg.id);
-            items += "_mode\"><option value=\"off\"";
+            items += "_mode\"";
+            if (!can_edit)
+                items += " disabled";
+            items += "><option value=\"off\"";
             if (cfg.mode == ThermoController::Mode::Off)
                 items += " selected";
             items += ">off</option><option value=\"heat\"";
@@ -531,26 +548,41 @@
             items += String((unsigned)cfg.id);
             items += "_target\" value=\"";
             items += String((int)(cfg.target_c + 0.5f));
-            items += "\"></div><div class=\"form-row\"><label>Гист.</label><input class=\"field temp\" type=\"number\" step=\"1\" name=\"t";
+            items += "\"";
+            if (!can_edit)
+                items += " disabled";
+            items += "></div><div class=\"form-row\"><label>Гист.</label><input class=\"field temp\" type=\"number\" step=\"1\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_hyst\" value=\"";
             items += String((int)(cfg.hysteresis + 0.5f));
-            items += "\"></div><div class=\"form-row\"><label>Нагрев</label><select class=\"field mini thermo-select\" data-type=\"relay\" data-selected=\"";
+            items += "\"";
+            if (!can_edit)
+                items += " disabled";
+            items += "></div><div class=\"form-row\"><label>Нагрев</label><select class=\"field mini thermo-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.heat_port != ThermoController::kInvalidPort)
                 items += String((unsigned)cfg.heat_port);
             items += "\" name=\"t";
             items += String((unsigned)cfg.id);
-            items += "_heat\"></select></div><div class=\"form-row\"><label>Охлажд</label><select class=\"field mini thermo-select\" data-type=\"relay\" data-selected=\"";
+            items += "_heat\"";
+            if (!can_edit)
+                items += " disabled";
+            items += "></select></div><div class=\"form-row\"><label>Охлажд</label><select class=\"field mini thermo-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.cool_port != ThermoController::kInvalidPort)
                 items += String((unsigned)cfg.cool_port);
             items += "\" name=\"t";
             items += String((unsigned)cfg.id);
-            items += "_cool\"></select></div><div class=\"form-row\"><label>Кнопка</label><select class=\"field mini thermo-select\" data-type=\"dinput\" data-selected=\"";
+            items += "_cool\"";
+            if (!can_edit)
+                items += " disabled";
+            items += "></select></div><div class=\"form-row\"><label>Кнопка</label><select class=\"field mini thermo-select\" data-type=\"dinput\" data-selected=\"";
             if (cfg.button_port != ThermoController::kInvalidPort)
                 items += String((unsigned)cfg.button_port);
             items += "\" name=\"t";
             items += String((unsigned)cfg.id);
-            items += "_button\"></select></div></div>";
+            items += "_button\"";
+            if (!can_edit)
+                items += " disabled";
+            items += "></select></div></div>";
             items += "<input type=\"hidden\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_power\" value=\"\">";
@@ -558,11 +590,16 @@
         };
 
         const size_t render_count = thermoLocalRenderCount_();
+        const bool can_view_disabled = webSessionIsAdmin_();
         for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = thermo.configByIndex(i);
             const auto *st = thermo.stateByIndex(i);
             if (!cfg || !st)
+                continue;
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Thermo, cfg->id))
+                continue;
+            if (!can_view_disabled && !cfg->enabled)
                 continue;
             appendTile(*cfg, *st, cfg->enabled);
         }
@@ -619,4 +656,3 @@
         out += "]";
         return out;
     }
-

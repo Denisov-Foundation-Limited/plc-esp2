@@ -30,6 +30,8 @@ public:
         if (!web.checkAuth_(request, &set_cookie))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Thermo, node_id))
+            return;
         const bool stack_view = web.isStackThermoView_(node_id);
         if (stack_view)
         {
@@ -63,7 +65,8 @@ public:
         page.replace("%THERMO_RELAY_USED_JSON%",
                      stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%THERMO_DEVICE_SELECT%", web.thermoDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%THERMO_SAVE_BTN%", stack_view ? "" : "<button type=\"submit\">Сохранить</button>");
+        page.replace("%THERMO_SAVE_BTN%",
+                     (stack_view || !web.webSessionIsAdmin_()) ? "" : "<button type=\"submit\">Сохранить</button>");
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -72,6 +75,8 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Thermo))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackThermoView_(node_id))
@@ -86,6 +91,37 @@ public:
             return;
         }
         ThermoController &thermo = web._controllers->thermo();
+        if (!web.webSessionIsAdmin_())
+        {
+            bool power_changed = false;
+            for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+            {
+                const auto *cfg = thermo.configByIndex(i);
+                if (!cfg)
+                    continue;
+                const String idx = String((unsigned)cfg->id);
+                const String power_key = String("t") + idx + "_power";
+                if (!request->hasParam(power_key, true))
+                    continue;
+                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, cfg->id))
+                {
+                    web._thermo_status = String("ACL deny item: ") + idx;
+                    web.sendRedirect_(request, "/thermo", set_cookie);
+                    return;
+                }
+                const String power_str = web.paramValue_(request, power_key);
+                const bool has_power = (power_str == "on" || power_str == "off" || power_str == "1" || power_str == "0" ||
+                                        power_str == "true" || power_str == "false");
+                if (!has_power)
+                    continue;
+                const bool power_on = (power_str == "on" || power_str == "1" || power_str == "true");
+                if (thermo.setPower(cfg->id, power_on, "web"))
+                    power_changed = true;
+            }
+            web._thermo_status = power_changed ? "Updated" : "No changes";
+            web.sendRedirect_(request, "/thermo", set_cookie);
+            return;
+        }
         uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
         uint32_t remote_used[ThermoController::kDeviceCount] = {};
         size_t remote_used_count = 0;
@@ -122,6 +158,12 @@ public:
                                  request->hasParam(power_key, true);
             if (!has_any)
                 continue;
+            if (!web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, cfg->id))
+            {
+                web._thermo_status = String("ACL deny item: ") + idx;
+                web.sendRedirect_(request, "/thermo", set_cookie);
+                return;
+            }
 
             const String en_force_str = web.paramValue_(request, en_force_key);
             const bool en_force_known = (en_force_str == "1" || en_force_str == "0" ||

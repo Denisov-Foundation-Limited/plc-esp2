@@ -197,13 +197,12 @@ private:
     void handleAdminSave_(AsyncWebServerRequest *request)
     {
         bool set_cookie = false;
-        if (_cli_auth && _cli_auth->adminPasswordSet())
-        {
-            if (!checkAuth_(request, &set_cookie))
-                return;
-        }
+        if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!requireWebAdmin_(request, &set_cookie))
+            return;
         const bool has_rtc = request->hasParam("rtc_date", true) || request->hasParam("rtc_time", true);
-        const bool has_pass = request->hasParam("password", true);
+        const bool has_buzzer = request->hasParam("buzzer_present", true);
 
         if (has_rtc)
         {
@@ -228,25 +227,23 @@ private:
             }
         }
 
-        if (has_pass)
+        if (has_buzzer)
         {
-            if (!_cli_auth)
+            if (!_plc)
             {
-                sendText_(request, 500, "text/plain", "CLI auth unavailable", set_cookie);
+                sendText_(request, 500, "text/plain", "PLC unavailable", set_cookie);
                 return;
             }
-            String pass = request->getParam("password", true)->value();
-            pass.trim();
-            if (!_cli_auth->setAdminPassword_(pass))
+            const bool enabled = request->hasParam("buzzer_enabled", true);
+            _plc->setBuzzerEnabled(enabled);
+            if (_configs_manager && !_configs_manager->save())
             {
-                sendText_(request, 400, "text/plain", "Invalid password", set_cookie);
+                sendText_(request, 500, "text/plain", "Save failed", set_cookie);
                 return;
             }
-            if (_configs_manager)
-                _configs_manager->save();
         }
 
-        if (!has_rtc && !has_pass)
+        if (!has_rtc && !has_buzzer)
         {
             sendText_(request, 400, "text/plain", "Missing data", set_cookie);
             return;
@@ -1370,6 +1367,8 @@ private:
                     hashAdd_(hash, (uint32_t)u.id);
                     hashAdd_(hash, u.enabled ? 1u : 0u);
                     hashAdd_(hash, u.username);
+                    hashAdd_(hash, u.web_password_hash);
+                    hashAdd_(hash, u.web_password_salt);
                     hashAdd_(hash, u.tg_username);
                     hashAdd_(hash, String((long long)u.tg_chat_id));
                     hashAdd_(hash, u.tg_admin ? 1u : 0u);
@@ -2008,10 +2007,9 @@ private:
         }
         if (path == "/admin")
         {
-            if (_cli_auth)
-                hashAdd_(hash, _cli_auth->adminPasswordSet() ? 1u : 0u);
             hashAdd_(hash, rtcDateStr_());
             hashAdd_(hash, rtcTimeOnlyStr_());
+            hashAdd_(hash, (_plc && _plc->buzzerEnabled()) ? 1u : 0u);
             return hash;
         }
         if (path == "/logs")
@@ -2109,17 +2107,19 @@ private:
         return out;
     }
 
-    void issueSession_()
+    void issueSession_(int16_t user_idx = -1)
     {
         _session_token = makeSessionToken_();
         const uint32_t now = millis();
         _session_expire_ms = now + _session_ttl_ms;
+        _session_user_idx = user_idx;
     }
 
     void clearSession_()
     {
         _session_token = "";
         _session_expire_ms = 0;
+        _session_user_idx = -1;
     }
 
     void refreshSession_()
@@ -2159,6 +2159,25 @@ private:
         out = cookies.substring(start, end);
         out.trim();
         return out.length() > 0;
+    }
+
+    bool sessionPrincipalValid_() const
+    {
+        if (_session_user_idx < 0)
+        {
+            if (_cli_auth && _cli_auth->adminPasswordSet())
+                return true;
+            if (_auth_enabled)
+                return true;
+            return false;
+        }
+        if (!_users)
+            return false;
+        const size_t idx = (size_t)_session_user_idx;
+        if (idx >= _users->size())
+            return false;
+        const auto &u = _users->user(idx);
+        return u.enabled;
     }
 
     String gsmStatusLabel_() const
@@ -2586,6 +2605,7 @@ private:
     String _session_token;
     uint32_t _session_expire_ms = 0;
     uint32_t _session_ttl_ms = 10u * 60u * 1000u;
+    int16_t _session_user_idx = -1;
     bool _upload_set_cookie = false;
     bool _ota_set_cookie = false;
     bool _ota_in_progress = false;

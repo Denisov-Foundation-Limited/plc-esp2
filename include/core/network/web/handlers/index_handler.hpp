@@ -33,6 +33,10 @@ public:
         page.replace("%NAV%", web.navHtml_());
         page.replace("%DEVICE_NAME%", web.deviceName_());
         page.replace("%DEVICE_STATUS%", web._device_status);
+        const bool can_edit_device = web.webSessionIsAdmin_();
+        page.replace("%DEVICE_BLOCK_STYLE%", can_edit_device ? "" : "display:none;");
+        page.replace("%DEVICE_NAME_DISABLED%", can_edit_device ? "" : "disabled");
+        page.replace("%DEVICE_SAVE_DISABLED%", can_edit_device ? "" : "disabled");
         const auto role = web.stackRole_();
         page.replace("%STACK_ROLE%", web.stackRoleName_(role));
         page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");

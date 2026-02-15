@@ -32,6 +32,13 @@ public:
         if (!web.checkAuth_(request, &set_cookie))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Ring, node_id))
+            return;
+        if (!web.webAclCanViewItem_(UsersRegistry::AclController::Ring, 1, node_id))
+        {
+            web.sendText_(request, 403, "text/plain", "ACL deny", set_cookie);
+            return;
+        }
         const bool stack_view = web.isStackRingView_(node_id);
         String page = FPSTR(kWebInterfaceRingHtml);
         page.reserve(page.length() + 1024);
@@ -82,8 +89,9 @@ public:
             page.replace("%RING_RELAY_JSON%", web.socketPortOptionsJson_(PortIO::PinType::Relay));
             page.replace("%RING_DINPUT_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::DInput));
             page.replace("%RING_RELAY_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
-            page.replace("%RING_FORM_DISABLED%", "");
-            page.replace("%RING_SAVE_DISABLED%", "");
+            const bool can_edit = web.webSessionIsAdmin_();
+            page.replace("%RING_FORM_DISABLED%", can_edit ? "" : "disabled");
+            page.replace("%RING_SAVE_DISABLED%", can_edit ? "" : "disabled");
         }
         web.sendHtml_(request, page, set_cookie);
     }
@@ -93,13 +101,39 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
-        if (!request->hasParam("ring_save", true))
-        {
-            web.sendRedirect_(request, "/ring", set_cookie);
+        if (!web.requireWebAdmin_(request, &set_cookie))
             return;
-        }
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Ring))
+            return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         const bool stack_view = web.isStackRingView_(node_id);
+        if (!request->hasParam("ring_save", true))
+        {
+            if (stack_view)
+            {
+                const String path = String("/ring?node=") + String((unsigned long)node_id) + "&unit=stack";
+                web.sendRedirect_(request, path.c_str(), set_cookie);
+            }
+            else
+            {
+                web.sendRedirect_(request, "/ring", set_cookie);
+            }
+            return;
+        }
+        if (!web.webAclCanControlItem_(UsersRegistry::AclController::Ring, 1, node_id))
+        {
+            web._ring_status = "ACL deny";
+            if (stack_view)
+            {
+                const String path = String("/ring?node=") + String((unsigned long)node_id) + "&unit=stack";
+                web.sendRedirect_(request, path.c_str(), set_cookie);
+            }
+            else
+            {
+                web.sendRedirect_(request, "/ring", set_cookie);
+            }
+            return;
+        }
         if (stack_view)
         {
             web._ring_status = "Настройки доступны только локально";
@@ -170,6 +204,13 @@ public:
         if (!web.checkAuth_(request, &set_cookie))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.webAclCanControlItem_(UsersRegistry::AclController::Ring, 1, node_id))
+        {
+            web.sendText_(request, 403, "text/plain", "ACL deny", set_cookie);
+            return;
+        }
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Ring, node_id))
+            return;
         const bool stack_view = web.isStackRingView_(node_id);
         if (!web._controllers)
         {

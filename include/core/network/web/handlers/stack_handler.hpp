@@ -32,6 +32,8 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
         String page = FPSTR(kWebInterfaceStackHtml);
         page.reserve(page.length() + 4096);
         page.replace("%NAV%", web.navHtml_());
@@ -84,6 +86,8 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
         String cls = "bad";
         String text = "Slave link: disconnected";
         if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
@@ -112,6 +116,8 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
             return;
         if (web.stackRole_() != ConfigsManagerIface::StackRole::Master)
         {

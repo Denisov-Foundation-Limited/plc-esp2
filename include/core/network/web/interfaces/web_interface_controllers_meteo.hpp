@@ -140,6 +140,10 @@
         for (size_t i = 0; i < render_count; ++i)
         {
             const StackMeteoItem &cfg = cache->items[i];
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg.id, node_id))
+                continue;
+            if (!webSessionIsAdmin_() && !cfg.enabled)
+                continue;
             char temp_buf[12] = {};
             char hum_buf[12] = {};
             const char *temp = "--";
@@ -467,11 +471,16 @@
         };
 
         const size_t render_count = meteoLocalRenderCount_();
+        const bool can_view_disabled = webSessionIsAdmin_();
         for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = meteo.configByIndex(i);
             const auto *st = meteo.stateByIndex(i);
             if (!cfg || !st)
+                continue;
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg->id))
+                continue;
+            if (!can_view_disabled && !cfg->enabled)
                 continue;
             appendRow(*cfg, *st, cfg->enabled);
         }

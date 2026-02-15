@@ -140,6 +140,10 @@
         for (size_t i = 0; i < render_count; ++i)
         {
             const StackTankItem &cfg = cache->items[i];
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Tanks, cfg.id, node_id))
+                continue;
+            if (!webSessionIsAdmin_() && !cfg.enabled)
+                continue;
             const char *level = "0%";
             const char *level_class = "level-empty";
             unsigned level_pct = 0;
@@ -341,11 +345,16 @@
         };
 
         const size_t render_count = tanksLocalRenderCount_();
+        const bool can_view_disabled = webSessionIsAdmin_();
         for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = tanks.configByIndex(i);
             const auto *st = tanks.stateByIndex(i);
             if (!cfg || !st)
+                continue;
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Tanks, cfg->id))
+                continue;
+            if (!can_view_disabled && !cfg->enabled)
                 continue;
             appendRow(*cfg, *st, cfg->enabled);
         }

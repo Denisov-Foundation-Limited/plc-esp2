@@ -28,6 +28,8 @@ public:
         if (!web.checkAuth_(request, &set_cookie))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Tanks, node_id))
+            return;
         const bool stack_view = web.isStackTanksView_(node_id);
         if (stack_view)
             web.requestStackTanks_(node_id);
@@ -43,7 +45,8 @@ public:
         page.replace("%TANK_RELAY_USED_JSON%",
                      stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%TANK_DEVICE_SELECT%", web.tanksDeviceSelectHtml_(node_id, stack_view));
-        page.replace("%TANK_SAVE_BTN%", stack_view ? "" : "<button type=\"submit\">Сохранить</button>");
+        page.replace("%TANK_SAVE_BTN%",
+                     (stack_view || !web.webSessionIsAdmin_()) ? "" : "<button type=\"submit\">Сохранить</button>");
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -52,6 +55,10 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Tanks))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackTanksView_(node_id))
@@ -95,6 +102,12 @@ public:
                                  request->hasParam(alarm_key, true);
             if (!has_any)
                 continue;
+            if (!web.webAclCanControlItem_(UsersRegistry::AclController::Tanks, cfg->id))
+            {
+                web._tanks_status = String("ACL deny item: ") + idx;
+                web.sendRedirect_(request, "/tanks", set_cookie);
+                return;
+            }
 
             const bool enabled = request->hasParam(en_key, true);
             if (!enabled)

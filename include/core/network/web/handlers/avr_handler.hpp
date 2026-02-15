@@ -30,6 +30,13 @@ public:
         if (!web.checkAuth_(request, &set_cookie))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Avr, node_id))
+            return;
+        if (!web.webAclCanViewItem_(UsersRegistry::AclController::Avr, 1, node_id))
+        {
+            web.sendText_(request, 403, "text/plain", "ACL deny", set_cookie);
+            return;
+        }
         const bool stack_view = isStackAvrView_(web, node_id);
         if (stack_view && web._stack_cache)
             web.stackCache().requestAvr(node_id);
@@ -39,7 +46,8 @@ public:
         page.replace("%AVR_FORM_ACTION%", avrRedirectPath_(node_id, stack_view));
         page.replace("%AVR_FAULT_FORM_ACTION%", avrRedirectPath_(node_id, stack_view));
         page.replace("%AVR_DEVICE_SELECT%", avrDeviceSelectHtml_(web, node_id, stack_view));
-        page.replace("%AVR_SAVE_BTN%", "<button type=\"submit\" form=\"avr-form\">Сохранить</button>");
+        page.replace("%AVR_SAVE_BTN%",
+                     web.webSessionIsAdmin_() ? "<button type=\"submit\" form=\"avr-form\">Сохранить</button>" : "");
         page.replace("%AVR_FAULT_BTN%", "<button type=\"submit\" form=\"avr-fault-form\" class=\"btn-muted\">Сбросить ошибку</button>");
 
         if (!web._controllers)
@@ -157,11 +165,21 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Avr))
+            return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         const bool stack_view = isStackAvrView_(web, node_id);
         if (!web._controllers)
         {
             web.sendText_(request, 500, "text/plain", "Контроллеры недоступны", set_cookie);
+            return;
+        }
+        if (!web.webAclCanControlItem_(UsersRegistry::AclController::Avr, 1, node_id))
+        {
+            web._avr_status = "ACL deny";
+            web.sendRedirect_(request, avrRedirectPath_(node_id, stack_view), set_cookie);
             return;
         }
 

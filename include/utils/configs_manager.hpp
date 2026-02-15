@@ -15,6 +15,7 @@
 #include <ArduinoJson.h>
 #include <array>
 #include <vector>
+#include <LittleFS.h>
 
 #include "core/cli/cli_console.hpp"
 #include "core/network/network.hpp"
@@ -51,8 +52,6 @@ public:
           _gsm(gsm),
           _users(users)
     {
-        _display_slots[0].kind = DisplaySlotKind::Time;
-        _display_slots[0].field = DisplaySlotField::TimeHm;
     }
 
     StackRole stackRole() const override { return _stack_role; }
@@ -160,10 +159,34 @@ public:
         if (!_configs.load(_doc))
         {
             if (_configs.lastError() == Configs::Error::OpenRead)
+            {
+                const bool loaded_users_fs = loadUsersFromFs_();
+                if (!loaded_users_fs)
+                    ensureDefaultUsers_();
+                const bool loaded_rules_fs = loadRulesFromFs_();
+                if (!loaded_rules_fs)
+                    ensureDefaultRules_();
                 return true;
+            }
             return false;
         }
         applyConfig_(_doc);
+        // Dedicated users file has higher priority than legacy "users" in startup-config.
+        const bool has_legacy_users = _doc["users"].is<JsonArrayConst>();
+        // Dedicated rules file has higher priority than legacy "rules" in startup-config.
+        const bool has_legacy_rules = _doc["rules"].is<JsonArrayConst>();
+        const bool loaded_users_fs = loadUsersFromFs_();
+        const bool loaded_rules_fs = loadRulesFromFs_();
+        if (!loaded_users_fs && has_legacy_users)
+            saveUsersToFs_();
+        else if (!loaded_users_fs)
+            ensureDefaultUsers_();
+        if (!hasAnyWebLoginUser_())
+            ensureDefaultUsers_();
+        if (!loaded_rules_fs && has_legacy_rules)
+            saveRulesToFs_();
+        else if (!loaded_rules_fs)
+            ensureDefaultRules_();
         return true;
     }
 
@@ -186,8 +209,6 @@ public:
         t["proxy_host"] = _telegram.proxyHost();
         t["proxy_port"] = (unsigned)_telegram.proxyPort();
         t["proxy_path"] = _telegram.proxyPath();
-        JsonArray users = _doc["users"].to<JsonArray>();
-        _users.serializeToJson(users);
 
         if (_console.adminPasswordSet())
         {
@@ -197,6 +218,7 @@ public:
 
         JsonObject plc = _doc["plc"].to<JsonObject>();
         plc["device_name"] = _plc.deviceName();
+        plc["buzzer"] = _plc.buzzerEnabled();
 
         JsonObject s = _doc["stack"].to<JsonObject>();
         s["role"] = (_stack_role == StackRole::Master) ? "master" : "slave";
@@ -208,8 +230,6 @@ public:
 
         JsonObject ctrl = _doc["controllers"].to<JsonObject>();
         _controllers.serialize(ctrl);
-        JsonArray rules = _doc["rules"].to<JsonArray>();
-        _rules.serialize(rules);
 
         JsonObject g = _doc["gsm"].to<JsonObject>();
         g["enabled"] = _gsm.enabled();
@@ -249,15 +269,161 @@ public:
         if (_doc.overflowed())
             return false;
 
-        return _configs.save(_doc);
+        if (!_configs.save(_doc))
+            return false;
+        if (!saveUsersToFs_())
+            return false;
+        return saveRulesToFs_();
     }
 
     bool save(const JsonDocument &doc) override
     {
-        return _configs.save(doc);
+        DynamicJsonDocument tmp(kConfigDocCapacity);
+        tmp.set(doc);
+        if (tmp.overflowed())
+            return false;
+        if (doc["users"].is<JsonArrayConst>())
+        {
+            _users.applyFromJson(doc["users"].as<JsonArrayConst>());
+        }
+        if (doc["rules"].is<JsonArrayConst>())
+        {
+            _rules.applyConfig(doc["rules"].as<JsonArrayConst>());
+        }
+        tmp.remove("users");
+        tmp.remove("rules");
+        if (!_configs.save(tmp))
+            return false;
+        if (!saveUsersToFs_())
+            return false;
+        return saveRulesToFs_();
     }
 
 private:
+    static constexpr const char *kUsersPath = "/users.json";
+    static constexpr const char *kRulesPath = "/rules.json";
+
+    bool hasAnyWebLoginUser_() const
+    {
+        for (size_t i = 0; i < _users.size(); ++i)
+        {
+            const auto &u = _users.user(i);
+            if (!u.enabled)
+                continue;
+            if (u.username.length() == 0)
+                continue;
+            if (!u.hasWebPassword())
+                continue;
+            return true;
+        }
+        return false;
+    }
+
+    void ensureDefaultUsers_()
+    {
+        _users.clear();
+        auto &u = _users.user(0);
+        u.enabled = true;
+        u.username = "admin";
+        u.tg_admin = true;
+        u.setWebPassword("1234");
+        saveUsersToFs_();
+    }
+
+    void ensureDefaultRules_()
+    {
+        _rules.resetDefaults();
+        saveRulesToFs_();
+    }
+
+    bool loadUsersFromFs_()
+    {
+        if (!LittleFS.exists(kUsersPath))
+            return false;
+        File f = LittleFS.open(kUsersPath, "r");
+        if (!f)
+            return false;
+        DynamicJsonDocument doc(24576);
+        DeserializationError err = deserializeJson(doc, f);
+        f.close();
+        if (err)
+            return false;
+        if (doc["users"].is<JsonArrayConst>())
+        {
+            _users.applyFromJson(doc["users"].as<JsonArrayConst>());
+            if (!hasAnyWebLoginUser_())
+                ensureDefaultUsers_();
+            return true;
+        }
+        if (doc.is<JsonArrayConst>())
+        {
+            _users.applyFromJson(doc.as<JsonArrayConst>());
+            if (!hasAnyWebLoginUser_())
+                ensureDefaultUsers_();
+            return true;
+        }
+        return false;
+    }
+
+    bool saveUsersToFs_()
+    {
+        DynamicJsonDocument doc(24576);
+        JsonArray users = doc["users"].to<JsonArray>();
+        _users.serializeToJson(users);
+        File f = LittleFS.open(kUsersPath, "w");
+        if (!f)
+            return false;
+        if (serializeJsonPretty(doc, f) == 0)
+        {
+            f.close();
+            return false;
+        }
+        f.close();
+        return true;
+    }
+
+    bool loadRulesFromFs_()
+    {
+        if (!LittleFS.exists(kRulesPath))
+            return false;
+        File f = LittleFS.open(kRulesPath, "r");
+        if (!f)
+            return false;
+        DynamicJsonDocument doc(32768);
+        DeserializationError err = deserializeJson(doc, f);
+        f.close();
+        if (err)
+            return false;
+        if (doc["rules"].is<JsonArrayConst>())
+        {
+            _rules.applyConfig(doc["rules"].as<JsonArrayConst>());
+            return true;
+        }
+        if (doc.is<JsonArrayConst>())
+        {
+            _rules.applyConfig(doc.as<JsonArrayConst>());
+            return true;
+        }
+        return false;
+    }
+
+    bool saveRulesToFs_()
+    {
+        DynamicJsonDocument doc(32768);
+        JsonArray rules = doc["rules"].to<JsonArray>();
+        _rules.serialize(rules);
+        File f = LittleFS.open(kRulesPath, "w");
+        if (!f)
+            return false;
+        if (serializeJsonPretty(doc, f) == 0)
+        {
+            f.close();
+            return false;
+        }
+        f.close();
+        return true;
+    }
+
     void applyConfig_(const JsonDocument &doc)
     {
         if (doc["wifi"].is<JsonObjectConst>())
@@ -556,6 +722,8 @@ private:
                 name = sanitizeUtf8_(name);
                 _plc.setDeviceName(name);
             }
+            if (p["buzzer"].is<bool>())
+                _plc.setBuzzerEnabled(p["buzzer"].as<bool>());
         }
 
         if (doc["stack"].is<JsonObjectConst>())
@@ -751,7 +919,7 @@ private:
     String _cloud_api_key;
     String _cloud_fw_version;
     uint32_t _cloud_event_ms = 0;
-    bool _cloud_enabled = true;
+    bool _cloud_enabled = false;
     DisplaySlotConfig _display_slots[kDisplaySlotCount]{};
     DynamicJsonDocument _doc{kConfigDocCapacity};
 

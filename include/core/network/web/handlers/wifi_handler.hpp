@@ -28,6 +28,8 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
         String page = FPSTR(kWebInterfaceWifiHtml);
         page.reserve(page.length() + 1536);
         page.replace("%NAV%", web.navHtml_());

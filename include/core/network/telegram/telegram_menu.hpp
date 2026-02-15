@@ -840,6 +840,13 @@ private:
         st = self->findAuth_(u.chat_id);
         if (st && st->awaiting_socket)
         {
+            if (!self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Sockets))
+            {
+                self->_bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+                st->awaiting_socket = false;
+                st->socket_action = 0;
+                return true;
+            }
             uint8_t id = 0;
             if (!parseSocketId_(u.text, id))
             {
@@ -1483,6 +1490,65 @@ private:
         return st->selected_node_id;
     }
 
+    const UsersRegistry::User *aclUserForChat_(int64_t chat_id) const
+    {
+        if (!_users)
+            return nullptr;
+        for (size_t i = 0; i < _users->size(); ++i)
+        {
+            const auto &u = _users->user(i);
+            if (!u.enabled)
+                continue;
+            if (u.tg_chat_id != 0 && u.tg_chat_id == chat_id)
+                return &u;
+        }
+        const ChatAuth *st = findAuth_(chat_id);
+        if (!st || st->user_id.length() == 0)
+            return nullptr;
+        const String uname = normalizeUsername_(st->user_id);
+        if (uname.length() == 0)
+            return nullptr;
+        for (size_t i = 0; i < _users->size(); ++i)
+        {
+            const auto &u = _users->user(i);
+            if (!u.enabled)
+                continue;
+            if (UsersRegistry::normalizeTgUsername(u.tg_username) == uname)
+                return &u;
+        }
+        return nullptr;
+    }
+
+    uint8_t aclUnitForChat_(int64_t chat_id) const
+    {
+        if (isLocalSelected_(chat_id))
+            return 0;
+        const uint32_t node_id = selectedNodeId_(chat_id);
+        if (node_id == 0 || !_stack_master)
+            return UsersRegistry::kAclUnitCount;
+        for (size_t i = 0; i < _stack_master->nodeCount(); ++i)
+        {
+            if (_stack_master->nodeIdAt(i) != node_id)
+                continue;
+            const size_t unit = i + 1u;
+            if (unit >= (size_t)UsersRegistry::kAclUnitCount)
+                return UsersRegistry::kAclUnitCount;
+            return (uint8_t)unit;
+        }
+        return UsersRegistry::kAclUnitCount;
+    }
+
+    bool aclControllerAllowedForChat_(int64_t chat_id, UsersRegistry::AclController ctrl) const
+    {
+        const UsersRegistry::User *u = aclUserForChat_(chat_id);
+        if (!u)
+            return true;
+        const uint8_t unit = aclUnitForChat_(chat_id);
+        if (unit >= UsersRegistry::kAclUnitCount)
+            return false;
+        return u->controllerAllowed(unit, ctrl);
+    }
+
     void buildSocketLabels_(std::vector<String> &out) const;
     void buildSocketLabels_(std::vector<String> &out, bool lights_only) const;
 
@@ -1955,27 +2021,38 @@ private:
                 labels.push_back(F("Админка"));
             if (self->isLocalSelected_(chat_id))
             {
-                if (self->_sockets && self->_sockets->controllerEnabled())
+                if (self->_sockets && self->_sockets->controllerEnabled() &&
+                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Sockets))
                     labels.push_back(F("Розетки"));
-                if (self->_sockets && self->_sockets->controllerEnabled())
+                if (self->_sockets && self->_sockets->controllerEnabled() &&
+                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Lights))
                     labels.push_back(F("Свет"));
-                if (self->_meteo && self->_meteo->controllerEnabled())
+                if (self->_meteo && self->_meteo->controllerEnabled() &&
+                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Meteo))
                     labels.push_back(F("Метео"));
-                if (self->_thermo && self->_thermo->controllerEnabled())
+                if (self->_thermo && self->_thermo->controllerEnabled() &&
+                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Thermo))
                     labels.push_back(F("Термо"));
-                if (self->_tanks && self->_tanks->controllerEnabled())
+                if (self->_tanks && self->_tanks->controllerEnabled() &&
+                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Tanks))
                     labels.push_back(F("Баки"));
-                if (self->_septic && self->_septic->controllerEnabled())
+                if (self->_septic && self->_septic->controllerEnabled() &&
+                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Septic))
                     labels.push_back(F("Септик"));
-                if (self->_security && self->_security->controllerEnabled())
+                if (self->_security && self->_security->controllerEnabled() &&
+                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Security))
                     labels.push_back(F("Охрана"));
-                if (self->_avr && self->_avr->controllerEnabled())
+                if (self->_avr && self->_avr->controllerEnabled() &&
+                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Avr))
                     labels.push_back(F("АВР"));
-                if (self->_leak && self->_leak->controllerEnabled())
+                if (self->_leak && self->_leak->controllerEnabled() &&
+                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Leak))
                     labels.push_back(F("Leak"));
-                if (self->_ring && self->_ring->controllerEnabled())
+                if (self->_ring && self->_ring->controllerEnabled() &&
+                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Ring))
                     labels.push_back(F("Звонок"));
-                if (self->_watering && self->_watering->controllerEnabled())
+                if (self->_watering && self->_watering->controllerEnabled() &&
+                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Watering))
                     labels.push_back(F("Полив"));
             }
             else
@@ -2096,27 +2173,38 @@ private:
                                 break;
                             }
 
-                    if (sockets_enabled)
+                    if (sockets_enabled &&
+                        self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Sockets))
                         labels.push_back(F("Розетки"));
-                    if (lights_enabled)
+                    if (lights_enabled &&
+                        self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Lights))
                         labels.push_back(F("Свет"));
-                    if (meteo_enabled)
+                    if (meteo_enabled &&
+                        self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Meteo))
                         labels.push_back(F("Метео"));
-                    if (thermo_enabled)
+                    if (thermo_enabled &&
+                        self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Thermo))
                         labels.push_back(F("Термо"));
-                    if (tanks_enabled)
+                    if (tanks_enabled &&
+                        self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Tanks))
                         labels.push_back(F("Баки"));
-                    if (septic_enabled)
+                    if (septic_enabled &&
+                        self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Septic))
                         labels.push_back(F("Септик"));
-                    if (security_enabled)
+                    if (security_enabled &&
+                        self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Security))
                         labels.push_back(F("Охрана"));
-                    if (avr_enabled)
+                    if (avr_enabled &&
+                        self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Avr))
                         labels.push_back(F("АВР"));
-                    if (leak_enabled)
+                    if (leak_enabled &&
+                        self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Leak))
                         labels.push_back(F("Leak"));
-                    if (ring_enabled)
+                    if (ring_enabled &&
+                        self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Ring))
                         labels.push_back(F("Звонок"));
-                    if (watering_enabled)
+                    if (watering_enabled &&
+                        self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Watering))
                         labels.push_back(F("Полив"));
                 }
             }
@@ -2971,186 +3059,371 @@ private:
 
 inline bool TelegramMenu::cmdSockets_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Sockets))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSockets::cmdSockets_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdLights_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Lights))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSockets::cmdLights_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdMeteo_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Meteo))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuMeteo::cmdMeteo_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdThermo_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Thermo))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuThermo::cmdThermo_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdTanks_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Tanks))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuTanks::cmdTanks_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSeptic_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Septic))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSeptic::cmdSeptic_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSepticStatus_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Septic))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSeptic::cmdSepticStatus_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSepticList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Septic))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSeptic::cmdSepticList_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSepticMonitor_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Septic))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSeptic::cmdSepticMonitor_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSecurity_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Security))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSecurity::cmdSecurity_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdAvr_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Avr))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuAvr::cmdAvr_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdAvrStatus_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Avr))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuAvr::cmdAvrStatus_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdLeak_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Leak))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuLeak::cmdLeak_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdLeakList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Leak))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuLeak::cmdLeakList_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdLeakShow_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Leak))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuLeak::cmdLeakShow_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdLeakAck_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Leak))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuLeak::cmdLeakAck_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdRing_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Ring))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuRing::cmdRing_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdRingOn_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Ring))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuRing::cmdRingOn_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdRingOff_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Ring))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuRing::cmdRingOff_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdWatering_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Watering))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuWatering::cmdWatering_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdWateringList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Watering))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuWatering::cmdWateringList_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdWateringShow_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Watering))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuWatering::cmdWateringShow_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSecurityStatus_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Security))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSecurity::cmdSecurityStatus_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSecurityList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Security))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSecurity::cmdSecurityList_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSecurityArm_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Security))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSecurity::cmdSecurityArm_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSecurityDisarm_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Security))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSecurity::cmdSecurityDisarm_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSecuritySilent_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Security))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSecurity::cmdSecuritySilent_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSocketList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Sockets))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSockets::cmdSocketList_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSocketOn_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Sockets))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSockets::cmdSocketOn_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSocketOff_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Sockets))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSockets::cmdSocketOff_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdSocketToggle_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Sockets))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSockets::cmdSocketToggle_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdMeteoList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Meteo))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuMeteo::cmdMeteoList_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdMeteoShow_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Meteo))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuMeteo::cmdMeteoShow_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdThermoList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Thermo))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuThermo::cmdThermoList_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdThermoShow_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Thermo))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuThermo::cmdThermoShow_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdTanksList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Tanks))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuTanks::cmdTanksList_(bot, u, reply);
 }
 
 inline bool TelegramMenu::cmdTanksShow_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
+    if (_self && !_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Tanks))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuTanks::cmdTanksShow_(bot, u, reply);
 }
 
@@ -3158,6 +3431,11 @@ inline bool TelegramMenu::startSocketAction_(TelegramBot &bot, const TelegramCli
 {
     if (!_self)
         return false;
+    if (!_self->aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Sockets))
+    {
+        reply = "Доступ запрещен (ACL)";
+        return true;
+    }
     return TelegramMenuSockets::startSocketAction_(*_self, bot, u, reply, action);
 }
 
@@ -3447,71 +3725,155 @@ inline String TelegramMenu::securityControlMarkup_()
 
 inline bool TelegramMenu::handleSocketToggleSelection_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Sockets))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuSockets::handleSocketToggleSelection_(*this, u);
 }
 
 inline bool TelegramMenu::handleMeteoSelection_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Meteo))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuMeteo::handleMeteoSelection_(*this, u);
 }
 
 inline bool TelegramMenu::handleThermoAction_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Thermo))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuThermo::handleThermoAction_(*this, u);
 }
 
 inline bool TelegramMenu::handleTankAction_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Tanks))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuTanks::handleTankAction_(*this, u);
 }
 
 inline bool TelegramMenu::handleThermoSelection_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Thermo))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuThermo::handleThermoSelection_(*this, u);
 }
 
 inline bool TelegramMenu::handleTankSelection_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Tanks))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuTanks::handleTankSelection_(*this, u);
 }
 
 inline bool TelegramMenu::handleSepticSelection_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Septic))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuSeptic::handleSepticSelection_(*this, u);
 }
 
 inline bool TelegramMenu::handleSecuritySelection_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Security))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuSecurity::handleSecuritySelection_(*this, u);
 }
 
 inline bool TelegramMenu::handleAvrSelection_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Avr))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuAvr::handleAvrSelection_(*this, u);
 }
 
 inline bool TelegramMenu::handleLeakSelection_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Leak))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuLeak::handleLeakSelection_(*this, u);
 }
 
 inline bool TelegramMenu::handleLeakAction_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Leak))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuLeak::handleLeakAction_(*this, u);
 }
 
 inline bool TelegramMenu::handleRingSelection_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Ring))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuRing::handleRingSelection_(*this, u);
 }
 
 inline bool TelegramMenu::handleWateringSelection_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Watering))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuWatering::handleWateringSelection_(*this, u);
 }
 
 inline bool TelegramMenu::handleWateringAction_(const TelegramClient::Update &u)
 {
+    if (!aclControllerAllowedForChat_(u.chat_id, UsersRegistry::AclController::Watering))
+    {
+        if (_bot)
+            _bot->sendText(u.chat_id, F("Доступ запрещен (ACL)"));
+        return true;
+    }
     return TelegramMenuWatering::handleWateringAction_(*this, u);
 }
 

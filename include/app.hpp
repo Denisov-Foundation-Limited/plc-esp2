@@ -176,7 +176,7 @@ struct UiContext
 
     UiContext(CoreContext &core, HardwareContext &hw, CommsContext &comms, ControlContext &control)
         : console(hw.plc, comms.wifi, hw.rtc, control.ftest, hw.i2c, hw.ow, comms.telegram,
-                  control.telegram_menu, core.configs, hw.ext, control.controllers, nullptr)
+                  control.telegram_menu, core.configs, hw.ext, control.users, control.controllers, nullptr)
     {
     }
 };
@@ -282,6 +282,7 @@ struct App
         control.controllers.security().setIButtonSerialHandler(&App::onSecurityIButtonSerial_, this);
         control.controllers.security().setRfidI2c(&hw.i2c);
         control.controllers.security().setUsersRegistry(control.users);
+        control.controllers.security().setPlcControl(hw.plc);
         control.controllers.septic().setDetectHandler(&App::onSepticDetect_, this);
         control.controllers.tanks().setDetectHandler(&App::onTankEmpty_, this);
         control.controllers.ring().setHoldHandler(&App::onRingHold_, this);

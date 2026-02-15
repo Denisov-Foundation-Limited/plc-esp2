@@ -34,6 +34,8 @@
         SocketController &sockets = _controllers->sockets();
         bool tmp_state = false;
         auto appendRow = [&](const SocketController::SocketConfig &cfg, bool enabled) {
+            const bool can_edit = webSessionIsAdmin_();
+            const bool can_control = webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id);
             const bool on = enabled && sockets.relayState(cfg.id, tmp_state) ? tmp_state : false;
             items += "<div class=\"tile";
             if (!enabled)
@@ -67,13 +69,18 @@
             items += "_en\"";
             if (enabled)
                 items += " checked";
+            if (!can_edit)
+                items += " disabled";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
             items += "</div>";
             items += "<input class=\"field name\" type=\"text\" name=\"s";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
             appendHtmlEscaped_(items, cfg.name.c_str());
-            items += "\">";
+            items += "\"";
+            if (!can_edit)
+                items += " disabled";
+            items += ">";
             items += "<div class=\"status-line\"><span class=\"status-dot ";
             items += on ? "status-on" : "status-off";
             items += "\"></span>";
@@ -88,21 +95,27 @@
                 items += String((unsigned)cfg.button_port);
             items += "\" name=\"s";
             items += String((unsigned)cfg.id);
-            items += "_btn\"></select></div>";
+            items += "_btn\"";
+            if (!can_edit)
+                items += " disabled";
+            items += "></select></div>";
             items += "<div class=\"form-row\"><label>Реле</label>";
             items += "<select class=\"field mini socket-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.relay_port != SocketController::kInvalidPort)
                 items += String((unsigned)cfg.relay_port);
             items += "\" name=\"s";
             items += String((unsigned)cfg.id);
-            items += "_relay\"></select></div>";
+            items += "_relay\"";
+            if (!can_edit)
+                items += " disabled";
+            items += "></select></div>";
             items += "<div class=\"form-row\"><label>Перекл.</label>";
             items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-id=\"";
             items += String((unsigned)cfg.id);
             items += "\"";
             if (on)
                 items += " checked";
-            if (!enabled)
+            if (!enabled || !can_control)
                 items += " disabled";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
             items += "</div>";
@@ -113,12 +126,17 @@
         };
 
         const size_t render_count = socketsLocalRenderCount_();
+        const bool can_view_disabled = webSessionIsAdmin_();
         for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = sockets.configByIndex(i);
             if (!cfg)
                 continue;
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg->id))
+                continue;
             if (cfg->id < start_id || cfg->id > end_id)
+                continue;
+            if (!can_view_disabled && !cfg->enabled)
                 continue;
             appendRow(*cfg, cfg->enabled);
         }
@@ -157,6 +175,11 @@
         for (size_t i = 0; i < render_count; ++i)
         {
             const StackSocketItem &cfg = cache->items[i];
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id))
+                continue;
+            if (!webSessionIsAdmin_() && !cfg.enabled)
+                continue;
+            const bool can_control = webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id);
             const bool on = cfg.state;
             items += "<div class=\"tile\">";
             items += "<div class=\"sock-visual\">";
@@ -191,6 +214,8 @@
             items += "\"";
             if (on)
                 items += " checked";
+            if (!can_control)
+                items += " disabled";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
             items += "</div></div>";
         }

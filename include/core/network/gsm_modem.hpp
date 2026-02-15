@@ -290,7 +290,7 @@ private:
     String _reg_status;
     int _last_http_status = -1;
     int _last_http_len = -1;
-    bool _enabled = true;
+    bool _enabled = false;
     bool _started = false;
     static constexpr size_t kInitCmdCount = 10;
     static constexpr uint32_t kInitTimeoutMs = 12000;

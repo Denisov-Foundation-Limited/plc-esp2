@@ -54,6 +54,7 @@
 #include "core/network/stack/stack_protocol.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
+#include "utils/users_registry.hpp"
 #include "controllers/controllers.hpp"
 
 #if defined(ESP32)
@@ -83,6 +84,7 @@ public:
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
                TelegramClient &tgbot, TelegramMenu &tgbot_menu, Configs &configs, Extender &ext,
+               UsersRegistry &users,
                Controllers &controllers, StackMaster *stack_master)
         : _plc(plc),
           _wifi(wifi),
@@ -94,6 +96,7 @@ public:
           _tgbot_menu(tgbot_menu),
           _configs(configs),
           _ext(ext),
+          _users(users),
           _controllers(controllers),
           _wifi_cli(*this),
           _tgbot_cli(*this),
@@ -241,6 +244,7 @@ public:
         _state = State::NeedUser;
         _mode = Mode::Enable;
         _user_input = "";
+        _session_user_idx = -1;
         printPrompt_();
     }
 
@@ -1083,11 +1087,25 @@ private:
             "help system",
             "help security"}};
 
-        static const std::array<const char *, 20> kConfigTgbotCmds = {{
+        static const std::array<const char *, 34> kConfigTgbotCmds = {{
             "token <value>",
             "chat <id>",
             "insecure on",
             "insecure off",
+            "user list",
+            "user enable <id> on",
+            "user enable <id> off",
+            "user username <id> <value>",
+            "user tg_username <id> <value>",
+            "user tg_chat <id> <chat_id>",
+            "user is_admin <id> on",
+            "user is_admin <id> off",
+            "user tg_notify <id> on",
+            "user tg_notify <id> off",
+            "user webpass <id> <password>",
+            "user webpass <id> clear",
+            "user acl <id> all",
+            "user acl <id> none",
             "allow list",
             "allow add <username>",
             "allow del <username>",
@@ -1759,6 +1777,305 @@ private:
         return true;
     }
 
+    const UsersRegistry::User *sessionUser_() const
+    {
+        if (_session_user_idx < 0 || (size_t)_session_user_idx >= _users.size())
+            return nullptr;
+        const auto &u = _users.user((size_t)_session_user_idx);
+        if (!u.enabled)
+            return nullptr;
+        return &u;
+    }
+
+    bool cliSessionIsAdmin_() const
+    {
+        const auto *u = sessionUser_();
+        return u && u->tg_admin;
+    }
+
+    bool cliAclControllerAllowed_(UsersRegistry::AclController ctrl, uint8_t unit = 0) const
+    {
+        const auto *u = sessionUser_();
+        if (!u)
+            return false;
+        if (unit >= UsersRegistry::kAclUnitCount)
+            return false;
+        return u->controllerAllowed(unit, ctrl);
+    }
+
+    bool cliAclCanViewItem_(UsersRegistry::AclController ctrl, uint16_t item_id, uint8_t unit = 0) const
+    {
+        const auto *u = sessionUser_();
+        if (!u)
+            return false;
+        if (unit >= UsersRegistry::kAclUnitCount)
+            return false;
+        return u->canViewItem(unit, ctrl, item_id);
+    }
+
+    bool cliAclCanControlItem_(UsersRegistry::AclController ctrl, uint16_t item_id, uint8_t unit = 0) const
+    {
+        const auto *u = sessionUser_();
+        if (!u)
+            return false;
+        if (unit >= UsersRegistry::kAclUnitCount)
+            return false;
+        return u->canControlItem(unit, ctrl, item_id);
+    }
+
+    bool cliAclAnyView_(UsersRegistry::AclController ctrl, uint16_t max_item_id, uint8_t unit = 0) const
+    {
+        for (uint16_t id = 1; id <= max_item_id; ++id)
+            if (cliAclCanViewItem_(ctrl, id, unit))
+                return true;
+        return false;
+    }
+
+    bool parseStackAclUnit_(const String &raw_unit, uint8_t &out_unit) const
+    {
+        String unit = raw_unit;
+        unit.trim();
+        unit.toLowerCase();
+        if (unit.startsWith("unit"))
+            unit = unit.substring(4);
+        unit.trim();
+        if (unit.length() == 0)
+            return false;
+        const uint32_t idx = (uint32_t)strtoul(unit.c_str(), nullptr, 10);
+        if (idx == 0 || idx >= (uint32_t)UsersRegistry::kAclUnitCount)
+            return false;
+        out_unit = (uint8_t)idx; // 1..7 are stack units, 0 is local
+        return true;
+    }
+
+    bool denyAcl_()
+    {
+        _io->println(F("ACL deny"));
+        printPrompt_();
+        return false;
+    }
+
+    bool enforceAclShow_(String what)
+    {
+        what.trim();
+        if (eq_(what, "sockets"))
+            return cliAclAnyView_(UsersRegistry::AclController::Sockets, 72);
+        if (startsWith_(what, "socket "))
+        {
+            String tail = what.substring(7);
+            tail.trim();
+            uint16_t id = 0;
+            return !parseUint_(tail, id) || cliAclCanViewItem_(UsersRegistry::AclController::Sockets, id);
+        }
+        if (eq_(what, "meteo"))
+            return cliAclAnyView_(UsersRegistry::AclController::Meteo, 50);
+        if (startsWith_(what, "meteo "))
+        {
+            String tail = what.substring(6);
+            tail.trim();
+            uint16_t id = 0;
+            return !parseUint_(tail, id) || cliAclCanViewItem_(UsersRegistry::AclController::Meteo, id);
+        }
+        if (eq_(what, "thermo"))
+            return cliAclAnyView_(UsersRegistry::AclController::Thermo, 20);
+        if (startsWith_(what, "thermo "))
+        {
+            String tail = what.substring(7);
+            tail.trim();
+            uint16_t id = 0;
+            return !parseUint_(tail, id) || cliAclCanViewItem_(UsersRegistry::AclController::Thermo, id);
+        }
+        if (eq_(what, "tanks"))
+            return cliAclAnyView_(UsersRegistry::AclController::Tanks, 20);
+        if (startsWith_(what, "tank "))
+        {
+            String tail = what.substring(5);
+            tail.trim();
+            uint16_t id = 0;
+            return !parseUint_(tail, id) || cliAclCanViewItem_(UsersRegistry::AclController::Tanks, id);
+        }
+        if (eq_(what, "watering"))
+            return cliAclAnyView_(UsersRegistry::AclController::Watering, 30);
+        if (startsWith_(what, "watering "))
+        {
+            String tail = what.substring(9);
+            tail.trim();
+            uint16_t id = 0;
+            return !parseUint_(tail, id) || cliAclCanViewItem_(UsersRegistry::AclController::Watering, id);
+        }
+        if (eq_(what, "septic"))
+            return cliAclCanViewItem_(UsersRegistry::AclController::Septic, 1);
+        if (startsWith_(what, "septic "))
+            return cliAclCanViewItem_(UsersRegistry::AclController::Septic, 1);
+        if (eq_(what, "security"))
+            return cliAclAnyView_(UsersRegistry::AclController::Security, 72);
+        if (startsWith_(what, "security "))
+        {
+            String tail = what.substring(9);
+            tail.trim();
+            uint16_t id = 0;
+            return !parseUint_(tail, id) || cliAclCanViewItem_(UsersRegistry::AclController::Security, id);
+        }
+        if (eq_(what, "ring"))
+            return cliAclCanViewItem_(UsersRegistry::AclController::Ring, 1);
+        if (eq_(what, "avr"))
+            return cliAclCanViewItem_(UsersRegistry::AclController::Avr, 1);
+        if (eq_(what, "leak"))
+            return cliAclAnyView_(UsersRegistry::AclController::Leak, 16);
+        return true;
+    }
+
+    bool enforceAclEnable_(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String low = cmd;
+        low.toLowerCase();
+        if (startsWith_(low, "show "))
+            return enforceAclShow_(cmd.substring(5));
+        if (startsWith_(low, "socket toggle ") || startsWith_(low, "socket on ") || startsWith_(low, "socket off "))
+        {
+            String tail = startsWith_(low, "socket toggle ") ? cmd.substring(14) : cmd.substring(startsWith_(low, "socket on ") ? 10 : 11);
+            tail.trim();
+            uint16_t id = 0;
+            return !parseUint_(tail, id) || cliAclCanControlItem_(UsersRegistry::AclController::Sockets, id);
+        }
+        if (low == "ring on" || low == "ring off")
+            return cliAclCanControlItem_(UsersRegistry::AclController::Ring, 1);
+        if (low == "avr on" || low == "avr off" || low == "avr clear_fault" || startsWith_(low, "avr source "))
+            return cliAclCanControlItem_(UsersRegistry::AclController::Avr, 1);
+        if (low == "security status")
+            return cliAclAnyView_(UsersRegistry::AclController::Security, 72);
+        if (low == "security arm" || low == "security disarm")
+            return cliAclCanControlItem_(UsersRegistry::AclController::Security, 1);
+        if (startsWith_(low, "stack send "))
+            return false;
+        if (startsWith_(low, "stack socket "))
+        {
+            String rest = cmd.substring(13);
+            rest.trim();
+            const int sp1 = rest.indexOf(' ');
+            if (sp1 <= 0)
+                return true;
+            const String unit_str = rest.substring(0, sp1);
+            rest = rest.substring(sp1 + 1);
+            rest.trim();
+            const int sp2 = rest.indexOf(' ');
+            if (sp2 <= 0)
+                return true;
+            const String id_str = rest.substring(sp2 + 1);
+            uint8_t unit = 0;
+            uint16_t id = 0;
+            if (!parseStackAclUnit_(unit_str, unit) || !parseUint_(id_str, id))
+                return true;
+            return cliAclCanControlItem_(UsersRegistry::AclController::Sockets, id, unit);
+        }
+        if (startsWith_(low, "stack thermo "))
+        {
+            String rest = cmd.substring(13);
+            rest.trim();
+            const int sp1 = rest.indexOf(' ');
+            if (sp1 <= 0)
+                return true;
+            const String unit_str = rest.substring(0, sp1);
+            rest = rest.substring(sp1 + 1);
+            rest.trim();
+            const int sp2 = rest.indexOf(' ');
+            if (sp2 <= 0)
+                return true;
+            const String id_str = rest.substring(sp2 + 1);
+            uint8_t unit = 0;
+            uint16_t id = 0;
+            if (!parseStackAclUnit_(unit_str, unit) || !parseUint_(id_str, id))
+                return true;
+            return cliAclCanControlItem_(UsersRegistry::AclController::Thermo, id, unit);
+        }
+        if (startsWith_(low, "stack security "))
+        {
+            String rest = cmd.substring(15);
+            rest.trim();
+            const int sp1 = rest.indexOf(' ');
+            if (sp1 <= 0)
+                return true;
+            const String unit_str = rest.substring(0, sp1);
+            String action = rest.substring(sp1 + 1);
+            action.trim();
+            action.toLowerCase();
+            uint8_t unit = 0;
+            if (!parseStackAclUnit_(unit_str, unit))
+                return true;
+            if (action == "status")
+                return cliAclCanViewItem_(UsersRegistry::AclController::Security, 1, unit);
+            return cliAclCanControlItem_(UsersRegistry::AclController::Security, 1, unit);
+        }
+        if (startsWith_(low, "stack septic "))
+        {
+            String rest = cmd.substring(13);
+            rest.trim();
+            const int sp1 = rest.indexOf(' ');
+            if (sp1 <= 0)
+                return true;
+            const String unit_str = rest.substring(0, sp1);
+            String action = rest.substring(sp1 + 1);
+            action.trim();
+            action.toLowerCase();
+            uint8_t unit = 0;
+            if (!parseStackAclUnit_(unit_str, unit))
+                return true;
+            if (action == "status" || action == "get")
+                return cliAclCanViewItem_(UsersRegistry::AclController::Septic, 1, unit);
+            return cliAclCanControlItem_(UsersRegistry::AclController::Septic, 1, unit);
+        }
+        if (startsWith_(low, "stack ring "))
+        {
+            String rest = cmd.substring(11);
+            rest.trim();
+            const int sp1 = rest.indexOf(' ');
+            if (sp1 <= 0)
+                return true;
+            const String unit_str = rest.substring(0, sp1);
+            uint8_t unit = 0;
+            if (!parseStackAclUnit_(unit_str, unit))
+                return true;
+            return cliAclCanControlItem_(UsersRegistry::AclController::Ring, 1, unit);
+        }
+        if (startsWith_(low, "configure terminal") || startsWith_(low, "conf t"))
+            return false;
+        if (low == "write" || low == "erase" || low == "reload" || low == "reset" || startsWith_(low, "copy "))
+            return false;
+        return true;
+    }
+
+    bool enforceAcl_(const String &line)
+    {
+        if (cliSessionIsAdmin_())
+            return true;
+        switch (_mode)
+        {
+        case Mode::Enable:
+            return enforceAclEnable_(line);
+        case Mode::Config:
+        case Mode::ConfigWifi:
+        case Mode::ConfigTgbot:
+        case Mode::ConfigTime:
+        case Mode::ConfigSocket:
+        case Mode::ConfigMeteo:
+        case Mode::ConfigThermo:
+        case Mode::ConfigTank:
+        case Mode::ConfigSeptic:
+        case Mode::ConfigSecurity:
+        case Mode::ConfigRing:
+        case Mode::ConfigAvr:
+        case Mode::ConfigLeak:
+        case Mode::ConfigWatering:
+        case Mode::ConfigCloud:
+            return false;
+        case Mode::User:
+            return true;
+        }
+        return false;
+    }
+
     void handleLine_(String line)
     {
         line.trim();
@@ -1775,6 +2092,11 @@ private:
         beginCmdOutput_();
         if (_state == State::LoggedIn)
             addHistory_(line);
+        if (!enforceAcl_(line))
+        {
+            denyAcl_();
+            return;
+        }
 
         switch (_mode)
         {
@@ -1842,6 +2164,7 @@ private:
                 return;
             }
             _user_input = line;
+            _session_user_idx = -1;
             _state = State::NeedPass;
             printPrompt_();
             return;
@@ -1849,36 +2172,37 @@ private:
 
         if (_state == State::NeedPass)
         {
-            if (!isAdminUser_(_user_input))
+            int matched_idx = -1;
+            const String normalized = UsersRegistry::normalizeUsername(_user_input);
+            for (size_t i = 0; i < _users.size(); ++i)
             {
-                printLine_(F("Login invalid"));
-                _state = State::NeedUser;
-                _user_input = "";
-                printPrompt_();
-                return;
+                const auto &u = _users.user(i);
+                if (!u.enabled || u.username.length() == 0)
+                    continue;
+                if (UsersRegistry::normalizeUsername(u.username) == normalized)
+                {
+                    matched_idx = (int)i;
+                    break;
+                }
             }
 
-            if (!_admin_set)
+            if (matched_idx >= 0)
             {
-                _state = State::LoggedIn;
-                _mode = Mode::Enable;
-                printPrompt_();
-                return;
+                const auto &u = _users.user((size_t)matched_idx);
+                if (u.checkWebPassword(line))
+                {
+                    _state = State::LoggedIn;
+                    _mode = Mode::Enable;
+                    _session_user_idx = matched_idx;
+                    printPrompt_();
+                    return;
+                }
             }
-
-            if (checkAdmin_(line.c_str()))
-            {
-                _state = State::LoggedIn;
-                _mode = Mode::Enable;
-                printPrompt_();
-            }
-            else
-            {
-                printLine_(F("Login invalid"));
-                _state = State::NeedUser;
-                _user_input = "";
-                printPrompt_();
-            }
+            printLine_(F("Login invalid"));
+            _state = State::NeedUser;
+            _user_input = "";
+            _session_user_idx = -1;
+            printPrompt_();
         }
     }
 
@@ -2233,12 +2557,14 @@ private:
     TelegramMenu &_tgbot_menu;
     Configs &_configs;
     Extender &_ext;
+    UsersRegistry &_users;
     Controllers &_controllers;
     ConfigsManagerIface *_configs_manager = nullptr;
 
     Stream *_io = nullptr;
     String _line;
     String _user_input;
+    int16_t _session_user_idx = -1;
     State _state = State::NeedUser;
     Mode _mode = Mode::Enable;
     uint8_t _admin_hash[32] = {};

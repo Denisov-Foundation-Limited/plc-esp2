@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -26,15 +26,14 @@ public:
     static void handleAdmin(WebInterface &web, AsyncWebServerRequest *request)
     {
         bool set_cookie = false;
-        if (web._cli_auth && web._cli_auth->adminPasswordSet())
-        {
-            if (!web.checkAuth_(request, &set_cookie))
-                return;
-        }
+        if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
         String page = FPSTR(kWebInterfaceAdminHtml);
         page.reserve(page.length() + 768);
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%ADMIN_STATUS%", (web._cli_auth && web._cli_auth->adminPasswordSet()) ? "установлен" : "не установлен");
+        page.replace("%ADMIN_STATUS%", "управление через users ACL");
         String rtc_date = web.rtcDateStr_();
         String rtc_time = web.rtcTimeOnlyStr_();
         String rtc_date_val = (rtc_date == "n/a") ? "" : rtc_date;
@@ -43,6 +42,7 @@ public:
         page.replace("%RTC_TIME%", rtc_time);
         page.replace("%RTC_DATE_VAL%", rtc_date_val);
         page.replace("%RTC_TIME_VAL%", rtc_time_val);
+        page.replace("%BUZZER_CHECKED%", (web._plc && web._plc->buzzerEnabled()) ? "checked" : "");
         web.sendHtml_(request, page, set_cookie);
     }
 };

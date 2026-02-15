@@ -140,6 +140,10 @@
         for (size_t i = 0; i < render_count; ++i)
         {
             const StackSepticItem &cfg = cache->items[i];
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Septic, cfg.id, node_id))
+                continue;
+            if (!webSessionIsAdmin_() && !cfg.enabled)
+                continue;
             const bool warn = cfg.warning;
             const bool alarm = cfg.alarm;
             const char *water_class = "water-low";
@@ -195,11 +199,16 @@
         items.reserve(2048);
         SepticController &septic = _controllers->septic();
         const size_t render_count = septicLocalRenderCount_();
+        const bool can_view_disabled = webSessionIsAdmin_();
         for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = septic.configByIndex(i);
             const auto *st = septic.stateByIndex(i);
             if (!cfg || !st)
+                continue;
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Septic, cfg->id))
+                continue;
+            if (!can_view_disabled && !cfg->enabled)
                 continue;
             const bool warn = st->warning;
             const bool alarm = st->alarm;

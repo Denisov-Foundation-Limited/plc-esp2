@@ -1843,6 +1843,8 @@
             bool set_cookie = false;
             if (!checkAuth_(request, &set_cookie, true))
                 return;
+            if (!requireWebAdmin_(request, &set_cookie))
+                return;
             if (_upload_in_progress && _upload)
                 _upload.close();
             _upload_in_progress = true;
@@ -1913,6 +1915,8 @@
         {
             bool set_cookie = false;
             if (!checkAuth_(request, &set_cookie, true))
+                return;
+            if (!requireWebAdmin_(request, &set_cookie))
                 return;
             _ota_set_cookie = set_cookie;
 #if !defined(ESP32)
@@ -2007,6 +2011,8 @@ sendRedirect_(request, "/status", _ota_set_cookie);
     {
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!requireWebAdmin_(request, &set_cookie))
             return;
         bool changed = false;
 
@@ -2117,6 +2123,8 @@ sendRedirect_(request, "/", set_cookie);
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
+        if (!requireWebAdmin_(request, &set_cookie))
+            return;
         if (!_configs_manager)
         {
             _stack_status = "Config manager missing";
@@ -2202,6 +2210,8 @@ sendRedirect_(request, "/", set_cookie);
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
+        if (!requireWebAdmin_(request, &set_cookie))
+            return;
         if (!_configs_manager)
         {
             sendText_(request, 500, "text/plain", "Config manager missing", set_cookie);
@@ -2227,6 +2237,8 @@ sendRedirect_(request, "/", set_cookie);
     {
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!requireWebAdmin_(request, &set_cookie))
             return;
         if (!_plc)
         {
@@ -2266,6 +2278,8 @@ sendRedirect_(request, "/", set_cookie);
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
             return;
+        if (!requireWebAdmin_(request, &set_cookie))
+            return;
 #if defined(ESP32)
         sendRedirect_(request, "/", set_cookie);
         delay(100);
@@ -2279,6 +2293,8 @@ sendRedirect_(request, "/", set_cookie);
     {
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie))
+            return;
+        if (!requireWebAdmin_(request, &set_cookie))
             return;
         String path;
         if (request->hasParam("path"))
@@ -2306,6 +2322,8 @@ sendRedirect_(request, "/", set_cookie);
     {
         bool set_cookie = false;
         if (!checkAuth_(request, &set_cookie, true))
+            return;
+        if (!requireWebAdmin_(request, &set_cookie))
             return;
         if (!request->hasParam("path"))
         {
@@ -2349,16 +2367,85 @@ sendRedirect_(request, "/", set_cookie);
         sendText_(request, 200, "text/plain", buf, set_cookie);
     }
 
+    bool hasUsersRegistryWebAuth_() const
+    {
+        if (!_users)
+            return false;
+        for (size_t i = 0; i < _users->size(); ++i)
+        {
+            const auto &u = _users->user(i);
+            if (!u.enabled)
+                continue;
+            if (u.username.length() == 0)
+                continue;
+            if (!u.hasWebPassword())
+                continue;
+            return true;
+        }
+        return false;
+    }
+
+    bool checkLegacyAdminAuth_(const String &user, const String &pass) const
+    {
+        if (_cli_auth)
+        {
+            String ulow = user;
+            ulow.toLowerCase();
+            if (ulow == CliConsole::kAdminUser && _cli_auth->adminPasswordSet() && _cli_auth->checkAdminPassword(pass))
+                return true;
+        }
+        return false;
+    }
+
+    bool findUsersRegistryAuth_(const String &user, const String &pass, size_t &user_idx) const
+    {
+        user_idx = 0;
+        if (!_users)
+            return false;
+        const String login = UsersRegistry::normalizeUsername(user);
+        if (login.length() == 0)
+            return false;
+        for (size_t i = 0; i < _users->size(); ++i)
+        {
+            const auto &u = _users->user(i);
+            if (!u.enabled)
+                continue;
+            if (u.username.length() == 0 || !u.hasWebPassword())
+                continue;
+            if (UsersRegistry::normalizeUsername(u.username) != login)
+                continue;
+            if (!u.checkWebPassword(pass))
+                continue;
+            user_idx = i;
+            return true;
+        }
+        return false;
+    }
+
+    bool checkUsersRegistryAuth_(const String &user, const String &pass) const
+    {
+        size_t user_idx = 0;
+        return findUsersRegistryAuth_(user, pass, user_idx);
+    }
+
     bool checkAuth_(AsyncWebServerRequest *request, bool *set_cookie, bool require_session = false)
     {
         if (set_cookie)
             *set_cookie = false;
+        const bool users_web_auth = hasUsersRegistryWebAuth_();
 
         String token;
         if (extractSessionToken_(request, token) && sessionValid_(token))
         {
-            refreshSession_();
-            return true;
+            if (!sessionPrincipalValid_())
+            {
+                clearSession_();
+            }
+            else
+            {
+                refreshSession_();
+                return true;
+            }
         }
         if (require_session)
         {
@@ -2366,40 +2453,40 @@ sendRedirect_(request, "/", set_cookie);
             return false;
         }
 
-        if (_cli_auth)
+        String user;
+        String pass;
+        if (parseBasicAuth_(request, user, pass))
         {
-            if (!_cli_auth->adminPasswordSet())
+            size_t user_idx = 0;
+            if (findUsersRegistryAuth_(user, pass, user_idx))
             {
-                sendRedirect_(request, "/admin", false);
-                return false;
+                issueSession_((int16_t)user_idx);
+                if (set_cookie)
+                    *set_cookie = true;
+                return true;
             }
-            String user;
-            String pass;
-            if (parseBasicAuth_(request, user, pass))
+            if (!users_web_auth && checkLegacyAdminAuth_(user, pass))
             {
-                String ulow = user;
-                ulow.toLowerCase();
-                if (ulow == CliConsole::kAdminUser &&
-                _cli_auth->checkAdminPassword(pass))
-                {
-                    issueSession_();
-                    if (set_cookie)
-                        *set_cookie = true;
-                    return true;
-                }
+                issueSession_(-1);
+                if (set_cookie)
+                    *set_cookie = true;
+                return true;
             }
+        }
+        if (users_web_auth)
+        {
             requestBasicAuth_(request);
             return false;
         }
-        if (!_auth_enabled)
-            return true;
-        if (request->authenticate(_auth_user.c_str(), _auth_pass.c_str()))
+        if (_auth_enabled && request->authenticate(_auth_user.c_str(), _auth_pass.c_str()))
         {
-            issueSession_();
+            issueSession_(-1);
             if (set_cookie)
                 *set_cookie = true;
             return true;
         }
+        if (!_auth_enabled && !_cli_auth)
+            return true;
         requestBasicAuth_(request);
         return false;
     }
@@ -2410,33 +2497,142 @@ sendRedirect_(request, "/", set_cookie);
             *set_cookie = false;
         if (!request)
             return false;
+        const bool users_web_auth = hasUsersRegistryWebAuth_();
 
         String token;
         if (extractSessionToken_(request, token) && sessionValid_(token))
         {
-            refreshSession_();
-            return true;
+            if (!sessionPrincipalValid_())
+            {
+                clearSession_();
+            }
+            else
+            {
+                refreshSession_();
+                return true;
+            }
         }
 
-        if (_cli_auth)
+        String user;
+        String pass;
+        if (parseBasicAuth_(request, user, pass))
         {
-            String user;
-            String pass;
-            if (parseBasicAuth_(request, user, pass))
+            size_t user_idx = 0;
+            if (findUsersRegistryAuth_(user, pass, user_idx))
             {
-                String ulow = user;
-                ulow.toLowerCase();
-                if (ulow == CliConsole::kAdminUser && _cli_auth->checkAdminPassword(pass))
-                {
-                    issueSession_();
-                    if (set_cookie)
-                        *set_cookie = true;
-                    return true;
-                }
+                issueSession_((int16_t)user_idx);
+                if (set_cookie)
+                    *set_cookie = true;
+                return true;
+            }
+            if (!users_web_auth && checkLegacyAdminAuth_(user, pass))
+            {
+                issueSession_(-1);
+                if (set_cookie)
+                    *set_cookie = true;
+                return true;
             }
         }
 
         sendText_(request, 403, "application/json", "{\"ok\":false,\"err\":\"auth\"}", false);
+        return false;
+    }
+
+    const UsersRegistry::User *sessionUser_() const
+    {
+        if (!_users || _session_user_idx < 0)
+            return nullptr;
+        const size_t idx = (size_t)_session_user_idx;
+        if (idx >= _users->size())
+            return nullptr;
+        const auto &u = _users->user(idx);
+        if (!u.enabled)
+            return nullptr;
+        return &u;
+    }
+
+    uint8_t aclUnitByNodeId_(uint32_t node_id) const
+    {
+        if (node_id == 0)
+            return 0;
+        if (!_stack_master)
+            return UsersRegistry::kAclUnitCount;
+        for (size_t i = 0; i < _stack_master->nodeCount(); ++i)
+        {
+            if (_stack_master->nodeIdAt(i) == node_id)
+            {
+                const size_t unit = i + 1u;
+                if (unit >= (size_t)UsersRegistry::kAclUnitCount)
+                    return UsersRegistry::kAclUnitCount;
+                return (uint8_t)unit;
+            }
+        }
+        return UsersRegistry::kAclUnitCount;
+    }
+
+    bool webAclControllerAllowed_(UsersRegistry::AclController ctrl, uint32_t node_id = 0) const
+    {
+        if (webSessionIsAdmin_())
+            return true;
+        const UsersRegistry::User *u = sessionUser_();
+        if (!u)
+            return false;
+        const uint8_t unit = aclUnitByNodeId_(node_id);
+        if (unit >= UsersRegistry::kAclUnitCount)
+            return false;
+        return u->controllerAllowed(unit, ctrl);
+    }
+
+    bool webAclCanViewItem_(UsersRegistry::AclController ctrl, uint16_t item_id, uint32_t node_id = 0) const
+    {
+        if (webSessionIsAdmin_())
+            return true;
+        const UsersRegistry::User *u = sessionUser_();
+        if (!u)
+            return false;
+        const uint8_t unit = aclUnitByNodeId_(node_id);
+        if (unit >= UsersRegistry::kAclUnitCount)
+            return false;
+        return u->canViewItem(unit, ctrl, item_id);
+    }
+
+    bool webAclCanControlItem_(UsersRegistry::AclController ctrl, uint16_t item_id, uint32_t node_id = 0) const
+    {
+        if (webSessionIsAdmin_())
+            return true;
+        const UsersRegistry::User *u = sessionUser_();
+        if (!u)
+            return false;
+        const uint8_t unit = aclUnitByNodeId_(node_id);
+        if (unit >= UsersRegistry::kAclUnitCount)
+            return false;
+        return u->canControlItem(unit, ctrl, item_id);
+    }
+
+    bool webSessionIsAdmin_() const
+    {
+        const UsersRegistry::User *u = sessionUser_();
+        if (u)
+            return u->tg_admin;
+        if (!hasUsersRegistryWebAuth_() && _session_user_idx < 0)
+            return sessionPrincipalValid_();
+        return false;
+    }
+
+    bool requireWebAdmin_(AsyncWebServerRequest *request, bool *set_cookie)
+    {
+        if (webSessionIsAdmin_())
+            return true;
+        sendText_(request, 403, "text/plain", "Admin only", set_cookie ? *set_cookie : false);
+        return false;
+    }
+
+    bool requireWebAclController_(AsyncWebServerRequest *request, bool *set_cookie,
+                                  UsersRegistry::AclController ctrl, uint32_t node_id = 0)
+    {
+        if (webAclControllerAllowed_(ctrl, node_id))
+            return true;
+        sendText_(request, 403, "text/plain", "ACL deny", set_cookie ? *set_cookie : false);
         return false;
     }
 
@@ -2491,13 +2687,16 @@ sendRedirect_(request, "/", set_cookie);
 
     String navHtml_() const
     {
-        String nav = F("<div class=\"nav\">");
-        nav += F("<a href=\"/\">FCPLC</a> | <a href=\"/wifi\">Сеть</a> | ");
-        nav += F("<a href=\"/manage\">Прошивка и файлы</a> | <a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a> | ");
-        nav += F("<a href=\"/stack\">Стек</a> | <a href=\"/controllers\">Контроллеры</a> | <a href=\"/users\">Пользователи</a> | <a href=\"/display\">Дисплей</a> | ");
-        nav += F("<a href=\"/rules\">Правила</a> | ");
-        nav += F("<a href=\"/telegram\">Telegram</a> | <a href=\"/cloud\">Облако</a> | ");
-        nav += F("<a href=\"/admin\">Система</a> | <a href=\"/logs\">Logs</a>");
+        String nav = F("<div class=\"nav\"><a href=\"/\">FCPLC</a> | <a href=\"/controllers\">Контроллеры</a>");
+        if (webSessionIsAdmin_())
+        {
+            nav += F(" | <a href=\"/wifi\">Сеть</a>");
+            nav += F(" | <a href=\"/manage\">Прошивка и файлы</a> | <a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a>");
+            nav += F(" | <a href=\"/stack\">Стек</a> | <a href=\"/users\">Пользователи</a> | <a href=\"/display\">Дисплей</a>");
+            nav += F(" | <a href=\"/rules\">Правила</a>");
+            nav += F(" | <a href=\"/telegram\">Telegram</a> | <a href=\"/cloud\">Облако</a>");
+            nav += F(" | <a href=\"/admin\">Система</a> | <a href=\"/logs\">Logs</a>");
+        }
         nav += F("</div>");
         return nav;
     }

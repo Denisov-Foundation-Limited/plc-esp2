@@ -126,8 +126,9 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Контроллеры</h1>
+      %CONTROLLERS_EMPTY_HINT%
       <div class="grid">
-        <div class="tile">
+        <div class="tile" style="%ACL_HIDE_SOCKETS%">
           <form method="POST" action="/controllers" id="sockets-form">
             <input type="hidden" name="ctrl" value="sockets">
             <div class="tile-head">
@@ -142,7 +143,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Розетки: <strong>%SOCKETS_ENABLED_LABEL%</strong></span>
           <span class="status">%SOCKETS_STATUS%</span>
         </div>
-        <div class="tile">
+        <div class="tile" style="%ACL_HIDE_LIGHTS%">
           <form method="POST" action="/controllers" id="lights-form">
             <input type="hidden" name="ctrl" value="lights">
             <div class="tile-head">
@@ -157,7 +158,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Свет: <strong>%LIGHTS_ENABLED_LABEL%</strong></span>
           <span class="status">%LIGHTS_STATUS%</span>
         </div>
-        <div class="tile">
+        <div class="tile" style="%ACL_HIDE_METEO%">
           <form method="POST" action="/controllers" id="meteo-form">
             <input type="hidden" name="ctrl" value="meteo">
             <div class="tile-head">
@@ -172,7 +173,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Метео: <strong>%METEO_ENABLED_LABEL%</strong></span>
           <span class="status">%METEO_STATUS%</span>
         </div>
-        <div class="tile">
+        <div class="tile" style="%ACL_HIDE_THERMO%">
           <form method="POST" action="/controllers" id="thermo-form">
             <input type="hidden" name="ctrl" value="thermo">
             <div class="tile-head">
@@ -187,7 +188,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Термо: <strong>%THERMO_ENABLED_LABEL%</strong></span>
           <span class="status">%THERMO_STATUS%</span>
         </div>
-        <div class="tile">
+        <div class="tile" style="%ACL_HIDE_TANKS%">
           <form method="POST" action="/controllers" id="tanks-form">
             <input type="hidden" name="ctrl" value="tanks">
             <div class="tile-head">
@@ -202,7 +203,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Баки: <strong>%TANKS_ENABLED_LABEL%</strong></span>
           <span class="status">%TANKS_STATUS%</span>
         </div>
-        <div class="tile">
+        <div class="tile" style="%ACL_HIDE_WATERING%">
           <form method="POST" action="/controllers" id="watering-form">
             <input type="hidden" name="ctrl" value="watering">
             <div class="tile-head">
@@ -217,7 +218,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Полив: <strong>%WATERING_ENABLED_LABEL%</strong></span>
           <span class="status">%WATERING_STATUS%</span>
         </div>
-<div class="tile">
+<div class="tile" style="%ACL_HIDE_SEPTIC%">
           <form method="POST" action="/controllers" id="septic-form">
             <input type="hidden" name="ctrl" value="septic">
             <div class="tile-head">
@@ -232,7 +233,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Септик: <strong>%SEPTIC_ENABLED_LABEL%</strong></span>
           <span class="status">%SEPTIC_STATUS%</span>
         </div>
-        <div class="tile">
+        <div class="tile" style="%ACL_HIDE_RING%">
           <form method="POST" action="/controllers" id="ring-form">
             <input type="hidden" name="ctrl" value="ring">
             <div class="tile-head">
@@ -247,7 +248,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Звонок: <strong>%RING_ENABLED_LABEL%</strong></span>
           <span class="status">%RING_STATUS%</span>
         </div>
-        <div class="tile">
+        <div class="tile" style="%ACL_HIDE_SECURITY%">
           <form method="POST" action="/controllers" id="security-form">
             <input type="hidden" name="ctrl" value="security">
             <div class="tile-head">
@@ -262,7 +263,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">Охрана: <strong>%SECURITY_ENABLED_LABEL%</strong></span>
           <span class="status">%SECURITY_STATUS%</span>
         </div>
-        <div class="tile">
+        <div class="tile" style="%ACL_HIDE_AVR%">
           <form method="POST" action="/controllers" id="avr-form">
             <input type="hidden" name="ctrl" value="avr">
             <div class="tile-head">
@@ -277,7 +278,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           <span class="status">АВР: <strong>%AVR_ENABLED_LABEL%</strong></span>
           <span class="status">%AVR_STATUS%</span>
         </div>
-        <div class="tile">
+        <div class="tile" style="%ACL_HIDE_LEAK%">
           <form method="POST" action="/controllers" id="leak-form">
             <input type="hidden" name="ctrl" value="leak">
             <div class="tile-head">
@@ -359,6 +360,9 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+
+
 
 
 

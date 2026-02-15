@@ -33,6 +33,8 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
         String page = FPSTR(kWebInterfaceDisplayHtml);
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", web.navHtml_());
@@ -56,6 +58,8 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
             return;
         if (!web._configs_manager)
         {

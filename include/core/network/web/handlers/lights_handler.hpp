@@ -38,9 +38,11 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Lights, node_id))
+            return;
         String page = FPSTR(kWebInterfaceLightsHtml);
         const uint8_t page_size = 8u;
-        const uint32_t node_id = web.parseStackNodeIdParam_(request);
         const bool stack_view = web.isStackLightsView_(node_id);
         if (stack_view)
             web.requestStackLights_(node_id);
@@ -94,7 +96,7 @@ public:
             page.replace("%RELAY_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
             page.replace("%LIGHTS_STATUS%", web._lights_status);
             page.replace("%LIGHTS_PAGINATION_STYLE%", "");
-            page.replace("%LIGHTS_SAVE_BTN%", "<button class=\"btn\" type=\"submit\">Сохранить</button>");
+            page.replace("%LIGHTS_SAVE_BTN%", web.webSessionIsAdmin_() ? "<button class=\"btn\" type=\"submit\">Сохранить</button>" : "");
             page.replace("%LIGHTS_UNIT%", "local");
             page.replace("%LIGHTS_NODE_ID%", "0");
         }
@@ -107,6 +109,10 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Lights))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackLightsView_(node_id))
@@ -142,6 +148,12 @@ public:
                                  request->hasParam(action_key, true);
             if (!has_any)
                 continue;
+            if (!web.webAclCanControlItem_(UsersRegistry::AclController::Lights, cfg->id))
+            {
+                web._lights_status = String("ACL deny item: ") + idx;
+                web.sendRedirect_(request, redirect ? redirect : "/lights", set_cookie);
+                return;
+            }
             const bool enabled = request->hasParam(en_key, true);
             String name = web.paramValue_(request, name_key);
             String btn = web.paramValue_(request, btn_key);
@@ -208,6 +220,8 @@ public:
         bool set_cookie = false;
         if (!web.checkAuthApi_(request, &set_cookie))
             return;
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Lights))
+            return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackLightsView_(node_id))
         {
@@ -230,17 +244,25 @@ public:
             return;
         }
         const uint16_t id = (uint16_t)id_str.toInt();
+        if (!web.webAclCanControlItem_(UsersRegistry::AclController::Lights, id, node_id))
+        {
+            web.sendText_(request, 403, "text/plain", "ACL deny", set_cookie);
+            return;
+        }
         SocketController &sockets = web._controllers->sockets();
         if (id == 0 || !sockets.lightConfig(id))
         {
             web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
             return;
         }
+        const SocketController::LightConfig *cfg = sockets.lightConfig(id);
+        const char *name = (cfg && cfg->name.length()) ? cfg->name.c_str() : "-";
         String action = web.paramValueAny_(request, "action");
         action.trim();
         action.toLowerCase();
         bool ok = false;
         bool state = false;
+        const bool state_poll = (action == "state");
         if (action == "state")
         {
             ok = sockets.lightRelayStateById(id, state);
@@ -265,8 +287,20 @@ public:
         }
         if (!ok)
         {
+            if (web._log && !state_poll)
+                web._log->warn(F("WEB"), F("Lights toggle failed: id: %u name: %s action: %s"),
+                               (unsigned)id, name, action.c_str());
             web.sendText_(request, 400, "text/plain", "Toggle failed", set_cookie);
             return;
+        }
+        if (web._log && !state_poll)
+        {
+            if (action == "toggle" || action.length() == 0)
+                web._log->info(F("WEB"), F("Lights toggle ok: id: %u name: %s action: toggle state: %s"),
+                               (unsigned)id, name, state ? "on" : "off");
+            else
+                web._log->info(F("WEB"), F("Lights toggle ok: id: %u name: %s action: %s"),
+                               (unsigned)id, name, action.c_str());
         }
         web.sendText_(request, 200, "text/plain", state ? "on" : "off", set_cookie);
     }
@@ -275,6 +309,8 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Lights))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackLightsView_(node_id))
@@ -294,6 +330,11 @@ public:
             return;
         }
         const uint16_t id = (uint16_t)id_str.toInt();
+        if (!web.webAclCanControlItem_(UsersRegistry::AclController::Lights, id, node_id))
+        {
+            web.sendText_(request, 403, "text/plain", "ACL deny", set_cookie);
+            return;
+        }
         SocketController &sockets = web._controllers->sockets();
         if (id == 0 || !sockets.lightConfig(id))
         {

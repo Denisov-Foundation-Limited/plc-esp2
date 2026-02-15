@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -104,6 +104,11 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
       <form method="POST" action="/admin" id="admin-form">
         <label for="password">Новый пароль</label>
         <input id="password" type="password" name="password" placeholder="Введите новый пароль">
+        <label style="margin-top:10px;display:flex;align-items:center;gap:8px;color:var(--text)">
+          <input type="hidden" name="buzzer_present" value="1">
+          <input type="checkbox" name="buzzer_enabled" %BUZZER_CHECKED%>
+          Buzzer
+        </label>
         <button type="submit">Сохранить</button>
       </form>
       <div class="section">

@@ -148,6 +148,8 @@ public:
     bool fanStatus() const { return _fan_on; }
     const String &deviceName() const { return _device_name; }
     void setDeviceName(const String &name) { _device_name = name; }
+    bool buzzerEnabled() const { return _buzzer_enabled; }
+    void setBuzzerEnabled(bool enabled) { _buzzer_enabled = enabled; }
     bool fanManualMode() const { return _fan_manual; }
     float fanOnC() const { return _fan_on_c; }
     float fanHysteresisC() const { return _fan_hyst_c; }
@@ -388,6 +390,7 @@ private:
     bool _alarm_led_state = false;
     uint32_t _alarm_blink_ms = 500;
     uint32_t _alarm_next_toggle_ms = 0;
+    bool _buzzer_enabled = true;
 
 
     static bool timeDue_(uint32_t now, uint32_t at)

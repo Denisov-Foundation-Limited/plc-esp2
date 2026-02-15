@@ -31,9 +31,11 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Security, node_id))
+            return;
         String page = FPSTR(kWebInterfaceSecurityHtml);
         const uint8_t page_size = 8u;
-        const uint32_t node_id = web.parseStackNodeIdParam_(request);
         const bool stack_view = web.isStackSecurityView_(node_id);
         if (stack_view)
             web.requestStackSecurity_(node_id);
@@ -112,7 +114,7 @@ public:
         page.replace("%SECURITY_SENSORS_TITLE%", stack_view ? web.stackSecurityTitle_(node_id) : String("Датчики"));
         page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", stack_view ? "style=\"display:none\"" : "");
         page.replace("%SECURITY_SAVE_BTN%",
-                     stack_view ? "" : "<button class=\"primary\" name=\"action\" value=\"save\">Сохранить</button>");
+                     (stack_view || !web.webSessionIsAdmin_()) ? "" : "<button class=\"primary\" name=\"action\" value=\"save\">Сохранить</button>");
         page.replace("%SECURITY_DEVICE_SELECT%", web.securityDeviceSelectHtml_(node_id, stack_view));
         web.sendHtml_(request, page, set_cookie);
     }
@@ -121,6 +123,10 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (!web.requireWebAdmin_(request, &set_cookie))
+            return;
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Security))
             return;
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackSecurityView_(node_id))
@@ -218,6 +224,12 @@ public:
                                  request->hasParam(silent_key, true);
             if (!has_any)
                 continue;
+            if (!web.webAclCanControlItem_(UsersRegistry::AclController::Security, cfg->id))
+            {
+                web._security_status = String("ACL deny item: ") + idx;
+                web.sendRedirect_(request, "/security", set_cookie);
+                return;
+            }
             const bool enabled = request->hasParam(en_key, true);
             if (!enabled)
             {
@@ -296,6 +308,13 @@ public:
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Security))
+            return;
+        if (!web.webAclCanControlItem_(UsersRegistry::AclController::Security, 1))
+        {
+            web.sendText_(request, 403, "text/plain", "ACL deny", set_cookie);
+            return;
+        }
         if (!web._controllers)
         {
             web.sendText_(request, 500, "text/plain", "0", set_cookie);

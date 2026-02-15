@@ -224,8 +224,9 @@ public:
                     writeRelay_(cfg, st.relay_on);
                     _dirty_sockets = true;
                     st.cooldown_until_ms = now + kButtonCooldownMs;
-                    _logs.info(F("SOCKET"), F("id: %u state: %s src: button"),
-                               (unsigned)cfg.id, st.relay_on ? "on" : "off");
+                    const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
+                    _logs.info(F("SOCKET"), F("Id: %u name: %s state: %s src: button"),
+                               (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
                 }
                 st.last_button = pressed;
             }
@@ -281,8 +282,9 @@ public:
         writeRelay_(cfg, st.relay_on);
         syncButtonState_(cfg, st);
         _dirty_sockets = true;
-        _logs.info(F("SOCKET"), F("id: %u state: %s"),
-                   (unsigned)cfg.id, st.relay_on ? "on" : "off");
+        const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
+        _logs.info(F("SOCKET"), F("Id: %u name: %s state: %s"),
+                   (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
         return true;
     }
 
@@ -301,8 +303,9 @@ public:
         writeRelay_(cfg, st.relay_on);
         syncButtonState_(cfg, st);
         _dirty_sockets = true;
-        _logs.info(F("SOCKET"), F("id: %u state: %s src: toggle"),
-                   (unsigned)cfg.id, st.relay_on ? "on" : "off");
+        const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
+        _logs.info(F("SOCKET"), F("Id: %u name: %s state: %s src: toggle"),
+                   (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
         return true;
     }
 
@@ -405,7 +408,7 @@ public:
             cfg.enabled = false;
             st = SocketState{};
             _dirty_sockets = true;
-            _logs.info(F("SOCKET"), F("id: %u enabled: false"), (unsigned)cfg.id);
+            _logs.info(F("SOCKET"), F("Id: %u enabled: false"), (unsigned)cfg.id);
             return true;
         }
         cfg.enabled = true;
@@ -413,7 +416,7 @@ public:
         st.has_button = setupButton_(cfg, st);
         setupRelay_(cfg, st);
         _dirty_sockets = true;
-        _logs.info(F("SOCKET"), F("id: %u enabled: true"), (unsigned)cfg.id);
+        _logs.info(F("SOCKET"), F("Id: %u enabled: true"), (unsigned)cfg.id);
         return true;
     }
 

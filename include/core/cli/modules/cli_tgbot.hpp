@@ -40,6 +40,15 @@ public:
         _c._io->println(F("    token <value>           - set bot token"));
         _c._io->println(F("    chat <id>               - set chat id"));
         _c._io->println(F("    insecure on|off         - TLS check"));
+        _c._io->println(F("    user list               - show users table"));
+        _c._io->println(F("    user enable <id> <on|off> - enable/disable user"));
+        _c._io->println(F("    user username <id> <value|clear> - set web username"));
+        _c._io->println(F("    user tg_username <id> <value|clear> - set telegram username"));
+        _c._io->println(F("    user tg_chat <id> <chat_id|0> - set telegram chat id"));
+        _c._io->println(F("    user is_admin <id> <on|off> - set admin flag"));
+        _c._io->println(F("    user tg_notify <id> <on|off> - set telegram notify flag"));
+        _c._io->println(F("    user webpass <id> <password|clear> - set/clear web password"));
+        _c._io->println(F("    user acl <id> <all|none> - grant all/clear ACL"));
         _c._io->println(F("    allow list              - show allowed users"));
         _c._io->println(F("    allow add <username> [chat_id] [admin] [notify] [off] - add allowed user"));
         _c._io->println(F("    allow del <username>    - remove allowed user"));
@@ -58,6 +67,15 @@ public:
         _c._io->println(F("  token <value>           - set bot token"));
         _c._io->println(F("  chat <id>               - set chat id"));
         _c._io->println(F("  insecure on|off         - TLS check"));
+        _c._io->println(F("  user list               - show users table"));
+        _c._io->println(F("  user enable <id> <on|off> - enable/disable user"));
+        _c._io->println(F("  user username <id> <value|clear> - set web username"));
+        _c._io->println(F("  user tg_username <id> <value|clear> - set telegram username"));
+        _c._io->println(F("  user tg_chat <id> <chat_id|0> - set telegram chat id"));
+        _c._io->println(F("  user is_admin <id> <on|off> - set admin flag"));
+        _c._io->println(F("  user tg_notify <id> <on|off> - set telegram notify flag"));
+        _c._io->println(F("  user webpass <id> <password|clear> - set/clear web password"));
+        _c._io->println(F("  user acl <id> <all|none> - grant all/clear ACL"));
         _c._io->println(F("  allow list              - show allowed users"));
         _c._io->println(F("  allow add <username> [chat_id] [admin] [notify] [off] - add allowed user"));
         _c._io->println(F("  allow del <username>    - remove allowed user"));
@@ -79,6 +97,212 @@ public:
         if (lower == "show")
         {
             _c.cmdShowTelegram_();
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower == "user list" || lower == "user show")
+        {
+            _c._io->println(F("ID  En  Username         TG User          TG Chat        Admin Notify WebPass"));
+            _c._io->println(F("--  --  ---------------  ---------------  -------------  ----- ------ -------"));
+            for (size_t i = 0; i < _c._users.size(); ++i)
+            {
+                const auto &u = _c._users.user(i);
+                const String id = String((unsigned)u.id);
+                const String chat = (u.tg_chat_id != 0) ? String((long long)u.tg_chat_id) : String("-");
+                _c._io->print(id);
+                _c._io->print(F("   "));
+                _c._io->print(u.enabled ? F("Y ") : F("N "));
+                _c._io->print(F(" "));
+                _c._io->print(u.username.length() ? u.username : String("-"));
+                _c._io->print(F("   "));
+                _c._io->print(u.tg_username.length() ? u.tg_username : String("-"));
+                _c._io->print(F("   "));
+                _c._io->print(chat);
+                _c._io->print(F("   "));
+                _c._io->print(u.tg_admin ? F("yes") : F("no "));
+                _c._io->print(F("   "));
+                _c._io->print(u.tg_notify ? F("yes") : F("no "));
+                _c._io->print(F("   "));
+                _c._io->println(u.hasWebPassword() ? F("yes") : F("no"));
+            }
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("user enable "))
+        {
+            uint8_t id = 0;
+            String value;
+            if (!parseUserIdAndTail_(cmd.substring(12), id, value))
+            {
+                _c._io->println(F("Usage: user enable <id> <on|off>"));
+                _c.printPrompt_();
+                return true;
+            }
+            bool b = false;
+            if (!parseBoolToken_(value, b))
+            {
+                _c._io->println(F("Invalid flag, use on|off"));
+                _c.printPrompt_();
+                return true;
+            }
+            _c._users.user((size_t)(id - 1)).enabled = b;
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("user username "))
+        {
+            uint8_t id = 0;
+            String value;
+            if (!parseUserIdAndTail_(cmd.substring(14), id, value))
+            {
+                _c._io->println(F("Usage: user username <id> <value|clear>"));
+                _c.printPrompt_();
+                return true;
+            }
+            auto &u = _c._users.user((size_t)(id - 1));
+            String v = value;
+            v.trim();
+            if (v == "clear")
+                v = "";
+            u.username = UsersRegistry::normalizeUsername(v);
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("user tg_username "))
+        {
+            uint8_t id = 0;
+            String value;
+            if (!parseUserIdAndTail_(cmd.substring(17), id, value))
+            {
+                _c._io->println(F("Usage: user tg_username <id> <value|clear>"));
+                _c.printPrompt_();
+                return true;
+            }
+            auto &u = _c._users.user((size_t)(id - 1));
+            String v = value;
+            v.trim();
+            if (v == "clear")
+                v = "";
+            u.tg_username = UsersRegistry::normalizeTgUsername(v);
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("user tg_chat "))
+        {
+            uint8_t id = 0;
+            String value;
+            if (!parseUserIdAndTail_(cmd.substring(13), id, value))
+            {
+                _c._io->println(F("Usage: user tg_chat <id> <chat_id|0>"));
+                _c.printPrompt_();
+                return true;
+            }
+            value.trim();
+            _c._users.user((size_t)(id - 1)).tg_chat_id = (int64_t)strtoll(value.c_str(), nullptr, 10);
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("user is_admin "))
+        {
+            uint8_t id = 0;
+            String value;
+            if (!parseUserIdAndTail_(cmd.substring(14), id, value))
+            {
+                _c._io->println(F("Usage: user is_admin <id> <on|off>"));
+                _c.printPrompt_();
+                return true;
+            }
+            bool b = false;
+            if (!parseBoolToken_(value, b))
+            {
+                _c._io->println(F("Invalid flag, use on|off"));
+                _c.printPrompt_();
+                return true;
+            }
+            _c._users.user((size_t)(id - 1)).tg_admin = b;
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("user tg_notify "))
+        {
+            uint8_t id = 0;
+            String value;
+            if (!parseUserIdAndTail_(cmd.substring(15), id, value))
+            {
+                _c._io->println(F("Usage: user tg_notify <id> <on|off>"));
+                _c.printPrompt_();
+                return true;
+            }
+            bool b = false;
+            if (!parseBoolToken_(value, b))
+            {
+                _c._io->println(F("Invalid flag, use on|off"));
+                _c.printPrompt_();
+                return true;
+            }
+            _c._users.user((size_t)(id - 1)).tg_notify = b;
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("user webpass "))
+        {
+            uint8_t id = 0;
+            String value;
+            if (!parseUserIdAndTail_(cmd.substring(13), id, value))
+            {
+                _c._io->println(F("Usage: user webpass <id> <password|clear>"));
+                _c.printPrompt_();
+                return true;
+            }
+            auto &u = _c._users.user((size_t)(id - 1));
+            value.trim();
+            if (value == "clear")
+            {
+                u.clearWebPassword();
+                _c._io->println(F("OK"));
+                _c.printPrompt_();
+                return true;
+            }
+            if (!u.setWebPassword(value))
+            {
+                _c._io->println(F("Failed to set password"));
+                _c.printPrompt_();
+                return true;
+            }
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("user acl "))
+        {
+            uint8_t id = 0;
+            String value;
+            if (!parseUserIdAndTail_(cmd.substring(9), id, value))
+            {
+                _c._io->println(F("Usage: user acl <id> <all|none>"));
+                _c.printPrompt_();
+                return true;
+            }
+            value.trim();
+            value.toLowerCase();
+            auto &u = _c._users.user((size_t)(id - 1));
+            if (value == "all")
+                u.grantAllAcl();
+            else if (value == "none")
+                u.clearAcl();
+            else
+            {
+                _c._io->println(F("Invalid mode, use all|none"));
+                _c.printPrompt_();
+                return true;
+            }
+            _c._io->println(F("OK"));
             _c.printPrompt_();
             return true;
         }
@@ -445,5 +669,44 @@ private:
             ++part;
         }
         return out.username.length() > 0;
+    }
+
+    static bool parseBoolToken_(String token, bool &out)
+    {
+        token.trim();
+        token.toLowerCase();
+        if (token == "on" || token == "1" || token == "true" || token == "yes")
+        {
+            out = true;
+            return true;
+        }
+        if (token == "off" || token == "0" || token == "false" || token == "no")
+        {
+            out = false;
+            return true;
+        }
+        return false;
+    }
+
+    static bool parseUserIdAndTail_(String input, uint8_t &id_out, String &tail_out)
+    {
+        input.trim();
+        if (input.length() == 0)
+            return false;
+        int sp = input.indexOf(' ');
+        String id_tok = (sp < 0) ? input : input.substring(0, (size_t)sp);
+        id_tok.trim();
+        const long id = id_tok.toInt();
+        if (id < 1 || id > (long)UsersRegistry::kMaxUsers)
+            return false;
+        id_out = (uint8_t)id;
+        if (sp < 0)
+        {
+            tail_out = "";
+            return false;
+        }
+        tail_out = input.substring((size_t)sp + 1);
+        tail_out.trim();
+        return tail_out.length() > 0;
     }
 };

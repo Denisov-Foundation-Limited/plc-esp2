@@ -143,6 +143,10 @@
         for (size_t i = 0; i < render_count; ++i)
         {
             const StackWateringItem &cfg = cache->items[i];
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Watering, cfg.id, node_id))
+                continue;
+            if (!webSessionIsAdmin_() && !cfg.enabled)
+                continue;
             const char *state_label = cfg.active ? "активно" : (cfg.paused ? "пауза" : "ожидание");
             items += "<div class=\"tile\" data-active=\"";
             items += cfg.active ? "1\">" : "0\">";
@@ -415,11 +419,16 @@
         };
 
         const size_t render_count = wateringLocalRenderCount_();
+        const bool can_view_disabled = webSessionIsAdmin_();
         for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = watering.configByIndex(i);
             const auto *st = watering.stateByIndex(i);
             if (!cfg || !st)
+                continue;
+            if (!webAclCanViewItem_(UsersRegistry::AclController::Watering, cfg->id))
+                continue;
+            if (!can_view_disabled && !cfg->enabled)
                 continue;
             appendRule(*cfg, *st);
         }
@@ -463,4 +472,6 @@
         out += "]";
         return out;
     }
+
+
 

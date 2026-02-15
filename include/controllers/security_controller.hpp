@@ -26,6 +26,7 @@
 #include "hal/ibutton.hpp"
 #include "hal/pn532.hpp"
 #include "core/eeprom_storage.hpp"
+#include "plc/plc_control.hpp"
 #include "utils/logger.hpp"
 #include "utils/users_registry.hpp"
 
@@ -498,6 +499,10 @@ public:
     void setUsersRegistry(UsersRegistry &users)
     {
         _users = &users;
+    }
+    void setPlcControl(PlcControl &plc)
+    {
+        _plc = &plc;
     }
 
     bool processRfidUid(const PN532::UID &uid, const char *src = "rfid")
@@ -1363,7 +1368,7 @@ private:
     void setupBuzzer_()
     {
         _gpio.pinModeDyn(ActiveBoardProfile::BUZZER_PIN, PortIO::PortMode::Output);
-        _gpio.writeDyn(ActiveBoardProfile::BUZZER_PIN, false);
+        writeBuzzer_(false);
     }
 
     void setupAlarmLed_()
@@ -1771,7 +1776,7 @@ private:
         {
             updateAlarmLed_();
             updateSiren_();
-            _gpio.writeDyn(ActiveBoardProfile::BUZZER_PIN, false);
+            writeBuzzer_(false);
         }
         _dirty = false;
         _force_save = false;
@@ -1872,16 +1877,31 @@ private:
 
     void startBeep_(uint8_t count, uint16_t on_ms, uint16_t off_ms)
     {
+        if (!buzzerEnabled_())
+        {
+            _beep_remaining = 0;
+            _beep_state_on = false;
+            writeBuzzer_(false);
+            return;
+        }
         _beep_remaining = count;
         _beep_on_ms = on_ms;
         _beep_off_ms = off_ms;
         _beep_state_on = true;
         _beep_next_ms = millis() + on_ms;
-        _gpio.writeDyn(ActiveBoardProfile::BUZZER_PIN, true);
+        writeBuzzer_(true);
     }
 
     void updateBuzzer_()
     {
+        if (!buzzerEnabled_())
+        {
+            _beep_remaining = 0;
+            _beep_state_on = false;
+            _alarm_buzz_state = false;
+            writeBuzzer_(false);
+            return;
+        }
         if (_alarm_on)
         {
             updateAlarmBuzzer_();
@@ -1890,7 +1910,7 @@ private:
         if (_alarm_buzz_state)
         {
             _alarm_buzz_state = false;
-            _gpio.writeDyn(ActiveBoardProfile::BUZZER_PIN, false);
+            writeBuzzer_(false);
         }
         if (_beep_remaining == 0)
             return;
@@ -1901,7 +1921,7 @@ private:
         if (_beep_state_on)
         {
             _beep_state_on = false;
-            _gpio.writeDyn(ActiveBoardProfile::BUZZER_PIN, false);
+            writeBuzzer_(false);
             if (_beep_off_ms == 0)
             {
                 if (_beep_remaining > 0)
@@ -1909,7 +1929,7 @@ private:
                 if (_beep_remaining == 0)
                     return;
                 _beep_state_on = true;
-                _gpio.writeDyn(ActiveBoardProfile::BUZZER_PIN, true);
+                writeBuzzer_(true);
                 _beep_next_ms = now + _beep_on_ms;
                 return;
             }
@@ -1922,7 +1942,7 @@ private:
         if (_beep_remaining == 0)
             return;
         _beep_state_on = true;
-        _gpio.writeDyn(ActiveBoardProfile::BUZZER_PIN, true);
+        writeBuzzer_(true);
         _beep_next_ms = now + _beep_on_ms;
     }
 
@@ -1932,7 +1952,7 @@ private:
         if ((int32_t)(now - _alarm_buzz_next_ms) < 0)
             return;
         _alarm_buzz_state = !_alarm_buzz_state;
-        _gpio.writeDyn(ActiveBoardProfile::BUZZER_PIN, _alarm_buzz_state);
+        writeBuzzer_(_alarm_buzz_state);
         _alarm_buzz_next_ms = now + kAlarmBuzzMs;
     }
 
@@ -1940,7 +1960,17 @@ private:
     {
         _alarm_buzz_state = false;
         _alarm_buzz_next_ms = millis() + kAlarmBuzzMs;
-        _gpio.writeDyn(ActiveBoardProfile::BUZZER_PIN, false);
+        writeBuzzer_(false);
+    }
+
+    bool buzzerEnabled_() const
+    {
+        return !_plc || _plc->buzzerEnabled();
+    }
+
+    void writeBuzzer_(bool on)
+    {
+        _gpio.writeDyn(ActiveBoardProfile::BUZZER_PIN, buzzerEnabled_() ? on : false);
     }
 
     void logDetect_(const SensorConfig &cfg)
@@ -2336,6 +2366,7 @@ private:
 
     bool _alarm_buzz_state = false;
     uint32_t _alarm_buzz_next_ms = 0;
+    PlcControl *_plc = nullptr;
     ArmStateHandler _arm_state_cb = nullptr;
     void *_arm_state_ctx = nullptr;
     PreArmCheckHandler _pre_arm_cb = nullptr;

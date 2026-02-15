@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -52,8 +52,10 @@ static const char kWebInterfaceCloudHtml[] PROGMEM = R"HTML(
     a { color: #7dd3fc; text-decoration: none; }
     .nav { margin-bottom: 12px; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-row { display: block; }
+    .form-row.full { grid-column: 1 / -1; }
     label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--muted); }
-    input[type=text], input[type=password], input[type=number] {
+    input[type=text], input[type=password], input[type=number], .field {
       width: 100%;
       background: #0b1220;
       border: 1px solid #334155;
@@ -86,7 +88,7 @@ static const char kWebInterfaceCloudHtml[] PROGMEM = R"HTML(
     .badge.ok { color: var(--ok); border-color: rgba(34,197,94,0.5); background: rgba(34,197,94,0.1); }
     .badge.bad { color: var(--bad); border-color: rgba(239,68,68,0.5); background: rgba(239,68,68,0.1); }
     .status { color: var(--muted); font-size: 12px; }
-    .hint { font-size: 12px; color: var(--muted); }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
     .fw { font-family: Consolas, "Courier New", monospace; }
   </style>
 </head>
@@ -97,8 +99,8 @@ static const char kWebInterfaceCloudHtml[] PROGMEM = R"HTML(
       <h1>Облако</h1>
       <div class="row" style="margin: 8px 0 16px;">
         <span class="badge %CLOUD_CONNECTED_CLASS%">%CLOUD_CONNECTED_TEXT%</span>
-        <span class="status">FW: <span class="fw">%CLOUD_FW_VERSION%</span></span>
-        <span class="status">Device ID: <span class="fw">%CLOUD_DEVICE_ID%</span></span>
+        <span class="status">Версия FW: <span class="fw">%CLOUD_FW_VERSION%</span></span>
+        <span class="status">ID устройства: <span class="fw">%CLOUD_DEVICE_ID%</span></span>
       </div>
       <form method="POST" action="/cloud" id="cloud-form">
         <div class="row" style="margin-bottom: 12px;">
@@ -108,34 +110,34 @@ static const char kWebInterfaceCloudHtml[] PROGMEM = R"HTML(
           </div>
         </div>
         <div class="grid" id="cloud-fields">
-          <div>
-            <label>Host</label>
-            <input type="text" name="host" value="%CLOUD_HOST%" placeholder="cloud.example.com">
+          <div class="form-row">
+            <label>Хост</label>
+            <input class="field" type="text" name="host" value="%CLOUD_HOST%" placeholder="cloud.example.com">
           </div>
-          <div>
-            <label>Port</label>
-            <input type="number" name="port" value="%CLOUD_PORT%" placeholder="443">
+          <div class="form-row">
+            <label>Порт</label>
+            <input class="field" type="number" name="port" value="%CLOUD_PORT%" placeholder="443">
           </div>
-          <div>
-            <label>Path</label>
-            <input type="text" name="path" value="%CLOUD_PATH%" placeholder="/">
+          <div class="form-row">
+            <label>Путь</label>
+            <input class="field" type="text" name="path" value="%CLOUD_PATH%" placeholder="/">
           </div>
           <div class="checkbox" style="margin-top:22px;">
             <input type="checkbox" id="ssl" name="ssl" %CLOUD_SSL_CHECKED%>
             <label for="ssl">Использовать SSL</label>
           </div>
-          <div>
-            <label>Reconnect (ms)</label>
-            <input type="number" name="reconnect_ms" value="%CLOUD_RECONNECT_MS%" placeholder="5000">
+          <div class="form-row">
+            <label>Переподключение (мс)</label>
+            <input class="field" type="number" name="reconnect_ms" value="%CLOUD_RECONNECT_MS%" placeholder="5000">
           </div>
-          <div>
-            <label>Event interval (ms)</label>
-            <input type="number" name="event_ms" value="%CLOUD_EVENT_MS%" placeholder="0">
-            <div class="hint">0 — отключить авто-ивенты</div>
+          <div class="form-row">
+            <label>Интервал событий (мс)</label>
+            <input class="field" type="number" name="event_ms" value="%CLOUD_EVENT_MS%" placeholder="0">
+            <div class="hint">0 - отключить авто-события</div>
           </div>
-          <div>
-            <label>API key</label>
-            <input type="password" name="api_key" value="%CLOUD_API_KEY%" placeholder="api_key">
+          <div class="form-row full">
+            <label>API ключ</label>
+            <input class="field" type="password" name="api_key" value="%CLOUD_API_KEY%" placeholder="api_key">
           </div>
         </div>
         <div class="row" style="margin-top:12px;">

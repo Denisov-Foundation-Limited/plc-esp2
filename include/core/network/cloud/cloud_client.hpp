@@ -458,6 +458,14 @@ private:
         {
             feature = StackFeature::Sockets;
             stack_action = (action == "toggle") ? "set" : "set";
+            const uint32_t item_id = (uint32_t)(args["id"] | 0);
+            if (action == "toggle")
+                _log.info(F("CLOUD"), F("Cmd stack: sockets node_id: %u id: %u action: toggle"),
+                          (unsigned)node_id, (unsigned)item_id);
+            else
+                _log.info(F("CLOUD"), F("Cmd stack: sockets node_id: %u id: %u action: set state: %s"),
+                          (unsigned)node_id, (unsigned)item_id,
+                          (String(args["state"] | "") == "on") ? "on" : "off");
             JsonArray items = params["items"].to<JsonArray>();
             JsonObject o = items.add<JsonObject>();
             o["id"] = (unsigned)(args["id"] | 0);
@@ -470,6 +478,14 @@ private:
         {
             feature = StackFeature::Sockets;
             stack_action = (action == "toggle") ? "set_lights" : "set_lights";
+            const uint32_t item_id = (uint32_t)(args["id"] | 0);
+            if (action == "toggle")
+                _log.info(F("CLOUD"), F("Cmd stack: lights node_id: %u id: %u action: toggle"),
+                          (unsigned)node_id, (unsigned)item_id);
+            else
+                _log.info(F("CLOUD"), F("Cmd stack: lights node_id: %u id: %u action: set state: %s"),
+                          (unsigned)node_id, (unsigned)item_id,
+                          (String(args["state"] | "") == "on") ? "on" : "off");
             JsonArray items = params["items"].to<JsonArray>();
             JsonObject o = items.add<JsonObject>();
             o["id"] = (unsigned)(args["id"] | 0);
@@ -625,12 +641,18 @@ private:
         const uint8_t id = (uint8_t)(args["id"] | 0);
         if (id == 0)
             return false;
+        const char *ctrl_name = lights ? "lights" : "sockets";
         if (action == "toggle")
+        {
+            _log.info(F("CLOUD"), F("Cmd: %s id: %u action: toggle"), ctrl_name, (unsigned)id);
             return lights ? s.toggleLightRelayById(id) : s.toggleRelayById(id);
+        }
         if (action == "set")
         {
             const String st = args["state"] | "";
             const bool on = (st == "on");
+            _log.info(F("CLOUD"), F("Cmd: %s id: %u action: set state: %s"),
+                      ctrl_name, (unsigned)id, on ? "on" : "off");
             return lights ? s.setLightRelayById(id, on) : s.setRelayById(id, on);
         }
         return false;
