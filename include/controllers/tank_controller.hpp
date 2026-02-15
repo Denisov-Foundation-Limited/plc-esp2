@@ -637,10 +637,9 @@ private:
         if (ok_full)
             st.level_full = full;
         st.levels_ok = ok_low && ok_mid && ok_full;
-        const uint32_t now = millis();
         if (!st.levels_ok)
         {
-            if (st.levels_ok_prev || (uint32_t)(now - st.last_level_err_ms) >= kLevelErrLogMs)
+            if (st.levels_ok_prev)
             {
                 _logs.warn(F("TANK"),
                            F("id: %u level read failed (low:%u mid:%u full:%u)"),
@@ -648,7 +647,6 @@ private:
                            ok_low ? 1u : 0u,
                            ok_mid ? 1u : 0u,
                            ok_full ? 1u : 0u);
-                st.last_level_err_ms = now;
             }
         }
         else if (!st.levels_ok_prev)

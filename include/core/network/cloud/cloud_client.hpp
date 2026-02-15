@@ -110,6 +110,7 @@ public:
         if (!_enabled)
             return;
         _ws.loop();
+        maintainConnectionHealth_();
         handlePendingTimeouts_();
         if (_event_interval_ms)
             maybeSendPeriodicEvent_();
@@ -123,6 +124,10 @@ private:
     static constexpr uint8_t kMaxStackCmds = 32;
     static constexpr uint32_t kStackTimeoutMs = 1500;
     static constexpr size_t kWsDocCapacity = 8192;
+    static constexpr uint32_t kHelloRetryMs = 10000;
+    static constexpr uint32_t kHelloSessionTimeoutMs = 60000;
+    static constexpr uint32_t kWsSilentTimeoutMs = 180000;
+    static constexpr uint32_t kWsReinitDisconnectedMs = 60000;
 
     enum class StackPart : uint8_t
     {
@@ -183,6 +188,11 @@ private:
     uint32_t _event_interval_ms = 0;
     uint32_t _next_event_ms = 0;
     bool _enabled = true;
+    uint32_t _last_rx_ms = 0;
+    uint32_t _last_connect_ms = 0;
+    uint32_t _last_hello_ms = 0;
+    uint32_t _last_disconnect_ms = 0;
+    bool _disconnect_reported = false;
 
     PendingRequest _pending[kMaxPending] = {};
     PendingStackCmd _stack_cmds[kMaxStackCmds] = {};
@@ -194,6 +204,12 @@ private:
         {
         case WStype_CONNECTED:
             _session_id = "";
+            _last_connect_ms = millis();
+            _last_rx_ms = _last_connect_ms;
+            _last_disconnect_ms = 0;
+            if (_disconnect_reported)
+                _log.info(F("CLOUD"), F("WS connection restored"));
+            _disconnect_reported = false;
             _log.info(F("CLOUD"), F("WS connected"));
             sendHello_();
             break;
@@ -217,12 +233,20 @@ private:
         }
         case WStype_TEXT:
             if (payload && len)
+            {
+                _last_rx_ms = millis();
                 handleMessage_(payload, len);
+            }
             break;
         case WStype_DISCONNECTED:
             _session_id = "";
+            _last_disconnect_ms = millis();
             clearPending_();
-            _log.warn(F("CLOUD"), F("WS disconnected"));
+            if (!_disconnect_reported)
+            {
+                _log.warn(F("CLOUD"), F("WS disconnected"));
+                _disconnect_reported = true;
+            }
             break;
         default:
             break;
@@ -274,6 +298,7 @@ private:
 
     void sendHello_()
     {
+        _last_hello_ms = millis();
         DynamicJsonDocument doc(2048);
         doc["v"] = kProtoVersion;
         doc["type"] = "hello";
@@ -315,6 +340,48 @@ private:
         String dbg;
         serializeJson(doc, dbg);
         sendJson_(doc);
+    }
+
+    void maintainConnectionHealth_()
+    {
+        const uint32_t now = millis();
+        const bool connected = isConnected();
+        if (!connected)
+        {
+            if (_last_disconnect_ms == 0)
+                _last_disconnect_ms = now;
+            if (_cfg.host.length() &&
+                (int32_t)(now - _last_disconnect_ms) >= (int32_t)kWsReinitDisconnectedMs)
+            {
+                _log.warn(F("CLOUD"), F("WS reconnect stalled, reinit"));
+                _last_disconnect_ms = now;
+                begin(_cfg);
+            }
+            return;
+        }
+
+        if (_session_id.length() == 0)
+        {
+            if ((int32_t)(now - _last_hello_ms) >= (int32_t)kHelloRetryMs)
+            {
+                _log.warn(F("CLOUD"), F("Session missing, hello retry"));
+                sendHello_();
+            }
+            if (_last_connect_ms != 0 &&
+                (int32_t)(now - _last_connect_ms) >= (int32_t)kHelloSessionTimeoutMs)
+            {
+                _log.warn(F("CLOUD"), F("Session timeout, reconnect"));
+                _ws.disconnect();
+                return;
+            }
+        }
+
+        if (_last_rx_ms != 0 &&
+            (int32_t)(now - _last_rx_ms) >= (int32_t)kWsSilentTimeoutMs)
+        {
+            _log.warn(F("CLOUD"), F("WS silent timeout, reconnect"));
+            _ws.disconnect();
+        }
     }
 
     void sendPong_(const String &reply_to, JsonVariantConst payload)
