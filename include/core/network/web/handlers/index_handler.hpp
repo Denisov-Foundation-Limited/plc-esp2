@@ -57,28 +57,50 @@ public:
         String fan_icon = web.fanStatusIcon_();
         if (stack_view)
         {
-            web.requestStackPlcStatus_(node_id);
-            web.requestStackRtcStatus_(node_id);
-            const auto *cache = web.findStackNodeStatusCache_(node_id, false);
-            if (cache)
+            rtc_date = "n/a";
+            rtc_time = "n/a";
+            rtc_temp = "n/a";
+            board_temp = "n/a";
+            cpu_temp = "n/a";
+            fan_icon = "n/a";
+            if (web._stack_cache)
             {
-                const bool has_rtc = cache->has_rtc && cache->last_rtc_ok;
-                const bool has_plc = cache->has_plc && cache->last_plc_ok;
-                rtc_date = has_rtc ? cache->rtc_date : "n/a";
-                rtc_time = has_rtc ? cache->rtc_time : "n/a";
-                rtc_temp = has_rtc ? web.formatTemp_(cache->rtc_temp) : "n/a";
-                board_temp = has_plc ? web.formatTemp_(cache->board_temp) : "n/a";
-                cpu_temp = has_plc ? web.formatTemp_(cache->cpu_temp) : "n/a";
-                fan_icon = has_plc ? web.fanStatusIcon_(cache->fan_on) : "n/a";
+                web._stack_cache->requestPlcStatus(node_id);
+                web._stack_cache->requestRtcStatus(node_id);
+                const auto *cache = web._stack_cache->statusCache(node_id);
+                if (cache)
+                {
+                    const bool has_rtc = cache->has_rtc && cache->last_rtc_ok;
+                    const bool has_plc = cache->has_plc && cache->last_plc_ok;
+                    rtc_date = has_rtc ? cache->rtc_date : "n/a";
+                    rtc_time = has_rtc ? cache->rtc_time : "n/a";
+                    rtc_temp = has_rtc ? web.formatTemp_(cache->rtc_temp) : "n/a";
+                    board_temp = has_plc ? web.formatTemp_(cache->board_temp) : "n/a";
+                    cpu_temp = has_plc ? web.formatTemp_(cache->cpu_temp) : "n/a";
+                    fan_icon = has_plc ? web.fanStatusIcon_(cache->fan_on) : "n/a";
+                }
             }
             else
             {
+                web.requestStackPlcStatus_(node_id);
+                web.requestStackRtcStatus_(node_id);
+                const auto *cache = web.findStackNodeStatusCache_(node_id, false);
+                if (cache)
+                {
+                    const bool has_rtc = cache->has_rtc && cache->last_rtc_ok;
+                    const bool has_plc = cache->has_plc && cache->last_plc_ok;
+                    rtc_date = has_rtc ? cache->rtc_date : "n/a";
+                    rtc_time = has_rtc ? cache->rtc_time : "n/a";
+                    rtc_temp = has_rtc ? web.formatTemp_(cache->rtc_temp) : "n/a";
+                    board_temp = has_plc ? web.formatTemp_(cache->board_temp) : "n/a";
+                    cpu_temp = has_plc ? web.formatTemp_(cache->cpu_temp) : "n/a";
+                    fan_icon = has_plc ? web.fanStatusIcon_(cache->fan_on) : "n/a";
+                }
+            }
+            if (rtc_date == "" || rtc_time == "")
+            {
                 rtc_date = "n/a";
                 rtc_time = "n/a";
-                rtc_temp = "n/a";
-                board_temp = "n/a";
-                cpu_temp = "n/a";
-                fan_icon = "n/a";
             }
             if (web._stack_master)
             {
@@ -113,8 +135,16 @@ public:
                 const uint32_t id = web._stack_master->nodeIdAt(i);
                 if (id == 0)
                     continue;
-                web.requestStackPlcStatus_(id);
-                web.requestStackRtcStatus_(id);
+                if (web._stack_cache)
+                {
+                    web._stack_cache->requestPlcStatus(id);
+                    web._stack_cache->requestRtcStatus(id);
+                }
+                else
+                {
+                    web.requestStackPlcStatus_(id);
+                    web.requestStackRtcStatus_(id);
+                }
             }
         }
         web.sendHtml_(request, page, set_cookie);

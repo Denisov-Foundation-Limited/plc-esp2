@@ -18,6 +18,8 @@ class TankHandler
 public:
     static void registerRoutes(WebInterface &web, AsyncWebServer &server)
     {
+        server.on("/tanks/toggle", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleTanksToggle(web, request); });
+        server.on("/tanks/toggle", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleTanksToggle(web, request); });
         server.on("/tanks", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleTanksSave(web, request); });
         server.on("/tanks", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleTanks(web, request); });
     }
@@ -63,7 +65,7 @@ public:
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackTanksView_(node_id))
         {
-            web._tanks_status = "Доступно только на локальном устройстве";
+            web._tanks_status = "Р”РѕСЃС‚СѓРїРЅРѕ С‚РѕР»СЊРєРѕ РЅР° Р»РѕРєР°Р»СЊРЅРѕРј СѓСЃС‚СЂРѕР№СЃС‚РІРµ";
             web.sendRedirect_(request, "/tanks", set_cookie);
             return;
         }
@@ -144,7 +146,7 @@ public:
                 !web.parseSocketPort_(alarm_str, alarm_port))
             {
                 ok = false;
-                web._tanks_status = String("Неверный порт для бака ") + idx;
+                web._tanks_status = String("РќРµРІРµСЂРЅС‹Р№ РїРѕСЂС‚ РґР»СЏ Р±Р°РєР° ") + idx;
                 break;
             }
 
@@ -202,17 +204,184 @@ public:
                 if (!web._configs_manager)
                 {
                     ok = false;
-                    web._tanks_status = "Менеджер конфигурации недоступен";
+                    web._tanks_status = "РњРµРЅРµРґР¶РµСЂ РєРѕРЅС„РёРіСѓСЂР°С†РёРё РЅРµРґРѕСЃС‚СѓРїРµРЅ";
                 }
                 else if (!web._configs_manager->save())
                 {
                     ok = false;
-                    web._tanks_status = "Сохранение не удалось";
+                    web._tanks_status = "РЎРѕС…СЂР°РЅРµРЅРёРµ РЅРµ СѓРґР°Р»РѕСЃСЊ";
                 }
             }
         }
         if (ok)
-            web._tanks_status = changed ? "Обновлено" : "Сохранено";
+            web._tanks_status = changed ? "РћР±РЅРѕРІР»РµРЅРѕ" : "РЎРѕС…СЂР°РЅРµРЅРѕ";
         web.sendRedirect_(request, "/tanks", set_cookie);
+    }
+
+    static void handleTanksToggle(WebInterface &web, AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Tanks, node_id))
+            return;
+
+        const String id_str = web.paramValueAny_(request, "id");
+        if (!id_str.length())
+        {
+            web.sendText_(request, 400, "text/plain", "Missing id", set_cookie);
+            return;
+        }
+        const uint16_t id = (uint16_t)id_str.toInt();
+        if (id == 0)
+        {
+            web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
+            return;
+        }
+        if (!web.webAclCanControlItem_(UsersRegistry::AclController::Tanks, id, node_id))
+        {
+            web.sendText_(request, 403, "text/plain", "ACL deny", set_cookie);
+            return;
+        }
+
+        String action = web.paramValueAny_(request, "action");
+        action.trim();
+        action.toLowerCase();
+        auto send_state = [&](bool power_on, bool level_low, bool level_mid, bool level_full,
+                              bool levels_ok, bool valve_on, bool pump_on, bool alarm_on) {
+            StaticJsonDocument<224> out;
+            out["power"] = power_on;
+            out["level_low"] = level_low;
+            out["level_mid"] = level_mid;
+            out["level_full"] = level_full;
+            out["levels_ok"] = levels_ok;
+            out["valve"] = valve_on;
+            out["pump"] = pump_on;
+            out["alarm"] = alarm_on;
+            String body;
+            serializeJson(out, body);
+            web.sendText_(request, 200, "application/json", body, set_cookie);
+        };
+
+        if (web.isStackTanksView_(node_id))
+        {
+            if (!web._stack_master)
+            {
+                web.sendText_(request, 400, "text/plain", "Stack master missing", set_cookie);
+                return;
+            }
+            auto *cache = web._stack_cache ? web._stack_cache->tanksCache(node_id) : nullptr;
+            StackCache::StackTankItem *item = nullptr;
+            if (cache && cache->items)
+            {
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    if (cache->items[i].id == id)
+                    {
+                        item = &cache->items[i];
+                        break;
+                    }
+                }
+            }
+
+            if (action == "state")
+            {
+                const bool stale = (!cache || !cache->has_data || cache->pending ||
+                                    (uint32_t)(millis() - cache->updated_ms) > 1500u);
+                if (stale)
+                {
+                    if (web._stack_cache)
+                        web._stack_cache->requestTanks(node_id);
+                    web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                    return;
+                }
+                if (!item)
+                {
+                    web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
+                    return;
+                }
+                send_state(item->power_on, item->level_low, item->level_mid, item->level_full,
+                           item->levels_ok, item->valve_on, item->pump_on, item->alarm_on);
+                return;
+            }
+
+            StaticJsonDocument<192> doc;
+            doc["cmd_id"] = 0;
+            doc["feature"] = (uint8_t)StackFeature::Tanks;
+            doc["action"] = "set";
+            JsonArray items = doc["params"]["items"].to<JsonArray>();
+            JsonObject o = items.add<JsonObject>();
+            o["id"] = id;
+            if (action == "on" || action == "off")
+                o["power"] = (action == "on");
+            else
+                o["toggle"] = true;
+            char payload[192] = {};
+            const size_t len = serializeJson(doc, payload, sizeof(payload));
+            if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                       reinterpret_cast<const uint8_t *>(payload), len))
+            {
+                web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
+                return;
+            }
+            if (web._stack_cache)
+                web._stack_cache->requestTanks(node_id);
+            web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+            return;
+        }
+
+        if (!web._controllers)
+        {
+            web.sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            return;
+        }
+        TankController &tanks = web._controllers->tanks();
+        if (!tanks.config(id))
+        {
+            web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
+            return;
+        }
+        if (action == "state")
+        {
+            const auto *cfg = tanks.config(id);
+            const auto *st = tanks.state(id);
+            if (!cfg || !st)
+            {
+                web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
+                return;
+            }
+            send_state(cfg->power_on, st->level_low, st->level_mid, st->level_full,
+                       st->levels_ok, st->valve_on, st->pump_on, st->alarm_on);
+            return;
+        }
+
+        bool ok = false;
+        const auto *cfg = tanks.config(id);
+        if (!cfg)
+        {
+            web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
+            return;
+        }
+        if (action == "on")
+            ok = tanks.setPower(id, true);
+        else if (action == "off")
+            ok = tanks.setPower(id, false);
+        else
+            ok = tanks.setPower(id, !cfg->power_on);
+        if (!ok)
+        {
+            web.sendText_(request, 400, "text/plain", "Toggle failed", set_cookie);
+            return;
+        }
+        const auto *cfg2 = tanks.config(id);
+        const auto *st = tanks.state(id);
+        if (!cfg2 || !st)
+        {
+            web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
+            return;
+        }
+        send_state(cfg2->power_on, st->level_low, st->level_mid, st->level_full,
+                   st->levels_ok, st->valve_on, st->pump_on, st->alarm_on);
     }
 };

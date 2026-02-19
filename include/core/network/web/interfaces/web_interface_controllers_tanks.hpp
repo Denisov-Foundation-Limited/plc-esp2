@@ -55,7 +55,7 @@
 
     String stackTanksStatusText_(uint32_t node_id) const
     {
-        const StackTankCache *cache = findStackTanksCache_(node_id, false);
+        const auto *cache = _stack_cache ? _stack_cache->tanksCache(node_id) : nullptr;
         if (!cache)
             return "Нет данных со слейва";
         if (cache->pending)
@@ -81,6 +81,8 @@
 
     bool requestStackTanks_(uint32_t node_id)
     {
+        if (_stack_cache)
+            return _stack_cache->requestTanks(node_id);
         if (!_stack_master)
             return false;
         if (stackRole_() != ConfigsManagerIface::StackRole::Master)
@@ -90,7 +92,17 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -107,13 +119,14 @@
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
 
     String listStackTanksHtml_(uint32_t node_id)
     {
-        StackTankCache *cache = findStackTanksCache_(node_id, false);
+        const auto *cache = _stack_cache ? _stack_cache->tanksCache(node_id) : nullptr;
         if (!cache || !cache->has_data)
             return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
         if (cache->item_count == 0)
@@ -139,7 +152,7 @@
         }
         for (size_t i = 0; i < render_count; ++i)
         {
-            const StackTankItem &cfg = cache->items[i];
+            const auto &cfg = cache->items[i];
             if (!webAclCanViewItem_(UsersRegistry::AclController::Tanks, cfg.id, node_id))
                 continue;
             if (!webSessionIsAdmin_() && !cfg.enabled)
@@ -184,9 +197,6 @@
             items += "<span class=\"badge\">ID ";
             items += String((unsigned)cfg.id);
             items += "</span>";
-            items += "<span class=\"badge\">";
-            items += cfg.power_on ? "питание on" : "питание off";
-            items += "</span>";
             items += "</div></div>";
             items += "<div>";
             items += "<div class=\"tile-head\"><strong>";
@@ -195,6 +205,9 @@
             else
                 items += "Бак";
             items += "</strong></div>";
+            items += "<div class=\"status-line\"><span class=\"status-dot ";
+            items += cfg.power_on ? "status-on" : "status-off";
+            items += "\"></span><span>Питание</span></div>";
             items += "<div class=\"status-line\"><span class=\"status-dot ";
             items += cfg.valve_on ? "status-on" : "status-off";
             items += "\"></span><span>Клапан</span></div>";

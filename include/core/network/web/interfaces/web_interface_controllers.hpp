@@ -912,7 +912,17 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 15000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -929,6 +939,7 @@
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -943,7 +954,17 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 15000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -960,6 +981,7 @@
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -974,7 +996,17 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 15000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (!run && cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -991,6 +1023,7 @@
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -1005,7 +1038,17 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 15000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (!run && cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -1022,6 +1065,7 @@
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -1036,7 +1080,17 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending_plc)
-            return false;
+        {
+            if (cache->plc_updated_ms && (uint32_t)(now - cache->plc_updated_ms) > 15000u)
+            {
+                cache->pending_plc = false;
+                cache->pending_plc_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_plc && (uint32_t)(now - cache->plc_updated_ms) < 3000u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -1053,6 +1107,7 @@
             return false;
         cache->pending_plc = true;
         cache->pending_plc_cmd_id = cmd_id;
+        cache->plc_updated_ms = now;
         return true;
     }
 
@@ -1067,7 +1122,17 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending_rtc)
-            return false;
+        {
+            if (cache->rtc_updated_ms && (uint32_t)(now - cache->rtc_updated_ms) > 15000u)
+            {
+                cache->pending_rtc = false;
+                cache->pending_rtc_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_rtc && (uint32_t)(now - cache->rtc_updated_ms) < 3000u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -1084,6 +1149,7 @@
             return false;
         cache->pending_rtc = true;
         cache->pending_rtc_cmd_id = cmd_id;
+        cache->rtc_updated_ms = now;
         return true;
     }
 

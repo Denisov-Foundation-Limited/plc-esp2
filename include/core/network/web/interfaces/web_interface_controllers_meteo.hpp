@@ -55,6 +55,23 @@
 
     String stackMeteoStatusText_(uint32_t node_id) const
     {
+        if (_stack_cache)
+        {
+            const auto *cache = _stack_cache->meteoCache(node_id);
+            if (!cache)
+                return "Нет данных со слейва";
+            if (cache->pending)
+                return "Запрос данных со слейва...";
+            if (!cache->last_ok && cache->last_error.length())
+            {
+                String msg = "Ошибка: ";
+                msg += cache->last_error;
+                return msg;
+            }
+            if (!cache->has_data)
+                return "Нет данных со слейва";
+            return "OK";
+        }
         const StackMeteoCache *cache = findStackMeteoCache_(node_id, false);
         if (!cache)
             return "Нет данных со слейва";
@@ -81,6 +98,8 @@
 
     bool requestStackMeteo_(uint32_t node_id)
     {
+        if (_stack_cache)
+            return _stack_cache->requestMeteo(node_id);
         if (!_stack_master)
             return false;
         if (stackRole_() != ConfigsManagerIface::StackRole::Master)
@@ -90,7 +109,17 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 15000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -107,13 +136,143 @@
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
 
     String listStackMeteoHtml_(uint32_t node_id)
     {
-        StackMeteoCache *cache = findStackMeteoCache_(node_id, false);
+        if (_stack_cache)
+        {
+            const auto *cache = _stack_cache->meteoCache(node_id);
+            if (!cache || !cache->has_data)
+                return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
+            if (cache->item_count == 0)
+                return "<div class=\"tile empty\"><strong>Датчики отсутствуют</strong></div>";
+            String items;
+            size_t reserve = 2048u + cache->item_count * 520u;
+            if (reserve < 8192u)
+                reserve = 8192u;
+            items.reserve(reserve);
+            size_t render_count = cache->item_count;
+            size_t last_enabled_idx = SIZE_MAX;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                if (cache->items[i].enabled)
+                    last_enabled_idx = i;
+            }
+            if (last_enabled_idx == SIZE_MAX)
+                render_count = cache->item_count ? 1u : 0u;
+            else
+            {
+                const size_t count = last_enabled_idx + 2u;
+                render_count = count > cache->item_count ? cache->item_count : count;
+            }
+            for (size_t i = 0; i < render_count; ++i)
+            {
+                const auto &cfg = cache->items[i];
+                if (!webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg.id, node_id))
+                    continue;
+                if (!webSessionIsAdmin_() && !cfg.enabled)
+                    continue;
+                char temp_buf[12] = {};
+                char hum_buf[12] = {};
+                const char *temp = "--";
+                const char *hum = "--";
+                if (cfg.has_temp)
+                {
+                    dtostrf(cfg.temp_c, 0, 1, temp_buf);
+                    temp = temp_buf;
+                }
+                if (cfg.has_hum)
+                {
+                    dtostrf(cfg.hum, 0, 1, hum_buf);
+                    hum = hum_buf;
+                }
+                const bool has_data = cfg.has_temp || cfg.has_hum;
+                const bool ok_on = has_data && cfg.ok;
+                const char *status_class = "status-na";
+                if (has_data)
+                    status_class = cfg.ok ? "status-ok" : "status-err";
+
+                String type_label = cfg.type;
+                type_label.toLowerCase();
+                if (type_label == "dht22")
+                    type_label = "DHT22";
+                else if (type_label == "ds18b20")
+                    type_label = "DS18B20";
+                else if (type_label.length() == 0)
+                    type_label = "none";
+
+                items += "<div class=\"tile";
+                if (!cfg.enabled)
+                    items += " disabled";
+                items += "\">";
+                items += "<div class=\"sensor-visual\">";
+                items += "<span class=\"badge\">#";
+                items += String((unsigned)cfg.id);
+                items += "</span>";
+                items += "<svg class=\"sensor-icon ";
+                if (!ok_on)
+                    items += "na";
+                items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+                items += "<path fill=\"currentColor\" d=\"M32 6c-5.5 0-10 4.5-10 10v19.2c-2.6 2.4-4 5.7-4 9.3 0 7.2 5.8 13 13 13s13-5.8 13-13c0-3.6-1.4-6.9-4-9.3V16c0-5.5-4.5-10-10-10zm6 33.1V16c0-3.3-2.7-6-6-6s-6 2.7-6 6v23.1l-0.9 0.9c-1.8 1.7-2.8 3.9-2.8 6.4 0 4.9 4 9 9 9s9-4 9-9c0-2.5-1-4.8-2.8-6.4l-0.5-0.5z\"/>";
+                items += "<rect x=\"30\" y=\"20\" width=\"4\" height=\"20\" rx=\"2\" fill=\"currentColor\"/>";
+                items += "</svg>";
+                items += "<div class=\"sensor-readout\">";
+                items += "<div class=\"sensor-value\">";
+                items += temp;
+                items += "</div><div class=\"sensor-unit\">°C</div>";
+                if (cfg.has_hum)
+                {
+                    items += "<div class=\"sensor-hum\"><svg class=\"sensor-hum-icon\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+                    items += "<path fill=\"currentColor\" d=\"M32 6c7 12 16 22 16 34 0 8.8-7.2 16-16 16S16 48.8 16 40c0-12 9-22 16-34z\"/>";
+                    items += "</svg><div class=\"sensor-value\">";
+                    items += hum;
+                    items += "</div><div class=\"sensor-unit\">%</div></div>";
+                }
+                items += "</div></div>";
+                items += "<div>";
+                items += "<div class=\"tile-head\"><strong>";
+                if (cfg.name[0])
+                    appendHtmlEscaped_(items, cfg.name);
+                else
+                    items += "Датчик";
+                items += "</strong></div>";
+                items += "<div class=\"status-line\"><span class=\"status-dot ";
+                items += status_class;
+                items += "\"></span><span class=\"status-text\">";
+                if (!cfg.enabled)
+                    items += "Отключен";
+                else if (!has_data)
+                    items += "Нет данных";
+                else
+                    items += cfg.ok ? "ОК" : "Ошибка";
+                items += "</span></div>";
+                items += "<div class=\"form-grid\">";
+                items += "<div class=\"form-row\"><label>Тип</label><div class=\"field mini\">";
+                appendHtmlEscaped_(items, type_label.c_str());
+                items += "</div></div>";
+                items += "<div class=\"form-row\"><label>Пин</label><div class=\"field mini\">";
+                if (cfg.pin >= 0)
+                    items += String(cfg.pin);
+                else
+                    items += "--";
+                items += "</div></div>";
+                items += "<div class=\"form-row full\"><label>Адрес</label><div class=\"field\">";
+                if (cfg.addr[0])
+                    appendHtmlEscaped_(items, cfg.addr);
+                else
+                    items += "--";
+                items += "</div></div>";
+                items += "</div>";
+                items += "</div></div>";
+            }
+            return items;
+        }
+
+        const StackMeteoCache *cache = findStackMeteoCache_(node_id, false);
         if (!cache || !cache->has_data)
             return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
         if (cache->item_count == 0)

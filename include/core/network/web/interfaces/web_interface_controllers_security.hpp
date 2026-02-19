@@ -55,6 +55,23 @@
 
     String stackSecurityStatusText_(uint32_t node_id) const
     {
+        if (_stack_cache)
+        {
+            const auto *cache = _stack_cache->securityCache(node_id);
+            if (!cache)
+                return "Нет данных со слейва";
+            if (cache->pending)
+                return "Запрос данных со слейва...";
+            if (!cache->last_ok && cache->last_error.length())
+            {
+                String msg = "Ошибка: ";
+                msg += cache->last_error;
+                return msg;
+            }
+            if (!cache->has_data)
+                return "Нет данных со слейва";
+            return "OK";
+        }
         const StackSecurityCache *cache = findStackSecurityCache_(node_id, false);
         if (!cache)
             return "Нет данных со слейва";
@@ -105,6 +122,8 @@
 
     bool requestStackSecurity_(uint32_t node_id)
     {
+        if (_stack_cache)
+            return _stack_cache->requestSecurity(node_id);
         if (!_stack_master)
             return false;
         if (stackRole_() != ConfigsManagerIface::StackRole::Master)
@@ -114,7 +133,17 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 15000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -131,6 +160,7 @@
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -351,7 +381,109 @@
 
     String listStackSecuritySensorsTiles_(uint32_t node_id)
     {
-        StackSecurityCache *cache = findStackSecurityCache_(node_id, false);
+        if (_stack_cache)
+        {
+            const auto *cache = _stack_cache->securityCache(node_id);
+            if (!cache || !cache->has_data)
+                return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
+            if (cache->item_count == 0)
+                return "<div class=\"tile empty\"><strong>Датчики отсутствуют</strong></div>";
+            String items;
+            size_t reserve = 2048u + cache->item_count * 420u;
+            if (reserve < 8192u)
+                reserve = 8192u;
+            items.reserve(reserve);
+            size_t render_count = cache->item_count;
+            size_t last_enabled_idx = SIZE_MAX;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                if (cache->items[i].enabled)
+                    last_enabled_idx = i;
+            }
+            if (last_enabled_idx == SIZE_MAX)
+                render_count = cache->item_count ? 1u : 0u;
+            else
+            {
+                const size_t count = last_enabled_idx + 2u;
+                render_count = count > cache->item_count ? cache->item_count : count;
+            }
+            for (size_t i = 0; i < render_count; ++i)
+            {
+                const auto &cfg = cache->items[i];
+                if (!webAclCanViewItem_(UsersRegistry::AclController::Security, cfg.id, node_id))
+                    continue;
+                if (!webSessionIsAdmin_() && !cfg.enabled)
+                    continue;
+                items += "<div class=\"tile\">";
+                items += "<div class=\"sock-visual\">";
+                items += "<span class=\"badge\">#";
+                items += String((unsigned)cfg.id);
+                items += "</span>";
+                items += "<svg class=\"sock-icon ";
+                if (cfg.detect)
+                    items += "alert";
+                else
+                    items += "off";
+                items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+                if (strcmp(cfg.type, "reed") == 0)
+                {
+                    items += "<rect x=\"6\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
+                    items += "<rect x=\"44\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
+                    items += "<rect x=\"22\" y=\"30\" width=\"20\" height=\"4\" rx=\"2\" fill=\"currentColor\"/>";
+                }
+                else
+                {
+                    items += "<circle cx=\"32\" cy=\"24\" r=\"6\" fill=\"currentColor\"/>";
+                    items += "<path d=\"M14 48c6-10 12-14 18-14s12 4 18 14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"4\" stroke-linecap=\"round\"/>";
+                    items += "<path d=\"M8 20c6-6 12-10 18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
+                    items += "<path d=\"M56 20c-6-6-12-10-18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
+                }
+                items += "</svg>";
+                items += "</div>";
+                items += "<div>";
+                items += "<div class=\"tile-head\"><strong>";
+                if (cfg.name[0])
+                    appendHtmlEscaped_(items, cfg.name);
+                else
+                    items += String(F("Датчик #")) + String((unsigned)cfg.id);
+                items += "</strong>";
+                if (cfg.silent)
+                    items += "<span class=\"badge\">silent</span>";
+                items += "</div>";
+                items += "<div class=\"status-line\"><span class=\"status-dot ";
+                if (!cfg.enabled)
+                    items += "status-off";
+                else if (cfg.detect)
+                    items += "status-bad";
+                else
+                    items += "status-on";
+                items += "\"></span><span class=\"status-text\">";
+                if (!cfg.enabled)
+                    items += "Отключен";
+                else if (cfg.detect)
+                    items += "Сработал";
+                else
+                    items += "Активен";
+                items += "</span></div>";
+                items += "<div class=\"form-grid\">";
+                items += "<div class=\"form-row\"><label>Тип</label><div class=\"field mini\">";
+                if (cfg.type[0])
+                    appendHtmlEscaped_(items, cfg.type);
+                else
+                    items += "--";
+                items += "</div></div>";
+                items += "<div class=\"form-row\"><label>Порт</label><div class=\"field mini\">";
+                if (cfg.port != SecurityController::kInvalidPort)
+                    items += String((unsigned)cfg.port);
+                else
+                    items += "--";
+                items += "</div></div>";
+                items += "</div></div></div>";
+            }
+            return items;
+        }
+
+        const StackSecurityCache *cache = findStackSecurityCache_(node_id, false);
         if (!cache || !cache->has_data)
             return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
         if (cache->item_count == 0)

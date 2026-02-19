@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -354,18 +354,125 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
         sessionStorage.setItem(reloadKey, '1');
       });
     }
+    const septicQs = new URLSearchParams(window.location.search);
+    const septicIsStackView = septicQs.get('unit') === 'stack';
+    const septicNodeId = septicQs.get('node') || '';
+    async function postSepticToggle(id, action) {
+      let body = 'id=' + encodeURIComponent(String(id)) + '&action=' + encodeURIComponent(action || 'toggle');
+      if (septicIsStackView && septicNodeId) {
+        body += '&node_id=' + encodeURIComponent(septicNodeId);
+      }
+      const res = await fetch('/septic/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        credentials: 'same-origin'
+      });
+      if (!res.ok) throw new Error('toggle failed');
+      const contentType = (res.headers.get('content-type') || '').toLowerCase();
+      if (contentType.indexOf('application/json') >= 0) {
+        return await res.json();
+      }
+      const raw = (await res.text()).trim().toLowerCase();
+      if (raw === 'pending' || raw === 'unknown') return raw;
+      throw new Error('bad state');
+    }
+    function applySepticStateUi(tile, st) {
+      if (!tile || !st) return;
+      const dots = tile.querySelectorAll('.status-grid .status-dot');
+      if (dots.length > 0) {
+        dots[0].classList.remove('status-on', 'status-off');
+        dots[0].classList.add(st.warning ? 'status-on' : 'status-off');
+      }
+      if (dots.length > 1) {
+        dots[1].classList.remove('status-on', 'status-off');
+        dots[1].classList.add(st.alarm ? 'status-on' : 'status-off');
+      }
+      if (dots.length > 2) {
+        dots[2].classList.remove('status-on', 'status-off');
+        dots[2].classList.add(st.relay_warning ? 'status-on' : 'status-off');
+      }
+      if (dots.length > 3) {
+        dots[3].classList.remove('status-on', 'status-off');
+        dots[3].classList.add(st.relay_alarm ? 'status-on' : 'status-off');
+      }
+      let waterClass = 'water-low';
+      let waterLevel = '20%';
+      let waterLabel = 'Уровень: 20%';
+      if (st.alarm) {
+        waterClass = 'water-alarm';
+        waterLevel = '100%';
+        waterLabel = 'Уровень: 100%';
+      } else if (st.warning) {
+        waterClass = 'water-warn';
+        waterLevel = '80%';
+        waterLabel = 'Уровень: 80%';
+      }
+      const liquid = tile.querySelector('.liquid');
+      if (liquid) {
+        liquid.classList.remove('water-low', 'water-warn', 'water-alarm');
+        liquid.classList.add(waterClass);
+        liquid.style.height = waterLevel;
+      }
+      const label = tile.querySelector('.level-label');
+      if (label) label.textContent = waterLabel;
+    }
+    function scheduleSepticStateRefresh(id, tile, el, hidden, reqId) {
+      const maxAttempts = 8;
+      const delayMs = 350;
+      let attempt = 0;
+      const tick = async () => {
+        if (!el || el.dataset.reqId !== reqId) return;
+        attempt++;
+        try {
+          const st = await postSepticToggle(id, 'state');
+          if (!el || el.dataset.reqId !== reqId) return;
+          if (typeof st === 'object' && st) {
+            el.checked = !!st.monitor;
+            if (hidden) hidden.value = st.monitor ? 'on' : 'off';
+            applySepticStateUi(tile, st);
+            return;
+          }
+        } catch (e) {}
+        if (attempt < maxAttempts && el && el.dataset.reqId === reqId) {
+          setTimeout(tick, delayMs);
+        }
+      };
+      setTimeout(tick, 220);
+    }
     document.querySelectorAll('input.septic-monitor').forEach((el) => {
-      el.addEventListener('change', () => {
+      el.addEventListener('change', async () => {
         if (el.dataset.busy === '1') return;
         el.dataset.busy = '1';
-        el.disabled = true;
+        const reqId = String((parseInt(el.dataset.reqId || '0', 10) || 0) + 1);
+        el.dataset.reqId = reqId;
+        const prev = !el.checked;
         const name = el.dataset.action;
         const hidden = document.querySelector('input[name="' + name + '"]');
         if (hidden) {
           hidden.value = el.checked ? 'on' : 'off';
         }
-        if (septicForm) {
-          septicForm.submit();
+        const tile = el.closest('.tile');
+        const idMatch = name ? name.match(/^sep(\d+)_mon$/) : null;
+        const id = idMatch ? parseInt(idMatch[1], 10) : 0;
+        try {
+          if (!id) throw new Error('bad id');
+          const desired = !!el.checked;
+          const st = await postSepticToggle(id, desired ? 'on' : 'off');
+          if (typeof st === 'object' && st) {
+            el.checked = !!st.monitor;
+            if (hidden) hidden.value = st.monitor ? 'on' : 'off';
+            applySepticStateUi(tile, st);
+          }
+          scheduleSepticStateRefresh(id, tile, el, hidden, reqId);
+        } catch (e) {
+          if (el.dataset.reqId !== reqId) return;
+          el.checked = prev;
+          if (hidden) hidden.value = prev ? 'on' : 'off';
+        } finally {
+          if (el.dataset.reqId === reqId) {
+            el.dataset.busy = '0';
+          }
         }
       });
     });
@@ -388,3 +495,4 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+

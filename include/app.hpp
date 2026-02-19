@@ -258,6 +258,8 @@ struct App
         control.telegram_menu.setRules(control.rules);
 
         stack_cache.setLogger(&core.logs);
+        stack_cache.setConfigsManager(&cfg.configs_manager);
+        stack_cache.setStackMaster(&net.network.stackMaster());
         net.fw_upgrade.setStackCache(stack_cache);
         net.fw_upgrade.setConfigsManager(cfg.configs_manager);
         net.fw_upgrade.setStackMaster(net.network.stackMaster());
@@ -823,17 +825,46 @@ private:
         if (!master.nodeIsOnline(node_id, kStackNodeStaleMs))
             return;
         logStackNodeInventory_(node_id);
-        stack_cache.requestSockets(node_id);
-        stack_cache.requestLights(node_id);
-        stack_cache.requestSecurity(node_id);
-        stack_cache.requestSecurityPrearm(node_id);
-        stack_cache.requestThermo(node_id);
-        stack_cache.requestSeptic(node_id);
-        stack_cache.requestTanks(node_id);
-        stack_cache.requestMeteo(node_id);
-        stack_cache.requestWatering(node_id);
-        stack_cache.requestAvr(node_id);
-        stack_cache.requestLeak(node_id);
+        const uint8_t feature = (uint8_t)(_stack_poll_feature_index % kStackPollFeatureCount);
+        _stack_poll_feature_index = (uint8_t)((_stack_poll_feature_index + 1) % kStackPollFeatureCount);
+        switch (feature)
+        {
+        case 0:
+            stack_cache.requestSockets(node_id);
+            break;
+        case 1:
+            stack_cache.requestLights(node_id);
+            break;
+        case 2:
+            stack_cache.requestSecurity(node_id);
+            break;
+        case 3:
+            stack_cache.requestSecurityPrearm(node_id);
+            break;
+        case 4:
+            stack_cache.requestThermo(node_id);
+            break;
+        case 5:
+            stack_cache.requestSeptic(node_id);
+            break;
+        case 6:
+            stack_cache.requestTanks(node_id);
+            break;
+        case 7:
+            stack_cache.requestMeteo(node_id);
+            break;
+        case 8:
+            stack_cache.requestWatering(node_id);
+            break;
+        case 9:
+            stack_cache.requestAvr(node_id);
+            break;
+        case 10:
+            stack_cache.requestLeak(node_id);
+            break;
+        default:
+            break;
+        }
     }
 
     void logLocalInventory_()
@@ -1669,6 +1700,8 @@ private:
     {
         if (!stackMasterActive_())
             return;
+        // Always feed shared stack cache with Ack/Err/Cmd* frames from slaves.
+        StackCache::onStackFrame_(&stack_cache, node_id, frame);
         if (frame.type != (uint8_t)StackMsgType::CmdSet)
             return;
         DynamicJsonDocument doc(512);
@@ -3171,24 +3204,25 @@ private:
             return;
         const String node = stackNodeLabel_(node_id);
         auto cacheReady = [](const auto *cache) -> bool {
-            return cache && (cache->has_data || cache->last_ok || cache->updated_ms != 0 || cache->last_error.length());
+            // Treat cache as ready only after an actual response (Ack/Err), not after request dispatch.
+            return cache && (cache->has_data || cache->last_ok || cache->last_error.length());
+        };
+        auto cacheHasItemsForSyncLog = [](const auto *cache) -> bool {
+            return cache && cache->last_ok && cache->items && cache->item_count > 0;
         };
 
         if ((state->logged_mask & kInvSockets) == 0)
         {
             const auto *cache = stack_cache.socketsCache(node_id);
-            if (cacheReady(cache))
+            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
             {
-                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                for (size_t i = 0; i < cache->item_count; ++i)
                 {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: sockets id: %u name: %s"),
-                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
-                    }
+                    const auto &it = cache->items[i];
+                    if (!it.enabled)
+                        continue;
+                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: sockets id: %u name: %s"),
+                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
                 }
                 state->logged_mask |= kInvSockets;
             }
@@ -3197,18 +3231,15 @@ private:
         if ((state->logged_mask & kInvLights) == 0)
         {
             const auto *cache = stack_cache.lightsCache(node_id);
-            if (cacheReady(cache))
+            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
             {
-                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                for (size_t i = 0; i < cache->item_count; ++i)
                 {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: lights id: %u name: %s"),
-                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
-                    }
+                    const auto &it = cache->items[i];
+                    if (!it.enabled)
+                        continue;
+                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: lights id: %u name: %s"),
+                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
                 }
                 state->logged_mask |= kInvLights;
             }
@@ -3217,19 +3248,16 @@ private:
         if ((state->logged_mask & kInvMeteo) == 0)
         {
             const auto *cache = stack_cache.meteoCache(node_id);
-            if (cacheReady(cache))
+            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
             {
-                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                for (size_t i = 0; i < cache->item_count; ++i)
                 {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: meteo id: %u name: %s type: %s"),
-                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
-                                       it.type[0] ? it.type : "none");
-                    }
+                    const auto &it = cache->items[i];
+                    if (!it.enabled)
+                        continue;
+                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: meteo id: %u name: %s type: %s"),
+                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
+                                   it.type[0] ? it.type : "none");
                 }
                 state->logged_mask |= kInvMeteo;
             }
@@ -3238,19 +3266,16 @@ private:
         if ((state->logged_mask & kInvThermo) == 0)
         {
             const auto *cache = stack_cache.thermoCache(node_id);
-            if (cacheReady(cache))
+            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
             {
-                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                for (size_t i = 0; i < cache->item_count; ++i)
                 {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: thermo id: %u name: %s mode: %s"),
-                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
-                                       it.mode[0] ? it.mode : "-");
-                    }
+                    const auto &it = cache->items[i];
+                    if (!it.enabled)
+                        continue;
+                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: thermo id: %u name: %s mode: %s"),
+                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
+                                   it.mode[0] ? it.mode : "-");
                 }
                 state->logged_mask |= kInvThermo;
             }
@@ -3259,18 +3284,15 @@ private:
         if ((state->logged_mask & kInvTanks) == 0)
         {
             const auto *cache = stack_cache.tanksCache(node_id);
-            if (cacheReady(cache))
+            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
             {
-                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                for (size_t i = 0; i < cache->item_count; ++i)
                 {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: tanks id: %u name: %s"),
-                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
-                    }
+                    const auto &it = cache->items[i];
+                    if (!it.enabled)
+                        continue;
+                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: tanks id: %u name: %s"),
+                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
                 }
                 state->logged_mask |= kInvTanks;
             }
@@ -3279,18 +3301,15 @@ private:
         if ((state->logged_mask & kInvSeptic) == 0)
         {
             const auto *cache = stack_cache.septicCache(node_id);
-            if (cacheReady(cache))
+            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
             {
-                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                for (size_t i = 0; i < cache->item_count; ++i)
                 {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: septic id: %u"),
-                                       node.c_str(), (unsigned)it.id);
-                    }
+                    const auto &it = cache->items[i];
+                    if (!it.enabled)
+                        continue;
+                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: septic id: %u"),
+                                   node.c_str(), (unsigned)it.id);
                 }
                 state->logged_mask |= kInvSeptic;
             }
@@ -3299,20 +3318,17 @@ private:
         if ((state->logged_mask & kInvSecurity) == 0)
         {
             const auto *cache = stack_cache.securityCache(node_id);
-            if (cacheReady(cache))
+            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
             {
-                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                for (size_t i = 0; i < cache->item_count; ++i)
                 {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        core.logs.info(F("STACK"),
-                                       F("Sync slave unit: %s item: security id: %u name: %s type: %s"),
-                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
-                                       it.type[0] ? it.type : "-");
-                    }
+                    const auto &it = cache->items[i];
+                    if (!it.enabled)
+                        continue;
+                    core.logs.info(F("STACK"),
+                                   F("Sync slave unit: %s item: security id: %u name: %s type: %s"),
+                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
+                                   it.type[0] ? it.type : "-");
                 }
                 state->logged_mask |= kInvSecurity;
             }
@@ -3321,18 +3337,15 @@ private:
         if ((state->logged_mask & kInvWatering) == 0)
         {
             const auto *cache = stack_cache.wateringCache(node_id);
-            if (cacheReady(cache))
+            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
             {
-                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                for (size_t i = 0; i < cache->item_count; ++i)
                 {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: watering id: %u name: %s"),
-                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
-                    }
+                    const auto &it = cache->items[i];
+                    if (!it.enabled)
+                        continue;
+                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: watering id: %u name: %s"),
+                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
                 }
                 state->logged_mask |= kInvWatering;
             }
@@ -3341,18 +3354,15 @@ private:
         if ((state->logged_mask & kInvLeak) == 0)
         {
             const auto *cache = stack_cache.leakCache(node_id);
-            if (cacheReady(cache))
+            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
             {
-                if (cache->last_ok && (cache->item_count == 0 || cache->items))
+                for (size_t i = 0; i < cache->item_count; ++i)
                 {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: leak id: %u name: %s"),
-                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
-                    }
+                    const auto &it = cache->items[i];
+                    if (!it.enabled)
+                        continue;
+                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: leak id: %u name: %s"),
+                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
                 }
                 state->logged_mask |= kInvLeak;
             }
@@ -3556,7 +3566,8 @@ private:
                       reinterpret_cast<const uint8_t *>(payload), len);
     }
 
-    static constexpr uint32_t kStackPollMs = 5000;
+    static constexpr uint32_t kStackPollMs = 2000;
+    static constexpr uint8_t kStackPollFeatureCount = 11;
 
     bool _pending_detect = false;
     uint8_t _pending_sensor_id = 0;
@@ -3587,6 +3598,7 @@ private:
     bool _local_inventory_logged = false;
     uint32_t _last_stack_poll_ms = 0;
     size_t _stack_poll_index = 0;
+    uint8_t _stack_poll_feature_index = 0;
     StackInventoryLogState _stack_inventory_log[StackMaster::MAX_SESSIONS]{};
     DisplaySlotConfig _display_slots[Display::kSlotCount]{};
 };

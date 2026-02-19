@@ -477,6 +477,16 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
         }
         window.location.href = url.toString();
       });
+      setInterval(() => {
+        if (meteoDirty) return;
+        if (document.visibilityState !== 'visible') return;
+        const val = meteoDevice.value || 'local';
+        if (val === 'local') return;
+        const url = new URL(window.location.href);
+        url.searchParams.set('unit', 'stack');
+        url.searchParams.set('node', val);
+        window.location.replace(url.toString());
+      }, 4000);
     }
   </script>
 </body>

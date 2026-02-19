@@ -55,6 +55,23 @@
 
     String stackWateringStatusText_(uint32_t node_id) const
     {
+        if (_stack_cache)
+        {
+            const auto *cache = _stack_cache->wateringCache(node_id);
+            if (!cache)
+                return "Нет данных со слейва";
+            if (cache->pending)
+                return "Запрос данных со слейва...";
+            if (!cache->last_ok && cache->last_error.length())
+            {
+                String msg = "Ошибка: ";
+                msg += cache->last_error;
+                return msg;
+            }
+            if (!cache->has_data)
+                return "Нет данных со слейва";
+            return "OK";
+        }
         const StackWateringCache *cache = findStackWateringCache_(node_id, false);
         if (!cache)
             return "Нет данных со слейва";
@@ -81,6 +98,8 @@
 
     bool requestStackWatering_(uint32_t node_id)
     {
+        if (_stack_cache)
+            return _stack_cache->requestWatering(node_id);
         if (!_stack_master)
             return false;
         if (stackRole_() != ConfigsManagerIface::StackRole::Master)
@@ -90,7 +109,17 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 15000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -110,13 +139,173 @@
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
 
     String listStackWateringHtml_(uint32_t node_id)
     {
-        StackWateringCache *cache = findStackWateringCache_(node_id, false);
+        if (_stack_cache)
+        {
+            const auto *cache = _stack_cache->wateringCache(node_id);
+            if (!cache || !cache->has_data)
+                return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
+            if (cache->item_count == 0)
+                return "<div class=\"tile empty\"><strong>Правила отсутствуют</strong></div>";
+            String items;
+            size_t reserve = 2048u + cache->item_count * 520u;
+            if (reserve < 8192u)
+                reserve = 8192u;
+            items.reserve(reserve);
+            size_t render_count = cache->item_count;
+            size_t last_enabled_idx = SIZE_MAX;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                if (cache->items[i].enabled)
+                    last_enabled_idx = i;
+            }
+            if (last_enabled_idx == SIZE_MAX)
+                render_count = cache->item_count ? 1u : 0u;
+            else
+            {
+                const size_t count = last_enabled_idx + 2u;
+                render_count = count > cache->item_count ? cache->item_count : count;
+            }
+            for (size_t i = 0; i < render_count; ++i)
+            {
+                const auto &cfg = cache->items[i];
+                if (!webAclCanViewItem_(UsersRegistry::AclController::Watering, cfg.id, node_id))
+                    continue;
+                if (!webSessionIsAdmin_() && !cfg.enabled)
+                    continue;
+                const char *state_label = cfg.active ? "активно" : (cfg.paused ? "пауза" : "ожидание");
+                items += "<div class=\"tile\" data-active=\"";
+                items += cfg.active ? "1\">" : "0\">";
+                items += "<div class=\"watering-visual\"><div class=\"tile-head\"><strong>Правило ";
+                items += String((unsigned)cfg.id);
+                items += "</strong><span class=\"badge\">";
+                items += cfg.enabled ? "вкл" : "выкл";
+                items += "</span></div><svg class=\"watering-icon\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M12 2c-2.3 3.5-6 7.4-6 11a6 6 0 0 0 12 0c0-3.6-3.7-7.5-6-11zm0 18a4 4 0 0 1-4-4c0-2.2 2.3-5.2 4-7.7 1.7 2.5 4 5.5 4 7.7a4 4 0 0 1-4 4z\"/></svg><div class=\"status-line\"><span class=\"muted\">Состояние</span><span class=\"status-value\">";
+                items += state_label;
+                items += "</span></div></div>";
+                items += "<div><div class=\"tile-head\"><strong>";
+                if (cfg.name[0])
+                    appendHtmlEscaped_(items, cfg.name);
+                else
+                    items += "Правило полива";
+                items += "</strong></div>";
+                items += "<div class=\"form-grid\">";
+                items += "<div class=\"form-row\"><label>Монитор</label><div class=\"field mini\">";
+                items += cfg.status ? "вкл" : "выкл";
+                items += "</div></div>";
+                items += "<div class=\"form-row\"><label>Кран</label><div class=\"field mini\">";
+                if (cfg.port != WateringController::kInvalidPort)
+                    items += String((unsigned)cfg.port);
+                else
+                    items += "--";
+                items += "</div></div>";
+                items += "<div class=\"form-row full\"><label>Дни</label><div class=\"field\">";
+                static const uint8_t kWeekdayMap[7] = {2, 3, 4, 5, 6, 7, 1};
+                static const char *kWeekdayLabels[7] = {"Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"};
+                bool any_day = false;
+                for (size_t wi = 0; wi < 7; ++wi)
+                {
+                    const uint8_t dow = kWeekdayMap[wi];
+                    if (cfg.weekdays_mask & (uint8_t)(1u << (dow - 1u)))
+                    {
+                        if (any_day)
+                            items += " ";
+                        items += kWeekdayLabels[wi];
+                        any_day = true;
+                    }
+                }
+                if (!any_day)
+                    items += "--";
+                items += "</div></div>";
+                items += "<div class=\"form-row\"><label>Время</label><div class=\"field mini\">";
+                if (cfg.weekdays_mask && cfg.duration_sec && cfg.hour <= 23 && cfg.minute <= 59)
+                {
+                    char buf[8] = {};
+                    snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour, (unsigned)cfg.minute);
+                    items += buf;
+                }
+                else
+                {
+                    items += "--";
+                }
+                items += "</div></div>";
+                items += "<div class=\"form-row\"><label>Бак</label><div class=\"field mini\">";
+                if (cfg.tank_id)
+                    items += String((unsigned)cfg.tank_id);
+                else
+                    items += "--";
+                items += "</div></div>";
+                items += "<div class=\"form-row\"><label>Длит. (мин)</label><div class=\"field mini\">";
+                if (cfg.duration_sec)
+                    items += String((unsigned long)((cfg.duration_sec + 59) / 60));
+                else
+                    items += "--";
+                items += "</div></div>";
+                items += "<div class=\"form-row\"><label>Время 2</label><div class=\"field mini\">";
+                if (cfg.weekdays_mask && cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
+                {
+                    char buf2[8] = {};
+                    snprintf(buf2, sizeof(buf2), "%02u:%02u", (unsigned)cfg.hour2, (unsigned)cfg.minute2);
+                    items += buf2;
+                }
+                else
+                {
+                    items += "--";
+                }
+                items += "</div></div>";
+                items += "<div class=\"form-row\"><label>Длит.2 (мин)</label><div class=\"field mini\">";
+                if (cfg.duration2_sec)
+                    items += String((unsigned long)((cfg.duration2_sec + 59) / 60));
+                else
+                    items += "--";
+                items += "</div></div>";
+                items += "<div class=\"form-row\"><label>Время 3</label><div class=\"field mini\">";
+                if (cfg.weekdays_mask && cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
+                {
+                    char buf3[8] = {};
+                    snprintf(buf3, sizeof(buf3), "%02u:%02u", (unsigned)cfg.hour3, (unsigned)cfg.minute3);
+                    items += buf3;
+                }
+                else
+                {
+                    items += "--";
+                }
+                items += "</div></div>";
+                items += "<div class=\"form-row\"><label>Длит.3 (мин)</label><div class=\"field mini\">";
+                if (cfg.duration3_sec)
+                    items += String((unsigned long)((cfg.duration3_sec + 59) / 60));
+                else
+                    items += "--";
+                items += "</div></div>";
+                items += "<div class=\"form-row\"><label>Продолжать</label><div class=\"field mini\">";
+                items += cfg.resume_after_refill ? "вкл" : "выкл";
+                items += "</div></div>";
+                items += "<div class=\"form-row full\"><label>Уровень >=</label><div class=\"field mini\">";
+                if (cfg.tank_id && cfg.resume_after_refill)
+                {
+                    const char *level = "low";
+                    if (cfg.resume_level == 1)
+                        level = "mid";
+                    else if (cfg.resume_level == 2)
+                        level = "full";
+                    items += level;
+                }
+                else
+                {
+                    items += "--";
+                }
+                items += "</div></div>";
+                items += "</div></div></div>";
+            }
+            return items;
+        }
+        const StackWateringCache *cache = findStackWateringCache_(node_id, false);
         if (!cache || !cache->has_data)
             return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
         if (cache->item_count == 0)

@@ -55,6 +55,23 @@
 
     String stackThermoStatusText_(uint32_t node_id) const
     {
+        if (_stack_cache)
+        {
+            const auto *cache = _stack_cache->thermoCache(node_id);
+            if (!cache)
+                return "Нет данных со слейва";
+            if (cache->pending)
+                return "Запрос данных со слейва...";
+            if (!cache->last_ok && cache->last_error.length())
+            {
+                String msg = "Ошибка: ";
+                msg += cache->last_error;
+                return msg;
+            }
+            if (!cache->has_data)
+                return "Нет данных со слейва";
+            return "OK";
+        }
         const StackThermoCache *cache = findStackThermoCache_(node_id, false);
         if (!cache)
             return "Нет данных со слейва";
@@ -81,6 +98,8 @@
 
     bool requestStackThermo_(uint32_t node_id)
     {
+        if (_stack_cache)
+            return _stack_cache->requestThermo(node_id);
         if (!_stack_master)
             return false;
         if (stackRole_() != ConfigsManagerIface::StackRole::Master)
@@ -90,7 +109,17 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 15000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -107,13 +136,198 @@
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
 
     String listStackThermoHtml_(uint32_t node_id)
     {
-        StackThermoCache *cache = findStackThermoCache_(node_id, false);
+        if (_stack_cache)
+        {
+            const auto *cache = _stack_cache->thermoCache(node_id);
+            if (!cache || !cache->has_data)
+                return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
+            if (cache->item_count == 0)
+                return "<div class=\"tile empty\"><strong>Термо отсутствует</strong></div>";
+            String items;
+            size_t reserve = 2048u + cache->item_count * 620u;
+            if (reserve < 8192u)
+                reserve = 8192u;
+            items.reserve(reserve);
+            const auto *meteo_cache = _stack_cache->meteoCache(node_id);
+            size_t render_count = cache->item_count;
+            size_t last_enabled_idx = SIZE_MAX;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                if (cache->items[i].enabled)
+                    last_enabled_idx = i;
+            }
+            if (last_enabled_idx == SIZE_MAX)
+                render_count = cache->item_count ? 1u : 0u;
+            else
+            {
+                const size_t count = last_enabled_idx + 2u;
+                render_count = count > cache->item_count ? cache->item_count : count;
+            }
+            for (size_t i = 0; i < render_count; ++i)
+            {
+                const auto &cfg = cache->items[i];
+                if (!webAclCanViewItem_(UsersRegistry::AclController::Thermo, cfg.id, node_id))
+                    continue;
+                if (!webSessionIsAdmin_() && !cfg.enabled)
+                    continue;
+                const bool can_control = webAclCanControlItem_(UsersRegistry::AclController::Thermo, cfg.id, node_id);
+                const bool mode_off = strcmp(cfg.mode, "off") == 0;
+                const bool mode_heat = strcmp(cfg.mode, "heat") == 0;
+                const bool mode_cool = strcmp(cfg.mode, "cool") == 0;
+                const char *mode_label = "авто";
+                if (mode_off)
+                    mode_label = "выкл";
+                else if (mode_heat)
+                    mode_label = "нагрев";
+                else if (mode_cool)
+                    mode_label = "охлаждение";
+
+                const char *state_label = "ожидание";
+                const char *state_class = "status-idle";
+                if (cfg.heat_on)
+                {
+                    state_label = "нагрев";
+                    state_class = "status-heat";
+                }
+                else if (cfg.cool_on)
+                {
+                    state_label = "охлаждение";
+                    state_class = "status-cool";
+                }
+
+                bool show_heat = true;
+                bool show_cool = true;
+                String heat_class = "icon heat ";
+                String cool_class = "icon cool ";
+                if (mode_off)
+                {
+                    show_heat = false;
+                    show_cool = false;
+                }
+                else if (mode_heat)
+                {
+                    show_cool = false;
+                    heat_class += cfg.heat_on ? "active" : "inactive";
+                }
+                else if (mode_cool)
+                {
+                    show_heat = false;
+                    cool_class += cfg.cool_on ? "active" : "inactive";
+                }
+                else
+                {
+                    heat_class += cfg.heat_on ? "active" : "inactive";
+                    cool_class += cfg.cool_on ? "active" : "inactive";
+                }
+
+                const char *sensor_label = "нет";
+                const char *sensor_suffix = "";
+                char sensor_buf[16] = {};
+                if (cfg.sensor != 0)
+                {
+                    bool found = false;
+                    if (meteo_cache && meteo_cache->has_data)
+                    {
+                        for (size_t s = 0; s < meteo_cache->item_count; ++s)
+                        {
+                            const auto &ms = meteo_cache->items[s];
+                            if (ms.id == cfg.sensor)
+                            {
+                                found = true;
+                                if (ms.has_temp)
+                                {
+                                    dtostrf(ms.temp_c, 0, 1, sensor_buf);
+                                    sensor_label = sensor_buf;
+                                    sensor_suffix = "°C";
+                                }
+                                else
+                                {
+                                    sensor_label = "--";
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    if (!found && cfg.sensor != 0)
+                        sensor_label = "--";
+                }
+
+                items += "<div class=\"tile";
+                if (!cfg.enabled)
+                    items += " disabled";
+                items += "\"><div class=\"thermo-left\"><div class=\"thermo-visual\"><div class=\"temp-pill sensor\">Текущая: <span class=\"temp-value\">";
+                items += sensor_label;
+                items += sensor_suffix;
+                items += "</span></div><div class=\"temp-pill target\">Цель: <span class=\"temp-value\">";
+                items += String(cfg.target, 1);
+                items += "&deg;C</span></div>";
+                if (show_heat)
+                {
+                    items += "<svg class=\"";
+                    items += heat_class;
+                    items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"22\" y=\"30\" width=\"76\" height=\"60\" rx=\"10\"/><line x1=\"36\" y1=\"40\" x2=\"36\" y2=\"80\"/><line x1=\"52\" y1=\"40\" x2=\"52\" y2=\"80\"/><line x1=\"68\" y1=\"40\" x2=\"68\" y2=\"80\"/><line x1=\"84\" y1=\"40\" x2=\"84\" y2=\"80\"/></svg>";
+                }
+                if (show_cool)
+                {
+                    items += "<svg class=\"";
+                    items += cool_class;
+                    items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"18\" y=\"28\" width=\"84\" height=\"46\" rx=\"10\"/><line x1=\"28\" y1=\"44\" x2=\"92\" y2=\"44\"/><line x1=\"28\" y1=\"56\" x2=\"92\" y2=\"56\"/><line x1=\"40\" y1=\"78\" x2=\"34\" y2=\"92\"/><line x1=\"60\" y1=\"78\" x2=\"60\" y2=\"94\"/><line x1=\"80\" y1=\"78\" x2=\"86\" y2=\"92\"/></svg>";
+                }
+                items += "</div>";
+                items += "<div class=\"status-line\"><span class=\"status-dot ";
+                items += state_class;
+                items += "\"></span><span><span class=\"status-value ";
+                if (strcmp(state_class, "status-heat") == 0)
+                    items += "status-text-heat";
+                else if (strcmp(state_class, "status-cool") == 0)
+                    items += "status-text-cool";
+                else
+                    items += "status-text-idle";
+                items += "\">";
+                items += state_label;
+                items += "</span></span></div></div>";
+                items += "<div><div class=\"tile-head\"><strong>";
+                if (cfg.name[0])
+                    appendHtmlEscaped_(items, cfg.name);
+                else
+                    items += "Термо";
+                items += "</strong><span class=\"badge\">ID ";
+                items += String((unsigned)cfg.id);
+                items += "</span></div>";
+                items += "<div class=\"status-line\"><span class=\"badge\">Питание: ";
+                items += cfg.power_on ? "on" : "off";
+                items += "</span><span class=\"badge\">Режим: ";
+                items += mode_label;
+                items += "</span></div>";
+                items += "<div class=\"status-line\"><span class=\"badge\">Датчик: ";
+                if (cfg.sensor != 0)
+                    items += String((unsigned)cfg.sensor);
+                else
+                    items += "--";
+                items += "</span></div><div class=\"form-row\" style=\"margin-top:8px;\"><label>Active</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
+                items += String((unsigned)cfg.id);
+                items += "_power\"";
+                if (cfg.power_on)
+                    items += " checked";
+                if (!cfg.enabled || !can_control)
+                    items += " disabled";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"t";
+                items += String((unsigned)cfg.id);
+                items += "_power\" value=\"";
+                items += cfg.power_on ? "on" : "off";
+                items += "\"></div>";
+                items += "</div></div>";
+            }
+            return items;
+        }
+        const StackThermoCache *cache = findStackThermoCache_(node_id, false);
         if (!cache || !cache->has_data)
             return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
         if (cache->item_count == 0)
@@ -145,6 +359,7 @@
                 continue;
             if (!webSessionIsAdmin_() && !cfg.enabled)
                 continue;
+            const bool can_control = webAclCanControlItem_(UsersRegistry::AclController::Thermo, cfg.id, node_id);
             const bool mode_off = strcmp(cfg.mode, "off") == 0;
             const bool mode_heat = strcmp(cfg.mode, "heat") == 0;
             const bool mode_cool = strcmp(cfg.mode, "cool") == 0;
@@ -278,7 +493,18 @@
                 items += String((unsigned)cfg.sensor);
             else
                 items += "--";
-            items += "</span></div>";
+            items += "</span></div><div class=\"form-row\" style=\"margin-top:8px;\"><label>Active</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_power\"";
+            if (cfg.power_on)
+                items += " checked";
+            if (!cfg.enabled || !can_control)
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_power\" value=\"";
+            items += cfg.power_on ? "on" : "off";
+            items += "\"></div>";
             items += "</div></div>";
         }
         return items;

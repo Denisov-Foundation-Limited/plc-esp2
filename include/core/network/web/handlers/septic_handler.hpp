@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -20,6 +20,8 @@ class SepticHandler
 public:
     static void registerRoutes(WebInterface &web, AsyncWebServer &server)
     {
+        server.on("/septic/toggle", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleSepticToggle(web, request); });
+        server.on("/septic/toggle", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleSepticToggle(web, request); });
         server.on("/septic", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleSepticSave(web, request); });
         server.on("/septic", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleSeptic(web, request); });
     }
@@ -229,4 +231,156 @@ public:
             web._septic_status = changed ? "Updated" : "Saved";
         web.sendRedirect_(request, "/septic", set_cookie);
     }
+
+    static void handleSepticToggle(WebInterface &web, AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Septic, node_id))
+            return;
+
+        const String id_str = web.paramValueAny_(request, "id");
+        if (!id_str.length())
+        {
+            web.sendText_(request, 400, "text/plain", "Missing id", set_cookie);
+            return;
+        }
+        const uint16_t id = (uint16_t)id_str.toInt();
+        if (id == 0)
+        {
+            web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
+            return;
+        }
+        if (!web.webAclCanControlItem_(UsersRegistry::AclController::Septic, id, node_id))
+        {
+            web.sendText_(request, 403, "text/plain", "ACL deny", set_cookie);
+            return;
+        }
+
+        String action = web.paramValueAny_(request, "action");
+        action.trim();
+        action.toLowerCase();
+        auto send_state = [&](bool monitor_on, bool warning, bool alarm, bool relay_warning, bool relay_alarm) {
+            StaticJsonDocument<160> out;
+            out["monitor"] = monitor_on;
+            out["warning"] = warning;
+            out["alarm"] = alarm;
+            out["relay_warning"] = relay_warning;
+            out["relay_alarm"] = relay_alarm;
+            String body;
+            serializeJson(out, body);
+            web.sendText_(request, 200, "application/json", body, set_cookie);
+        };
+
+        if (web.isStackSepticView_(node_id))
+        {
+            if (!web._stack_master)
+            {
+                web.sendText_(request, 400, "text/plain", "Stack master missing", set_cookie);
+                return;
+            }
+            auto *cache = web._stack_cache ? web._stack_cache->septicCache(node_id) : nullptr;
+            StackCache::StackSepticItem *item = nullptr;
+            if (cache && cache->items)
+            {
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    if (cache->items[i].id == id)
+                    {
+                        item = &cache->items[i];
+                        break;
+                    }
+                }
+            }
+
+            if (action == "state")
+            {
+                const bool stale = (!cache || !cache->has_data || cache->pending ||
+                                    (uint32_t)(millis() - cache->updated_ms) > 1500u);
+                if (stale)
+                {
+                    if (web._stack_cache)
+                        web._stack_cache->requestSeptic(node_id);
+                    web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                    return;
+                }
+                if (!item)
+                {
+                    web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
+                    return;
+                }
+                send_state(item->monitor, item->warning, item->alarm, false, false);
+                return;
+            }
+
+            StaticJsonDocument<192> doc;
+            doc["cmd_id"] = 0;
+            doc["feature"] = (uint8_t)StackFeature::Septic;
+            doc["action"] = "set";
+            doc["params"]["id"] = id;
+            if (action == "on")
+                doc["params"]["monitor"] = true;
+            else if (action == "off")
+                doc["params"]["monitor"] = false;
+            else if (item)
+                doc["params"]["monitor"] = !item->monitor;
+            else
+                doc["params"]["monitor"] = true;
+            char payload[192] = {};
+            const size_t len = serializeJson(doc, payload, sizeof(payload));
+            if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                       reinterpret_cast<const uint8_t *>(payload), len))
+            {
+                web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
+                return;
+            }
+            if (web._stack_cache)
+                web._stack_cache->requestSeptic(node_id);
+            web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+            return;
+        }
+
+        if (!web._controllers)
+        {
+            web.sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            return;
+        }
+        SepticController &septic = web._controllers->septic();
+        const auto *cfg = septic.configByIndex((size_t)(id - 1));
+        const auto *st = septic.stateByIndex((size_t)(id - 1));
+        if (!cfg || !st)
+        {
+            web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
+            return;
+        }
+        if (action == "state")
+        {
+            send_state(cfg->monitoring_on, st->warning, st->alarm, st->relay_warning, st->relay_alarm);
+            return;
+        }
+
+        bool ok = false;
+        if (action == "on")
+            ok = septic.setMonitoring(id, true);
+        else if (action == "off")
+            ok = septic.setMonitoring(id, false);
+        else
+            ok = septic.setMonitoring(id, !cfg->monitoring_on);
+        if (!ok)
+        {
+            web.sendText_(request, 400, "text/plain", "Toggle failed", set_cookie);
+            return;
+        }
+        const auto *cfg2 = septic.configByIndex((size_t)(id - 1));
+        const auto *st2 = septic.stateByIndex((size_t)(id - 1));
+        if (!cfg2 || !st2)
+        {
+            web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
+            return;
+        }
+        send_state(cfg2->monitoring_on, st2->warning, st2->alarm, st2->relay_warning, st2->relay_alarm);
+    }
 };
+

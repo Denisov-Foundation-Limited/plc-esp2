@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
     size_t socketsLocalRenderCount_() const
     {
@@ -148,6 +148,81 @@
 
     String listStackSocketsHtml_(uint32_t node_id)
     {
+        if (_stack_cache)
+        {
+            const auto *cache = _stack_cache->socketsCache(node_id);
+            if (!cache || !cache->has_data)
+                return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
+            if (cache->item_count == 0)
+                return "<div class=\"tile empty\"><strong>Розетки отсутствуют</strong></div>";
+            String items;
+            size_t reserve = 2048u + cache->item_count * 420u;
+            if (reserve < 8192u)
+                reserve = 8192u;
+            items.reserve(reserve);
+            size_t render_count = cache->item_count;
+            size_t last_enabled_idx = SIZE_MAX;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                if (cache->items[i].enabled)
+                    last_enabled_idx = i;
+            }
+            if (last_enabled_idx == SIZE_MAX)
+                render_count = cache->item_count ? 1u : 0u;
+            else
+            {
+                const size_t count = last_enabled_idx + 2u;
+                render_count = count > cache->item_count ? cache->item_count : count;
+            }
+            for (size_t i = 0; i < render_count; ++i)
+            {
+                const auto &cfg = cache->items[i];
+                if (!webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id))
+                    continue;
+                if (!webSessionIsAdmin_() && !cfg.enabled)
+                    continue;
+                const bool can_control = webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id);
+                const bool on = cfg.state;
+                items += "<div class=\"tile\">";
+                items += "<div class=\"sock-visual\">";
+                items += "<span class=\"badge\">#";
+                items += String((unsigned)cfg.id);
+                items += "</span>";
+                items += "<svg class=\"sock-icon ";
+                items += on ? "on" : "off";
+                items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+                items += "<path fill=\"currentColor\" d=\"M16 10h32c3.3 0 6 2.7 6 6v32c0 3.3-2.7 6-6 6H16c-3.3 0-6-2.7-6-6V16c0-3.3 2.7-6 6-6zm0 4c-1.1 0-2 .9-2 2v32c0 1.1.9 2 2 2h32c1.1 0 2-.9 2-2V16c0-1.1-.9-2-2-2H16z\"/>";
+                items += "<circle cx=\"24\" cy=\"26\" r=\"4\" fill=\"currentColor\"/>";
+                items += "<circle cx=\"40\" cy=\"26\" r=\"4\" fill=\"currentColor\"/>";
+                items += "<rect x=\"28\" y=\"36\" width=\"8\" height=\"10\" rx=\"2\" fill=\"currentColor\"/>";
+                items += "</svg>";
+                items += "</div>";
+                items += "<div>";
+                items += "<div class=\"tile-head\"><strong>";
+                if (cfg.name[0])
+                    appendHtmlEscaped_(items, cfg.name);
+                else
+                    items += "Розетка";
+                items += "</strong></div>";
+                items += "<div class=\"status-line\"><span class=\"status-dot ";
+                items += on ? "status-on" : "status-off";
+                items += "\"></span>";
+                items += "<span class=\"status-text\">";
+                items += on ? "Включена" : "Выключена";
+                items += "</span></div>";
+                items += "<div class=\"form-row\"><label>Перекл.</label>";
+                items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-id=\"";
+                items += String((unsigned)cfg.id);
+                items += "\"";
+                if (on)
+                    items += " checked";
+                if (!can_control)
+                    items += " disabled";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+                items += "</div></div>";
+            }
+            return items;
+        }
         StackSocketsCache *cache = findStackSocketsCache_(node_id, false);
         if (!cache || !cache->has_data)
             return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
@@ -260,9 +335,32 @@
 
     String stackSocketsStatusText_(uint32_t node_id) const
     {
+        if (_stack_cache)
+        {
+            const auto *cache = _stack_cache->socketsCache(node_id);
+            if (!cache)
+                return "Нет данных со слейва";
+            if (cache->pending &&
+                (uint32_t)(millis() - cache->updated_ms) > 15000u)
+                return "Таймаут ожидания ответа";
+            if (cache->pending)
+                return "Запрос данных со слейва...";
+            if (!cache->last_ok && cache->last_error.length())
+            {
+                String msg = "Ошибка: ";
+                msg += cache->last_error;
+                return msg;
+            }
+            if (!cache->has_data)
+                return "Нет данных со слейва";
+            return "OK";
+        }
         const StackSocketsCache *cache = findStackSocketsCache_(node_id, false);
         if (!cache)
             return "Нет данных со слейва";
+        if (cache->pending &&
+            (uint32_t)(millis() - cache->updated_ms) > 15000u)
+            return "Таймаут ожидания ответа";
         if (cache->pending)
             return "Запрос данных со слейва...";
         if (!cache->last_ok && cache->last_error.length())
@@ -369,6 +467,8 @@
 
     bool requestStackSockets_(uint32_t node_id)
     {
+        if (_stack_cache)
+            return _stack_cache->requestSockets(node_id);
         if (!_stack_master)
             return false;
         if (stackRole_() != ConfigsManagerIface::StackRole::Master)
@@ -378,7 +478,12 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 4000u)
+                cache->pending = false;
+            else
+                return false;
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -395,6 +500,7 @@
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 

@@ -1323,7 +1323,7 @@ private:
     {
         if (action == "get")
         {
-            static constexpr size_t kDefaultChunk = 6;
+            static constexpr size_t kDefaultChunk = 3;
             static constexpr size_t kMaxChunk = 16;
             size_t chunk = kDefaultChunk;
             if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
@@ -1679,6 +1679,17 @@ private:
                 return;
             }
             JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            uint8_t changed_ids[ThermoController::kDeviceCount] = {};
+            size_t changed_count = 0;
+            auto mark_changed = [&](uint8_t id) {
+                for (size_t i = 0; i < changed_count; ++i)
+                {
+                    if (changed_ids[i] == id)
+                        return;
+                }
+                if (changed_count < ThermoController::kDeviceCount)
+                    changed_ids[changed_count++] = id;
+            };
             for (JsonVariantConst v : items)
             {
                 if (!v.is<JsonObjectConst>())
@@ -1690,6 +1701,7 @@ private:
                 if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
                 {
                     _thermo.togglePower(id, "stack");
+                    mark_changed(id);
                     continue;
                 }
                 if (item["power"].is<bool>() || item["power"].is<int>())
@@ -1697,6 +1709,7 @@ private:
                     const bool on = item["power"].is<bool>() ? item["power"].as<bool>()
                                                              : (item["power"].as<int>() != 0);
                     _thermo.setPower(id, on, "stack");
+                    mark_changed(id);
                     continue;
                 }
                 if (item["state"].is<bool>() || item["state"].is<int>())
@@ -1704,6 +1717,7 @@ private:
                     const bool on = item["state"].is<bool>() ? item["state"].as<bool>()
                                                              : (item["state"].as<int>() != 0);
                     _thermo.setPower(id, on, "stack");
+                    mark_changed(id);
                     continue;
                 }
                 if (item["mode"].is<const char *>())
@@ -1721,6 +1735,7 @@ private:
                             _thermo.setMode(id, ThermoController::Mode::Cool);
                         else if (m == "auto")
                             _thermo.setMode(id, ThermoController::Mode::Auto);
+                        mark_changed(id);
                     }
                     continue;
                 }
@@ -1729,7 +1744,10 @@ private:
                     const int raw = item["mode"].is<unsigned>() ? (int)item["mode"].as<unsigned>()
                                                                 : item["mode"].as<int>();
                     if (raw >= (int)ThermoController::Mode::Off && raw <= (int)ThermoController::Mode::Auto)
+                    {
                         _thermo.setMode(id, (ThermoController::Mode)raw);
+                        mark_changed(id);
+                    }
                     continue;
                 }
                 if (item["target"].is<float>() || item["target"].is<double>() || item["target"].is<int>())
@@ -1737,6 +1755,7 @@ private:
                     const float target = item["target"].is<int>() ? (float)item["target"].as<int>()
                                                                    : item["target"].as<float>();
                     _thermo.setTarget(id, target);
+                    mark_changed(id);
                     continue;
                 }
                 if (item["hyst"].is<float>() || item["hyst"].is<double>() || item["hyst"].is<int>())
@@ -1744,9 +1763,41 @@ private:
                     const float hyst = item["hyst"].is<int>() ? (float)item["hyst"].as<int>()
                                                                : item["hyst"].as<float>();
                     _thermo.setHysteresis(id, hyst);
+                    mark_changed(id);
                 }
             }
-            sendAck_(cmd_id);
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            JsonArray out_items = doc["items"].to<JsonArray>();
+            for (size_t i = 0; i < changed_count; ++i)
+            {
+                const uint8_t id = changed_ids[i];
+                const auto *cfg = _thermo.config(id);
+                const auto *st = _thermo.state(id);
+                if (!cfg || !st)
+                    continue;
+                JsonObject o = out_items.add<JsonObject>();
+                o["id"] = (unsigned)id;
+                o["enabled"] = cfg->enabled;
+                if (cfg->name.length())
+                    o["name"] = cfg->name;
+                o["sensor"] = (unsigned)cfg->sensor_id;
+                if (cfg->sensor_node_id != 0)
+                    o["sensor_node"] = (unsigned long)cfg->sensor_node_id;
+                o["mode"] = ThermoController::modeName(cfg->mode);
+                o["target"] = cfg->target_c;
+                o["hyst"] = cfg->hysteresis;
+                if (cfg->heat_port != ThermoController::kInvalidPort)
+                    o["heat"] = cfg->heat_port;
+                if (cfg->cool_port != ThermoController::kInvalidPort)
+                    o["cool"] = cfg->cool_port;
+                if (cfg->button_port != ThermoController::kInvalidPort)
+                    o["button"] = cfg->button_port;
+                o["power_on"] = st->power_on;
+                o["heat_on"] = st->heat_on;
+                o["cool_on"] = st->cool_on;
+            }
+            sendAck_(cmd_id, doc);
             return;
         }
         sendErr_(cmd_id, "unsupported");
@@ -2073,7 +2124,32 @@ private:
                     sendErr_(cmd_id, "invalid id");
                     return;
                 }
-                sendAck_(cmd_id);
+                _tx_doc.clear();
+                JsonDocument &doc = _tx_doc;
+                JsonArray arr = doc["items"].to<JsonArray>();
+                const auto *cfg = _septic.configByIndex((size_t)(id - 1));
+                const auto *st = _septic.stateByIndex((size_t)(id - 1));
+                if (cfg && st)
+                {
+                    JsonObject o = arr.add<JsonObject>();
+                    o["id"] = (unsigned)cfg->id;
+                    o["enabled"] = cfg->enabled;
+                    o["monitor"] = cfg->monitoring_on;
+                    if (cfg->warning_port != SepticController::kInvalidPort)
+                        o["warning_port"] = cfg->warning_port;
+                    if (cfg->alarm_port != SepticController::kInvalidPort)
+                        o["alarm_port"] = cfg->alarm_port;
+                    if (cfg->relay_warning != SepticController::kInvalidPort)
+                        o["relay_warning"] = cfg->relay_warning;
+                    if (cfg->relay_alarm != SepticController::kInvalidPort)
+                        o["relay_alarm"] = cfg->relay_alarm;
+                    o["warning"] = st->warning;
+                    o["alarm"] = st->alarm;
+                }
+                doc["part"] = 1;
+                doc["parts"] = 1;
+                doc["done"] = true;
+                sendAck_(cmd_id, doc);
                 return;
             }
             sendErr_(cmd_id, "missing monitor");
@@ -2170,6 +2246,8 @@ private:
                 return;
             }
             JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            uint8_t changed_ids[TankController::kTankCount] = {};
+            size_t changed_count = 0;
             for (JsonVariantConst v : items)
             {
                 if (!v.is<JsonObjectConst>())
@@ -2178,35 +2256,85 @@ private:
                 if (!item["id"].is<unsigned>())
                     continue;
                 const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                bool changed = false;
                 if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
                 {
                     const auto *cfg = _tanks.config(id);
                     if (cfg)
-                        _tanks.setPower(id, !cfg->power_on);
-                    continue;
+                        changed = _tanks.setPower(id, !cfg->power_on);
                 }
-                if (item["power_on"].is<bool>() || item["power_on"].is<int>())
+                else if (item["power_on"].is<bool>() || item["power_on"].is<int>())
                 {
                     const bool on = item["power_on"].is<bool>() ? item["power_on"].as<bool>()
                                                                 : (item["power_on"].as<int>() != 0);
-                    _tanks.setPower(id, on);
-                    continue;
+                    changed = _tanks.setPower(id, on);
                 }
-                if (item["power"].is<bool>() || item["power"].is<int>())
+                else if (item["power"].is<bool>() || item["power"].is<int>())
                 {
                     const bool on = item["power"].is<bool>() ? item["power"].as<bool>()
                                                              : (item["power"].as<int>() != 0);
-                    _tanks.setPower(id, on);
-                    continue;
+                    changed = _tanks.setPower(id, on);
                 }
-                if (item["state"].is<bool>() || item["state"].is<int>())
+                else if (item["state"].is<bool>() || item["state"].is<int>())
                 {
                     const bool on = item["state"].is<bool>() ? item["state"].as<bool>()
                                                              : (item["state"].as<int>() != 0);
-                    _tanks.setPower(id, on);
+                    changed = _tanks.setPower(id, on);
                 }
+                if (!changed)
+                    continue;
+                bool exists = false;
+                for (size_t i = 0; i < changed_count; ++i)
+                {
+                    if (changed_ids[i] == id)
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists && changed_count < TankController::kTankCount)
+                    changed_ids[changed_count++] = id;
             }
-            sendAck_(cmd_id);
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            JsonArray arr = doc["items"].to<JsonArray>();
+            for (size_t i = 0; i < changed_count; ++i)
+            {
+                const uint8_t id = changed_ids[i];
+                const auto *cfg = _tanks.config(id);
+                const auto *st = _tanks.state(id);
+                if (!cfg || !st)
+                    continue;
+                JsonObject o = arr.add<JsonObject>();
+                o["id"] = (unsigned)cfg->id;
+                o["enabled"] = cfg->enabled;
+                o["power_on"] = cfg->power_on;
+                if (cfg->name.length())
+                    o["name"] = cfg->name;
+                if (cfg->level_low != TankController::kInvalidPort)
+                    o["low"] = cfg->level_low;
+                if (cfg->level_mid != TankController::kInvalidPort)
+                    o["mid"] = cfg->level_mid;
+                if (cfg->level_full != TankController::kInvalidPort)
+                    o["full"] = cfg->level_full;
+                if (cfg->relay_valve != TankController::kInvalidPort)
+                    o["valve"] = cfg->relay_valve;
+                if (cfg->relay_pump != TankController::kInvalidPort)
+                    o["pump"] = cfg->relay_pump;
+                if (cfg->relay_alarm != TankController::kInvalidPort)
+                    o["alarm"] = cfg->relay_alarm;
+                o["level_low"] = st->level_low;
+                o["level_mid"] = st->level_mid;
+                o["level_full"] = st->level_full;
+                o["levels_ok"] = st->levels_ok;
+                o["valve_on"] = st->valve_on;
+                o["pump_on"] = st->pump_on;
+                o["alarm_on"] = st->alarm_on;
+            }
+            doc["part"] = 1;
+            doc["parts"] = 1;
+            doc["done"] = true;
+            sendAck_(cmd_id, doc);
             return;
         }
         sendErr_(cmd_id, "unsupported");
@@ -3941,6 +4069,11 @@ private:
         _msg_doc.clear();
         _msg_doc["cmd_id"] = cmd_id;
         _msg_doc["ok"] = true;
+        if (_rx_doc["feature"].is<unsigned>())
+            _msg_doc["feature"] = _rx_doc["feature"].as<unsigned>();
+        const String action = _rx_doc["action"] | "";
+        if (action.length())
+            _msg_doc["action"] = action;
         sendJson_((uint8_t)StackMsgType::Ack, _msg_doc);
     }
 
@@ -3949,6 +4082,11 @@ private:
         _msg_doc.clear();
         _msg_doc["cmd_id"] = cmd_id;
         _msg_doc["ok"] = true;
+        if (_rx_doc["feature"].is<unsigned>())
+            _msg_doc["feature"] = _rx_doc["feature"].as<unsigned>();
+        const String action = _rx_doc["action"] | "";
+        if (action.length())
+            _msg_doc["action"] = action;
         if (!data.isNull())
             _msg_doc["data"] = data.as<JsonVariantConst>();
         sendJson_((uint8_t)StackMsgType::Ack, _msg_doc);
@@ -3959,6 +4097,11 @@ private:
         _msg_doc.clear();
         _msg_doc["cmd_id"] = cmd_id;
         _msg_doc["ok"] = false;
+        if (_rx_doc["feature"].is<unsigned>())
+            _msg_doc["feature"] = _rx_doc["feature"].as<unsigned>();
+        const String action = _rx_doc["action"] | "";
+        if (action.length())
+            _msg_doc["action"] = action;
         _msg_doc["error"] = msg ? msg : "error";
         sendJson_((uint8_t)StackMsgType::Err, _msg_doc);
     }
@@ -3967,7 +4110,13 @@ private:
     {
         const size_t len = serializeJson(doc, reinterpret_cast<char *>(_tx_payload_buf), sizeof(_tx_payload_buf));
         if (len == 0 || len > sizeof(_tx_payload_buf))
+        {
+            _logs.warn(F("STACK"), F("Drop tx frame: json too large type: %u bytes: %u cap: %u"),
+                       (unsigned)type,
+                       (unsigned)len,
+                       (unsigned)sizeof(_tx_payload_buf));
             return;
+        }
         StackFrame frame{};
         frame.type = type;
         frame.payload = _tx_payload_buf;

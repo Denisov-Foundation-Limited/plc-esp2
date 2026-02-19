@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
     size_t septicLocalRenderCount_() const
     {
@@ -55,6 +55,23 @@
 
     String stackSepticStatusText_(uint32_t node_id) const
     {
+        if (_stack_cache)
+        {
+            const auto *cache = _stack_cache->septicCache(node_id);
+            if (!cache)
+                return "Нет данных со слейва";
+            if (cache->pending)
+                return "Запрос данных со слейва...";
+            if (!cache->last_ok && cache->last_error.length())
+            {
+                String msg = "Ошибка: ";
+                msg += cache->last_error;
+                return msg;
+            }
+            if (!cache->has_data)
+                return "Нет данных со слейва";
+            return "OK";
+        }
         const StackSepticCache *cache = findStackSepticCache_(node_id, false);
         if (!cache)
             return "Нет данных со слейва";
@@ -81,6 +98,8 @@
 
     bool requestStackSeptic_(uint32_t node_id)
     {
+        if (_stack_cache)
+            return _stack_cache->requestSeptic(node_id);
         if (!_stack_master)
             return false;
         if (stackRole_() != ConfigsManagerIface::StackRole::Master)
@@ -90,7 +109,17 @@
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 15000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -107,13 +136,102 @@
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
 
     String listStackSepticHtml_(uint32_t node_id)
     {
-        StackSepticCache *cache = findStackSepticCache_(node_id, false);
+        if (_stack_cache)
+        {
+            const auto *cache = _stack_cache->septicCache(node_id);
+            if (!cache || !cache->has_data)
+                return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
+            if (cache->item_count == 0)
+                return "<div class=\"tile empty\"><strong>Септик отсутствует</strong></div>";
+            String items;
+            size_t reserve = 1024u + cache->item_count * 480u;
+            if (reserve < 4096u)
+                reserve = 4096u;
+            items.reserve(reserve);
+            size_t render_count = cache->item_count;
+            size_t last_enabled_idx = SIZE_MAX;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                if (cache->items[i].enabled)
+                    last_enabled_idx = i;
+            }
+            if (last_enabled_idx == SIZE_MAX)
+                render_count = cache->item_count ? 1u : 0u;
+            else
+            {
+                const size_t count = last_enabled_idx + 2u;
+                render_count = count > cache->item_count ? cache->item_count : count;
+            }
+            for (size_t i = 0; i < render_count; ++i)
+            {
+                const auto &cfg = cache->items[i];
+                if (!webAclCanViewItem_(UsersRegistry::AclController::Septic, cfg.id, node_id))
+                    continue;
+                if (!webSessionIsAdmin_() && !cfg.enabled)
+                    continue;
+                const bool warn = cfg.warning;
+                const bool alarm = cfg.alarm;
+                const char *water_class = "water-low";
+                const char *water_level = "20%";
+                const char *water_label = "Уровень: 20%";
+                if (alarm)
+                {
+                    water_class = "water-alarm";
+                    water_level = "100%";
+                    water_label = "Уровень: 100%";
+                }
+                else if (warn)
+                {
+                    water_class = "water-warn";
+                    water_level = "80%";
+                    water_label = "Уровень: 80%";
+                }
+                items += "<div class=\"tile";
+                if (!cfg.enabled)
+                    items += " disabled";
+                items += "\"><div class=\"septic-visual\"><div class=\"liquid ";
+                items += water_class;
+                items += "\" style=\"height:";
+                items += water_level;
+                items += ";\"></div><div class=\"level-label\">";
+                items += water_label;
+                items += "</div></div><div><div class=\"tile-head\"><div><strong>Септик #";
+                items += String((unsigned)cfg.id);
+                items += "</strong>";
+                if (!cfg.enabled)
+                    items += " <span class=\"badge\">выкл</span>";
+                items += "</div></div>";
+                items += "<div class=\"status-grid\">";
+                items += "<div class=\"status-line\"><span class=\"status-dot ";
+                items += warn ? "status-on" : "status-off";
+                items += "\"></span><span>Датчик предупреждения</span></div>";
+                items += "<div class=\"status-line\"><span class=\"status-dot ";
+                items += alarm ? "status-bad" : "status-off";
+                items += "\"></span><span>Датчик аварии</span></div>";
+                items += "</div><div class=\"form-row\" style=\"margin-top:8px;\"><label>Мониторинг</label><label class=\"switch\"><input type=\"checkbox\" class=\"septic-monitor\" data-action=\"sep";
+                items += String((unsigned)cfg.id);
+                items += "_mon\"";
+                if (cfg.monitor)
+                    items += " checked";
+                if (!cfg.enabled)
+                    items += " disabled";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"sep";
+                items += String((unsigned)cfg.id);
+                items += "_mon\" value=\"";
+                items += cfg.monitor ? "on" : "off";
+                items += "\"></div></div></div>";
+            }
+            return items;
+        }
+
+        const StackSepticCache *cache = findStackSepticCache_(node_id, false);
         if (!cache || !cache->has_data)
             return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
         if (cache->item_count == 0)
@@ -185,7 +303,18 @@
             items += "\"></span><span>Датчик тревоги</span></div>";
             items += "<div class=\"status-line\"><span class=\"status-dot status-off\"></span><span>Реле предупреждения: н/д</span></div>";
             items += "<div class=\"status-line\"><span class=\"status-dot status-off\"></span><span>Реле тревоги: н/д</span></div>";
-            items += "</div></div></div>";
+            items += "</div><div class=\"form-row\" style=\"margin-top:8px;\"><label>Мониторинг</label><label class=\"switch\"><input type=\"checkbox\" class=\"septic-monitor\" data-action=\"sep";
+            items += String((unsigned)cfg.id);
+            items += "_mon\"";
+            if (cfg.monitor)
+                items += " checked";
+            if (!cfg.enabled)
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"sep";
+            items += String((unsigned)cfg.id);
+            items += "_mon\" value=\"";
+            items += cfg.monitor ? "on" : "off";
+            items += "\"></div></div></div>";
         }
         return items;
     }

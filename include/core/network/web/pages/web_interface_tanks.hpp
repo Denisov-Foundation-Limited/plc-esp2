@@ -354,18 +354,119 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
         sessionStorage.setItem(reloadKey, '1');
       });
     }
+    const tanksQs = new URLSearchParams(window.location.search);
+    const tanksIsStackView = tanksQs.get('unit') === 'stack';
+    const tanksNodeId = tanksQs.get('node') || '';
+    async function postTankToggle(id, action) {
+      let body = 'id=' + encodeURIComponent(String(id)) + '&action=' + encodeURIComponent(action || 'toggle');
+      if (tanksIsStackView && tanksNodeId) {
+        body += '&node_id=' + encodeURIComponent(tanksNodeId);
+      }
+      const res = await fetch('/tanks/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        credentials: 'same-origin'
+      });
+      if (!res.ok) throw new Error('toggle failed');
+      const contentType = (res.headers.get('content-type') || '').toLowerCase();
+      if (contentType.indexOf('application/json') >= 0) {
+        return await res.json();
+      }
+      const raw = (await res.text()).trim().toLowerCase();
+      if (raw === 'pending' || raw === 'unknown') return raw;
+      throw new Error('bad state');
+    }
+    function applyTankStateUi(tile, st) {
+      if (!tile || !st) return;
+      const fill = tile.querySelector('.tank-fill');
+      const label = tile.querySelector('.tank-label');
+      let levelClass = 'level-empty';
+      let levelPct = 0;
+      if (st.level_full) {
+        levelClass = 'level-full';
+        levelPct = 99;
+      } else if (st.level_mid) {
+        levelClass = 'level-mid';
+        levelPct = 66;
+      } else if (st.level_low) {
+        levelClass = 'level-low';
+        levelPct = 33;
+      }
+      if (fill) {
+        fill.classList.remove('level-low', 'level-mid', 'level-full', 'level-empty');
+        fill.classList.add(levelClass);
+        fill.style.height = String(levelPct) + '%';
+      }
+      if (label) {
+        label.textContent = String(levelPct) + '%';
+      }
+      const dots = tile.querySelectorAll('.status-row .status-dot');
+      if (dots.length > 0) {
+        dots[0].classList.remove('status-on', 'status-off');
+        dots[0].classList.add(st.pump ? 'status-on' : 'status-off');
+      }
+      if (dots.length > 1) {
+        dots[1].classList.remove('status-on', 'status-off');
+        dots[1].classList.add(st.valve ? 'status-on' : 'status-off');
+      }
+    }
+    function scheduleTankStateRefresh(id, tile, el, hidden, reqId) {
+      const maxAttempts = 8;
+      const delayMs = 350;
+      let attempt = 0;
+      const tick = async () => {
+        if (!el || el.dataset.reqId !== reqId) return;
+        attempt++;
+        try {
+          const st = await postTankToggle(id, 'state');
+          if (!el || el.dataset.reqId !== reqId) return;
+          if (typeof st === 'object' && st) {
+            el.checked = !!st.power;
+            if (hidden) hidden.value = st.power ? 'on' : 'off';
+            applyTankStateUi(tile, st);
+            return;
+          }
+        } catch (e) {}
+        if (attempt < maxAttempts && el && el.dataset.reqId === reqId) {
+          setTimeout(tick, delayMs);
+        }
+      };
+      setTimeout(tick, 220);
+    }
     document.querySelectorAll('input.tank-power').forEach((el) => {
-      el.addEventListener('change', () => {
+      el.addEventListener('change', async () => {
         if (el.dataset.busy === '1') return;
         el.dataset.busy = '1';
-        el.disabled = true;
+        const reqId = String((parseInt(el.dataset.reqId || '0', 10) || 0) + 1);
+        el.dataset.reqId = reqId;
+        const prev = !el.checked;
         const name = el.dataset.action;
         const hidden = document.querySelector('input[name="' + name + '"]');
         if (hidden) {
           hidden.value = el.checked ? 'on' : 'off';
         }
-        if (tanksForm) {
-          tanksForm.submit();
+        const tile = el.closest('.tile');
+        const idMatch = name ? name.match(/^k(\d+)_power$/) : null;
+        const id = idMatch ? parseInt(idMatch[1], 10) : 0;
+        try {
+          if (!id) throw new Error('bad id');
+          const desired = !!el.checked;
+          const st = await postTankToggle(id, desired ? 'on' : 'off');
+          if (typeof st === 'object' && st) {
+            el.checked = !!st.power;
+            if (hidden) hidden.value = st.power ? 'on' : 'off';
+            applyTankStateUi(tile, st);
+          }
+          scheduleTankStateRefresh(id, tile, el, hidden, reqId);
+        } catch (e) {
+          if (el.dataset.reqId !== reqId) return;
+          el.checked = prev;
+          if (hidden) hidden.value = prev ? 'on' : 'off';
+        } finally {
+          if (el.dataset.reqId === reqId) {
+            el.dataset.busy = '0';
+          }
         }
       });
     });

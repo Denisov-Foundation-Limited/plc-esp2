@@ -1566,8 +1566,17 @@ private:
         DynamicJsonDocument doc(4096);
         DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
         if (err)
+        {
+            if (_log)
+                _log->warn(F("STACK"), F("Drop rx frame: json parse failed type: %u node: 0x%08lX bytes: %u"),
+                           (unsigned)frame.type,
+                           (unsigned long)node_id,
+                           (unsigned)frame.payload_len);
             return;
+        }
         const uint16_t cmd_id = doc["cmd_id"] | 0;
+        String rx_action = doc["action"] | "";
+        rx_action.toLowerCase();
         StackSocketsCache *sock_cache = findStackSocketsCacheByCmd_(cmd_id);
         StackLightsCache *light_cache = findStackLightsCacheByCmd_(cmd_id);
         StackPortsCache *ports_cache = findStackPortsCacheByCmd_(cmd_id);
@@ -1589,7 +1598,174 @@ private:
         if (!sock_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !sec_prearm_cache && !meteo_cache &&
             !thermo_cache && !septic_cache && !tanks_cache && !avr_cache && !leak_cache &&
             !watering_cache && !i2c_cache && !ow_cache && !status_cache)
+        {
+            const uint8_t feature = (uint8_t)(doc["feature"] | 0u);
+            switch ((StackFeature)feature)
+            {
+            case StackFeature::Sockets:
+            {
+                const String action = doc["action"] | "";
+                if (action == "get_lights")
+                {
+                    StackLightsCache *c = findStackLightsCache_(node_id, false);
+                    if (c && c->pending)
+                        light_cache = c;
+                }
+                else
+                {
+                    StackSocketsCache *c = findStackSocketsCache_(node_id, false);
+                    if (c && c->pending)
+                        sock_cache = c;
+                }
+                break;
+            }
+            case StackFeature::Security:
+            {
+                const String action = doc["action"] | "";
+                if (action == "prearm")
+                {
+                    StackSecurityPrearmCache *c = findStackSecurityPrearmCache_(node_id, false);
+                    if (c && c->pending)
+                        sec_prearm_cache = c;
+                }
+                else
+                {
+                    StackSecurityCache *sec_c = findStackSecurityCache_(node_id, false);
+                    StackSecurityPrearmCache *prearm_c = findStackSecurityPrearmCache_(node_id, false);
+                    if (sec_c && sec_c->pending)
+                    {
+                        sec_cache = sec_c;
+                    }
+                    else if ((!action.length() || action == "status") && prearm_c && prearm_c->pending)
+                    {
+                        // Old slave firmware may omit action in Ack/Err for prearm.
+                        sec_prearm_cache = prearm_c;
+                    }
+                }
+                break;
+            }
+            case StackFeature::Meteo:
+            {
+                StackMeteoCache *c = findStackMeteoCache_(node_id, false);
+                if (c && c->pending)
+                    meteo_cache = c;
+                break;
+            }
+            case StackFeature::Thermo:
+            {
+                if (rx_action == "get")
+                {
+                    StackThermoCache *c = findStackThermoCache_(node_id, false);
+                    if (c && c->pending)
+                        thermo_cache = c;
+                }
+                else if (rx_action == "set")
+                {
+                    StackThermoCache *c = findStackThermoCache_(node_id, false);
+                    if (c)
+                        thermo_cache = c;
+                }
+                break;
+            }
+            case StackFeature::Septic:
+            {
+                StackSepticCache *c = findStackSepticCache_(node_id, false);
+                if (rx_action == "get")
+                {
+                    if (c && c->pending)
+                        septic_cache = c;
+                }
+                else if (rx_action == "set")
+                {
+                    if (c)
+                        septic_cache = c;
+                }
+                break;
+            }
+            case StackFeature::Tanks:
+            {
+                StackTankCache *c = findStackTanksCache_(node_id, false);
+                if (rx_action == "get")
+                {
+                    if (c && c->pending)
+                        tanks_cache = c;
+                }
+                else if (rx_action == "set")
+                {
+                    if (c)
+                        tanks_cache = c;
+                }
+                break;
+            }
+            case StackFeature::Watering:
+            {
+                StackWateringCache *c = findStackWateringCache_(node_id, false);
+                if (c && c->pending)
+                    watering_cache = c;
+                break;
+            }
+            case StackFeature::I2cScan:
+            {
+                StackI2cCache *c = findStackI2cCache_(node_id, false);
+                if (c && c->pending)
+                    i2c_cache = c;
+                break;
+            }
+            case StackFeature::OwScan:
+            {
+                StackOwCache *c = findStackOwCache_(node_id, false);
+                if (c && c->pending)
+                    ow_cache = c;
+                break;
+            }
+            case StackFeature::Avr:
+            {
+                StackAvrCache *c = findStackAvrCache_(node_id, false);
+                if (c && c->pending)
+                    avr_cache = c;
+                break;
+            }
+            case StackFeature::Leak:
+            {
+                StackLeakCache *c = findStackLeakCache_(node_id, false);
+                if (c && c->pending)
+                    leak_cache = c;
+                break;
+            }
+            case StackFeature::PlcStatus:
+            {
+                StackNodeStatusCache *c = findStackNodeStatusCache_(node_id, false);
+                if (c && c->pending_plc)
+                {
+                    status_cache = c;
+                    status_is_plc = true;
+                    status_is_rtc = false;
+                }
+                break;
+            }
+            case StackFeature::Rtc:
+            {
+                StackNodeStatusCache *c = findStackNodeStatusCache_(node_id, false);
+                if (c && c->pending_rtc)
+                {
+                    status_cache = c;
+                    status_is_plc = false;
+                    status_is_rtc = true;
+                }
+                break;
+            }
+            default:
+                break;
+            }
+        }
+        if (!sock_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !sec_prearm_cache && !meteo_cache &&
+            !thermo_cache && !septic_cache && !tanks_cache && !avr_cache && !leak_cache &&
+            !watering_cache && !i2c_cache && !ow_cache && !status_cache)
+        {
+            if (cmd_id == 0)
+                return;
             return;
+        }
         const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (doc["ok"] | false);
         JsonObjectConst data_obj = doc["data"].as<JsonObjectConst>();
         JsonArrayConst items = data_obj["items"].as<JsonArrayConst>();
@@ -1953,6 +2129,66 @@ private:
                 thermo_cache->last_error = "";
                 thermo_cache->last_error = doc["error"] | "error";
             }
+            else if (rx_action == "set")
+            {
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                        StackThermoItem *dst_ptr = nullptr;
+                        for (size_t k = 0; k < thermo_cache->item_count; ++k)
+                        {
+                            if (thermo_cache->items[k].id == id)
+                            {
+                                dst_ptr = &thermo_cache->items[k];
+                                break;
+                            }
+                        }
+                        if (!dst_ptr)
+                        {
+                            if (thermo_cache->item_count >= ThermoController::kDeviceCount)
+                                continue;
+                            dst_ptr = &thermo_cache->items[thermo_cache->item_count++];
+                            *dst_ptr = StackThermoItem{};
+                            dst_ptr->id = id;
+                        }
+                        StackThermoItem &dst = *dst_ptr;
+                        if (item["enabled"].is<bool>() || item["enabled"].is<int>() || item["enabled"].is<unsigned>())
+                            dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>() : (item["enabled"].as<int>() != 0);
+                        if (item["power_on"].is<bool>() || item["power_on"].is<int>() || item["power_on"].is<unsigned>())
+                            dst.power_on = item["power_on"].is<bool>() ? item["power_on"].as<bool>() : (item["power_on"].as<int>() != 0);
+                        if (item["heat_on"].is<bool>() || item["heat_on"].is<int>() || item["heat_on"].is<unsigned>())
+                            dst.heat_on = item["heat_on"].is<bool>() ? item["heat_on"].as<bool>() : (item["heat_on"].as<int>() != 0);
+                        if (item["cool_on"].is<bool>() || item["cool_on"].is<int>() || item["cool_on"].is<unsigned>())
+                            dst.cool_on = item["cool_on"].is<bool>() ? item["cool_on"].as<bool>() : (item["cool_on"].as<int>() != 0);
+                        if (item["sensor"].is<unsigned>() || item["sensor"].is<int>())
+                            dst.sensor = (uint8_t)item["sensor"].as<unsigned>();
+                        if (item["sensor_node"].is<unsigned>() || item["sensor_node"].is<int>())
+                            dst.sensor_node = (uint32_t)item["sensor_node"].as<unsigned>();
+                        if (item["target"].is<float>() || item["target"].is<double>() || item["target"].is<int>())
+                            dst.target = item["target"].as<float>();
+                        if (item["hyst"].is<float>() || item["hyst"].is<double>() || item["hyst"].is<int>())
+                            dst.hyst = item["hyst"].as<float>();
+                        if (item["heat"].is<unsigned>() || item["heat"].is<int>())
+                            dst.heat = (uint8_t)item["heat"].as<unsigned>();
+                        if (item["cool"].is<unsigned>() || item["cool"].is<int>())
+                            dst.cool = (uint8_t)item["cool"].as<unsigned>();
+                        if (item["button"].is<unsigned>() || item["button"].is<int>())
+                            dst.button = (uint8_t)item["button"].as<unsigned>();
+                        if (item["name"].is<const char *>())
+                            copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                        if (item["mode"].is<const char *>())
+                            copyStr_(dst.mode, sizeof(dst.mode), item["mode"].as<const char *>());
+                    }
+                }
+                thermo_cache->pending = false;
+                thermo_cache->has_data = true;
+                thermo_cache->last_ok = true;
+                thermo_cache->node_id = node_id;
+            }
             else
             {
                 const uint16_t part = data_obj["part"] | 1;
@@ -2017,10 +2253,11 @@ private:
             }
             else
             {
+                const bool merge_set = (rx_action == "set");
                 const uint16_t part = data_obj["part"] | 1;
                 const uint16_t parts = data_obj["parts"] | 1;
                 const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
-                if (part <= 1)
+                if (part <= 1 && !merge_set)
                 {
                     septic_cache->item_count = 0;
                     septic_cache->has_data = false;
@@ -2031,12 +2268,36 @@ private:
                 {
                     for (JsonObjectConst item : items)
                     {
-                        if (septic_cache->item_count >= SepticController::kSepticCount)
-                            break;
                         if (!item["id"].is<unsigned>())
                             continue;
-                        StackSepticItem &dst = septic_cache->items[septic_cache->item_count++];
-                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                        StackSepticItem *dst_ptr = nullptr;
+                        if (merge_set)
+                        {
+                            for (size_t i = 0; i < septic_cache->item_count; ++i)
+                            {
+                                if (septic_cache->items[i].id == id)
+                                {
+                                    dst_ptr = &septic_cache->items[i];
+                                    break;
+                                }
+                            }
+                            if (!dst_ptr && septic_cache->item_count < SepticController::kSepticCount)
+                            {
+                                dst_ptr = &septic_cache->items[septic_cache->item_count++];
+                                dst_ptr->id = id;
+                            }
+                        }
+                        else
+                        {
+                            if (septic_cache->item_count >= SepticController::kSepticCount)
+                                break;
+                            dst_ptr = &septic_cache->items[septic_cache->item_count++];
+                            dst_ptr->id = id;
+                        }
+                        if (!dst_ptr)
+                            continue;
+                        StackSepticItem &dst = *dst_ptr;
                         dst.enabled = item["enabled"] | false;
                         dst.monitor = item["monitor"] | false;
                         dst.warning_port = (uint8_t)(item["warning_port"] | SepticController::kInvalidPort);
@@ -2051,7 +2312,7 @@ private:
                 {
                     septic_cache->pending = false;
                     septic_cache->pending_since_ms = 0;
-                    septic_cache->has_data = true;
+                    septic_cache->has_data = septic_cache->item_count > 0 || septic_cache->has_data;
                     septic_cache->last_ok = true;
                     septic_cache->node_id = node_id;
                 }
@@ -2075,10 +2336,11 @@ private:
             }
             else
             {
+                const bool merge_set = (rx_action == "set");
                 const uint16_t part = data_obj["part"] | 1;
                 const uint16_t parts = data_obj["parts"] | 1;
                 const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
-                if (part <= 1)
+                if (part <= 1 && !merge_set)
                 {
                     tanks_cache->item_count = 0;
                     tanks_cache->has_data = false;
@@ -2089,12 +2351,36 @@ private:
                 {
                     for (JsonObjectConst item : items)
                     {
-                        if (tanks_cache->item_count >= TankController::kTankCount)
-                            break;
                         if (!item["id"].is<unsigned>())
                             continue;
-                        StackTankItem &dst = tanks_cache->items[tanks_cache->item_count++];
-                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                        StackTankItem *dst_ptr = nullptr;
+                        if (merge_set)
+                        {
+                            for (size_t i = 0; i < tanks_cache->item_count; ++i)
+                            {
+                                if (tanks_cache->items[i].id == id)
+                                {
+                                    dst_ptr = &tanks_cache->items[i];
+                                    break;
+                                }
+                            }
+                            if (!dst_ptr && tanks_cache->item_count < TankController::kTankCount)
+                            {
+                                dst_ptr = &tanks_cache->items[tanks_cache->item_count++];
+                                dst_ptr->id = id;
+                            }
+                        }
+                        else
+                        {
+                            if (tanks_cache->item_count >= TankController::kTankCount)
+                                break;
+                            dst_ptr = &tanks_cache->items[tanks_cache->item_count++];
+                            dst_ptr->id = id;
+                        }
+                        if (!dst_ptr)
+                            continue;
+                        StackTankItem &dst = *dst_ptr;
                         dst.enabled = item["enabled"] | false;
                         dst.power_on = item["power_on"] | false;
                         dst.low = (uint8_t)(item["low"] | TankController::kInvalidPort);
@@ -2117,7 +2403,7 @@ private:
                 {
                     tanks_cache->pending = false;
                     tanks_cache->pending_since_ms = 0;
-                    tanks_cache->has_data = true;
+                    tanks_cache->has_data = tanks_cache->item_count > 0 || tanks_cache->has_data;
                     tanks_cache->last_ok = true;
                     tanks_cache->node_id = node_id;
                 }
@@ -2358,8 +2644,8 @@ private:
                 status_cache->board_temp = data["board_temp"] | 0.0f;
                 status_cache->cpu_temp = data["cpu_temp"] | 0.0f;
                 status_cache->fan_on = data["fan_on"] | false;
-                status_cache->fan_on_c = data["fan_on_c"] | 0.0f;
-                status_cache->fan_hyst_c = data["fan_hyst_c"] | 0.0f;
+                status_cache->fan_on_c = data["fan_on_c"] | (data["on_c"] | 0.0f);
+                status_cache->fan_hyst_c = data["fan_hyst_c"] | (data["hyst_c"] | 0.0f);
                 status_cache->has_plc = true;
                 status_cache->last_plc_ok = true;
                 status_cache->node_id = node_id;
@@ -2379,10 +2665,10 @@ private:
             else
             {
                 JsonObjectConst data = doc["data"];
-                status_cache->rtc_date = data["rtc_date"] | "";
-                status_cache->rtc_time = data["rtc_time"] | "";
-                status_cache->rtc_temp = data["rtc_temp"] | 0.0f;
-                status_cache->rtc_weekday = (uint8_t)(data["rtc_weekday"] | 0u);
+                status_cache->rtc_date = data["rtc_date"] | (data["date"] | "");
+                status_cache->rtc_time = data["rtc_time"] | (data["time"] | "");
+                status_cache->rtc_temp = data["rtc_temp"] | (data["temp_c"] | 0.0f);
+                status_cache->rtc_weekday = (uint8_t)(data["rtc_weekday"] | (data["weekday"] | 0u));
                 status_cache->has_rtc = true;
                 status_cache->last_rtc_ok = true;
                 status_cache->node_id = node_id;
@@ -2402,7 +2688,17 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if (cache->updated_ms && (uint32_t)(now - cache->updated_ms) > 6000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2410,7 +2706,16 @@ private:
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Sockets;
         doc["action"] = "get";
-        char payload[96] = {};
+        doc["params"]["chunk"] = 3;
+        char payload[160] = {};
+        const size_t need = measureJson(doc);
+        if (need >= sizeof(payload))
+        {
+            if (_log)
+                _log->warn(F("STACK"), F("Sync req too large: item: sockets bytes: %u cap: %u"),
+                           (unsigned)need, (unsigned)sizeof(payload));
+            return false;
+        }
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
             return false;
@@ -2419,6 +2724,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -2433,7 +2739,17 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2441,6 +2757,7 @@ private:
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Sockets;
         doc["action"] = "get_lights";
+        doc["params"]["chunk"] = 3;
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -2450,6 +2767,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -2465,7 +2783,7 @@ private:
         const uint32_t now = millis();
         if (cache->pending)
         {
-            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 6000u)
             {
                 cache->pending = false;
                 cache->pending_cmd_id = 0;
@@ -2483,6 +2801,7 @@ private:
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Security;
         doc["action"] = "get";
+        doc["params"]["chunk"] = 3;
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -2508,7 +2827,7 @@ private:
         const uint32_t now = millis();
         if (cache->pending)
         {
-            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 6000u)
             {
                 cache->pending = false;
                 cache->pending_cmd_id = 0;
@@ -2551,7 +2870,7 @@ private:
         const uint32_t now = millis();
         if (cache->pending)
         {
-            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 6000u)
             {
                 cache->pending = false;
                 cache->pending_cmd_id = 0;
@@ -2569,6 +2888,7 @@ private:
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Meteo;
         doc["action"] = "get";
+        doc["params"]["chunk"] = 3;
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -2592,7 +2912,17 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2600,6 +2930,7 @@ private:
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Thermo;
         doc["action"] = "get";
+        doc["params"]["chunk"] = 3;
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -2609,6 +2940,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -2624,7 +2956,7 @@ private:
         const uint32_t now = millis();
         if (cache->pending)
         {
-            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 6000u)
             {
                 cache->pending = false;
                 cache->pending_cmd_id = 0;
@@ -2642,6 +2974,7 @@ private:
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Septic;
         doc["action"] = "get";
+        doc["params"]["chunk"] = 3;
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -2667,7 +3000,7 @@ private:
         const uint32_t now = millis();
         if (cache->pending)
         {
-            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 6000u)
             {
                 cache->pending = false;
                 cache->pending_cmd_id = 0;
@@ -2685,6 +3018,7 @@ private:
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Tanks;
         doc["action"] = "get";
+        doc["params"]["chunk"] = 3;
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -2709,7 +3043,17 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2726,6 +3070,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -2740,7 +3085,17 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2757,6 +3112,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -2771,7 +3127,17 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         cache->next_offset = 0;
@@ -2793,6 +3159,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -2803,7 +3170,18 @@ private:
         if (stackRole_() != ConfigsManagerIface::StackRole::Master)
             return false;
         if (cache.pending)
-            return false;
+        {
+            const uint32_t now = millis();
+            if ((uint32_t)(now - cache.updated_ms) > 6000u)
+            {
+                cache.pending = false;
+                cache.pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         const uint16_t cmd_id = nextStackCmdId_();
         StaticJsonDocument<192> doc;
         doc["cmd_id"] = cmd_id;
@@ -2821,6 +3199,7 @@ private:
             return false;
         cache.pending = true;
         cache.pending_cmd_id = cmd_id;
+        cache.updated_ms = millis();
         return true;
     }
 
@@ -2835,7 +3214,17 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2852,6 +3241,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -2866,7 +3256,17 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2883,6 +3283,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -2897,7 +3298,17 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u && !run)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2916,6 +3327,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
 
@@ -2930,7 +3342,17 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending)
-            return false;
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u && !run)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -2949,6 +3371,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
         return true;
     }
     bool requestStackPlcStatus_(uint32_t node_id)
@@ -2962,14 +3385,24 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending_plc)
-            return false;
+        {
+            if (cache->plc_updated_ms && (uint32_t)(now - cache->plc_updated_ms) > 4000u)
+            {
+                cache->pending_plc = false;
+                cache->pending_plc_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_plc && (uint32_t)(now - cache->plc_updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
         StaticJsonDocument<192> doc;
         doc["cmd_id"] = cmd_id;
-        doc["feature"] = (uint8_t)StackFeature::Rtc;
-        doc["action"] = "get_plc";
+        doc["feature"] = (uint8_t)StackFeature::PlcStatus;
+        doc["action"] = "get";
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -2979,6 +3412,7 @@ private:
             return false;
         cache->pending_plc = true;
         cache->pending_plc_cmd_id = cmd_id;
+        cache->plc_updated_ms = now;
         return true;
     }
 
@@ -2993,14 +3427,24 @@ private:
             return false;
         const uint32_t now = millis();
         if (cache->pending_rtc)
-            return false;
+        {
+            if (cache->rtc_updated_ms && (uint32_t)(now - cache->rtc_updated_ms) > 4000u)
+            {
+                cache->pending_rtc = false;
+                cache->pending_rtc_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
         if (cache->has_rtc && (uint32_t)(now - cache->rtc_updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
         StaticJsonDocument<192> doc;
         doc["cmd_id"] = cmd_id;
-        doc["feature"] = (uint8_t)StackFeature::PlcStatus;
-        doc["action"] = "get_rtc";
+        doc["feature"] = (uint8_t)StackFeature::Rtc;
+        doc["action"] = "get_time";
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -3010,6 +3454,7 @@ private:
             return false;
         cache->pending_rtc = true;
         cache->pending_rtc_cmd_id = cmd_id;
+        cache->rtc_updated_ms = now;
         return true;
     }
 
