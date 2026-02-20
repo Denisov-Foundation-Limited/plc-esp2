@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -46,7 +46,10 @@ public:
         const uint8_t page_size = 8u;
         const bool stack_view = web.isStackSocketsView_(node_id);
         if (stack_view)
+        {
             web.requestStackSockets_(node_id);
+            web.requestStackPorts_(node_id);
+        }
         const String page_str = web.paramValueAny_(request, "page");
         uint8_t page_idx = 0;
         if (page_str.length())
@@ -69,24 +72,38 @@ public:
         }
         else
         {
-            page_idx = 0;
+            const size_t visible = web.stackSocketsVisibleCount_(node_id);
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
         }
         const size_t extra = 4096u + (size_t)page_size * 900u;
         page.reserve(page.length() + extra);
-        page.replace("%SOCKETS%", stack_view ? web.listStackSocketsHtml_(node_id) : web.listSocketsHtml_(start, end));
+        page.replace("%SOCKETS%", stack_view ? web.listStackSocketsHtml_(node_id, (size_t)page_idx * page_size, page_size)
+                                             : web.listSocketsHtml_(start, end));
         page.replace("%SOCKETS_PAGE%", String((unsigned)(page_idx + 1)));
         page.replace("%SOCKETS_PAGES%", String((unsigned)max_pages));
         if (stack_view)
         {
-            page.replace("%DINPUT_JSON%", "[]");
-            page.replace("%RELAY_JSON%", "[]");
-            page.replace("%DINPUT_USED_JSON%", "[]");
-            page.replace("%RELAY_USED_JSON%", "[]");
+            page.replace("%DINPUT_JSON%", web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput));
+            page.replace("%RELAY_JSON%", web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay));
+            page.replace("%DINPUT_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput));
+            page.replace("%RELAY_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay));
             page.replace("%SOCKETS_STATUS%", web.stackSocketsStatusText_(node_id));
-            page.replace("%SOCKETS_PAGINATION_STYLE%", "style=\"display:none\"");
-            page.replace("%SOCKETS_SAVE_BTN%", "");
+            page.replace("%SOCKETS_PAGINATION_STYLE%", (max_pages > 1) ? "" : "style=\"display:none\"");
+            page.replace("%SOCKETS_SAVE_BTN%", web.webSessionIsAdmin_() ? String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>" : "");
             page.replace("%SOCKETS_UNIT%", "stack");
             page.replace("%SOCKETS_NODE_ID%", String((unsigned long)node_id));
+            String hidden;
+            hidden.reserve(96);
+            hidden += "<input type=\"hidden\" name=\"unit\" value=\"stack\">";
+            hidden += "<input type=\"hidden\" name=\"node\" value=\"";
+            hidden += String((unsigned long)node_id);
+            hidden += "\">";
+            hidden += "<input type=\"hidden\" name=\"page\" value=\"";
+            hidden += String((unsigned)(page_idx + 1));
+            hidden += "\">";
+            page.replace("%SOCKETS_FORM_HIDDEN%", hidden);
         }
         else
         {
@@ -96,9 +113,10 @@ public:
             page.replace("%RELAY_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
             page.replace("%SOCKETS_STATUS%", web._sockets_status);
             page.replace("%SOCKETS_PAGINATION_STYLE%", "");
-            page.replace("%SOCKETS_SAVE_BTN%", web.webSessionIsAdmin_() ? "<button class=\"btn\" type=\"submit\">Сохранить</button>" : "");
+            page.replace("%SOCKETS_SAVE_BTN%", web.webSessionIsAdmin_() ? String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>" : "");
             page.replace("%SOCKETS_UNIT%", "local");
             page.replace("%SOCKETS_NODE_ID%", "0");
+            page.replace("%SOCKETS_FORM_HIDDEN%", "");
         }
         page.replace("%SOCKETS_DEVICE_SELECT%", web.socketsDeviceSelectHtml_(node_id, stack_view));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
@@ -117,8 +135,171 @@ public:
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackSocketsView_(node_id))
         {
-            web._sockets_status = "Доступно только на локальном устройстве";
-            web.sendRedirect_(request, redirect ? redirect : "/sockets", set_cookie);
+            String back = String("/sockets?unit=stack&node=") + String((unsigned long)node_id);
+            const String page_str = web.paramValueAny_(request, "page");
+            if (page_str.length())
+            {
+                const int pv = page_str.toInt();
+                if (pv > 0)
+                {
+                    back += "&page=";
+                    back += String((unsigned)pv);
+                }
+            }
+            if (!web._stack_master || !web._stack_cache)
+            {
+                web._sockets_status = "Stack unavailable";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            const auto *cache = web._stack_cache->socketsCache(node_id);
+            if (!cache || !cache->has_data || !cache->items)
+            {
+                web.requestStackSockets_(node_id);
+                web._sockets_status = "No data";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            auto *cache_mut = web._stack_cache->socketsCache(node_id);
+            bool changed_stack = false;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &cfg = cache->items[i];
+                const String idx = String((unsigned)cfg.id);
+                const String prefix = String("s") + idx + "_";
+                const String en_key = prefix + "en";
+                const String name_key = prefix + "name";
+                const String btn_key = prefix + "btn";
+                const String relay_key = prefix + "relay";
+                const String action_key = prefix + "action";
+                const bool has_any = request->hasParam(en_key, true) ||
+                                     request->hasParam(name_key, true) ||
+                                     request->hasParam(btn_key, true) ||
+                                     request->hasParam(relay_key, true) ||
+                                     request->hasParam(action_key, true);
+                if (!has_any)
+                    continue;
+                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id))
+                {
+                    web._sockets_status = String("ACL deny item: ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+                const bool enabled = request->hasParam(en_key, true);
+                String name = web.paramValue_(request, name_key);
+                String btn = web.paramValue_(request, btn_key);
+                String relay = web.paramValue_(request, relay_key);
+                String action = web.paramValue_(request, action_key);
+                name.trim();
+                uint8_t btn_port = SocketController::kInvalidPort;
+                uint8_t relay_port = SocketController::kInvalidPort;
+                if (!web.parseSocketPort_(btn, btn_port) || !web.parseSocketPort_(relay, relay_port))
+                {
+                    web._sockets_status = String("Invalid port for socket ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+                bool send = false;
+                bool desired_state = cfg.state;
+                bool set_state = false;
+                StaticJsonDocument<256> doc;
+                doc["cmd_id"] = web.nextStackCmdId_();
+                doc["feature"] = (uint8_t)StackFeature::Sockets;
+                doc["action"] = "set";
+                JsonArray items = doc["params"]["items"].to<JsonArray>();
+                JsonObject o = items.add<JsonObject>();
+                o["id"] = (unsigned)cfg.id;
+                if (cfg.enabled != enabled)
+                {
+                    o["enabled"] = enabled;
+                    send = true;
+                }
+                if (strcmp(cfg.name, name.c_str()) != 0)
+                {
+                    o["name"] = name;
+                    send = true;
+                }
+                if (cfg.button_port != btn_port)
+                {
+                    o["button"] = btn_port;
+                    send = true;
+                }
+                if (cfg.relay_port != relay_port)
+                {
+                    o["relay"] = relay_port;
+                    send = true;
+                }
+                if (action.length())
+                {
+                    String act = action;
+                    act.toLowerCase();
+                    if (act == "on")
+                    {
+                        o["state"] = true;
+                        desired_state = true;
+                        set_state = true;
+                        send = true;
+                    }
+                    else if (act == "off")
+                    {
+                        o["state"] = false;
+                        desired_state = false;
+                        set_state = true;
+                        send = true;
+                    }
+                    else if (act == "toggle")
+                    {
+                        o["toggle"] = true;
+                        desired_state = !cfg.state;
+                        set_state = true;
+                        send = true;
+                    }
+                }
+                if (!send)
+                    continue;
+                char payload[256] = {};
+                const size_t len = serializeJson(doc, payload, sizeof(payload));
+                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                           reinterpret_cast<const uint8_t *>(payload), len))
+                {
+                    web._sockets_status = String("Send failed for socket ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+                changed_stack = true;
+                if (cache_mut && cache_mut->items)
+                {
+                    for (size_t k = 0; k < cache_mut->item_count; ++k)
+                    {
+                        auto &dst = cache_mut->items[k];
+                        if (dst.id != cfg.id)
+                            continue;
+                        dst.enabled = enabled;
+                        if (set_state)
+                            dst.state = desired_state;
+                        dst.button_port = btn_port;
+                        dst.relay_port = relay_port;
+                        const char *src = name.c_str();
+                        size_t p = 0;
+                        for (; p + 1 < sizeof(dst.name) && src[p]; ++p)
+                            dst.name[p] = src[p];
+                        dst.name[p] = '\0';
+                        break;
+                    }
+                    cache_mut->updated_ms = millis();
+                }
+            }
+            if (changed_stack)
+            {
+                web.requestStackSockets_(node_id);
+                web.requestStackPorts_(node_id);
+                web._sockets_status = "Updated";
+            }
+            else
+            {
+                web._sockets_status = "Saved";
+            }
+            web.sendRedirect_(request, back, set_cookie);
             return;
         }
         if (!web._controllers)
@@ -315,7 +496,7 @@ public:
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackSocketsView_(node_id))
         {
-            web.sendText_(request, 400, "text/plain", "Read-only", set_cookie);
+            web.handleStackSocketsEnable_(request, node_id, set_cookie);
             return;
         }
         if (!web._controllers)
@@ -374,3 +555,4 @@ public:
         web.sendText_(request, 200, "application/json", dbg, set_cookie);
     }
 };
+

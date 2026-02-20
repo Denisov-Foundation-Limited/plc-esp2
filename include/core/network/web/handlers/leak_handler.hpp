@@ -33,20 +33,110 @@ public:
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Leak, node_id))
             return;
         const bool stack_view = isStackLeakView_(web, node_id);
+        const uint8_t page_size = 8u;
+        const String page_str = web.paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+        uint8_t max_pages = 1;
         if (stack_view && web._stack_cache)
+        {
             web.stackCache().requestLeak(node_id);
+            const size_t visible = stackLeakVisibleCount_(web, node_id);
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+        else if (!stack_view)
+        {
+            const size_t visible = localLeakVisibleCount_(web, node_id);
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
         String page = FPSTR(kWebInterfaceLeakHtml);
         page.reserve(page.length() + 8192);
+        String pagination = "";
+        if (stack_view && max_pages > 1)
+        {
+            pagination.reserve(256);
+            pagination += "<div class=\"pagination\">";
+            if (page_idx > 0)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/leak?unit=stack&node=";
+                pagination += String((unsigned long)node_id);
+                pagination += "&page=";
+                pagination += String((unsigned)page_idx);
+                pagination += "\">Назад</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Назад</span>";
+            pagination += "<span class=\"page-info\">Страница ";
+            pagination += String((unsigned)(page_idx + 1));
+            pagination += " / ";
+            pagination += String((unsigned)max_pages);
+            pagination += "</span>";
+            if ((page_idx + 1u) < max_pages)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/leak?unit=stack&node=";
+                pagination += String((unsigned long)node_id);
+                pagination += "&page=";
+                pagination += String((unsigned)(page_idx + 2u));
+                pagination += "\">Вперёд</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+            pagination += "</div>";
+        }
+        else if (!stack_view && max_pages > 1)
+        {
+            pagination.reserve(256);
+            pagination += "<div class=\"pagination\">";
+            if (page_idx > 0)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/leak?page=";
+                pagination += String((unsigned)page_idx);
+                pagination += "\">Назад</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Назад</span>";
+            pagination += "<span class=\"page-info\">Страница ";
+            pagination += String((unsigned)(page_idx + 1));
+            pagination += " / ";
+            pagination += String((unsigned)max_pages);
+            pagination += "</span>";
+            if ((page_idx + 1u) < max_pages)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/leak?page=";
+                pagination += String((unsigned)(page_idx + 2u));
+                pagination += "\">Вперёд</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+            pagination += "</div>";
+        }
         page.replace("%NAV%", web.navHtml_());
         page.replace("%LEAK_DEVICE_SELECT%", leakDeviceSelectHtml_(web, node_id, stack_view));
         page.replace("%LEAK_STATUS%", stack_view ? stackLeakStatusText_(web, node_id) : web._leak_status);
+        page.replace("%LEAK_PAGINATION%", pagination);
         page.replace("%LEAK_DINPUT_JSON%", web.socketPortOptionsJson_(PortIO::PinType::DInput));
         page.replace("%LEAK_RELAY_JSON%", web.socketPortOptionsJson_(PortIO::PinType::Relay));
         page.replace("%LEAK_DINPUT_USED_JSON%", stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::DInput));
         page.replace("%LEAK_RELAY_USED_JSON%", stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Relay));
-        page.replace("%LEAK_ROWS%", buildRows_(web, node_id, stack_view));
-        page.replace("%LEAK_FORM_ACTION%", stack_view ? leakRedirectPath_(node_id, true) : "/leak");
-        page.replace("%LEAK_ACK_FORM_ACTION%", stack_view ? leakRedirectPath_(node_id, true) : "/leak");
+        page.replace("%LEAK_ROWS%", buildRows_(web, node_id, stack_view, (size_t)page_idx * page_size, page_size));
+        String leak_form_action = stack_view ? leakRedirectPath_(node_id, true) : String("/leak");
+        if (stack_view)
+        {
+            leak_form_action += "&page=";
+            leak_form_action += String((unsigned)(page_idx + 1));
+        }
+        page.replace("%LEAK_FORM_ACTION%", leak_form_action);
+        page.replace("%LEAK_ACK_FORM_ACTION%", leak_form_action);
+        page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         web.sendHtml_(request, page, set_cookie);
     }
 
@@ -336,7 +426,82 @@ private:
         return String((unsigned)port);
     }
 
-    static String buildRows_(WebInterface &web, uint32_t node_id, bool stack_view)
+    static size_t stackLeakVisibleCount_(WebInterface &web, uint32_t node_id)
+    {
+        if (!web._controllers)
+            return 0;
+        LeakController &leak = web._controllers->leak();
+        (void)leak;
+        const bool can_view_disabled = web.webSessionIsAdmin_();
+        const StackCache::StackLeakCache *stack_cache = web._stack_cache ? web.stackCache().leakCache(node_id) : nullptr;
+        if (!stack_cache || !stack_cache->has_data || !stack_cache->items)
+            return 0;
+        size_t render_count = LeakController::kZoneCount ? 1u : 0u;
+        if (stack_cache->item_count)
+        {
+            size_t last_enabled_id = 0;
+            for (size_t i = 0; i < stack_cache->item_count; ++i)
+            {
+                const auto &it = stack_cache->items[i];
+                if (it.enabled && it.id > last_enabled_id)
+                    last_enabled_id = it.id;
+            }
+            if (last_enabled_id > 0)
+            {
+                const size_t count = last_enabled_id + 1u;
+                render_count = count > LeakController::kZoneCount ? LeakController::kZoneCount : count;
+            }
+        }
+        size_t visible = 0;
+        for (size_t i = 0; i < render_count; ++i)
+        {
+            const size_t id = i + 1;
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Leak, (uint16_t)id, node_id))
+                continue;
+            const StackCache::StackLeakItem *it = nullptr;
+            for (size_t k = 0; k < stack_cache->item_count; ++k)
+            {
+                if (stack_cache->items[k].id != id)
+                    continue;
+                it = &stack_cache->items[k];
+                break;
+            }
+            if (!it || (!can_view_disabled && !it->enabled))
+                continue;
+            ++visible;
+        }
+        return visible;
+    }
+    static size_t localLeakVisibleCount_(WebInterface &web, uint32_t node_id)
+    {
+        if (!web._controllers)
+            return 0;
+        LeakController &leak = web._controllers->leak();
+        size_t render_count = LeakController::kZoneCount ? 1u : 0u;
+        size_t last_enabled_idx = SIZE_MAX;
+        for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+        {
+            const LeakController::ZoneConfig *cfg = leak.configByIndex(i);
+            if (cfg && cfg->enabled)
+                last_enabled_idx = i;
+        }
+        if (last_enabled_idx != SIZE_MAX)
+        {
+            const size_t count = last_enabled_idx + 2u;
+            render_count = count > LeakController::kZoneCount ? LeakController::kZoneCount : count;
+        }
+        size_t visible = 0;
+        for (size_t i = 0; i < render_count; ++i)
+        {
+            const size_t id = i + 1;
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Leak, (uint16_t)id, node_id))
+                continue;
+            ++visible;
+        }
+        return visible;
+    }
+
+    static String buildRows_(WebInterface &web, uint32_t node_id, bool stack_view, size_t offset, size_t limit)
     {
         if (!web._controllers)
             return "<div class=\"tile tile-empty\">Контроллеры недоступны</div>";
@@ -344,6 +509,7 @@ private:
         String rows;
         rows.reserve(LeakController::kZoneCount * 1200);
         const StackCache::StackLeakCache *stack_cache = nullptr;
+        const bool can_view_disabled = web.webSessionIsAdmin_();
         if (stack_view && web._stack_cache)
             stack_cache = web.stackCache().leakCache(node_id);
         size_t render_count = LeakController::kZoneCount ? 1u : 0u;
@@ -380,8 +546,13 @@ private:
                 render_count = count > LeakController::kZoneCount ? LeakController::kZoneCount : count;
             }
         }
+        const size_t page_limit = (limit == 0) ? SIZE_MAX : limit;
+        size_t rendered = 0;
+        size_t visible_idx = 0;
         for (size_t i = 0; i < render_count; ++i)
         {
+            if (rendered >= page_limit)
+                break;
             const size_t id = i + 1;
             if (!web.webAclCanViewItem_(UsersRegistry::AclController::Leak, (uint16_t)id, node_id))
                 continue;
@@ -409,6 +580,8 @@ private:
                 if (!it)
                     continue;
                 cfg_enabled = it->enabled;
+                if (!can_view_disabled && !cfg_enabled)
+                    continue;
                 cfg_power = it->power_on;
                 cfg_active_low = it->sensor_active_low;
                 if (it->name[0])
@@ -435,6 +608,12 @@ private:
                 st_wet = st->wet;
                 st_latched = st->alarm_latched;
             }
+            if (visible_idx < offset)
+            {
+                ++visible_idx;
+                continue;
+            }
+            ++visible_idx;
             const bool alert = st_wet || st_latched;
             rows += "<div class=\"tile";
             rows += cfg_enabled ? "" : " disabled";
@@ -494,6 +673,7 @@ private:
             rows += "> Активный ноль</label>";
 
             rows += "</div></div></div>";
+            ++rendered;
         }
         if (rows.length() == 0 && stack_view)
             return "<div class=\"tile tile-empty\">Ожидаем данные со слейва</div>";

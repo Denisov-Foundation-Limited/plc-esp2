@@ -47,6 +47,7 @@ public:
         page.replace("%CLOUD_API_KEY%", web.cloudApiKey_());
         page.replace("%CLOUD_FW_VERSION%", web.cloudFwVersion_());
         page.replace("%CLOUD_DEVICE_ID%", String(web.cloudDeviceId_()));
+        page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         page.replace("%CLOUD_STATUS%", web._cloud_status);
         web.sendHtml_(request, page, set_cookie);
     }

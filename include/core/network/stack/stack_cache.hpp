@@ -20,13 +20,15 @@
 class StackCache
 {
 public:
-    static constexpr uint16_t kWateringPageSize = 10;
+    static constexpr uint16_t kWateringPageSize = 1;
     // Types
     struct StackSocketItem
     {
         uint8_t id = 0;
         bool enabled = false;
         bool state = false;
+        uint8_t button_port = SocketController::kInvalidPort;
+        uint8_t relay_port = SocketController::kInvalidPort;
         static constexpr size_t kNameLen = 48;
         char name[kNameLen] = {};
     };
@@ -98,7 +100,9 @@ public:
     {
         uint8_t id = 0;
         bool ctrl = false;
+        bool used = false;
         bool is_extender = false;
+        uint8_t pin_type = 0xFF;
         int16_t dev = -1;
         int16_t pin = -1;
         static constexpr size_t kBackendLen = 32;
@@ -112,9 +116,12 @@ public:
     };
     struct StackPortsCache
     {
+        static constexpr size_t kMaxPartsTracked = 128;
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
         uint16_t pending_cmd_id = 0;
+        uint16_t parts_expected = 0;
+        uint16_t parts_received = 0;
         bool pending = false;
         bool has_data = false;
         bool last_ok = false;
@@ -122,16 +129,22 @@ public:
         StackPortItem *items = nullptr;
         size_t capacity = PortIO::PORT_COUNT;
         size_t item_count = 0;
+        uint8_t part_seen[kMaxPartsTracked] = {};
+        uint8_t present[PortIO::PORT_COUNT] = {};
         void reset()
         {
             node_id = 0;
             updated_ms = 0;
             pending_cmd_id = 0;
+            parts_expected = 0;
+            parts_received = 0;
             pending = false;
             has_data = false;
             last_ok = false;
             last_error = String();
             item_count = 0;
+            memset(part_seen, 0, sizeof(part_seen));
+            memset(present, 0, sizeof(present));
             if (!items)
                 return;
             for (size_t i = 0; i < capacity; ++i)
@@ -1371,6 +1384,10 @@ private:
                     o["id"] = (unsigned)it.id;
                     o["enabled"] = it.enabled;
                     o["state"] = it.state;
+                    if (it.button_port != SocketController::kInvalidPort)
+                        o["button"] = it.button_port;
+                    if (it.relay_port != SocketController::kInvalidPort)
+                        o["relay"] = it.relay_port;
                     if (it.name[0])
                         o["name"] = it.name;
                 }
@@ -1804,6 +1821,10 @@ private:
                         dst.id = (uint8_t)item["id"].as<unsigned>();
                         dst.enabled = item["enabled"] | false;
                         dst.state = item["state"] | false;
+                        dst.button_port = item["button"].is<unsigned>() ? (uint8_t)item["button"].as<unsigned>()
+                                                                         : SocketController::kInvalidPort;
+                        dst.relay_port = item["relay"].is<unsigned>() ? (uint8_t)item["relay"].as<unsigned>()
+                                                                       : SocketController::kInvalidPort;
                         copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
                     }
                 }
@@ -1878,6 +1899,10 @@ private:
             if (!ok)
             {
                 ports_cache->pending = false;
+                ports_cache->parts_expected = 0;
+                ports_cache->parts_received = 0;
+                memset(ports_cache->part_seen, 0, sizeof(ports_cache->part_seen));
+                memset(ports_cache->present, 0, sizeof(ports_cache->present));
                 ports_cache->last_ok = false;
                 ports_cache->last_error = "";
                 ports_cache->last_error = doc["error"] | "error";
@@ -1892,36 +1917,70 @@ private:
                     port_items = items;
                 if (!port_items.isNull())
                 {
-                    if (part <= 1)
+                    // Start (or restart) multipart aggregation on first received frame for this cmd.
+                    if (ports_cache->parts_received == 0)
                     {
                         ports_cache->item_count = 0;
                         ports_cache->has_data = false;
                         ports_cache->last_ok = false;
                         ports_cache->last_error = "";
+                        memset(ports_cache->part_seen, 0, sizeof(ports_cache->part_seen));
+                        memset(ports_cache->present, 0, sizeof(ports_cache->present));
+                    }
+                    ports_cache->parts_expected = parts;
+                    if (part >= 1 && part <= StackPortsCache::kMaxPartsTracked)
+                    {
+                        const size_t idx = (size_t)(part - 1);
+                        if (ports_cache->part_seen[idx] == 0)
+                        {
+                            ports_cache->part_seen[idx] = 1;
+                            ++ports_cache->parts_received;
+                        }
                     }
                     for (JsonObjectConst item : port_items)
                     {
-                        if (ports_cache->item_count >= PortIO::PORT_COUNT)
-                            break;
                         if (!item["id"].is<unsigned>())
                             continue;
-                        StackPortItem &dst = ports_cache->items[ports_cache->item_count++];
-                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        const uint16_t id16 = (uint16_t)item["id"].as<unsigned>();
+                        if (id16 >= PortIO::PORT_COUNT)
+                            continue;
+                        const size_t id = (size_t)id16;
+                        StackPortItem &dst = ports_cache->items[id];
+                        dst.id = (uint8_t)id16;
                         dst.ctrl = item["ctrl"] | false;
+                        dst.used = item["used"] | false;
                         dst.is_extender = item["ext"] | false;
+                        dst.pin_type = (uint8_t)(item["ptype"] | 0xFFu);
                         dst.dev = item["dev"] | -1;
                         dst.pin = item["pin"] | -1;
                         copyStr_(dst.backend, sizeof(dst.backend), item["backend"].as<const char *>());
                         copyStr_(dst.loc, sizeof(dst.loc), item["loc"].as<const char *>());
                         copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
                         copyStr_(dst.hw, sizeof(dst.hw), item["hw"].as<const char *>());
+                        ports_cache->present[id] = 1;
                     }
-                    if (done)
+                    const bool all_parts_received = (ports_cache->parts_expected > 0 &&
+                                                     ports_cache->parts_received >= ports_cache->parts_expected);
+                    if (done && all_parts_received)
                     {
+                        size_t w = 0;
+                        for (size_t i = 0; i < PortIO::PORT_COUNT; ++i)
+                        {
+                            if (!ports_cache->present[i])
+                                continue;
+                            if (w != i)
+                                ports_cache->items[w] = ports_cache->items[i];
+                            ++w;
+                        }
+                        ports_cache->item_count = w;
                         ports_cache->pending = false;
                         ports_cache->has_data = true;
                         ports_cache->last_ok = true;
                         ports_cache->node_id = node_id;
+                        ports_cache->parts_expected = 0;
+                        ports_cache->parts_received = 0;
+                        memset(ports_cache->part_seen, 0, sizeof(ports_cache->part_seen));
+                        memset(ports_cache->present, 0, sizeof(ports_cache->present));
                     }
                     else
                     {
@@ -3219,6 +3278,10 @@ private:
             {
                 cache->pending = false;
                 cache->pending_cmd_id = 0;
+                cache->parts_expected = 0;
+                cache->parts_received = 0;
+                memset(cache->part_seen, 0, sizeof(cache->part_seen));
+                memset(cache->present, 0, sizeof(cache->present));
             }
             else
             {
@@ -3232,6 +3295,7 @@ private:
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Ports;
         doc["action"] = "get_state";
+        doc["params"]["chunk"] = 3;
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
@@ -3241,6 +3305,10 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->parts_expected = 0;
+        cache->parts_received = 0;
+        memset(cache->part_seen, 0, sizeof(cache->part_seen));
+        memset(cache->present, 0, sizeof(cache->present));
         cache->updated_ms = now;
         return true;
     }
@@ -4172,4 +4240,3 @@ private:
     StackNodeStatusCache _stack_status_cache[StackMaster::MAX_SESSIONS] = {};
     uint16_t _stack_cmd_id = 0;
 };
-

@@ -66,6 +66,29 @@ static const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
     .field.name { min-width: 160px; }
     .field.name { margin-bottom: 8px; }
     .actions { display: flex; gap: 10px; margin-top: 16px; }
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 8px 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+      flex-wrap: wrap;
+    }
+    .page-info { white-space: nowrap; }
+    .page-btn {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid #1f2937;
+      background: #0b1220;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .page-btn.disabled {
+      opacity: .5;
+      pointer-events: none;
+    }
     button {
       border: none;
       border-radius: 10px;
@@ -232,7 +255,8 @@ static const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
       <h1>Полив</h1>
       <div class="status">%WATERING_STATUS%</div>
       %WATERING_DEVICE_SELECT%
-      <form method="POST" action="/watering" id="watering-form">
+      %WATERING_PAGINATION%
+      <form method="POST" action="%WATERING_FORM_ACTION%" id="watering-form">
         <div class="grid">
           %WATERING_ROWS%
         </div>
@@ -334,7 +358,7 @@ static const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
     const reloadKey = 'watering_reload';
     if (sessionStorage.getItem(reloadKey)) {
       sessionStorage.removeItem(reloadKey);
-      location.replace(location.pathname);
+      location.replace(location.pathname + location.search);
     }
     if (wateringForm) {
       wateringForm.addEventListener('submit', () => {

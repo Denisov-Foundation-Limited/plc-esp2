@@ -109,7 +109,7 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
           <input type="checkbox" name="buzzer_enabled" %BUZZER_CHECKED%>
           Buzzer
         </label>
-        <button type="submit">Сохранить</button>
+        <button type="submit">%SAVE_TEXT%</button>
       </form>
       <div class="section">
         <p class="status">RTC сейчас: <strong>%RTC_DATE%</strong> <strong>%RTC_TIME%</strong></p>
@@ -124,7 +124,7 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
               <input id="rtc-time" type="time" step="1" name="rtc_time" value="%RTC_TIME_VAL%">
             </div>
           </div>
-          <button type="submit">Сохранить RTC</button>
+          <button type="submit">%SAVE_RTC_TEXT%</button>
         </form>
       </div>
 
@@ -157,3 +157,5 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+

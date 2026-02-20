@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -17,7 +17,7 @@ static const char kWebInterfaceUsersHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Пользователи</title>
+  <title>РџРѕР»СЊР·РѕРІР°С‚РµР»Рё</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -145,7 +145,7 @@ static const char kWebInterfaceUsersHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Пользователи</h1>
+      <h1>РџРѕР»СЊР·РѕРІР°С‚РµР»Рё</h1>
       <p class="status">%USERS_STATUS%</p>
       %USERS_READONLY_NOTE%
       <form method="POST" action="/users">
@@ -154,10 +154,11 @@ static const char kWebInterfaceUsersHtml[] PROGMEM = R"HTML(
         </div>
         %USERS_IBUTTON_DATALIST%
         %USERS_RFID_DATALIST%
-        <button class="btn" type="submit" %USERS_FORM_DISABLED%>Сохранить</button>
+        <button class="btn" type="submit" %USERS_FORM_DISABLED%>%SAVE_TEXT%</button>
       </form>
     </div>
   </div>
 </body>
 </html>
 )HTML";
+

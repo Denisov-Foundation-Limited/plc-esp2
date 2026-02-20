@@ -35,19 +35,103 @@ public:
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Septic, node_id))
             return;
         const bool stack_view = web.isStackSepticView_(node_id);
+        const uint8_t page_size = 8u;
+        const String page_str = web.paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+        uint8_t max_pages = 1;
         if (stack_view)
+        {
             web.requestStackSeptic_(node_id);
+            web.requestStackPorts_(node_id);
+            const size_t visible = web.stackSepticVisibleCount_(node_id);
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+        else
+        {
+            const size_t visible = web.septicLocalRenderCount_();
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
         String page = FPSTR(kWebInterfaceSepticHtml);
         page.reserve(page.length() + 4096);
+        String pagination = "";
+        if (stack_view && max_pages > 1)
+        {
+            pagination.reserve(256);
+            pagination += "<div class=\"pagination\">";
+            if (page_idx > 0)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/septic?unit=stack&node=";
+                pagination += String((unsigned long)node_id);
+                pagination += "&page=";
+                pagination += String((unsigned)page_idx);
+                pagination += "\">Назад</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Назад</span>";
+            pagination += "<span class=\"page-info\">Страница ";
+            pagination += String((unsigned)(page_idx + 1));
+            pagination += " / ";
+            pagination += String((unsigned)max_pages);
+            pagination += "</span>";
+            if ((page_idx + 1u) < max_pages)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/septic?unit=stack&node=";
+                pagination += String((unsigned long)node_id);
+                pagination += "&page=";
+                pagination += String((unsigned)(page_idx + 2u));
+                pagination += "\">Вперёд</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+            pagination += "</div>";
+        }
+        else if (!stack_view && max_pages > 1)
+        {
+            pagination.reserve(256);
+            pagination += "<div class=\"pagination\">";
+            if (page_idx > 0)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/septic?page=";
+                pagination += String((unsigned)page_idx);
+                pagination += "\">Назад</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Назад</span>";
+            pagination += "<span class=\"page-info\">Страница ";
+            pagination += String((unsigned)(page_idx + 1));
+            pagination += " / ";
+            pagination += String((unsigned)max_pages);
+            pagination += "</span>";
+            if ((page_idx + 1u) < max_pages)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/septic?page=";
+                pagination += String((unsigned)(page_idx + 2u));
+                pagination += "\">Вперёд</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+            pagination += "</div>";
+        }
         page.replace("%NAV%", web.navHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         page.replace("%SEPTIC_STATUS%", stack_view ? web.stackSepticStatusText_(node_id) : web._septic_status);
         page.replace("%SEPTIC_DEVICE_SELECT%", web.septicDeviceSelectHtml_(node_id, stack_view));
+        page.replace("%SEPTIC_PAGINATION%", pagination);
         page.replace("%SEPTIC_SAVE_BTN%",
-                     (stack_view || !web.webSessionIsAdmin_()) ? "" : "<button type=\"submit\">Сохранить</button>");
+                     (stack_view || !web.webSessionIsAdmin_()) ? String("") : (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>"));
         if (!web._controllers)
         {
-            page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id) : "");
+            page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id, (size_t)page_idx * page_size, page_size) : "");
             page.replace("%SEPTIC_DINPUT_JSON%", "[]");
             page.replace("%SEPTIC_RELAY_JSON%", "[]");
             page.replace("%SEPTIC_DINPUT_USED_JSON%", "[]");
@@ -66,13 +150,18 @@ public:
             web.sendHtml_(request, page, set_cookie);
             return;
         }
-        page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id) : web.listSepticHtml_());
-        page.replace("%SEPTIC_DINPUT_JSON%", stack_view ? "[]" : web.septicPortOptionsJson_(PortIO::PinType::DInput));
-        page.replace("%SEPTIC_RELAY_JSON%", stack_view ? "[]" : web.septicPortOptionsJson_(PortIO::PinType::Relay));
+        page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id, (size_t)page_idx * page_size, page_size)
+                                                  : web.listSepticHtml_((size_t)page_idx * page_size, page_size));
+        page.replace("%SEPTIC_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
+                                                        : web.septicPortOptionsJson_(PortIO::PinType::DInput));
+        page.replace("%SEPTIC_RELAY_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay)
+                                                       : web.septicPortOptionsJson_(PortIO::PinType::Relay));
         page.replace("%SEPTIC_DINPUT_USED_JSON%",
-                     stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::DInput));
+                     stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput)
+                                : web.globalUsedPortsJson_(PortIO::PinType::DInput));
         page.replace("%SEPTIC_RELAY_USED_JSON%",
-                     stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Relay));
+                     stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
+                                : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         if (!stack_view)
         {
             SepticController &septic = web._controllers->septic();
@@ -297,8 +386,14 @@ public:
 
             if (action == "state")
             {
-                const bool stale = (!cache || !cache->has_data || cache->pending ||
-                                    (uint32_t)(millis() - cache->updated_ms) > 1500u);
+                if (!cache || !cache->has_data)
+                {
+                    if (web._stack_cache)
+                        web._stack_cache->requestSeptic(node_id);
+                    web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                    return;
+                }
+                const bool stale = (cache->pending || (uint32_t)(millis() - cache->updated_ms) > 1500u);
                 if (stale)
                 {
                     if (web._stack_cache)
@@ -336,8 +431,26 @@ public:
                 web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
                 return;
             }
+            if (cache && item)
+            {
+                bool new_monitor = item->monitor;
+                if (action == "on")
+                    new_monitor = true;
+                else if (action == "off")
+                    new_monitor = false;
+                else
+                    new_monitor = !item->monitor;
+                item->monitor = new_monitor;
+                cache->updated_ms = millis();
+                cache->has_data = true;
+            }
             if (web._stack_cache)
                 web._stack_cache->requestSeptic(node_id);
+            if (item)
+            {
+                send_state(item->monitor, item->warning, item->alarm, false, false);
+                return;
+            }
             web.sendText_(request, 200, "text/plain", "pending", set_cookie);
             return;
         }

@@ -262,17 +262,10 @@ private:
 
     bool isPortUsedByOther_(uint16_t id, uint8_t port) const
     {
-        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
-        {
-            const auto *cfg = _sockets.configByIndex(i);
-            if (!cfg)
-                continue;
-            if (cfg->id == id)
-                continue;
-            if (cfg->button_port == port || cfg->relay_port == port)
-                return true;
-        }
-        return false;
+        const auto *self = _sockets.config(id);
+        if (self && (self->button_port == port || self->relay_port == port))
+            return false;
+        return _c.gpioPortUsed_(port);
     }
 
     void printIdRangeInline_() const

@@ -47,7 +47,7 @@ public:
         page.replace("%AVR_FAULT_FORM_ACTION%", avrRedirectPath_(node_id, stack_view));
         page.replace("%AVR_DEVICE_SELECT%", avrDeviceSelectHtml_(web, node_id, stack_view));
         page.replace("%AVR_SAVE_BTN%",
-                     web.webSessionIsAdmin_() ? "<button type=\"submit\" form=\"avr-form\">Сохранить</button>" : "");
+                     web.webSessionIsAdmin_() ? (String("<button type=\"submit\" form=\"avr-form\">") + WebUiRu::kSave + "</button>") : String(""));
         page.replace("%AVR_FAULT_BTN%", "<button type=\"submit\" form=\"avr-fault-form\" class=\"btn-muted\">Сбросить ошибку</button>");
 
         if (!web._controllers)

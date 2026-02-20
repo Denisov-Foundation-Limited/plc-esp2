@@ -1,10 +1,18 @@
 #pragma once
 
-    size_t tanksLocalRenderCount_() const
+#ifndef WEB_INTERFACE_CLASS_CONTEXT
+class WebInterface;
+class WebInterfaceControllersTanksHelper;
+#else
+
+class WebInterfaceControllersTanksHelper
+{
+public:
+    static size_t tanksLocalRenderCount_(const WebInterface &web)
     {
-        if (!_controllers)
+        if (!web._controllers)
             return 0;
-        TankController &tanks = _controllers->tanks();
+        TankController &tanks = web._controllers->tanks();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < TankController::kTankCount; ++i)
         {
@@ -17,146 +25,147 @@
         const size_t count = last_enabled_idx + 2u;
         return count > TankController::kTankCount ? TankController::kTankCount : count;
     }
-
-    String tanksDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
+    static String tanksDeviceSelectHtml_(const WebInterface &web, uint32_t selected_node_id, bool stack_view)
     {
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
+        if (web.stackRole_() != ConfigsManagerIface::StackRole::Master || !web._stack_master)
             return "";
         String html;
         html.reserve(512);
         html += "<div class=\"row\">";
-        html += "<span class=\"muted\">Устройство</span>";
+        html += String("<span class=\"muted\">") + WebUiRu::kDevice + "</span>";
         html += "<select id=\"tanks-device\" class=\"field mini\">";
         html += "<option value=\"local\"";
         if (!stack_view)
             html += " selected";
         html += ">local</option>";
-        const size_t count = _stack_master->nodeCount();
+        const size_t count = web._stack_master->nodeCount();
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t id = _stack_master->nodeIdAt(i);
+            const uint32_t id = web._stack_master->nodeIdAt(i);
             html += "<option value=\"";
             html += String((unsigned long)id);
             html += "\"";
             if (stack_view && id == selected_node_id)
                 html += " selected";
             html += ">";
-            String name = _stack_master->nodeNameAt(i);
+            String name = web._stack_master->nodeNameAt(i);
             if (name.length() > 0)
-                appendHtmlEscaped_(html, name.c_str());
+                web.appendHtmlEscaped_(html, name.c_str());
             else
-                html += stackNodeIdHex_(id);
+                html += web.stackNodeIdHex_(id);
             html += "</option>";
         }
         html += "</select></div>";
         return html;
     }
-
-
-    String stackTanksStatusText_(uint32_t node_id) const
+    static String stackTanksStatusText_(const WebInterface &web, uint32_t node_id)
     {
-        const auto *cache = _stack_cache ? _stack_cache->tanksCache(node_id) : nullptr;
+        const auto *cache = web._stack_cache->tanksCache(node_id);
         if (!cache)
-            return "Нет данных со слейва";
+            return WebUiRu::kNoDataFromSlave;
         if (cache->pending)
-            return "Запрос данных со слейва...";
+            return "";
         if (!cache->last_ok && cache->last_error.length())
         {
-            String msg = "Ошибка: ";
+            String msg = WebUiRu::kErrorPrefix;
             msg += cache->last_error;
             return msg;
         }
         if (!cache->has_data)
-            return "Нет данных со слейва";
-        return "OK";
+            return WebUiRu::kNoDataFromSlave;
+        return WebUiRu::kStatusOk;
     }
-
-
-    bool isStackTanksView_(uint32_t node_id) const
+    static bool isStackTanksView_(const WebInterface &web, uint32_t node_id)
     {
-        return node_id != 0 && _stack_master &&
-               stackRole_() == ConfigsManagerIface::StackRole::Master;
+        return node_id != 0 && web._stack_master &&
+               web.stackRole_() == ConfigsManagerIface::StackRole::Master;
     }
-
-
-    bool requestStackTanks_(uint32_t node_id)
+    static bool requestStackTanks_(WebInterface &web, uint32_t node_id)
     {
-        if (_stack_cache)
-            return _stack_cache->requestTanks(node_id);
-        if (!_stack_master)
-            return false;
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
-            return false;
-        StackTankCache *cache = findStackTanksCache_(node_id, true);
-        if (!cache)
-            return false;
-        const uint32_t now = millis();
-        if (cache->pending)
+        return web._stack_cache && web._stack_cache->requestTanks(node_id);
+    }
+    static size_t stackTanksVisibleCount_(const WebInterface &web, uint32_t node_id)
+    {
+        const auto *cache = web._stack_cache ? web._stack_cache->tanksCache(node_id) : nullptr;
+        if (!cache || !cache->has_data || !cache->items)
+            return 0;
+        const bool can_view_disabled = web.webSessionIsAdmin_();
+        size_t render_count = cache->item_count;
+        if (can_view_disabled)
         {
-            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            size_t last_enabled_idx = SIZE_MAX;
+            for (size_t i = 0; i < cache->item_count; ++i)
             {
-                cache->pending = false;
-                cache->pending_cmd_id = 0;
+                if (cache->items[i].enabled)
+                    last_enabled_idx = i;
             }
+            if (last_enabled_idx == SIZE_MAX)
+                render_count = cache->item_count ? 1u : 0u;
             else
             {
-                return false;
+                const size_t rc = last_enabled_idx + 2u;
+                render_count = rc > cache->item_count ? cache->item_count : rc;
             }
         }
-        if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
-            return false;
-        const uint16_t cmd_id = nextStackCmdId_();
-        StaticJsonDocument<192> doc;
-        doc["cmd_id"] = cmd_id;
-        doc["feature"] = (uint8_t)StackFeature::Tanks;
-        doc["action"] = "get";
-        char payload[96] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0)
-            return false;
-        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
-                                   (const uint8_t *)payload, len))
-            return false;
-        cache->pending = true;
-        cache->pending_cmd_id = cmd_id;
-        cache->updated_ms = now;
-        return true;
-    }
-
-
-    String listStackTanksHtml_(uint32_t node_id)
-    {
-        const auto *cache = _stack_cache ? _stack_cache->tanksCache(node_id) : nullptr;
-        if (!cache || !cache->has_data)
-            return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
-        if (cache->item_count == 0)
-            return "<div class=\"tile empty\"><strong>Баки отсутствуют</strong></div>";
-        String items;
-        size_t reserve = 2048u + cache->item_count * 520u;
-        if (reserve < 8192u)
-            reserve = 8192u;
-        items.reserve(reserve);
-        size_t render_count = cache->item_count;
-        size_t last_enabled_idx = SIZE_MAX;
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            if (cache->items[i].enabled)
-                last_enabled_idx = i;
-        }
-        if (last_enabled_idx == SIZE_MAX)
-            render_count = cache->item_count ? 1u : 0u;
-        else
-        {
-            const size_t count = last_enabled_idx + 2u;
-            render_count = count > cache->item_count ? cache->item_count : count;
-        }
+        size_t count = 0;
         for (size_t i = 0; i < render_count; ++i)
         {
             const auto &cfg = cache->items[i];
-            if (!webAclCanViewItem_(UsersRegistry::AclController::Tanks, cfg.id, node_id))
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Tanks, cfg.id, node_id))
                 continue;
-            if (!webSessionIsAdmin_() && !cfg.enabled)
+            if (!can_view_disabled && !cfg.enabled)
                 continue;
+            ++count;
+        }
+        return count;
+    }
+    static String listStackTanksHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit)
+    {
+        const auto *cache = web._stack_cache ? web._stack_cache->tanksCache(node_id) : nullptr;
+        if (!cache || !cache->has_data)
+            return WebUiRu::Tanks::kText;
+        if (cache->item_count == 0)
+            return WebUiRu::Tanks::kText2;
+    
+        String items;
+        const size_t page_limit = (limit == 0) ? 1u : limit;
+        size_t reserve = 2048u + page_limit * 520u;
+        if (reserve < 8192u)
+            reserve = 8192u;
+        items.reserve(reserve);
+        const bool can_view_disabled = web.webSessionIsAdmin_();
+        size_t render_count = cache->item_count;
+        if (can_view_disabled)
+        {
+            size_t last_enabled_idx = SIZE_MAX;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                if (cache->items[i].enabled)
+                    last_enabled_idx = i;
+            }
+            if (last_enabled_idx == SIZE_MAX)
+                render_count = cache->item_count ? 1u : 0u;
+            else
+            {
+                const size_t rc = last_enabled_idx + 2u;
+                render_count = rc > cache->item_count ? cache->item_count : rc;
+            }
+        }
+        size_t rendered = 0;
+        size_t visible_idx = 0;
+        for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
+        {
+            const auto &cfg = cache->items[i];
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Tanks, cfg.id, node_id))
+                continue;
+            if (!can_view_disabled && !cfg.enabled)
+                continue;
+            if (visible_idx < offset)
+            {
+                ++visible_idx;
+                continue;
+            }
+            ++visible_idx;
             const char *level = "0%";
             const char *level_class = "level-empty";
             unsigned level_pct = 0;
@@ -178,7 +187,7 @@
                 level_class = "level-low";
                 level_pct = 33;
             }
-
+    
             items += "<div class=\"tile";
             if (!cfg.enabled)
                 items += " disabled";
@@ -201,37 +210,49 @@
             items += "<div>";
             items += "<div class=\"tile-head\"><strong>";
             if (cfg.name[0])
-                appendHtmlEscaped_(items, cfg.name);
+                web.appendHtmlEscaped_(items, cfg.name);
             else
-                items += "Бак";
+                items += WebUiRu::Tanks::kText3;
             items += "</strong></div>";
             items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += cfg.power_on ? "status-on" : "status-off";
-            items += "\"></span><span>Питание</span></div>";
+            items += (cfg.power_on ? "status-on" : "status-off");
+            items += WebUiRu::Tanks::kText4;
             items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += cfg.valve_on ? "status-on" : "status-off";
-            items += "\"></span><span>Клапан</span></div>";
+            items += (cfg.valve_on ? "status-on" : "status-off");
+            items += WebUiRu::Tanks::kText5;
             items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += cfg.pump_on ? "status-on" : "status-off";
-            items += "\"></span><span>Насос</span></div>";
+            items += (cfg.pump_on ? "status-on" : "status-off");
+            items += WebUiRu::Tanks::kText6;
             items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += cfg.alarm_on ? "status-on" : "status-off";
-            items += "\"></span><span>Авария</span></div>";
+            items += (cfg.alarm_on ? "status-bad" : "status-off");
+            items += WebUiRu::Tanks::kText7;
+            items += WebUiRu::Tanks::kInputTypeCheckboxClassTankPowerData;
+            items += String((unsigned)cfg.id);
+            items += "_power\"";
+            if (cfg.power_on)
+                items += " checked";
+            if (!cfg.enabled)
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_power\" value=\"";
+            items += cfg.power_on ? "on" : "off";
+            items += "\"></div>";
             items += "</div></div>";
+            ++rendered;
         }
+        if (items.length() == 0)
+            items = WebUiRu::Tanks::kText2;
         return items;
     }
-
-
-
-    String listTanksHtml_()
+    static String listTanksHtml_(WebInterface &web, size_t offset, size_t limit)
     {
-        if (!_controllers)
-            return "<div class=\"tile\" style=\"color:#94a3b8\"><strong>Контроллеры недоступны</strong></div>";
+        if (!web._controllers)
+            return WebUiRu::Tanks::kText8;
         String items;
         items.reserve(16384);
-        TankController &tanks = _controllers->tanks();
-
+        TankController &tanks = web._controllers->tanks();
+    
         auto appendRow = [&](const TankController::TankConfig &cfg, const TankController::TankState &st,
                              bool enabled) {
             const char *level = "0%";
@@ -255,7 +276,7 @@
                 level_class = "level-low";
                 level_pct = 33;
             }
-
+    
             items += "<div class=\"tile";
             if (!enabled)
                 items += " disabled";
@@ -275,16 +296,16 @@
             items += String((unsigned)cfg.id);
             items += "</span>";
             items += "<span class=\"badge\">";
-            items += enabled ? "вкл" : "выкл";
+            items += enabled ? WebUiRu::Tanks::kText9 : WebUiRu::Tanks::kText10;
             items += "</span>";
             items += "</div></div>";
             items += "<div>";
             items += "<div class=\"tile-head\">";
             items += "<strong>";
             if (cfg.name[0])
-                appendHtmlEscaped_(items, cfg.name);
+                web.appendHtmlEscaped_(items, cfg.name);
             else
-                items += "Бак";
+                items += WebUiRu::Tanks::kText3;
             items += "</strong>";
             items += "<label class=\"switch\"><input type=\"checkbox\" name=\"k";
             items += String((unsigned)cfg.id);
@@ -296,47 +317,47 @@
             items += "<input class=\"field name\" type=\"text\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
-            appendHtmlEscaped_(items, cfg.name.c_str());
+            web.appendHtmlEscaped_(items, cfg.name.c_str());
             items += "\">";
             items += "<div class=\"form-grid\">";
-            items += "<div class=\"form-row\"><label>Низкий</label><select class=\"field mini tank-select\" data-type=\"dinput\" data-selected=\"";
+            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData;
             if (cfg.level_low != TankController::kInvalidPort)
                 items += String((unsigned)cfg.level_low);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_low\"></select></div>";
-            items += "<div class=\"form-row\"><label>Средний</label><select class=\"field mini tank-select\" data-type=\"dinput\" data-selected=\"";
+            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData2;
             if (cfg.level_mid != TankController::kInvalidPort)
                 items += String((unsigned)cfg.level_mid);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_mid\"></select></div>";
-            items += "<div class=\"form-row\"><label>Полный</label><select class=\"field mini tank-select\" data-type=\"dinput\" data-selected=\"";
+            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData3;
             if (cfg.level_full != TankController::kInvalidPort)
                 items += String((unsigned)cfg.level_full);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_full\"></select></div>";
-            items += "<div class=\"form-row\"><label>Клапан</label><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
+            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData4;
             if (cfg.relay_valve != TankController::kInvalidPort)
                 items += String((unsigned)cfg.relay_valve);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_valve\"></select></div>";
-            items += "<div class=\"form-row\"><label>Насос</label><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
+            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData5;
             if (cfg.relay_pump != TankController::kInvalidPort)
                 items += String((unsigned)cfg.relay_pump);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_pump\"></select></div>";
-            items += "<div class=\"form-row\"><label>Индикатор</label><select class=\"field mini tank-select\" data-type=\"relay\" data-selected=\"";
+            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData6;
             if (cfg.relay_alarm != TankController::kInvalidPort)
                 items += String((unsigned)cfg.relay_alarm);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
             items += "_alarm\"></select></div>";
             items += "<div>";
-            items += "<div class=\"form-row\"><label>Питание</label><label class=\"switch\"><input type=\"checkbox\" class=\"tank-power\" data-action=\"k";
+            items += WebUiRu::Tanks::kInputTypeCheckboxClassTankPowerData2;
             items += String((unsigned)cfg.id);
             items += "_power\"";
             if (cfg.power_on)
@@ -348,96 +369,114 @@
             items += "\"></div>";
             items += "<div class=\"status-row\">";
             items += "<span class=\"status-dot ";
-            items += st.pump_on ? "status-on" : "status-off";
-            items += "\"></span><span>Насос</span>";
+            items += (st.pump_on ? "status-on" : "status-off");
+            items += WebUiRu::Tanks::kText11;
             items += "<span class=\"status-dot ";
-            items += st.valve_on ? "status-on" : "status-off";
-            items += "\"></span><span>Клапан</span>";
+            items += (st.valve_on ? "status-on" : "status-off");
+            items += WebUiRu::Tanks::kText12;
+            items += "<span class=\"status-dot ";
+            items += (st.alarm_on ? "status-bad" : "status-off");
+            items += WebUiRu::Tanks::kText14;
             items += "</div></div>";
             items += "</div></div></div>";
         };
-
-        const size_t render_count = tanksLocalRenderCount_();
-        const bool can_view_disabled = webSessionIsAdmin_();
+    
+        const size_t render_count = web.tanksLocalRenderCount_();
+        const size_t page_limit = (limit == 0) ? 1u : limit;
+        const bool can_view_disabled = web.webSessionIsAdmin_();
+        size_t rendered = 0;
+        size_t visible_idx = 0;
         for (size_t i = 0; i < render_count; ++i)
         {
+            if (rendered >= page_limit)
+                break;
             const auto *cfg = tanks.configByIndex(i);
             const auto *st = tanks.stateByIndex(i);
             if (!cfg || !st)
                 continue;
-            if (!webAclCanViewItem_(UsersRegistry::AclController::Tanks, cfg->id))
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Tanks, cfg->id))
                 continue;
             if (!can_view_disabled && !cfg->enabled)
                 continue;
+            if (visible_idx < offset)
+            {
+                ++visible_idx;
+                continue;
+            }
+            ++visible_idx;
             appendRow(*cfg, *st, cfg->enabled);
+            ++rendered;
         }
         if (items.length() == 0)
-            items = "<div class=\"tile\" style=\"color:#94a3b8\"><strong>Баки отсутствуют</strong></div>";
+            items = WebUiRu::Tanks::kText13;
         return items;
     }
+    static String listTanksHtml_(WebInterface &web)
+    {
+        return listTanksHtml_(web, 0u, SIZE_MAX);
+    }
+    static String tankPortOptionsJson_(const WebInterface &web, PortIO::PinType type)
+    {
+        return web.socketPortOptionsJson_(type);
+    }
+    static String tankUsedPortsJson_(const WebInterface &web, PortIO::PinType type)
+    {
+        return web.globalUsedPortsJson_(type);
+    }
+};
 
+    size_t tanksLocalRenderCount_() const
+    {
+        return WebInterfaceControllersTanksHelper::tanksLocalRenderCount_(*this);
+    }
 
+    String tanksDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
+    {
+        return WebInterfaceControllersTanksHelper::tanksDeviceSelectHtml_(*this, selected_node_id, stack_view);
+    }
+
+    String stackTanksStatusText_(uint32_t node_id) const
+    {
+        return WebInterfaceControllersTanksHelper::stackTanksStatusText_(*this, node_id);
+    }
+
+    bool isStackTanksView_(uint32_t node_id) const
+    {
+        return WebInterfaceControllersTanksHelper::isStackTanksView_(*this, node_id);
+    }
+
+    bool requestStackTanks_(uint32_t node_id)
+    {
+        return WebInterfaceControllersTanksHelper::requestStackTanks_(*this, node_id);
+    }
+
+    size_t stackTanksVisibleCount_(uint32_t node_id) const
+    {
+        return WebInterfaceControllersTanksHelper::stackTanksVisibleCount_(*this, node_id);
+    }
+
+    String listStackTanksHtml_(uint32_t node_id, size_t offset, size_t limit)
+    {
+        return WebInterfaceControllersTanksHelper::listStackTanksHtml_(*this, node_id, offset, limit);
+    }
+
+    String listTanksHtml_()
+    {
+        return WebInterfaceControllersTanksHelper::listTanksHtml_(*this);
+    }
+    String listTanksHtml_(size_t offset, size_t limit)
+    {
+        return WebInterfaceControllersTanksHelper::listTanksHtml_(*this, offset, limit);
+    }
 
     String tankPortOptionsJson_(PortIO::PinType type) const
     {
-        return socketPortOptionsJson_(type);
+        return WebInterfaceControllersTanksHelper::tankPortOptionsJson_(*this, type);
     }
-
 
     String tankUsedPortsJson_(PortIO::PinType type) const
     {
-        String out;
-        out.reserve(128);
-        out += "[";
-        bool first = true;
-        if (_controllers)
-        {
-            TankController &tanks = _controllers->tanks();
-            bool used[PortIO::PORT_COUNT] = {};
-            for (size_t i = 0; i < TankController::kTankCount; ++i)
-            {
-                const auto *cfg = tanks.configByIndex(i);
-                if (!cfg)
-                    continue;
-                if (type == PortIO::PinType::DInput)
-                {
-                    const uint8_t low = cfg->level_low;
-                    const uint8_t mid = cfg->level_mid;
-                    const uint8_t full = cfg->level_full;
-                    if (low != TankController::kInvalidPort && low < PortIO::PORT_COUNT)
-                        used[low] = true;
-                    if (mid != TankController::kInvalidPort && mid < PortIO::PORT_COUNT)
-                        used[mid] = true;
-                    if (full != TankController::kInvalidPort && full < PortIO::PORT_COUNT)
-                        used[full] = true;
-                }
-                else if (type == PortIO::PinType::Relay)
-                {
-                    const uint8_t valve = cfg->relay_valve;
-                    const uint8_t pump = cfg->relay_pump;
-                    const uint8_t alarm = cfg->relay_alarm;
-                    if (valve != TankController::kInvalidPort && valve < PortIO::PORT_COUNT)
-                        used[valve] = true;
-                    if (pump != TankController::kInvalidPort && pump < PortIO::PORT_COUNT)
-                        used[pump] = true;
-                    if (alarm != TankController::kInvalidPort && alarm < PortIO::PORT_COUNT)
-                        used[alarm] = true;
-                }
-            }
-            for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
-            {
-                if (!used[i])
-                    continue;
-                const auto &p = ActiveBoardProfile::PORTS[i];
-                if (p.caps == Cap::None || p.type != type)
-                    continue;
-                if (!first)
-                    out += ",";
-                out += String((unsigned)i);
-                first = false;
-            }
-        }
-        out += "]";
-        return out;
+        return WebInterfaceControllersTanksHelper::tankUsedPortsJson_(*this, type);
     }
 
+#endif

@@ -137,7 +137,7 @@ private:
     uint32_t _reconnect_ms = 3000;
     uint32_t _last_connect_ms = 0;
     uint32_t _hello_interval_ms = 15000;
-    uint32_t _status_interval_ms = 5000;
+    uint32_t _status_interval_ms = 2000;
     uint32_t _last_hello_ms = 0;
     uint32_t _last_status_ms = 0;
     bool _hello_sent_current_connection = false;

@@ -81,6 +81,29 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     .status-err { background: #64748b; }
     .status-na { background: #64748b; }
     .actions { margin-top: 14px; }
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 8px 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+      flex-wrap: wrap;
+    }
+    .page-info { white-space: nowrap; }
+    .page-btn {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid #1f2937;
+      background: #0b1220;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .page-btn.disabled {
+      opacity: .5;
+      pointer-events: none;
+    }
     .mini { width: 72px; }
     .addr { width: 100%; }
     .temp { width: 100%; }
@@ -232,6 +255,7 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       <h1>Метео</h1>
       <div class="status">%METEO_STATUS%</div>
       %METEO_DEVICE_SELECT%
+      %METEO_PAGINATION%
       <form method="POST" action="/meteo" id="meteo-form">
         <div class="grid">
           %METEO_TILES%
@@ -426,6 +450,72 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     }
     pollRemoteSources();
     setInterval(pollRemoteSources, 3000);
+
+    const meteoQs = new URLSearchParams(window.location.search);
+    const meteoIsStackView = meteoQs.get('unit') === 'stack';
+    const meteoNodeId = meteoQs.get('node') || '';
+    function formatMeteoValue(v) {
+      if (typeof v !== 'number' || Number.isNaN(v)) return '--';
+      return String(Math.round(v * 10) / 10);
+    }
+    function meteoStatusText(item) {
+      if (!item || !item.enabled) return 'выключен';
+      const hasData = !!item.has_temp || !!item.has_hum;
+      if (!hasData) return 'нет данных';
+      return item.ok ? 'ok' : 'ошибка';
+    }
+    function applyMeteoTileState(tile, item) {
+      if (!tile || !item) return;
+      tile.classList.toggle('disabled', !item.enabled);
+      const icon = tile.querySelector('.sensor-icon');
+      const hasData = !!item.has_temp || !!item.has_hum;
+      const okOn = !!item.ok && hasData;
+      if (icon) {
+        icon.classList.toggle('na', !okOn);
+      }
+      const temp = tile.querySelector('.sensor-temp-value');
+      if (temp) {
+        temp.textContent = (item.has_temp ? formatMeteoValue(item.temp) : '--') + ' C';
+      }
+      const hum = tile.querySelector('.sensor-hum-value');
+      if (hum) {
+        hum.textContent = item.has_hum ? formatMeteoValue(item.hum) : '--';
+      }
+      const dot = tile.querySelector('.sensor-status-dot');
+      if (dot) {
+        dot.classList.remove('status-ok', 'status-err', 'status-na');
+        if (!item.enabled || !hasData) dot.classList.add('status-na');
+        else dot.classList.add(item.ok ? 'status-ok' : 'status-err');
+      }
+      const text = tile.querySelector('.sensor-status-text');
+      if (text) {
+        text.textContent = meteoStatusText(item);
+      }
+    }
+    async function pollMeteoStates() {
+      const tiles = Array.from(document.querySelectorAll('.tile[data-sensor-id]'));
+      if (!tiles.length) return;
+      try {
+        let url = '/meteo/state';
+        if (meteoIsStackView && meteoNodeId) {
+          url += '?node_id=' + encodeURIComponent(meteoNodeId);
+        }
+        const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const map = new Map();
+        const list = Array.isArray(data.items) ? data.items : [];
+        list.forEach((it) => map.set(String(it.id), it));
+        tiles.forEach((tile) => {
+          const id = tile.dataset.sensorId || '';
+          const item = map.get(String(id));
+          if (item) applyMeteoTileState(tile, item);
+        });
+      } catch (e) {}
+    }
+    setTimeout(pollMeteoStates, 500);
+    setInterval(pollMeteoStates, 2000);
+
     document.querySelectorAll('input.meteo-enable').forEach((el) => {
       el.addEventListener('change', () => {
         const tile = el.closest('.tile');
@@ -477,16 +567,6 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
         }
         window.location.href = url.toString();
       });
-      setInterval(() => {
-        if (meteoDirty) return;
-        if (document.visibilityState !== 'visible') return;
-        const val = meteoDevice.value || 'local';
-        if (val === 'local') return;
-        const url = new URL(window.location.href);
-        url.searchParams.set('unit', 'stack');
-        url.searchParams.set('node', val);
-        window.location.replace(url.toString());
-      }, 4000);
     }
   </script>
 </body>

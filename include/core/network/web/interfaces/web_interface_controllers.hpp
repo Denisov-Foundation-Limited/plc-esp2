@@ -1,4 +1,8 @@
-#pragma once
+﻿#pragma once
+
+#ifndef WEB_INTERFACE_CLASS_CONTEXT
+class WebInterface;
+#else
 
 #include "core/network/web/interfaces/web_interface_controllers_sockets.hpp"
 
@@ -9,7 +13,7 @@
         String html;
         html.reserve(512);
         html += "<div class=\"row\" style=\"margin: 6px 0 10px;\">";
-        html += "<span class=\"status\">Устройство</span>";
+        html += String("<span class=\"status\">") + WebUiRu::kDevice + "</span>";
         html += "<select id=\"index-device\" class=\"mini\">";
         html += "<option value=\"local\"";
         if (!stack_view)
@@ -59,8 +63,8 @@
         String html;
         html.reserve(512);
         html += "<div class=\"row\" style=\"margin-bottom:10px;\">";
-        html += "<span class=\"muted\">Устройство</span>";
-        html += "<select id=\"buses-device\" class=\"field mini\" onchange=\"location.href='/buses?node=' + this.value;\">";
+        html += String("<span class=\"muted\">") + WebUiRu::kDevice + "</span>";
+        html += "<select id=\"buses-device\" class=\"mini\">";
         html += "<option value=\"0\"";
         if (!stack_view)
             html += " selected";
@@ -93,8 +97,8 @@
         String html;
         html.reserve(512);
         html += "<div class=\"row\" style=\"margin-bottom:10px;\">";
-        html += "<span class=\"muted\">Устройство</span>";
-        html += "<select id=\"ports-device\" class=\"field mini\" onchange=\"location.href='/ports?node=' + this.value;\">";
+        html += String("<span class=\"muted\">") + WebUiRu::kDevice + "</span>";
+        html += "<select id=\"ports-device\" class=\"mini\">";
         html += "<option value=\"0\"";
         if (!stack_view)
             html += " selected";
@@ -122,56 +126,56 @@
 
     String stackBusesStatusText_(uint32_t node_id) const
     {
-        const StackI2cCache *i2c = findStackI2cCache_(node_id, false);
-        const StackOwCache *ow = findStackOwCache_(node_id, false);
+        const auto *i2c = _stack_cache ? _stack_cache->i2cCache(node_id) : nullptr;
+        const auto *ow = _stack_cache ? _stack_cache->owCache(node_id) : nullptr;
         if (!i2c && !ow)
-            return "Нет данных со слейва";
+            return WebUiRu::kNoDataFromSlave;
         if ((i2c && i2c->pending) || (ow && ow->pending))
-            return "Запрос данных со слейва...";
+            return "";
         if (i2c && !i2c->last_ok && i2c->last_error.length())
         {
-            String msg = "I2C ошибка: ";
+            String msg = WebUiRu::Controllers::kI2c;
             msg += i2c->last_error;
             return msg;
         }
         if (ow && !ow->last_ok && ow->last_error.length())
         {
-            String msg = "OW ошибка: ";
+            String msg = WebUiRu::Controllers::kOw;
             msg += ow->last_error;
             return msg;
         }
         const bool i2c_ok = i2c && i2c->has_data;
         const bool ow_ok = ow && ow->has_data;
         if (!i2c_ok && !ow_ok)
-            return "Нет данных со слейва";
-        return "OK";
+            return WebUiRu::kNoDataFromSlave;
+        return WebUiRu::kStatusOk;
     }
 
     String stackPortsStatusText_(uint32_t node_id) const
     {
-        const StackPortsCache *ports = findStackPortsCache_(node_id, false);
-        const StackExtendersCache *exts = findStackExtendersCache_(node_id, false);
+        const auto *ports = _stack_cache ? _stack_cache->portsCache(node_id) : nullptr;
+        const auto *exts = _stack_cache ? _stack_cache->extendersCache(node_id) : nullptr;
         if (!ports && !exts)
-            return "Нет данных со слейва";
+            return WebUiRu::kNoDataFromSlave;
         if ((ports && ports->pending) || (exts && exts->pending))
-            return "Запрос данных со слейва...";
+            return "";
         if (ports && !ports->last_ok && ports->last_error.length())
         {
-            String msg = "Ports ошибка: ";
+            String msg = WebUiRu::Controllers::kPorts;
             msg += ports->last_error;
             return msg;
         }
         if (exts && !exts->last_ok && exts->last_error.length())
         {
-            String msg = "Extenders ошибка: ";
+            String msg = WebUiRu::Controllers::kExtenders;
             msg += exts->last_error;
             return msg;
         }
         const bool ports_ok = ports && ports->has_data;
         const bool exts_ok = exts && exts->has_data;
         if (!ports_ok && !exts_ok)
-            return "Нет данных со слейва";
-        return "OK";
+            return WebUiRu::kNoDataFromSlave;
+        return WebUiRu::kStatusOk;
     }
 
     bool isStackBusesView_(uint32_t node_id) const
@@ -202,1343 +206,39 @@
 
     void handleStackFrame_(uint32_t node_id, const StackFrame &frame)
     {
-        if (frame.type != (uint8_t)StackMsgType::Ack &&
-            frame.type != (uint8_t)StackMsgType::Err)
-            return;
-        DynamicJsonDocument doc(4096);
-        DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
-        if (err)
-            return;
-        const uint16_t cmd_id = doc["cmd_id"] | 0;
-        StackSocketsCache *sock_cache = findStackSocketsCacheByCmd_(cmd_id);
-        StackLightsCache *light_cache = findStackLightsCacheByCmd_(cmd_id);
-        StackPortsCache *ports_cache = findStackPortsCacheByCmd_(cmd_id);
-        StackExtendersCache *ext_cache = findStackExtendersCacheByCmd_(cmd_id);
-        StackSecurityCache *sec_cache = findStackSecurityCacheByCmd_(cmd_id);
-        StackMeteoCache *meteo_cache = findStackMeteoCacheByCmd_(cmd_id);
-        StackThermoCache *thermo_cache = findStackThermoCacheByCmd_(cmd_id);
-        StackSepticCache *septic_cache = findStackSepticCacheByCmd_(cmd_id);
-        StackTankCache *tanks_cache = findStackTanksCacheByCmd_(cmd_id);
-        StackWateringCache *watering_cache = findStackWateringCacheByCmd_(cmd_id);
-        StackI2cCache *i2c_cache = findStackI2cCacheByCmd_(cmd_id);
-        StackOwCache *ow_cache = findStackOwCacheByCmd_(cmd_id);
-        bool status_is_plc = false;
-        bool status_is_rtc = false;
-        StackNodeStatusCache *status_cache = findStackNodeStatusCacheByCmd_(cmd_id, status_is_plc, status_is_rtc);
-        if (!sock_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !meteo_cache &&
-            !thermo_cache && !septic_cache && !tanks_cache && !watering_cache && !i2c_cache && !ow_cache &&
-            !status_cache)
-            return;
-        const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (doc["ok"] | false);
-        JsonArrayConst items = doc["data"]["items"].as<JsonArrayConst>();
-
-        if (sock_cache)
-        {
-            sock_cache->updated_ms = millis();
-            if (!ok)
-            {
-                sock_cache->pending = false;
-                sock_cache->last_ok = false;
-                sock_cache->last_error = "";
-                sock_cache->last_error = doc["error"] | "error";
-            }
-            else
-            {
-                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
-                const uint16_t part = data["part"] | 1;
-                const uint16_t parts = data["parts"] | 1;
-                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
-                if (part <= 1)
-                {
-                    sock_cache->item_count = 0;
-                    sock_cache->has_data = false;
-                    sock_cache->last_ok = false;
-                    sock_cache->last_error = "";
-                }
-                if (!items.isNull())
-                {
-                    for (JsonObjectConst item : items)
-                    {
-                        if (sock_cache->item_count >= SocketController::kSocketCount)
-                            break;
-                        if (!item["id"].is<unsigned>())
-                            continue;
-                        StackSocketItem &dst = sock_cache->items[sock_cache->item_count++];
-                        dst.id = (uint8_t)item["id"].as<unsigned>();
-                        dst.enabled = item["enabled"] | false;
-                        dst.state = item["state"] | false;
-                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
-                    }
-                }
-                if (done)
-                {
-                    sock_cache->pending = false;
-                    sock_cache->has_data = true;
-                    sock_cache->last_ok = true;
-                    sock_cache->node_id = node_id;
-                }
-                else
-                {
-                    sock_cache->pending = true;
-                }
-            }
-        }
-
-        if (light_cache)
-        {
-            light_cache->updated_ms = millis();
-            if (!ok)
-            {
-                light_cache->pending = false;
-                light_cache->last_ok = false;
-                light_cache->last_error = "";
-                light_cache->last_error = doc["error"] | "error";
-            }
-            else
-            {
-                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
-                const uint16_t part = data["part"] | 1;
-                const uint16_t parts = data["parts"] | 1;
-                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
-                if (part <= 1)
-                {
-                    light_cache->item_count = 0;
-                    light_cache->has_data = false;
-                    light_cache->last_ok = false;
-                    light_cache->last_error = "";
-                }
-                if (!items.isNull())
-                {
-                    for (JsonObjectConst item : items)
-                    {
-                        if (light_cache->item_count >= SocketController::kLightCount)
-                            break;
-                        if (!item["id"].is<unsigned>())
-                            continue;
-                        StackLightItem &dst = light_cache->items[light_cache->item_count++];
-                        dst.id = (uint8_t)item["id"].as<unsigned>();
-                        dst.enabled = item["enabled"] | false;
-                        dst.state = item["state"] | false;
-                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
-                    }
-                }
-                if (done)
-                {
-                    light_cache->pending = false;
-                    light_cache->has_data = true;
-                    light_cache->last_ok = true;
-                    light_cache->node_id = node_id;
-                }
-                else
-                {
-                    light_cache->pending = true;
-                }
-            }
-        }
-
-        if (ports_cache)
-        {
-            ports_cache->updated_ms = millis();
-            if (!ok)
-            {
-                ports_cache->pending = false;
-                ports_cache->last_ok = false;
-                ports_cache->last_error = "";
-                ports_cache->last_error = doc["error"] | "error";
-            }
-            else
-            {
-                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
-                const uint16_t part = data["part"] | 1;
-                const uint16_t parts = data["parts"] | 1;
-                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
-                JsonArrayConst ports = data["ports"].as<JsonArrayConst>();
-                if (!ports.isNull())
-                {
-                    if (part <= 1)
-                    {
-                        ports_cache->item_count = 0;
-                        ports_cache->has_data = false;
-                        ports_cache->last_ok = false;
-                        ports_cache->last_error = "";
-                    }
-                    for (JsonObjectConst item : ports)
-                    {
-                        if (ports_cache->item_count >= PortIO::PORT_COUNT)
-                            break;
-                        if (!item["id"].is<unsigned>())
-                            continue;
-                        StackPortItem &dst = ports_cache->items[ports_cache->item_count++];
-                        dst.id = (uint8_t)item["id"].as<unsigned>();
-                        dst.ctrl = item["ctrl"] | false;
-                        copyStr_(dst.backend, sizeof(dst.backend), item["backend"].as<const char *>());
-                        copyStr_(dst.loc, sizeof(dst.loc), item["loc"].as<const char *>());
-                        copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
-                        copyStr_(dst.hw, sizeof(dst.hw), item["hw"].as<const char *>());
-                        dst.is_extender = (strcmp(dst.backend, "Extender") == 0);
-                        if (item["dev"].is<int>() || item["dev"].is<unsigned>())
-                            dst.dev = (int16_t)item["dev"].as<int>();
-                        else
-                            dst.dev = -1;
-                        if (item["pin"].is<int>() || item["pin"].is<unsigned>())
-                            dst.pin = (int16_t)item["pin"].as<int>();
-                        else
-                            dst.pin = -1;
-                    }
-                    if (done)
-                    {
-                        ports_cache->pending = false;
-                        ports_cache->has_data = true;
-                        ports_cache->last_ok = true;
-                        ports_cache->node_id = node_id;
-                    }
-                    else
-                    {
-                        ports_cache->pending = true;
-                    }
-                }
-            }
-        }
-
-        if (ext_cache)
-        {
-            ext_cache->pending = false;
-            ext_cache->updated_ms = millis();
-            ext_cache->last_ok = false;
-            ext_cache->last_error = "";
-            if (!ok)
-            {
-                ext_cache->last_error = doc["error"] | "error";
-            }
-            else if (!items.isNull())
-            {
-                ext_cache->item_count = 0;
-                for (JsonObjectConst item : items)
-                {
-                    if (ext_cache->item_count >= Extender::MAX_DEVS)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackExtenderItem &dst = ext_cache->items[ext_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.bus = (uint8_t)(item["bus"] | 0u);
-                    copyStr_(dst.addr, sizeof(dst.addr), item["addr"].as<const char *>());
-                    copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
-                    dst.present = item["present"] | false;
-                }
-                ext_cache->has_data = true;
-                ext_cache->last_ok = true;
-                ext_cache->node_id = node_id;
-            }
-        }
-
-        if (sec_cache)
-        {
-            sec_cache->updated_ms = millis();
-            if (!ok)
-            {
-                sec_cache->pending = false;
-                sec_cache->last_ok = false;
-                sec_cache->last_error = "";
-                sec_cache->last_error = doc["error"] | "error";
-            }
-            else
-            {
-                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
-                const uint16_t part = data["part"] | 1;
-                const uint16_t parts = data["parts"] | 1;
-                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
-                if (part <= 1)
-                {
-                    sec_cache->item_count = 0;
-                    sec_cache->has_data = false;
-                    sec_cache->last_ok = false;
-                    sec_cache->last_error = "";
-                }
-                if (!items.isNull())
-                {
-                    for (JsonObjectConst item : items)
-                    {
-                        if (sec_cache->item_count >= SecurityController::kSensorCount)
-                            break;
-                        if (!item["id"].is<unsigned>())
-                            continue;
-                        StackSecuritySensorItem &dst = sec_cache->items[sec_cache->item_count++];
-                        dst.id = (uint8_t)item["id"].as<unsigned>();
-                        dst.enabled = item["enabled"] | false;
-                        dst.detect = item["detect"] | false;
-                        dst.silent = item["silent"] | false;
-                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
-                        copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
-                        dst.port = (uint8_t)(item["port"] | SecurityController::kInvalidPort);
-                    }
-                }
-                if (done)
-                {
-                    sec_cache->pending = false;
-                    sec_cache->has_data = true;
-                    sec_cache->last_ok = true;
-                    sec_cache->node_id = node_id;
-                }
-                else
-                {
-                    sec_cache->pending = true;
-                }
-            }
-        }
-
-        if (meteo_cache)
-        {
-            meteo_cache->updated_ms = millis();
-            if (!ok)
-            {
-                meteo_cache->pending = false;
-                meteo_cache->last_ok = false;
-                meteo_cache->last_error = "";
-                meteo_cache->last_error = doc["error"] | "error";
-            }
-            else
-            {
-                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
-                const uint16_t part = data["part"] | 1;
-                const uint16_t parts = data["parts"] | 1;
-                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
-                if (part <= 1)
-                {
-                    meteo_cache->item_count = 0;
-                    meteo_cache->has_data = false;
-                    meteo_cache->last_ok = false;
-                    meteo_cache->last_error = "";
-                }
-                if (!items.isNull())
-                {
-                    for (JsonObjectConst item : items)
-                    {
-                        if (meteo_cache->item_count >= MeteoController::kSensorCount)
-                            break;
-                        if (!item["id"].is<unsigned>())
-                            continue;
-                        StackMeteoItem &dst = meteo_cache->items[meteo_cache->item_count++];
-                        dst.id = (uint8_t)item["id"].as<unsigned>();
-                        dst.enabled = item["enabled"] | false;
-                        dst.ok = item["ok"] | false;
-                        dst.has_temp = item["has_temp"] | false;
-                        dst.has_hum = item["has_hum"] | false;
-                        dst.temp_c = item["temp_c"] | 0.0f;
-                        dst.hum = item["hum"] | 0.0f;
-                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
-                        copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
-                        copyStr_(dst.addr, sizeof(dst.addr), item["addr"].as<const char *>());
-                        if (item["pin"].is<int>() || item["pin"].is<unsigned>())
-                            dst.pin = item["pin"].as<int>();
-                        else
-                            dst.pin = -1;
-                    }
-                }
-                if (done)
-                {
-                    meteo_cache->pending = false;
-                    meteo_cache->has_data = true;
-                    meteo_cache->last_ok = true;
-                    meteo_cache->node_id = node_id;
-                }
-                else
-                {
-                    meteo_cache->pending = true;
-                }
-            }
-        }
-
-        if (thermo_cache)
-        {
-            thermo_cache->updated_ms = millis();
-            if (!ok)
-            {
-                thermo_cache->pending = false;
-                thermo_cache->last_ok = false;
-                thermo_cache->last_error = "";
-                thermo_cache->last_error = doc["error"] | "error";
-            }
-            else
-            {
-                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
-                const uint16_t part = data["part"] | 1;
-                const uint16_t parts = data["parts"] | 1;
-                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
-                if (part <= 1)
-                {
-                    thermo_cache->item_count = 0;
-                    thermo_cache->has_data = false;
-                    thermo_cache->last_ok = false;
-                    thermo_cache->last_error = "";
-                }
-                if (!items.isNull())
-                {
-                    for (JsonObjectConst item : items)
-                    {
-                        if (thermo_cache->item_count >= ThermoController::kDeviceCount)
-                            break;
-                        if (!item["id"].is<unsigned>())
-                            continue;
-                        StackThermoItem &dst = thermo_cache->items[thermo_cache->item_count++];
-                        dst.id = (uint8_t)item["id"].as<unsigned>();
-                        dst.enabled = item["enabled"] | false;
-                        dst.power_on = item["power_on"] | false;
-                        dst.heat_on = item["heat_on"] | false;
-                        dst.cool_on = item["cool_on"] | false;
-                        dst.sensor = (uint8_t)(item["sensor"] | 0u);
-                        dst.target = item["target"] | 0.0f;
-                        dst.hyst = item["hyst"] | 0.0f;
-                        dst.heat = (uint8_t)(item["heat"] | ThermoController::kInvalidPort);
-                        dst.cool = (uint8_t)(item["cool"] | ThermoController::kInvalidPort);
-                        dst.button = (uint8_t)(item["button"] | ThermoController::kInvalidPort);
-                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
-                        copyStr_(dst.mode, sizeof(dst.mode), item["mode"].as<const char *>());
-                    }
-                }
-                if (done)
-                {
-                    thermo_cache->pending = false;
-                    thermo_cache->has_data = true;
-                    thermo_cache->last_ok = true;
-                    thermo_cache->node_id = node_id;
-                }
-                else
-                {
-                    thermo_cache->pending = true;
-                }
-            }
-        }
-
-        if (septic_cache)
-        {
-            septic_cache->updated_ms = millis();
-            if (!ok)
-            {
-                septic_cache->pending = false;
-                septic_cache->last_ok = false;
-                septic_cache->last_error = "";
-                septic_cache->last_error = doc["error"] | "error";
-            }
-            else
-            {
-                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
-                const uint16_t part = data["part"] | 1;
-                const uint16_t parts = data["parts"] | 1;
-                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
-                if (part <= 1)
-                {
-                    septic_cache->item_count = 0;
-                    septic_cache->has_data = false;
-                    septic_cache->last_ok = false;
-                    septic_cache->last_error = "";
-                }
-                if (!items.isNull())
-                {
-                    for (JsonObjectConst item : items)
-                    {
-                        if (septic_cache->item_count >= SepticController::kSepticCount)
-                            break;
-                        if (!item["id"].is<unsigned>())
-                            continue;
-                        StackSepticItem &dst = septic_cache->items[septic_cache->item_count++];
-                        dst.id = (uint8_t)item["id"].as<unsigned>();
-                        dst.enabled = item["enabled"] | false;
-                        dst.monitor = item["monitor"] | false;
-                        dst.warning_port = (uint8_t)(item["warning_port"] | SepticController::kInvalidPort);
-                        dst.alarm_port = (uint8_t)(item["alarm_port"] | SepticController::kInvalidPort);
-                        dst.relay_warning = (uint8_t)(item["relay_warning"] | SepticController::kInvalidPort);
-                        dst.relay_alarm = (uint8_t)(item["relay_alarm"] | SepticController::kInvalidPort);
-                        dst.warning = item["warning"] | false;
-                        dst.alarm = item["alarm"] | false;
-                    }
-                }
-                if (done)
-                {
-                    septic_cache->pending = false;
-                    septic_cache->has_data = true;
-                    septic_cache->last_ok = true;
-                    septic_cache->node_id = node_id;
-                }
-                else
-                {
-                    septic_cache->pending = true;
-                }
-            }
-        }
-
-        if (tanks_cache)
-        {
-            tanks_cache->updated_ms = millis();
-            if (!ok)
-            {
-                tanks_cache->pending = false;
-                tanks_cache->last_ok = false;
-                tanks_cache->last_error = "";
-                tanks_cache->last_error = doc["error"] | "error";
-            }
-            else
-            {
-                JsonObjectConst data = doc["data"].as<JsonObjectConst>();
-                const uint16_t part = data["part"] | 1;
-                const uint16_t parts = data["parts"] | 1;
-                const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part >= parts);
-                if (part <= 1)
-                {
-                    tanks_cache->item_count = 0;
-                    tanks_cache->has_data = false;
-                    tanks_cache->last_ok = false;
-                    tanks_cache->last_error = "";
-                }
-                if (!items.isNull())
-                {
-                    for (JsonObjectConst item : items)
-                    {
-                        if (tanks_cache->item_count >= TankController::kTankCount)
-                            break;
-                        if (!item["id"].is<unsigned>())
-                            continue;
-                        StackTankItem &dst = tanks_cache->items[tanks_cache->item_count++];
-                        dst.id = (uint8_t)item["id"].as<unsigned>();
-                        dst.enabled = item["enabled"] | false;
-                        dst.power_on = item["power_on"] | false;
-                        dst.low = (uint8_t)(item["low"] | TankController::kInvalidPort);
-                        dst.mid = (uint8_t)(item["mid"] | TankController::kInvalidPort);
-                        dst.full = (uint8_t)(item["full"] | TankController::kInvalidPort);
-                        dst.valve = (uint8_t)(item["valve"] | TankController::kInvalidPort);
-                        dst.pump = (uint8_t)(item["pump"] | TankController::kInvalidPort);
-                        dst.alarm = (uint8_t)(item["alarm"] | TankController::kInvalidPort);
-                        dst.level_low = item["level_low"] | false;
-                        dst.level_mid = item["level_mid"] | false;
-                        dst.level_full = item["level_full"] | false;
-                        dst.levels_ok = item["levels_ok"] | false;
-                        dst.valve_on = item["valve_on"] | false;
-                        dst.pump_on = item["pump_on"] | false;
-                        dst.alarm_on = item["alarm_on"] | false;
-                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
-                    }
-                }
-                if (done)
-                {
-                    tanks_cache->pending = false;
-                    tanks_cache->has_data = true;
-                    tanks_cache->last_ok = true;
-                    tanks_cache->node_id = node_id;
-                }
-                else
-                {
-                    tanks_cache->pending = true;
-                }
-            }
-        }
-
-        if (watering_cache)
-        {
-            watering_cache->pending = false;
-            watering_cache->updated_ms = millis();
-            watering_cache->last_ok = false;
-            watering_cache->last_error = "";
-            if (!ok)
-            {
-                watering_cache->last_error = doc["error"] | "error";
-            }
-            else if (!items.isNull())
-            {
-                watering_cache->item_count = 0;
-                watering_cache->total = (uint16_t)(doc["data"]["total"] | 0u);
-                watering_cache->offset = (uint16_t)(doc["data"]["offset"] | 0u);
-                for (JsonObjectConst item : items)
-                {
-                    if (watering_cache->item_count >= WateringController::kRuleCount)
-                        break;
-                    if (!item["id"].is<unsigned>())
-                        continue;
-                    StackWateringItem &dst = watering_cache->items[watering_cache->item_count++];
-                    dst.id = (uint8_t)item["id"].as<unsigned>();
-                    dst.enabled = item["enabled"] | false;
-                    dst.status = item["status"] | false;
-                    if (item["port"].is<int>() || item["port"].is<unsigned>())
-                        dst.port = (uint8_t)(item["port"] | WateringController::kInvalidPort);
-                    else
-                    dst.port = WateringController::kInvalidPort;
-                    dst.tank_id = (uint8_t)(item["tank"] | 0u);
-                    dst.weekdays_mask = (uint8_t)(item["weekdays_mask"] | 0u);
-                    dst.hour = (uint8_t)(item["hour"] | 0u);
-                    dst.minute = (uint8_t)(item["minute"] | 0u);
-                    dst.duration_sec = (uint32_t)(item["duration_s"] | 0u);
-                    dst.hour2 = (uint8_t)(item["hour2"] | 0u);
-                    dst.minute2 = (uint8_t)(item["minute2"] | 0u);
-                    dst.duration2_sec = (uint32_t)(item["duration2_s"] | 0u);
-                    dst.hour3 = (uint8_t)(item["hour3"] | 0u);
-                    dst.minute3 = (uint8_t)(item["minute3"] | 0u);
-                    dst.duration3_sec = (uint32_t)(item["duration3_s"] | 0u);
-                    dst.resume_after_refill = item["resume"] | false;
-                    dst.resume_level = (uint8_t)(item["resume_level"] | 0u);
-                    dst.active = item["active"] | false;
-                    dst.paused = item["paused"] | false;
-                    dst.remaining_ms = (uint32_t)(item["remaining_ms"] | 0u);
-                    copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
-                }
-                watering_cache->has_data = true;
-                watering_cache->last_ok = true;
-                watering_cache->node_id = node_id;
-            }
-        }
-
-        if (i2c_cache)
-        {
-            i2c_cache->pending = false;
-            i2c_cache->updated_ms = millis();
-            i2c_cache->last_ok = false;
-            i2c_cache->last_error = "";
-            if (!ok)
-            {
-                i2c_cache->last_error = doc["error"] | "error";
-            }
-            else if (!items.isNull())
-            {
-                i2c_cache->item_count = 0;
-                for (JsonObjectConst item : items)
-                {
-                    if (i2c_cache->item_count >= 127)
-                        break;
-                    if (!item["bus"].is<unsigned>())
-                        continue;
-                    const char *addr = item["addr"] | "";
-                    uint8_t addr_val = 0;
-                    if (addr && addr[0])
-                        addr_val = (uint8_t)strtoul(addr, nullptr, 0);
-                    StackI2cItem &dst = i2c_cache->items[i2c_cache->item_count++];
-                    dst.bus = (uint8_t)item["bus"].as<unsigned>();
-                    dst.addr = addr_val;
-                }
-                i2c_cache->has_data = true;
-                i2c_cache->last_ok = true;
-                i2c_cache->node_id = node_id;
-            }
-        }
-
-        if (ow_cache)
-        {
-            ow_cache->pending = false;
-            ow_cache->updated_ms = millis();
-            ow_cache->last_ok = false;
-            ow_cache->last_error = "";
-            if (!ok)
-            {
-                ow_cache->last_error = doc["error"] | "error";
-            }
-            else if (!items.isNull())
-            {
-                ow_cache->item_count = 0;
-                for (JsonObjectConst item : items)
-                {
-                    if (ow_cache->item_count >= 64)
-                        break;
-                    if (!item["bus"].is<unsigned>())
-                        continue;
-                    StackOwItem &dst = ow_cache->items[ow_cache->item_count++];
-                    dst.bus = (uint8_t)item["bus"].as<unsigned>();
-                    const char *addr = item["addr"] | "";
-                    const char *type = item["type"] | "";
-                    strncpy(dst.addr, addr ? addr : "", sizeof(dst.addr) - 1);
-                    strncpy(dst.type, type ? type : "", sizeof(dst.type) - 1);
-                    dst.addr[sizeof(dst.addr) - 1] = '\0';
-                    dst.type[sizeof(dst.type) - 1] = '\0';
-                }
-                ow_cache->has_data = true;
-                ow_cache->last_ok = true;
-                ow_cache->node_id = node_id;
-            }
-        }
-
-        if (status_cache)
-        {
-            JsonObjectConst data = doc["data"].as<JsonObjectConst>();
-            if (status_is_plc)
-            {
-                status_cache->pending_plc = false;
-                status_cache->plc_updated_ms = millis();
-                status_cache->last_plc_ok = false;
-                status_cache->last_plc_error = "";
-                if (!ok)
-                {
-                    status_cache->last_plc_error = doc["error"] | "error";
-                }
-                else if (!data.isNull())
-                {
-                    status_cache->board_temp = data["board_temp"] | status_cache->board_temp;
-                    status_cache->cpu_temp = data["cpu_temp"] | status_cache->cpu_temp;
-                    status_cache->fan_on = data["fan_on"] | false;
-                    status_cache->fan_on_c = data["on_c"] | status_cache->fan_on_c;
-                    status_cache->fan_hyst_c = data["hyst_c"] | status_cache->fan_hyst_c;
-                    status_cache->has_plc = true;
-                    status_cache->last_plc_ok = true;
-                    status_cache->node_id = node_id;
-                }
-            }
-            if (status_is_rtc)
-            {
-                status_cache->pending_rtc = false;
-                status_cache->rtc_updated_ms = millis();
-                status_cache->last_rtc_ok = false;
-                status_cache->last_rtc_error = "";
-                if (!ok)
-                {
-                    status_cache->last_rtc_error = doc["error"] | "error";
-                }
-                else if (!data.isNull())
-                {
-                    status_cache->rtc_date = data["date"] | status_cache->rtc_date;
-                    status_cache->rtc_time = data["time"] | status_cache->rtc_time;
-                    status_cache->rtc_weekday = (uint8_t)(data["weekday"] | status_cache->rtc_weekday);
-                    status_cache->rtc_temp = data["temp_c"] | status_cache->rtc_temp;
-                    status_cache->has_rtc = true;
-                    status_cache->last_rtc_ok = true;
-                    status_cache->node_id = node_id;
-                }
-            }
-        }
+        // Fallback local stack caches removed: StackCache is the single source of truth.
+        (void)node_id;
+        (void)frame;
     }
 
     bool requestStackPorts_(uint32_t node_id)
     {
-        if (!_stack_master)
-            return false;
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
-            return false;
-        StackPortsCache *cache = findStackPortsCache_(node_id, true);
-        if (!cache)
-            return false;
-        const uint32_t now = millis();
-        if (cache->pending)
-        {
-            if ((uint32_t)(now - cache->updated_ms) > 15000u)
-            {
-                cache->pending = false;
-                cache->pending_cmd_id = 0;
-            }
-            else
-            {
-                return false;
-            }
-        }
-        if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
-            return false;
-        const uint16_t cmd_id = nextStackCmdId_();
-        StaticJsonDocument<192> doc;
-        doc["cmd_id"] = cmd_id;
-        doc["feature"] = (uint8_t)StackFeature::Ports;
-        doc["action"] = "get_state";
-        char payload[96] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0)
-            return false;
-        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
-                                   (const uint8_t *)payload, len))
-            return false;
-        cache->pending = true;
-        cache->pending_cmd_id = cmd_id;
-        cache->updated_ms = now;
-        return true;
+        return _stack_cache && _stack_cache->requestPorts(node_id);
     }
 
     bool requestStackExtenders_(uint32_t node_id)
     {
-        if (!_stack_master)
-            return false;
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
-            return false;
-        StackExtendersCache *cache = findStackExtendersCache_(node_id, true);
-        if (!cache)
-            return false;
-        const uint32_t now = millis();
-        if (cache->pending)
-        {
-            if ((uint32_t)(now - cache->updated_ms) > 15000u)
-            {
-                cache->pending = false;
-                cache->pending_cmd_id = 0;
-            }
-            else
-            {
-                return false;
-            }
-        }
-        if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
-            return false;
-        const uint16_t cmd_id = nextStackCmdId_();
-        StaticJsonDocument<192> doc;
-        doc["cmd_id"] = cmd_id;
-        doc["feature"] = (uint8_t)StackFeature::Extenders;
-        doc["action"] = "get_list";
-        char payload[96] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0)
-            return false;
-        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
-                                   (const uint8_t *)payload, len))
-            return false;
-        cache->pending = true;
-        cache->pending_cmd_id = cmd_id;
-        cache->updated_ms = now;
-        return true;
+        return _stack_cache && _stack_cache->requestExtenders(node_id);
     }
 
     bool requestStackI2c_(uint32_t node_id, bool run)
     {
-        if (!_stack_master)
-            return false;
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
-            return false;
-        StackI2cCache *cache = findStackI2cCache_(node_id, true);
-        if (!cache)
-            return false;
-        const uint32_t now = millis();
-        if (cache->pending)
-        {
-            if ((uint32_t)(now - cache->updated_ms) > 15000u)
-            {
-                cache->pending = false;
-                cache->pending_cmd_id = 0;
-            }
-            else
-            {
-                return false;
-            }
-        }
-        if (!run && cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
-            return false;
-        const uint16_t cmd_id = nextStackCmdId_();
-        StaticJsonDocument<128> doc;
-        doc["cmd_id"] = cmd_id;
-        doc["feature"] = (uint8_t)StackFeature::I2cScan;
-        doc["action"] = run ? "run" : "get_last";
-        char payload[96] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0)
-            return false;
-        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
-                                   (const uint8_t *)payload, len))
-            return false;
-        cache->pending = true;
-        cache->pending_cmd_id = cmd_id;
-        cache->updated_ms = now;
-        return true;
+        return _stack_cache && _stack_cache->requestI2c(node_id, run);
     }
 
     bool requestStackOw_(uint32_t node_id, bool run)
     {
-        if (!_stack_master)
-            return false;
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
-            return false;
-        StackOwCache *cache = findStackOwCache_(node_id, true);
-        if (!cache)
-            return false;
-        const uint32_t now = millis();
-        if (cache->pending)
-        {
-            if ((uint32_t)(now - cache->updated_ms) > 15000u)
-            {
-                cache->pending = false;
-                cache->pending_cmd_id = 0;
-            }
-            else
-            {
-                return false;
-            }
-        }
-        if (!run && cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
-            return false;
-        const uint16_t cmd_id = nextStackCmdId_();
-        StaticJsonDocument<128> doc;
-        doc["cmd_id"] = cmd_id;
-        doc["feature"] = (uint8_t)StackFeature::OwScan;
-        doc["action"] = run ? "run" : "get_last";
-        char payload[96] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0)
-            return false;
-        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
-                                   (const uint8_t *)payload, len))
-            return false;
-        cache->pending = true;
-        cache->pending_cmd_id = cmd_id;
-        cache->updated_ms = now;
-        return true;
+        return _stack_cache && _stack_cache->requestOw(node_id, run);
     }
 
     bool requestStackPlcStatus_(uint32_t node_id)
     {
-        if (!_stack_master)
-            return false;
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
-            return false;
-        StackNodeStatusCache *cache = findStackNodeStatusCache_(node_id, true);
-        if (!cache)
-            return false;
-        const uint32_t now = millis();
-        if (cache->pending_plc)
-        {
-            if (cache->plc_updated_ms && (uint32_t)(now - cache->plc_updated_ms) > 15000u)
-            {
-                cache->pending_plc = false;
-                cache->pending_plc_cmd_id = 0;
-            }
-            else
-            {
-                return false;
-            }
-        }
-        if (cache->has_plc && (uint32_t)(now - cache->plc_updated_ms) < 3000u)
-            return false;
-        const uint16_t cmd_id = nextStackCmdId_();
-        StaticJsonDocument<128> doc;
-        doc["cmd_id"] = cmd_id;
-        doc["feature"] = (uint8_t)StackFeature::PlcStatus;
-        doc["action"] = "get";
-        char payload[96] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0)
-            return false;
-        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
-                                   (const uint8_t *)payload, len))
-            return false;
-        cache->pending_plc = true;
-        cache->pending_plc_cmd_id = cmd_id;
-        cache->plc_updated_ms = now;
-        return true;
+        return _stack_cache && _stack_cache->requestPlcStatus(node_id);
     }
 
     bool requestStackRtcStatus_(uint32_t node_id)
     {
-        if (!_stack_master)
-            return false;
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
-            return false;
-        StackNodeStatusCache *cache = findStackNodeStatusCache_(node_id, true);
-        if (!cache)
-            return false;
-        const uint32_t now = millis();
-        if (cache->pending_rtc)
-        {
-            if (cache->rtc_updated_ms && (uint32_t)(now - cache->rtc_updated_ms) > 15000u)
-            {
-                cache->pending_rtc = false;
-                cache->pending_rtc_cmd_id = 0;
-            }
-            else
-            {
-                return false;
-            }
-        }
-        if (cache->has_rtc && (uint32_t)(now - cache->rtc_updated_ms) < 3000u)
-            return false;
-        const uint16_t cmd_id = nextStackCmdId_();
-        StaticJsonDocument<128> doc;
-        doc["cmd_id"] = cmd_id;
-        doc["feature"] = (uint8_t)StackFeature::Rtc;
-        doc["action"] = "get_time";
-        char payload[96] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0)
-            return false;
-        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
-                                   (const uint8_t *)payload, len))
-            return false;
-        cache->pending_rtc = true;
-        cache->pending_rtc_cmd_id = cmd_id;
-        cache->rtc_updated_ms = now;
-        return true;
-    }
-
-    StackSocketsCache *findStackSocketsCache_(uint32_t node_id, bool create)
-    {
-        if (node_id == 0)
-            return nullptr;
-        if (_stack_sockets_cache.node_id == node_id)
-            return &_stack_sockets_cache;
-        if (!create)
-            return nullptr;
-        _stack_sockets_cache = StackSocketsCache{};
-        _stack_sockets_cache.node_id = node_id;
-        return &_stack_sockets_cache;
-    }
-
-    const StackSocketsCache *findStackSocketsCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackSocketsCache_(node_id, create);
-    }
-
-    StackSocketsCache *findStackSocketsCacheByCmd_(uint16_t cmd_id)
-    {
-        if (cmd_id == 0)
-            return nullptr;
-        if (_stack_sockets_cache.pending && _stack_sockets_cache.pending_cmd_id == cmd_id)
-            return &_stack_sockets_cache;
-        return nullptr;
-    }
-
-    StackSocketItem *findStackSocketItem_(StackSocketsCache &cache, uint8_t id)
-    {
-        for (size_t i = 0; i < cache.item_count; ++i)
-            if (cache.items[i].id == id)
-                return &cache.items[i];
-        return nullptr;
-    }
-
-    StackLightsCache *findStackLightsCache_(uint32_t node_id, bool create)
-    {
-        if (node_id == 0)
-            return nullptr;
-        if (_stack_lights_cache.node_id == node_id)
-            return &_stack_lights_cache;
-        if (!create)
-            return nullptr;
-        _stack_lights_cache = StackLightsCache{};
-        _stack_lights_cache.node_id = node_id;
-        return &_stack_lights_cache;
-    }
-
-    const StackLightsCache *findStackLightsCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackLightsCache_(node_id, create);
-    }
-
-    StackLightsCache *findStackLightsCacheByCmd_(uint16_t cmd_id)
-    {
-        if (cmd_id == 0)
-            return nullptr;
-        if (_stack_lights_cache.pending && _stack_lights_cache.pending_cmd_id == cmd_id)
-            return &_stack_lights_cache;
-        return nullptr;
-    }
-
-    StackPortsCache *findStackPortsCache_(uint32_t node_id, bool create)
-    {
-        if (node_id == 0)
-            return nullptr;
-        if (_stack_ports_cache.node_id == node_id)
-            return &_stack_ports_cache;
-        if (!create)
-            return nullptr;
-        _stack_ports_cache = StackPortsCache{};
-        _stack_ports_cache.node_id = node_id;
-        return &_stack_ports_cache;
-    }
-
-    const StackPortsCache *findStackPortsCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackPortsCache_(node_id, create);
-    }
-
-    StackPortsCache *findStackPortsCacheByCmd_(uint16_t cmd_id)
-    {
-        if (cmd_id == 0)
-            return nullptr;
-        if (_stack_ports_cache.pending && _stack_ports_cache.pending_cmd_id == cmd_id)
-            return &_stack_ports_cache;
-        return nullptr;
-    }
-
-    StackExtendersCache *findStackExtendersCache_(uint32_t node_id, bool create)
-    {
-        if (node_id == 0)
-            return nullptr;
-        if (_stack_ext_cache.node_id == node_id)
-            return &_stack_ext_cache;
-        if (!create)
-            return nullptr;
-        _stack_ext_cache = StackExtendersCache{};
-        _stack_ext_cache.node_id = node_id;
-        return &_stack_ext_cache;
-    }
-
-    const StackExtendersCache *findStackExtendersCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackExtendersCache_(node_id, create);
-    }
-
-    StackExtendersCache *findStackExtendersCacheByCmd_(uint16_t cmd_id)
-    {
-        if (cmd_id == 0)
-            return nullptr;
-        if (_stack_ext_cache.pending && _stack_ext_cache.pending_cmd_id == cmd_id)
-            return &_stack_ext_cache;
-        return nullptr;
-    }
-
-    StackI2cCache *findStackI2cCache_(uint32_t node_id, bool create)
-    {
-        if (node_id == 0)
-            return nullptr;
-        if (_stack_i2c_cache.node_id == node_id)
-            return &_stack_i2c_cache;
-        if (!create)
-            return nullptr;
-        _stack_i2c_cache = StackI2cCache{};
-        _stack_i2c_cache.node_id = node_id;
-        return &_stack_i2c_cache;
-    }
-
-    const StackI2cCache *findStackI2cCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackI2cCache_(node_id, create);
-    }
-
-    StackI2cCache *findStackI2cCacheByCmd_(uint16_t cmd_id)
-    {
-        if (cmd_id == 0)
-            return nullptr;
-        if (_stack_i2c_cache.pending && _stack_i2c_cache.pending_cmd_id == cmd_id)
-            return &_stack_i2c_cache;
-        return nullptr;
-    }
-
-    StackOwCache *findStackOwCache_(uint32_t node_id, bool create)
-    {
-        if (node_id == 0)
-            return nullptr;
-        if (_stack_ow_cache.node_id == node_id)
-            return &_stack_ow_cache;
-        if (!create)
-            return nullptr;
-        _stack_ow_cache = StackOwCache{};
-        _stack_ow_cache.node_id = node_id;
-        return &_stack_ow_cache;
-    }
-
-    const StackOwCache *findStackOwCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackOwCache_(node_id, create);
-    }
-
-    StackOwCache *findStackOwCacheByCmd_(uint16_t cmd_id)
-    {
-        if (cmd_id == 0)
-            return nullptr;
-        if (_stack_ow_cache.pending && _stack_ow_cache.pending_cmd_id == cmd_id)
-            return &_stack_ow_cache;
-        return nullptr;
-    }
-
-    StackLightItem *findStackLightItem_(StackLightsCache &cache, uint8_t id)
-    {
-        for (size_t i = 0; i < cache.item_count; ++i)
-            if (cache.items[i].id == id)
-                return &cache.items[i];
-        return nullptr;
-    }
-
-    StackSecurityCache *findStackSecurityCache_(uint32_t node_id, bool create)
-    {
-        if (node_id == 0)
-            return nullptr;
-        if (_stack_security_cache.node_id == node_id)
-            return &_stack_security_cache;
-        if (!create)
-            return nullptr;
-        _stack_security_cache = StackSecurityCache{};
-        _stack_security_cache.node_id = node_id;
-        return &_stack_security_cache;
-    }
-
-    const StackSecurityCache *findStackSecurityCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackSecurityCache_(node_id, create);
-    }
-
-    StackSecurityCache *findStackSecurityCacheByCmd_(uint16_t cmd_id)
-    {
-        if (cmd_id == 0)
-            return nullptr;
-        if (_stack_security_cache.pending && _stack_security_cache.pending_cmd_id == cmd_id)
-            return &_stack_security_cache;
-        return nullptr;
-    }
-
-    StackMeteoCache *findStackMeteoCache_(uint32_t node_id, bool create)
-    {
-        if (node_id == 0)
-            return nullptr;
-        if (_stack_meteo_cache.node_id == node_id)
-            return &_stack_meteo_cache;
-        if (!create)
-            return nullptr;
-        _stack_meteo_cache = StackMeteoCache{};
-        _stack_meteo_cache.node_id = node_id;
-        return &_stack_meteo_cache;
-    }
-
-    const StackMeteoCache *findStackMeteoCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackMeteoCache_(node_id, create);
-    }
-
-    StackMeteoCache *findStackMeteoCacheByCmd_(uint16_t cmd_id)
-    {
-        if (cmd_id == 0)
-            return nullptr;
-        if (_stack_meteo_cache.pending && _stack_meteo_cache.pending_cmd_id == cmd_id)
-            return &_stack_meteo_cache;
-        return nullptr;
-    }
-
-    StackThermoCache *findStackThermoCache_(uint32_t node_id, bool create)
-    {
-        if (node_id == 0)
-            return nullptr;
-        if (_stack_thermo_cache.node_id == node_id)
-            return &_stack_thermo_cache;
-        if (!create)
-            return nullptr;
-        _stack_thermo_cache = StackThermoCache{};
-        _stack_thermo_cache.node_id = node_id;
-        return &_stack_thermo_cache;
-    }
-
-    const StackThermoCache *findStackThermoCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackThermoCache_(node_id, create);
-    }
-
-    StackThermoCache *findStackThermoCacheByCmd_(uint16_t cmd_id)
-    {
-        if (cmd_id == 0)
-            return nullptr;
-        if (_stack_thermo_cache.pending && _stack_thermo_cache.pending_cmd_id == cmd_id)
-            return &_stack_thermo_cache;
-        return nullptr;
-    }
-
-    StackSepticCache *findStackSepticCache_(uint32_t node_id, bool create)
-    {
-        if (node_id == 0)
-            return nullptr;
-        if (_stack_septic_cache.node_id == node_id)
-            return &_stack_septic_cache;
-        if (!create)
-            return nullptr;
-        _stack_septic_cache = StackSepticCache{};
-        _stack_septic_cache.node_id = node_id;
-        return &_stack_septic_cache;
-    }
-
-    const StackSepticCache *findStackSepticCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackSepticCache_(node_id, create);
-    }
-
-    StackSepticCache *findStackSepticCacheByCmd_(uint16_t cmd_id)
-    {
-        if (cmd_id == 0)
-            return nullptr;
-        if (_stack_septic_cache.pending && _stack_septic_cache.pending_cmd_id == cmd_id)
-            return &_stack_septic_cache;
-        return nullptr;
-    }
-
-    StackTankCache *findStackTanksCache_(uint32_t node_id, bool create)
-    {
-        if (node_id == 0)
-            return nullptr;
-        if (_stack_tanks_cache.node_id == node_id)
-            return &_stack_tanks_cache;
-        if (!create)
-            return nullptr;
-        _stack_tanks_cache = StackTankCache{};
-        _stack_tanks_cache.node_id = node_id;
-        return &_stack_tanks_cache;
-    }
-
-    const StackTankCache *findStackTanksCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackTanksCache_(node_id, create);
-    }
-
-    StackTankCache *findStackTanksCacheByCmd_(uint16_t cmd_id)
-    {
-        if (cmd_id == 0)
-            return nullptr;
-        if (_stack_tanks_cache.pending && _stack_tanks_cache.pending_cmd_id == cmd_id)
-            return &_stack_tanks_cache;
-        return nullptr;
-    }
-
-    StackWateringCache *findStackWateringCache_(uint32_t node_id, bool create)
-    {
-        if (node_id == 0)
-            return nullptr;
-        if (_stack_watering_cache.node_id == node_id)
-            return &_stack_watering_cache;
-        if (!create)
-            return nullptr;
-        _stack_watering_cache = StackWateringCache{};
-        _stack_watering_cache.node_id = node_id;
-        return &_stack_watering_cache;
-    }
-
-    const StackWateringCache *findStackWateringCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackWateringCache_(node_id, create);
-    }
-
-    StackWateringCache *findStackWateringCacheByCmd_(uint16_t cmd_id)
-    {
-        if (cmd_id == 0)
-            return nullptr;
-        if (_stack_watering_cache.pending && _stack_watering_cache.pending_cmd_id == cmd_id)
-            return &_stack_watering_cache;
-        return nullptr;
-    }
-
-    StackNodeStatusCache *findStackNodeStatusCache_(uint32_t node_id, bool create)
-    {
-        for (auto &c : _stack_status_cache)
-        {
-            if (c.node_id == node_id)
-                return &c;
-        }
-        if (!create)
-            return nullptr;
-        for (auto &c : _stack_status_cache)
-        {
-            if (c.node_id == 0)
-            {
-                c = StackNodeStatusCache{};
-                c.node_id = node_id;
-                return &c;
-            }
-        }
-        return nullptr;
-    }
-
-    const StackNodeStatusCache *findStackNodeStatusCache_(uint32_t node_id, bool create) const
-    {
-        return const_cast<WebInterface *>(this)->findStackNodeStatusCache_(node_id, create);
-    }
-
-    StackNodeStatusCache *findStackNodeStatusCacheByCmd_(uint16_t cmd_id, bool &is_plc, bool &is_rtc)
-    {
-        is_plc = false;
-        is_rtc = false;
-        if (cmd_id == 0)
-            return nullptr;
-        for (auto &c : _stack_status_cache)
-        {
-            if (c.pending_plc && c.pending_plc_cmd_id == cmd_id)
-            {
-                is_plc = true;
-                return &c;
-            }
-            if (c.pending_rtc && c.pending_rtc_cmd_id == cmd_id)
-            {
-                is_rtc = true;
-                return &c;
-            }
-        }
-        return nullptr;
+        return _stack_cache && _stack_cache->requestRtcStatus(node_id);
     }
 
     uint16_t nextStackCmdId_()
@@ -1587,7 +287,7 @@
 
     String listStackI2cHtml_(uint32_t node_id) const
     {
-        const StackI2cCache *cache = findStackI2cCache_(node_id, false);
+        const auto *cache = _stack_cache ? _stack_cache->i2cCache(node_id) : nullptr;
         if (!cache)
             return "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
         if (cache->pending)
@@ -1617,9 +317,9 @@
         String out;
         out.reserve(1024);
         out += "<div class=\"section\">";
-        out += "<h2>Контроллеры</h2>";
+        out += WebUiRu::Controllers::kText;
         out += "<table><thead><tr>";
-        out += "<th>Unit</th><th>DeviceName</th><th>NodeID</th><th>IP</th><th>Тип</th>";
+        out += WebUiRu::Controllers::kUnitDevicenameNodeidIp;
         out += "</tr></thead><tbody id=\"stack-nodes-tbody\">";
         out += listStackNodesHtml_();
         out += "</tbody></table>";
@@ -1629,59 +329,53 @@
 
     String listStackNodesStatusHtml_() const
     {
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
-            return "";
+        String html;
+        html.reserve(4096);
+        html += "<tr><th>";
+        html += WebUiRu::Controllers::kIpRtcCpu;
+        html += "</th></tr>";
+        if (!_stack_master)
+            return WebUiRu::Controllers::kText3;
         const size_t count = _stack_master->nodeCount();
         if (count == 0)
-            return "<p class=\"status\">Слейвы не подключены</p>";
-        String html;
-        html.reserve(256 + count * 160);
-        html += "<table><thead><tr>";
-        html += "<th>Узел</th><th>IP</th><th>Дата</th><th>Время</th><th>RTC</th><th>Плата</th><th>CPU</th><th>Вент.</th>";
-        html += "</tr></thead><tbody>";
+            return WebUiRu::Controllers::kText4;
         for (size_t i = 0; i < count; ++i)
         {
             const uint32_t id = _stack_master->nodeIdAt(i);
-            if (id == 0)
-                continue;
-            const String name = _stack_master->nodeNameAt(i);
-            const String ip = _stack_master->nodeIpAt(i);
-            const StackNodeStatusCache *cache = findStackNodeStatusCache_(id, false);
+            const auto *cache = _stack_cache ? _stack_cache->statusCache(id) : nullptr;
             const bool has_rtc = cache && cache->has_rtc && cache->last_rtc_ok;
             const bool has_plc = cache && cache->has_plc && cache->last_plc_ok;
-            const String label = name.length() ? safeHtmlValue_(name, "") : stackNodeIdHex_(id);
             html += "<tr><td><strong>";
-            html += label;
-            html += "</strong></td><td>";
-            html += safeHtmlValue_(ip, "n/a");
-            html += "</td><td>";
+            html += _stack_master->nodeNameAt(i);
+            html += "</strong></td><td><strong>";
+            html += _stack_master->nodeIpAt(i);
+            html += "</strong></td><td><strong>";
             html += has_rtc ? safeHtmlValue_(cache->rtc_date, "n/a") : "n/a";
-            html += "</td><td>";
+            html += "</strong></td><td><strong>";
             html += has_rtc ? safeHtmlValue_(cache->rtc_time, "n/a") : "n/a";
-            html += "</td><td>";
+            html += "</strong></td><td><strong>";
             html += has_rtc ? formatTemp_(cache->rtc_temp) : "n/a";
-            html += "</td><td>";
+            html += "</strong></td><td><strong>";
             html += has_plc ? formatTemp_(cache->board_temp) : "n/a";
-            html += "</td><td>";
+            html += "</strong></td><td><strong>";
             html += has_plc ? formatTemp_(cache->cpu_temp) : "n/a";
-            html += "</td><td>";
+            html += "</strong></td><td class=\"center\"><strong>";
             if (has_plc)
                 html += fanStatusIcon_(cache->fan_on);
             else
                 html += "n/a";
-            html += "</td></tr>";
+            html += "</strong></td></tr>";
         }
-        html += "</tbody></table>";
         return html;
     }
 
     String listStackNodesHtml_() const
     {
         if (!_stack_master)
-            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Стек недоступен</strong></td></tr>";
+            return WebUiRu::Controllers::kText3;
         const size_t count = _stack_master->nodeCount();
         if (count == 0)
-            return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Контроллеров нет</strong></td></tr>";
+            return WebUiRu::Controllers::kText4;
         String items;
         items.reserve(1024);
         for (size_t i = 0; i < count; ++i)
@@ -1689,7 +383,9 @@
             const uint32_t id = _stack_master->nodeIdAt(i);
             const String name = _stack_master->nodeNameAt(i);
             const String ip = _stack_master->nodeIpAt(i);
-            items += "<tr><td><strong>";
+            items += "<tr data-node=\"";
+            items += String((unsigned long)id);
+            items += "\"><td><strong>";
             if (name.length())
                 appendHtmlEscaped_(items, name.c_str());
             else
@@ -1707,7 +403,7 @@
             else
                 items += "-";
             items += "</td><td>";
-            items += _stack_master->nodeIsControllerAt(i) ? "Контроллер" : "Модуль";
+            items += _stack_master->nodeIsControllerAt(i) ? WebUiRu::Controllers::kText5 : WebUiRu::Controllers::kText6;
             items += "</td></tr>";
         }
         return items;
@@ -1719,121 +415,117 @@
         out.reserve(128);
         out += "[";
         bool first = true;
-        auto mark_used = [](bool used[], uint8_t port)
-        {
-            if (port < PortIO::PORT_COUNT)
-                used[port] = true;
-        };
-        bool used[PortIO::PORT_COUNT] = {};
-        if (_controllers)
-        {
-            SocketController &sockets = _controllers->sockets();
-            MeteoController &meteo = _controllers->meteo();
-            ThermoController &thermo = _controllers->thermo();
-            TankController &tanks = _controllers->tanks();
-            SepticController &septic = _controllers->septic();
-            SecurityController &security = _controllers->security();
-            RingController &ring = _controllers->ring();
-            AvrController &avr = _controllers->avr();
-            LeakController &leak = _controllers->leak();
-
-            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
-            {
-                const auto *cfg = sockets.configByIndex(i);
-                if (!cfg)
-                    continue;
-                mark_used(used, cfg->button_port);
-                mark_used(used, cfg->relay_port);
-            }
-            for (size_t i = 0; i < SocketController::kLightCount; ++i)
-            {
-                const auto *cfg = sockets.lightConfigByIndex(i);
-                if (!cfg)
-                    continue;
-                mark_used(used, cfg->button_port);
-                mark_used(used, cfg->relay_port);
-            }
-            for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
-            {
-                const auto *cfg = meteo.configByIndex(i);
-                if (!cfg)
-                    continue;
-                if (cfg->type != MeteoController::SensorType::Dht22)
-                    continue;
-                mark_used(used, cfg->dht_pin);
-            }
-            for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
-            {
-                const auto *cfg = thermo.configByIndex(i);
-                if (!cfg)
-                    continue;
-                mark_used(used, cfg->heat_port);
-                mark_used(used, cfg->cool_port);
-                mark_used(used, cfg->button_port);
-            }
-            for (size_t i = 0; i < TankController::kTankCount; ++i)
-            {
-                const auto *cfg = tanks.configByIndex(i);
-                if (!cfg)
-                    continue;
-                mark_used(used, cfg->level_low);
-                mark_used(used, cfg->level_mid);
-                mark_used(used, cfg->level_full);
-                mark_used(used, cfg->relay_valve);
-                mark_used(used, cfg->relay_pump);
-                mark_used(used, cfg->relay_alarm);
-            }
-            for (size_t i = 0; i < SepticController::kSepticCount; ++i)
-            {
-                const auto *cfg = septic.configByIndex(i);
-                if (!cfg)
-                    continue;
-                mark_used(used, cfg->warning_port);
-                mark_used(used, cfg->alarm_port);
-                mark_used(used, cfg->relay_warning);
-                mark_used(used, cfg->relay_alarm);
-            }
-            if (security.sirenPort() != SecurityController::kInvalidPort)
-                mark_used(used, security.sirenPort());
-            for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
-            {
-                const auto *cfg = security.configByIndex(i);
-                if (!cfg)
-                    continue;
-                mark_used(used, cfg->port);
-            }
-            const auto &rcfg = ring.config();
-            mark_used(used, rcfg.button_port);
-            mark_used(used, rcfg.relay_port);
-
-            const auto &acfg = avr.config();
-            mark_used(used, acfg.main_ok_port);
-            mark_used(used, acfg.reserve_ok_port);
-            mark_used(used, acfg.feedback_main_port);
-            mark_used(used, acfg.feedback_reserve_port);
-            mark_used(used, acfg.relay_main_port);
-            mark_used(used, acfg.relay_reserve_port);
-
-            for (size_t i = 0; i < LeakController::kZoneCount; ++i)
-            {
-                const auto *cfg = leak.configByIndex(i);
-                if (!cfg)
-                    continue;
-                mark_used(used, cfg->sensor_port);
-                mark_used(used, cfg->valve_port);
-                mark_used(used, cfg->alarm_port);
-            }
-        }
+        if (!_controllers)
+            return "[]";
         for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
         {
-            if (!used[i])
-                continue;
-            const auto &p = ActiveBoardProfile::PORTS[i];
-            if (p.caps == Cap::None || p.type != type)
+            if (!_controllers->gpioPortUsedByType(i, type))
                 continue;
             if (!first)
                 out += ",";
             out += String((unsigned)i);
+            first = false;
+        }
+        out += "]";
+        return out;
+    }
+
+    static bool stackPortTypeMatch_(const StackCache::StackPortItem &it, PortIO::PinType type)
+    {
+        const bool has_pin_type = (it.pin_type != 0xFFu);
+        if (has_pin_type && ((uint8_t)type == it.pin_type))
+            return true;
+
+        String t = it.type;
+        t.toLowerCase();
+        switch (type)
+        {
+        case PortIO::PinType::Relay:
+            return t == "relay" || t == "output" || t == "out" || t == "rly";
+        case PortIO::PinType::DInput:
+            return t == "dinput" || t == "din" || t == "input" || t == "button" || t == "btn" || t == "switch";
+        case PortIO::PinType::Sensor:
+            return t == "sensor";
+        case PortIO::PinType::Button:
+            return t == "button" || t == "btn" || t == "dinput" || t == "din" || t == "input" || t == "switch";
+        case PortIO::PinType::Led:
+            return t == "led";
+        case PortIO::PinType::System:
+            return t == "system";
+        case PortIO::PinType::Buzzer:
+            return t == "buzzer";
+        case PortIO::PinType::Fan:
+            return t == "fan";
+        default:
+            break;
+        }
+        return false;
+    }
+
+    String stackPortOptionsJson_(uint32_t node_id, PortIO::PinType type) const
+    {
+        String out;
+        out.reserve(256);
+        out += "[";
+        const auto *cache = _stack_cache ? _stack_cache->portsCache(node_id) : nullptr;
+        if (!cache || !cache->has_data || !cache->items)
+            return "[]";
+
+        bool first = true;
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const auto &it = cache->items[i];
+            if (!stackPortTypeMatch_(it, type))
+                continue;
+            if (!first)
+                out += ",";
+            out += "{\"v\":";
+            out += String((unsigned)it.id);
+            out += ",\"l\":\"";
+            out += "#";
+            out += String((unsigned)it.id);
+            out += " ";
+            if (it.type[0])
+                appendJsonEscaped_(out, it.type);
+            else
+                out += "Port";
+            if (it.loc[0])
+            {
+                out += " @";
+                appendJsonEscaped_(out, it.loc);
+            }
+            if (it.pin >= 0)
+            {
+                out += " GPIO";
+                out += String((int)it.pin);
+            }
+            out += "\"}";
+            first = false;
+        }
+        out += "]";
+        return out;
+    }
+
+    String stackUsedPortsJson_(uint32_t node_id, PortIO::PinType type) const
+    {
+        String out;
+        out.reserve(128);
+        out += "[";
+        const auto *cache = _stack_cache ? _stack_cache->portsCache(node_id) : nullptr;
+        if (!cache || !cache->has_data || !cache->items)
+            return "[]";
+
+        bool first = true;
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const auto &it = cache->items[i];
+            if (!stackPortTypeMatch_(it, type))
+                continue;
+            if (!it.used)
+                continue;
+            if (!first)
+                out += ",";
+            out += String((unsigned)it.id);
             first = false;
         }
         out += "]";
@@ -1876,7 +568,7 @@
 
     String listStackOwHtml_(uint32_t node_id) const
     {
-        const StackOwCache *cache = findStackOwCache_(node_id, false);
+        const auto *cache = _stack_cache ? _stack_cache->owCache(node_id) : nullptr;
         if (!cache)
             return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
         if (cache->pending)
@@ -1891,9 +583,15 @@
             items += "<tr><td class=\"right\"><strong>";
             items += String((unsigned)it.bus);
             items += "</strong></td><td><strong>";
-            items += it.type[0] ? it.type : "n/a";
+            if (it.addr[0])
+                appendHtmlEscaped_(items, it.addr);
+            else
+                items += "n/a";
             items += "</strong></td><td><strong>";
-            items += it.addr[0] ? it.addr : "n/a";
+            if (it.type[0])
+                appendHtmlEscaped_(items, it.type);
+            else
+                items += "n/a";
             items += "</strong></td></tr>";
         }
         if (items.length() == 0)
@@ -2753,17 +1451,68 @@ sendRedirect_(request, "/", set_cookie);
 
     String navHtml_() const
     {
-        String nav = F("<div class=\"nav\"><a href=\"/\">FCPLC</a> | <a href=\"/controllers\">Контроллеры</a>");
+        String nav = WebUiRu::Controllers::kFcplc;
         if (webSessionIsAdmin_())
         {
-            nav += F(" | <a href=\"/wifi\">Сеть</a>");
-            nav += F(" | <a href=\"/manage\">Прошивка и файлы</a> | <a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a>");
-            nav += F(" | <a href=\"/stack\">Стек</a> | <a href=\"/users\">Пользователи</a> | <a href=\"/display\">Дисплей</a>");
-            nav += F(" | <a href=\"/rules\">Правила</a>");
-            nav += F(" | <a href=\"/telegram\">Telegram</a> | <a href=\"/cloud\">Облако</a>");
-            nav += F(" | <a href=\"/admin\">Система</a> | <a href=\"/logs\">Logs</a>");
+            nav += WebUiRu::Controllers::kText7;
+            nav += WebUiRu::Controllers::kText8;
+            nav += WebUiRu::Controllers::kText9;
+            nav += WebUiRu::Controllers::kText10;
+            nav += WebUiRu::Controllers::kTelegram;
+            nav += WebUiRu::Controllers::kLogs;
         }
         nav += F("</div>");
+        nav += F(R"HTML(
+<div id="global-stack-toast-wrap" style="position:fixed;left:16px;top:16px;display:flex;flex-direction:column;gap:8px;z-index:9999;pointer-events:none"></div>
+<script>
+(function(){
+  const wrap = document.getElementById('global-stack-toast-wrap');
+  if (!wrap) return;
+  function showToast(msg, kind){
+    const el = document.createElement('div');
+    el.textContent = msg;
+    const ok = kind !== 'error';
+    const border = ok ? 'rgba(34,197,94,0.45)' : 'rgba(239,68,68,0.50)';
+    const bg = ok ? 'rgba(6,33,23,.94)' : 'rgba(46,12,12,.94)';
+    const color = ok ? '#d1fae5' : '#fee2e2';
+    el.style.cssText = 'min-width:220px;max-width:340px;padding:10px 12px;border-radius:10px;border:1px solid ' + border + ';background:' + bg + ';color:' + color + ';font-size:13px;box-shadow:0 8px 20px rgba(0,0,0,.35);opacity:0;transform:translateY(8px);transition:opacity .18s ease,transform .18s ease';
+    wrap.appendChild(el);
+    requestAnimationFrame(()=>{ el.style.opacity='1'; el.style.transform='translateY(0)'; });
+    setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(8px)'; setTimeout(()=>{ if(el.parentNode) el.parentNode.removeChild(el); },220); },3200);
+  }
+  let known = null;
+  async function poll(){
+    try{
+      const r = await fetch('/stack/online_snapshot', {cache:'no-store', credentials:'same-origin'});
+      if(!r.ok) return;
+      const data = await r.json();
+      const next = new Map();
+      if(Array.isArray(data)){
+        data.forEach((n)=>{
+          const id = String((n && n.id != null) ? n.id : '').trim();
+          if(!id) return;
+          const name = String((n && n.name) ? n.name : id);
+          next.set(id, name);
+        });
+      }
+      if (known === null){
+        known = next;
+        return;
+      }
+      next.forEach((name,id)=>{
+        if(!known.has(id)) showToast('Подключен слейв: ' + name + ' id: 0x' + Number(id).toString(16).toUpperCase().padStart(8, '0'), 'success');
+      });
+      known.forEach((name,id)=>{
+        if(!next.has(id)) showToast('Отключен слейв: ' + name + ' id: 0x' + Number(id).toString(16).toUpperCase().padStart(8, '0'), 'error');
+      });
+      known = next;
+    }catch(e){}
+  }
+  poll();
+  setInterval(poll, 3000);
+})();
+</script>
+)HTML");
         return nav;
     }
 
@@ -3326,4 +2075,7 @@ static bool parseThermoMode_(const String &input, ThermoController::Mode &out)
         out = v;
         return true;
     }
+
+#endif // WEB_INTERFACE_CLASS_CONTEXT
+
 

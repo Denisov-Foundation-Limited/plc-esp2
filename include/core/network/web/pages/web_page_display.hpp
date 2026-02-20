@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -17,7 +17,7 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Дисплей</title>
+  <title>Р”РёСЃРїР»РµР№</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -102,7 +102,7 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Дисплей (LCD1602)</h1>
+      <h1>Р”РёСЃРїР»РµР№ (LCD1602)</h1>
       <div class="status">%DISPLAY_STATUS%</div>
       <pre id="display-preview" style="background:#0b1220;border:1px solid #1f2937;border-radius:10px;padding:10px;color:#e5e7eb;white-space:pre;font-family:Consolas,""Courier New"",monospace;margin:0 0 12px;">
                 </pre>
@@ -111,7 +111,7 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
           %DISPLAY_SLOTS%
         </div>
         <div class="actions">
-          <button class="btn" type="submit">Сохранить</button>
+          <button class="btn" type="submit">%SAVE_TEXT%</button>
         </div>
       </form>
     </div>
@@ -119,30 +119,30 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
   <script>
     const sourceOptions = [
       { v: 'none', l: '-' },
-      { v: 'time', l: 'Время' },
-      { v: 'socket', l: 'Розетка' },
-      { v: 'light', l: 'Свет' },
-      { v: 'meteo', l: 'Метео' },
-      { v: 'thermo', l: 'Термо' },
-      { v: 'tank', l: 'Бак' },
-      { v: 'septic', l: 'Септик' },
-      { v: 'security', l: 'Охрана' },
-      { v: 'avr', l: 'АВР' },
-      { v: 'leak', l: 'Протечки' },
-      { v: 'text', l: 'Текст' }
+      { v: 'time', l: 'Р’СЂРµРјСЏ' },
+      { v: 'socket', l: 'Р РѕР·РµС‚РєР°' },
+      { v: 'light', l: 'РЎРІРµС‚' },
+      { v: 'meteo', l: 'РњРµС‚РµРѕ' },
+      { v: 'thermo', l: 'РўРµСЂРјРѕ' },
+      { v: 'tank', l: 'Р‘Р°Рє' },
+      { v: 'septic', l: 'РЎРµРїС‚РёРє' },
+      { v: 'security', l: 'РћС…СЂР°РЅР°' },
+      { v: 'avr', l: 'РђР’Р ' },
+      { v: 'leak', l: 'РџСЂРѕС‚РµС‡РєРё' },
+      { v: 'text', l: 'РўРµРєСЃС‚' }
     ];
     const fieldOptions = {
       time: [{ v: 'hm', l: 'HH:' }, { v: 'min', l: 'MM' }],
-      socket: [{ v: 'state', l: 'Состояние' }],
-      light: [{ v: 'state', l: 'Состояние' }],
-      meteo: [{ v: 'temp', l: 'Темп' }, { v: 'hum', l: 'Влажн' }],
-      thermo: [{ v: 'state', l: 'Статус' }],
-      tank: [{ v: 'level', l: 'Уровень' }],
-      septic: [{ v: 'level', l: 'Уровень' }],
+      socket: [{ v: 'state', l: 'РЎРѕСЃС‚РѕСЏРЅРёРµ' }],
+      light: [{ v: 'state', l: 'РЎРѕСЃС‚РѕСЏРЅРёРµ' }],
+      meteo: [{ v: 'temp', l: 'РўРµРјРї' }, { v: 'hum', l: 'Р’Р»Р°Р¶РЅ' }],
+      thermo: [{ v: 'state', l: 'РЎС‚Р°С‚СѓСЃ' }],
+      tank: [{ v: 'level', l: 'РЈСЂРѕРІРµРЅСЊ' }],
+      septic: [{ v: 'level', l: 'РЈСЂРѕРІРµРЅСЊ' }],
       security: [{ v: 'armed', l: 'ARM/DIS' }],
-      avr: [{ v: 'avr_source', l: 'Источник' }, { v: 'avr_main_ok', l: 'Основная сеть' }, { v: 'avr_reserve_ok', l: 'Резервная сеть' }],
-      leak: [{ v: 'leak_state', l: 'Состояние' }],
-      text: [{ v: 'text', l: 'Текст' }]
+      avr: [{ v: 'avr_source', l: 'РСЃС‚РѕС‡РЅРёРє' }, { v: 'avr_main_ok', l: 'РћСЃРЅРѕРІРЅР°СЏ СЃРµС‚СЊ' }, { v: 'avr_reserve_ok', l: 'Р РµР·РµСЂРІРЅР°СЏ СЃРµС‚СЊ' }],
+      leak: [{ v: 'leak_state', l: 'РЎРѕСЃС‚РѕСЏРЅРёРµ' }],
+      text: [{ v: 'text', l: 'РўРµРєСЃС‚' }]
     };
     const deviceOptions = %DISPLAY_DEVICE_JSON%;
     const socketOptions = %DISPLAY_SOCKET_JSON%;
@@ -288,6 +288,7 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 
 

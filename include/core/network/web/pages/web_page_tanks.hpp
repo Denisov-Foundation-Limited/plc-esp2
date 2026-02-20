@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -66,6 +66,29 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     .field.mini { padding: 4px 6px; width: 72px; }
     .field.name { min-width: 160px; }
     .actions { display: flex; gap: 10px; margin-top: 16px; }
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 8px 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+      flex-wrap: wrap;
+    }
+    .page-info { white-space: nowrap; }
+    .page-btn {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid #1f2937;
+      background: #0b1220;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .page-btn.disabled {
+      opacity: .5;
+      pointer-events: none;
+    }
     button {
       border: none;
       border-radius: 10px;
@@ -186,6 +209,7 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     }
     .status-on { background: #22c55e; }
     .status-off { background: #64748b; }
+    .status-bad { background: #ef4444; }
     .tile .field.name {
       margin-bottom: 8px;
     }
@@ -201,6 +225,14 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       min-width: 72px;
     }
     .form-row > label.switch {
+      min-width: 0;
+    }
+    .form-row.power-row {
+      justify-content: flex-start;
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .form-row.power-row > label:not(.switch) {
       min-width: 0;
     }
     .status-line {
@@ -233,8 +265,8 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     %NAV%
     <div class="card">
       <h1>Баки</h1>
-      <div class="status">%TANK_STATUS%</div>
       %TANK_DEVICE_SELECT%
+      %TANK_PAGINATION%
       <form method="POST" action="/tanks" id="tanks-form">
         <div class="grid">
           %TANK_ITEMS%
@@ -401,14 +433,30 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       if (label) {
         label.textContent = String(levelPct) + '%';
       }
-      const dots = tile.querySelectorAll('.status-row .status-dot');
-      if (dots.length > 0) {
-        dots[0].classList.remove('status-on', 'status-off');
-        dots[0].classList.add(st.pump ? 'status-on' : 'status-off');
-      }
-      if (dots.length > 1) {
-        dots[1].classList.remove('status-on', 'status-off');
-        dots[1].classList.add(st.valve ? 'status-on' : 'status-off');
+      const stackDots = tile.querySelectorAll('.status-line .status-dot');
+      if (stackDots.length >= 4) {
+        stackDots[0].classList.remove('status-on', 'status-off', 'status-bad');
+        stackDots[0].classList.add(st.power ? 'status-on' : 'status-off');
+        stackDots[1].classList.remove('status-on', 'status-off', 'status-bad');
+        stackDots[1].classList.add(st.valve ? 'status-on' : 'status-off');
+        stackDots[2].classList.remove('status-on', 'status-off', 'status-bad');
+        stackDots[2].classList.add(st.pump ? 'status-on' : 'status-off');
+        stackDots[3].classList.remove('status-on', 'status-off', 'status-bad');
+        stackDots[3].classList.add(st.alarm ? 'status-bad' : 'status-off');
+      } else {
+        const localDots = tile.querySelectorAll('.status-row .status-dot');
+        if (localDots.length > 0) {
+          localDots[0].classList.remove('status-on', 'status-off', 'status-bad');
+          localDots[0].classList.add(st.pump ? 'status-on' : 'status-off');
+        }
+        if (localDots.length > 1) {
+          localDots[1].classList.remove('status-on', 'status-off', 'status-bad');
+          localDots[1].classList.add(st.valve ? 'status-on' : 'status-off');
+        }
+        if (localDots.length > 2) {
+          localDots[2].classList.remove('status-on', 'status-off', 'status-bad');
+          localDots[2].classList.add(st.alarm ? 'status-bad' : 'status-off');
+        }
       }
     }
     function scheduleTankStateRefresh(id, tile, el, hidden, reqId) {
@@ -470,6 +518,29 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
         }
       });
     });
+    async function pollTankTilesState() {
+      const controls = Array.from(document.querySelectorAll('input.tank-power'));
+      for (const el of controls) {
+        if (!el || el.dataset.busy === '1') continue;
+        const name = el.dataset.action;
+        const idMatch = name ? name.match(/^k(\d+)_power$/) : null;
+        const id = idMatch ? parseInt(idMatch[1], 10) : 0;
+        if (!id) continue;
+        const hidden = document.querySelector('input[name="' + name + '"]');
+        const tile = el.closest('.tile');
+        try {
+          const st = await postTankToggle(id, 'state');
+          if (typeof st !== 'object' || !st) continue;
+          el.checked = !!st.power;
+          if (hidden) hidden.value = st.power ? 'on' : 'off';
+          applyTankStateUi(tile, st);
+        } catch (e) {}
+      }
+    }
+    if (tanksIsStackView) {
+      setTimeout(pollTankTilesState, 600);
+      setInterval(pollTankTilesState, 2500);
+    }
     const scrollKey = 'tanks_scroll_y';
     const savedScroll = sessionStorage.getItem(scrollKey);
     if (savedScroll) {
@@ -500,3 +571,6 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+
+

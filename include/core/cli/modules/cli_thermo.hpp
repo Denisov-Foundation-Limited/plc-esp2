@@ -510,17 +510,10 @@ private:
 
     bool isPortUsedByOther_(uint16_t id, uint8_t port) const
     {
-        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
-        {
-            const auto *cfg = _thermo.configByIndex(i);
-            if (!cfg)
-                continue;
-            if (cfg->id == id)
-                continue;
-            if (cfg->heat_port == port || cfg->cool_port == port || cfg->button_port == port)
-                return true;
-        }
-        return false;
+        const auto *self = _thermo.config(id);
+        if (self && (self->heat_port == port || self->cool_port == port || self->button_port == port))
+            return false;
+        return _c.gpioPortUsed_(port);
     }
 
     void printIdRangeInline_() const

@@ -1228,7 +1228,9 @@ private:
         appendConditionValueOptions_(out, cond_controller, r->condition_parameter, r->condition_value);
         out += "</select></div></div>";
         out += "</div>";
-        out += "<button type=\"submit\">Сохранить правило</button></form>";
+        out += "<button type=\"submit\">";
+        out += WebUiRu::kSaveRule;
+        out += "</button></form>";
 
         out += "<script>(function(){";
         out += "const n=document.getElementById('rule-cond-node');";
@@ -1528,7 +1530,9 @@ private:
         appendLightValueOptions_(web, out, action_node_id);
         out += "</select></div><div id=\"rule-light-state-wrap\"><label>Состояние</label><select id=\"rule-light-state\"><option value=\"on\">on</option><option value=\"off\">off</option></select></div></div>";
 
-        out += "<button type=\"submit\">Сохранить действие</button>";
+        out += "<button type=\"submit\">";
+        out += WebUiRu::kSaveAction;
+        out += "</button>";
         out += "<script>(function(){";
         out += "const m={";
         out += "sockets:['set','toggle'],";

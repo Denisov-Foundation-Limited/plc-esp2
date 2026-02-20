@@ -61,7 +61,10 @@ public:
         }
         else
         {
-            page_idx = 0;
+            const size_t visible = web.stackSecurityVisibleCount_(node_id);
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
         }
         page.reserve(page.length() + 16384);
         page.replace("%NAV%", web.navHtml_());
@@ -103,7 +106,8 @@ public:
         else
             page.replace("%SECURITY_SIREN%", "");
         page.replace("%SECURITY_SENSORS%",
-                     stack_view ? web.listStackSecuritySensorsTiles_(node_id) : web.listSecuritySensorsTiles_(start, end));
+                     stack_view ? web.listStackSecuritySensorsTiles_(node_id, (size_t)page_idx * page_size, page_size)
+                                : web.listSecuritySensorsTiles_(start, end));
         page.replace("%SECURITY_SENSORS_PAGE%", String((unsigned)(page_idx + 1)));
         page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)max_pages));
         page.replace("%SECURITY_SENSOR_JSON%", web.securityPortOptionsJson_());
@@ -112,9 +116,9 @@ public:
         page.replace("%SECURITY_SIREN_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%SECURITY_STATUS%", stack_view ? web.stackSecurityStatusText_(node_id) : web._security_status);
         page.replace("%SECURITY_SENSORS_TITLE%", stack_view ? web.stackSecurityTitle_(node_id) : String("Датчики"));
-        page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", stack_view ? "style=\"display:none\"" : "");
+        page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", (max_pages > 1) ? "" : "style=\"display:none\"");
         page.replace("%SECURITY_SAVE_BTN%",
-                     (stack_view || !web.webSessionIsAdmin_()) ? "" : "<button class=\"primary\" name=\"action\" value=\"save\">Сохранить</button>");
+                     (stack_view || !web.webSessionIsAdmin_()) ? String("") : (String("<button class=\"primary\" name=\"action\" value=\"save\">") + WebUiRu::kSave + "</button>"));
         page.replace("%SECURITY_DEVICE_SELECT%", web.securityDeviceSelectHtml_(node_id, stack_view));
         web.sendHtml_(request, page, set_cookie);
     }

@@ -67,6 +67,29 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
     .field.temp { width: 100%; }
     .field.name { min-width: 160px; }
     .actions { display: flex; gap: 10px; margin-top: 16px; }
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 8px 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+      flex-wrap: wrap;
+    }
+    .page-info { white-space: nowrap; }
+    .page-btn {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid #1f2937;
+      background: #0b1220;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .page-btn.disabled {
+      opacity: .5;
+      pointer-events: none;
+    }
     button {
       border: none;
       border-radius: 10px;
@@ -256,8 +279,8 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Термо</h1>
-      <div class="status">%THERMO_STATUS%</div>
       %THERMO_DEVICE_SELECT%
+      %THERMO_PAGINATION%
       <form method="POST" action="/thermo" id="thermo-form">
         %THERMO_FORM_HIDDEN%
         <div class="grid">
@@ -544,6 +567,33 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
         }
       });
     });
+    function thermoTileId(tile) {
+      if (!tile) return 0;
+      const power = tile.querySelector('input.thermo-power');
+      const action = power ? (power.dataset.action || '') : '';
+      const m = action.match(/^t(\d+)_power$/);
+      return m ? (parseInt(m[1], 10) || 0) : 0;
+    }
+    async function pollThermoStates() {
+      const powers = Array.from(document.querySelectorAll('input.thermo-power'));
+      for (let i = 0; i < powers.length; i++) {
+        const el = powers[i];
+        if (!el || el.dataset.busy === '1') continue;
+        const tile = el.closest('.tile');
+        const id = thermoTileId(tile);
+        if (!id) continue;
+        const hidden = document.querySelector('input[name="t' + String(id) + '_power"]');
+        try {
+          const st = await postThermoToggle(id, 'state');
+          if (!st || !st.known) continue;
+          el.checked = !!st.power;
+          if (hidden) hidden.value = st.power ? 'on' : 'off';
+          applyThermoPowerUi(tile, !!st.power, !!st.heat, !!st.cool);
+        } catch (e) {}
+      }
+    }
+    setInterval(pollThermoStates, 2000);
+    setTimeout(pollThermoStates, 500);
     document.querySelectorAll('.thermo-visual').forEach((el) => {
       el.addEventListener('click', () => {
         const tile = el.closest('.tile');

@@ -247,9 +247,33 @@ public:
     const AvrController &avr() const { return _avr; }
     LeakController &leak() { return _leak; }
     const LeakController &leak() const { return _leak; }
+    void invalidateGpioUsageCache() const { _gpio_usage_cache.valid = false; }
+    bool gpioPortUsed(uint8_t port) const
+    {
+        if (port >= PortIO::PORT_COUNT)
+            return false;
+        ensureGpioUsageCache_();
+        return _gpio_usage_cache.used[port];
+    }
+    bool gpioPortUsedByType(uint8_t port, PortIO::PinType type) const
+    {
+        if (port >= PortIO::PORT_COUNT)
+            return false;
+        const auto &p = ActiveBoardProfile::PORTS[port];
+        if (p.caps == Cap::None || p.type != type)
+            return false;
+        return gpioPortUsed(port);
+    }
     void setSaveIntervalMs(uint32_t ms) { _save_interval_ms = ms; }
 
 private:
+    struct GpioUsageCache
+    {
+        bool valid = false;
+        uint32_t built_ms = 0;
+        bool used[PortIO::PORT_COUNT] = {};
+    };
+
     SocketController _sockets;
     MeteoController _meteo;
     ThermoController _thermo;
@@ -264,6 +288,124 @@ private:
     Logger &_logs;
     uint32_t _last_save_ms = 0;
     uint32_t _save_interval_ms = 10000;
+    mutable GpioUsageCache _gpio_usage_cache;
+
+    static void markPortUsed_(bool used[], uint8_t port)
+    {
+        if (port < PortIO::PORT_COUNT)
+            used[port] = true;
+    }
+
+    void rebuildGpioUsageCache_() const
+    {
+        for (size_t i = 0; i < PortIO::PORT_COUNT; ++i)
+            _gpio_usage_cache.used[i] = false;
+
+        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+        {
+            const auto *cfg = _sockets.configByIndex(i);
+            if (!cfg)
+                continue;
+            markPortUsed_(_gpio_usage_cache.used, cfg->button_port);
+            markPortUsed_(_gpio_usage_cache.used, cfg->relay_port);
+        }
+        for (size_t i = 0; i < SocketController::kLightCount; ++i)
+        {
+            const auto *cfg = _sockets.lightConfigByIndex(i);
+            if (!cfg)
+                continue;
+            markPortUsed_(_gpio_usage_cache.used, cfg->button_port);
+            markPortUsed_(_gpio_usage_cache.used, cfg->relay_port);
+        }
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = _meteo.configByIndex(i);
+            if (!cfg)
+                continue;
+            if (cfg->type != MeteoController::SensorType::Dht22)
+                continue;
+            markPortUsed_(_gpio_usage_cache.used, cfg->dht_pin);
+        }
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = _thermo.configByIndex(i);
+            if (!cfg)
+                continue;
+            markPortUsed_(_gpio_usage_cache.used, cfg->heat_port);
+            markPortUsed_(_gpio_usage_cache.used, cfg->cool_port);
+            markPortUsed_(_gpio_usage_cache.used, cfg->button_port);
+        }
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = _tanks.configByIndex(i);
+            if (!cfg)
+                continue;
+            markPortUsed_(_gpio_usage_cache.used, cfg->level_low);
+            markPortUsed_(_gpio_usage_cache.used, cfg->level_mid);
+            markPortUsed_(_gpio_usage_cache.used, cfg->level_full);
+            markPortUsed_(_gpio_usage_cache.used, cfg->relay_valve);
+            markPortUsed_(_gpio_usage_cache.used, cfg->relay_pump);
+            markPortUsed_(_gpio_usage_cache.used, cfg->relay_alarm);
+        }
+        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        {
+            const auto *cfg = _septic.configByIndex(i);
+            if (!cfg)
+                continue;
+            markPortUsed_(_gpio_usage_cache.used, cfg->warning_port);
+            markPortUsed_(_gpio_usage_cache.used, cfg->alarm_port);
+            markPortUsed_(_gpio_usage_cache.used, cfg->relay_warning);
+            markPortUsed_(_gpio_usage_cache.used, cfg->relay_alarm);
+        }
+        if (_security.sirenPort() != SecurityController::kInvalidPort)
+            markPortUsed_(_gpio_usage_cache.used, _security.sirenPort());
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+            const auto *cfg = _security.configByIndex(i);
+            if (!cfg)
+                continue;
+            markPortUsed_(_gpio_usage_cache.used, cfg->port);
+        }
+        const auto &rcfg = _ring.config();
+        markPortUsed_(_gpio_usage_cache.used, rcfg.button_port);
+        markPortUsed_(_gpio_usage_cache.used, rcfg.relay_port);
+
+        const auto &acfg = _avr.config();
+        markPortUsed_(_gpio_usage_cache.used, acfg.main_ok_port);
+        markPortUsed_(_gpio_usage_cache.used, acfg.reserve_ok_port);
+        markPortUsed_(_gpio_usage_cache.used, acfg.feedback_main_port);
+        markPortUsed_(_gpio_usage_cache.used, acfg.feedback_reserve_port);
+        markPortUsed_(_gpio_usage_cache.used, acfg.relay_main_port);
+        markPortUsed_(_gpio_usage_cache.used, acfg.relay_reserve_port);
+
+        for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+        {
+            const auto *cfg = _leak.configByIndex(i);
+            if (!cfg)
+                continue;
+            markPortUsed_(_gpio_usage_cache.used, cfg->sensor_port);
+            markPortUsed_(_gpio_usage_cache.used, cfg->valve_port);
+            markPortUsed_(_gpio_usage_cache.used, cfg->alarm_port);
+        }
+
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+            const auto *cfg = _watering.configByIndex(i);
+            if (!cfg)
+                continue;
+            markPortUsed_(_gpio_usage_cache.used, cfg->port);
+        }
+    }
+
+    void ensureGpioUsageCache_() const
+    {
+        const uint32_t now = millis();
+        if (_gpio_usage_cache.valid && _gpio_usage_cache.built_ms == now)
+            return;
+        rebuildGpioUsageCache_();
+        _gpio_usage_cache.valid = true;
+        _gpio_usage_cache.built_ms = now;
+    }
 
     void loadFromStorage_()
     {

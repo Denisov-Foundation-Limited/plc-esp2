@@ -1,10 +1,18 @@
-﻿#pragma once
+#pragma once
 
-    size_t socketsLocalRenderCount_() const
+#ifndef WEB_INTERFACE_CLASS_CONTEXT
+class WebInterface;
+class WebInterfaceControllersSocketsHelper;
+#else
+
+class WebInterfaceControllersSocketsHelper
+{
+public:
+    static size_t socketsLocalRenderCount_(const WebInterface &web)
     {
-        if (!_controllers)
+        if (!web._controllers)
             return 0;
-        SocketController &sockets = _controllers->sockets();
+        SocketController &sockets = web._controllers->sockets();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < SocketController::kSocketCount; ++i)
         {
@@ -17,11 +25,10 @@
         const size_t count = last_enabled_idx + 2u;
         return count > SocketController::kSocketCount ? SocketController::kSocketCount : count;
     }
-
-    String listSocketsHtml_(uint8_t start_id, uint8_t end_id)
+    static String listSocketsHtml_(WebInterface &web, uint8_t start_id, uint8_t end_id)
     {
-        if (!_controllers)
-            return "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>";
+        if (!web._controllers)
+            return WebUiRu::Sockets::kText;
         String items;
         if (start_id == 0)
             start_id = 1;
@@ -31,11 +38,11 @@
         if (reserve < 16384u)
             reserve = 16384u;
         items.reserve(reserve);
-        SocketController &sockets = _controllers->sockets();
+        SocketController &sockets = web._controllers->sockets();
         bool tmp_state = false;
         auto appendRow = [&](const SocketController::SocketConfig &cfg, bool enabled) {
-            const bool can_edit = webSessionIsAdmin_();
-            const bool can_control = webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id);
+            const bool can_edit = web.webSessionIsAdmin_();
+            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id);
             const bool on = enabled && sockets.relayState(cfg.id, tmp_state) ? tmp_state : false;
             items += "<div class=\"tile";
             if (!enabled)
@@ -58,9 +65,9 @@
             items += "<div class=\"tile-head\">";
             items += "<strong>";
             if (cfg.name[0])
-                appendHtmlEscaped_(items, cfg.name);
+                web.appendHtmlEscaped_(items, cfg.name);
             else
-                items += "Розетка";
+                items += WebUiRu::Sockets::kText2;
             items += "</strong>";
             items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-enable\" data-id=\"";
             items += String((unsigned)cfg.id);
@@ -76,7 +83,7 @@
             items += "<input class=\"field name\" type=\"text\" name=\"s";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
-            appendHtmlEscaped_(items, cfg.name.c_str());
+            web.appendHtmlEscaped_(items, cfg.name.c_str());
             items += "\"";
             if (!can_edit)
                 items += " disabled";
@@ -85,11 +92,11 @@
             items += on ? "status-on" : "status-off";
             items += "\"></span>";
             items += "<span class=\"status-text\">";
-            items += on ? "Включена" : "Выключена";
+            items += on ? WebUiRu::Sockets::kText3 : WebUiRu::Sockets::kText4;
             items += "</span>";
             items += "</div>";
             items += "<div class=\"form-grid\">";
-            items += "<div class=\"form-row\"><label>Кнопка</label>";
+            items += WebUiRu::Sockets::kText5;
             items += "<select class=\"field mini socket-select\" data-type=\"dinput\" data-selected=\"";
             if (cfg.button_port != SocketController::kInvalidPort)
                 items += String((unsigned)cfg.button_port);
@@ -99,7 +106,7 @@
             if (!can_edit)
                 items += " disabled";
             items += "></select></div>";
-            items += "<div class=\"form-row\"><label>Реле</label>";
+            items += WebUiRu::Sockets::kText6;
             items += "<select class=\"field mini socket-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.relay_port != SocketController::kInvalidPort)
                 items += String((unsigned)cfg.relay_port);
@@ -109,7 +116,7 @@
             if (!can_edit)
                 items += " disabled";
             items += "></select></div>";
-            items += "<div class=\"form-row\"><label>Перекл.</label>";
+            items += WebUiRu::Sockets::kText7;
             items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-id=\"";
             items += String((unsigned)cfg.id);
             items += "\"";
@@ -124,15 +131,15 @@
             items += "_action\" value=\"\">";
             items += "</div></div>";
         };
-
-        const size_t render_count = socketsLocalRenderCount_();
-        const bool can_view_disabled = webSessionIsAdmin_();
+    
+        const size_t render_count = web.socketsLocalRenderCount_();
+        const bool can_view_disabled = web.webSessionIsAdmin_();
         for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = sockets.configByIndex(i);
             if (!cfg)
                 continue;
-            if (!webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg->id))
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg->id))
                 continue;
             if (cfg->id < start_id || cfg->id > end_id)
                 continue;
@@ -141,49 +148,98 @@
             appendRow(*cfg, cfg->enabled);
         }
         if (items.length() == 0)
-            items = "<div class=\"tile empty\"><strong>Розетки отсутствуют</strong></div>";
+            items = WebUiRu::Sockets::kText8;
         return items;
     }
-
-
-    String listStackSocketsHtml_(uint32_t node_id)
+    static size_t stackSocketsVisibleCount_(const WebInterface &web, uint32_t node_id)
     {
-        if (_stack_cache)
-        {
-            const auto *cache = _stack_cache->socketsCache(node_id);
-            if (!cache || !cache->has_data)
-                return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
-            if (cache->item_count == 0)
-                return "<div class=\"tile empty\"><strong>Розетки отсутствуют</strong></div>";
-            String items;
-            size_t reserve = 2048u + cache->item_count * 420u;
-            if (reserve < 8192u)
-                reserve = 8192u;
-            items.reserve(reserve);
+            const auto *cache = web._stack_cache ? web._stack_cache->socketsCache(node_id) : nullptr;
+            if (!cache || !cache->has_data || !cache->items)
+                return 0;
+            const bool can_view_disabled = web.webSessionIsAdmin_();
             size_t render_count = cache->item_count;
-            size_t last_enabled_idx = SIZE_MAX;
-            for (size_t i = 0; i < cache->item_count; ++i)
+            if (can_view_disabled)
             {
-                if (cache->items[i].enabled)
-                    last_enabled_idx = i;
+                size_t last_enabled_idx = SIZE_MAX;
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    if (cache->items[i].enabled)
+                        last_enabled_idx = i;
+                }
+                if (last_enabled_idx == SIZE_MAX)
+                    render_count = cache->item_count ? 1u : 0u;
+                else
+                {
+                    const size_t rc = last_enabled_idx + 2u;
+                    render_count = rc > cache->item_count ? cache->item_count : rc;
+                }
             }
-            if (last_enabled_idx == SIZE_MAX)
-                render_count = cache->item_count ? 1u : 0u;
-            else
-            {
-                const size_t count = last_enabled_idx + 2u;
-                render_count = count > cache->item_count ? cache->item_count : count;
-            }
+            size_t count = 0;
             for (size_t i = 0; i < render_count; ++i)
             {
                 const auto &cfg = cache->items[i];
-                if (!webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id))
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id))
                     continue;
-                if (!webSessionIsAdmin_() && !cfg.enabled)
+                if (!can_view_disabled && !cfg.enabled)
                     continue;
-                const bool can_control = webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id);
+                ++count;
+            }
+            return count;
+        
+    }
+    static String listStackSocketsHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit)
+    {
+            const auto *cache = web._stack_cache->socketsCache(node_id);
+            if (!cache || !cache->has_data)
+                return WebUiRu::Sockets::kText9;
+            if (cache->item_count == 0)
+                return WebUiRu::Sockets::kText8;
+            String items;
+            const size_t page_limit = (limit == 0) ? 1u : limit;
+            size_t reserve = 2048u + page_limit * 420u;
+            if (reserve < 8192u)
+                reserve = 8192u;
+            items.reserve(reserve);
+            const bool can_view_disabled = web.webSessionIsAdmin_();
+            size_t render_count = cache->item_count;
+            if (can_view_disabled)
+            {
+                size_t last_enabled_idx = SIZE_MAX;
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    if (cache->items[i].enabled)
+                        last_enabled_idx = i;
+                }
+                if (last_enabled_idx == SIZE_MAX)
+                    render_count = cache->item_count ? 1u : 0u;
+                else
+                {
+                    const size_t rc = last_enabled_idx + 2u;
+                    render_count = rc > cache->item_count ? cache->item_count : rc;
+                }
+            }
+            size_t rendered = 0;
+            size_t visible_idx = 0;
+            for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
+            {
+                const auto &cfg = cache->items[i];
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id))
+                    continue;
+                if (!can_view_disabled && !cfg.enabled)
+                    continue;
+                if (visible_idx < offset)
+                {
+                    ++visible_idx;
+                    continue;
+                }
+                ++visible_idx;
+                const bool can_edit = web.webSessionIsAdmin_();
+                const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id);
                 const bool on = cfg.state;
-                items += "<div class=\"tile\">";
+                items += "<div class=\"tile";
+                if (!cfg.enabled)
+                    items += " disabled";
+                items += "\">";
                 items += "<div class=\"sock-visual\">";
                 items += "<span class=\"badge\">#";
                 items += String((unsigned)cfg.id);
@@ -198,240 +254,205 @@
                 items += "</svg>";
                 items += "</div>";
                 items += "<div>";
-                items += "<div class=\"tile-head\"><strong>";
+                items += "<div class=\"tile-head\">";
+                items += "<strong>";
                 if (cfg.name[0])
-                    appendHtmlEscaped_(items, cfg.name);
+                    web.appendHtmlEscaped_(items, cfg.name);
                 else
-                    items += "Розетка";
-                items += "</strong></div>";
+                    items += WebUiRu::Sockets::kText2;
+                items += "</strong>";
+                items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-enable\" data-id=\"";
+                items += String((unsigned)cfg.id);
+                items += "\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_en\"";
+                if (cfg.enabled)
+                    items += " checked";
+                if (!can_edit)
+                    items += " disabled";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+                items += "</div>";
+                items += "<input class=\"field name\" type=\"text\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_name\" value=\"";
+                web.appendHtmlEscaped_(items, cfg.name);
+                items += "\"";
+                if (!can_edit)
+                    items += " disabled";
+                items += ">";
                 items += "<div class=\"status-line\"><span class=\"status-dot ";
                 items += on ? "status-on" : "status-off";
                 items += "\"></span>";
                 items += "<span class=\"status-text\">";
-                items += on ? "Включена" : "Выключена";
+                items += on ? WebUiRu::Sockets::kText3 : WebUiRu::Sockets::kText4;
                 items += "</span></div>";
-                items += "<div class=\"form-row\"><label>Перекл.</label>";
+                items += "<div class=\"form-grid\">";
+                items += WebUiRu::Sockets::kText5;
+                items += "<select class=\"field mini socket-select\" data-type=\"dinput\" data-selected=\"";
+                if (cfg.button_port != SocketController::kInvalidPort)
+                    items += String((unsigned)cfg.button_port);
+                items += "\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_btn\"";
+                if (!can_edit)
+                    items += " disabled";
+                items += "></select></div>";
+                items += WebUiRu::Sockets::kText6;
+                items += "<select class=\"field mini socket-select\" data-type=\"relay\" data-selected=\"";
+                if (cfg.relay_port != SocketController::kInvalidPort)
+                    items += String((unsigned)cfg.relay_port);
+                items += "\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_relay\"";
+                if (!can_edit)
+                    items += " disabled";
+                items += "></select></div>";
+                items += WebUiRu::Sockets::kText7;
                 items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-id=\"";
                 items += String((unsigned)cfg.id);
                 items += "\"";
                 if (on)
                     items += " checked";
-                if (!can_control)
+                if (!cfg.enabled || !can_control)
                     items += " disabled";
                 items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+                items += "</div>";
+                items += "<input type=\"hidden\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_action\" value=\"\">";
                 items += "</div></div>";
+                ++rendered;
             }
+            if (items.length() == 0)
+                items = WebUiRu::Sockets::kText8;
             return items;
-        }
-        StackSocketsCache *cache = findStackSocketsCache_(node_id, false);
-        if (!cache || !cache->has_data)
-            return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
-        if (cache->item_count == 0)
-            return "<div class=\"tile empty\"><strong>Розетки отсутствуют</strong></div>";
-        String items;
-        size_t reserve = 2048u + cache->item_count * 420u;
-        if (reserve < 8192u)
-            reserve = 8192u;
-        items.reserve(reserve);
-        size_t render_count = cache->item_count;
-        size_t last_enabled_idx = SIZE_MAX;
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            if (cache->items[i].enabled)
-                last_enabled_idx = i;
-        }
-        if (last_enabled_idx == SIZE_MAX)
-            render_count = cache->item_count ? 1u : 0u;
-        else
-        {
-            const size_t count = last_enabled_idx + 2u;
-            render_count = count > cache->item_count ? cache->item_count : count;
-        }
-        for (size_t i = 0; i < render_count; ++i)
-        {
-            const StackSocketItem &cfg = cache->items[i];
-            if (!webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id))
-                continue;
-            if (!webSessionIsAdmin_() && !cfg.enabled)
-                continue;
-            const bool can_control = webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id);
-            const bool on = cfg.state;
-            items += "<div class=\"tile\">";
-            items += "<div class=\"sock-visual\">";
-            items += "<span class=\"badge\">#";
-            items += String((unsigned)cfg.id);
-            items += "</span>";
-            items += "<svg class=\"sock-icon ";
-            items += on ? "on" : "off";
-            items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
-            items += "<path fill=\"currentColor\" d=\"M16 10h32c3.3 0 6 2.7 6 6v32c0 3.3-2.7 6-6 6H16c-3.3 0-6-2.7-6-6V16c0-3.3 2.7-6 6-6zm0 4c-1.1 0-2 .9-2 2v32c0 1.1.9 2 2 2h32c1.1 0 2-.9 2-2V16c0-1.1-.9-2-2-2H16z\"/>";
-            items += "<circle cx=\"24\" cy=\"26\" r=\"4\" fill=\"currentColor\"/>";
-            items += "<circle cx=\"40\" cy=\"26\" r=\"4\" fill=\"currentColor\"/>";
-            items += "<rect x=\"28\" y=\"36\" width=\"8\" height=\"10\" rx=\"2\" fill=\"currentColor\"/>";
-            items += "</svg>";
-            items += "</div>";
-            items += "<div>";
-            items += "<div class=\"tile-head\"><strong>";
-            if (cfg.name[0])
-                appendHtmlEscaped_(items, cfg.name);
-            else
-                items += "Розетка";
-            items += "</strong></div>";
-            items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += on ? "status-on" : "status-off";
-            items += "\"></span>";
-            items += "<span class=\"status-text\">";
-            items += on ? "Включена" : "Выключена";
-            items += "</span></div>";
-            items += "<div class=\"form-row\"><label>Перекл.</label>";
-            items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-id=\"";
-            items += String((unsigned)cfg.id);
-            items += "\"";
-            if (on)
-                items += " checked";
-            if (!can_control)
-                items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-            items += "</div></div>";
-        }
-        return items;
+        
     }
-
-
-    String socketsDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
+    static String socketsDeviceSelectHtml_(const WebInterface &web, uint32_t selected_node_id, bool stack_view)
     {
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
+        if (web.stackRole_() != ConfigsManagerIface::StackRole::Master || !web._stack_master)
             return "";
         String html;
         html.reserve(512);
         html += "<div class=\"row\">";
-        html += "<span class=\"muted\">Устройство</span>";
+        html += String("<span class=\"muted\">") + WebUiRu::kDevice + "</span>";
         html += "<select id=\"sockets-device\" class=\"field mini\">";
         html += "<option value=\"local\"";
         if (!stack_view)
             html += " selected";
         html += ">local</option>";
-        const size_t count = _stack_master->nodeCount();
+        const size_t count = web._stack_master->nodeCount();
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t id = _stack_master->nodeIdAt(i);
+            const uint32_t id = web._stack_master->nodeIdAt(i);
             html += "<option value=\"";
             html += String((unsigned long)id);
             html += "\"";
             if (stack_view && id == selected_node_id)
                 html += " selected";
             html += ">";
-            String name = _stack_master->nodeNameAt(i);
+            String name = web._stack_master->nodeNameAt(i);
             if (name.length() > 0)
-                appendHtmlEscaped_(html, name.c_str());
+                web.appendHtmlEscaped_(html, name.c_str());
             else
-                html += stackNodeIdHex_(id);
+                html += web.stackNodeIdHex_(id);
             html += "</option>";
         }
         html += "</select></div>";
         return html;
     }
-
-
-    String stackSocketsStatusText_(uint32_t node_id) const
+    static String stackSocketsStatusText_(const WebInterface &web, uint32_t node_id)
     {
-        if (_stack_cache)
-        {
-            const auto *cache = _stack_cache->socketsCache(node_id);
+            const auto *cache = web._stack_cache->socketsCache(node_id);
             if (!cache)
-                return "Нет данных со слейва";
+                return WebUiRu::kNoDataFromSlave;
             if (cache->pending &&
                 (uint32_t)(millis() - cache->updated_ms) > 15000u)
-                return "Таймаут ожидания ответа";
+                return WebUiRu::Sockets::kText10;
             if (cache->pending)
-                return "Запрос данных со слейва...";
+                return "";
             if (!cache->last_ok && cache->last_error.length())
             {
-                String msg = "Ошибка: ";
+                String msg = WebUiRu::kErrorPrefix;
                 msg += cache->last_error;
                 return msg;
             }
             if (!cache->has_data)
-                return "Нет данных со слейва";
-            return "OK";
-        }
-        const StackSocketsCache *cache = findStackSocketsCache_(node_id, false);
-        if (!cache)
-            return "Нет данных со слейва";
-        if (cache->pending &&
-            (uint32_t)(millis() - cache->updated_ms) > 15000u)
-            return "Таймаут ожидания ответа";
-        if (cache->pending)
-            return "Запрос данных со слейва...";
-        if (!cache->last_ok && cache->last_error.length())
-        {
-            String msg = "Ошибка: ";
-            msg += cache->last_error;
-            return msg;
-        }
-        if (!cache->has_data)
-            return "Нет данных со слейва";
-        return "OK";
+                return WebUiRu::kNoDataFromSlave;
+            return WebUiRu::kStatusOk;
+        
     }
-
-
-    bool isStackSocketsView_(uint32_t node_id) const
+    static bool isStackSocketsView_(const WebInterface &web, uint32_t node_id)
     {
-        return node_id != 0 && _stack_master &&
-               stackRole_() == ConfigsManagerIface::StackRole::Master;
+        return node_id != 0 && web._stack_master &&
+               web.stackRole_() == ConfigsManagerIface::StackRole::Master;
     }
-
-
-    void handleStackSocketsToggle_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie)
+    static void handleStackSocketsToggle_(WebInterface &web, AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie)
     {
-        if (!_stack_master)
+        if (!web._stack_master)
         {
-            sendText_(request, 400, "text/plain", "Stack master missing", set_cookie);
+            web.sendText_(request, 400, "text/plain", "Stack master missing", set_cookie);
             return;
         }
-        const String id_str = paramValueAny_(request, "id");
+        const String id_str = web.paramValueAny_(request, "id");
         if (!id_str.length())
         {
-            sendText_(request, 400, "text/plain", "Missing id", set_cookie);
+            web.sendText_(request, 400, "text/plain", "Missing id", set_cookie);
             return;
         }
         const uint8_t id = (uint8_t)id_str.toInt();
         if (id == 0)
         {
-            sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
+            web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
             return;
         }
-        String action = paramValueAny_(request, "action");
+        String action = web.paramValueAny_(request, "action");
         action.trim();
         action.toLowerCase();
-        StackSocketsCache *cache = findStackSocketsCache_(node_id, false);
-        StackSocketItem *item = cache ? findStackSocketItem_(*cache, id) : nullptr;
-
+        const auto *cache = web._stack_cache ? web._stack_cache->socketsCache(node_id) : nullptr;
+        const StackCache::StackSocketItem *item = nullptr;
+        if (cache)
+        {
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                if (cache->items[i].id == id)
+                {
+                    item = &cache->items[i];
+                    break;
+                }
+            }
+        }
+    
         if (action == "state")
         {
             if (!cache || !cache->has_data ||
                 (uint32_t)(millis() - cache->updated_ms) > 1500u)
             {
-                requestStackSockets_(node_id);
+                web.requestStackSockets_(node_id);
+            }
+            if (cache && cache->pending)
+            {
+                web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                return;
             }
             if (!item)
             {
-                sendText_(request, 200, "text/plain", "unknown", set_cookie);
+                web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
                 return;
             }
-            sendText_(request, 200, "text/plain", item->state ? "on" : "off", set_cookie);
+            web.sendText_(request, 200, "text/plain", item->state ? "on" : "off", set_cookie);
             return;
         }
-
+    
         StaticJsonDocument<192> doc;
-        doc["cmd_id"] = nextStackCmdId_();
+        doc["cmd_id"] = web.nextStackCmdId_();
         doc["feature"] = (uint8_t)StackFeature::Sockets;
         doc["action"] = "set";
         JsonObject params = doc["params"].to<JsonObject>();
         JsonArray items = params["items"].to<JsonArray>();
         JsonObject o = items.add<JsonObject>();
         o["id"] = id;
-
+    
         bool desired_known = false;
         bool desired = false;
         if (action == "on" || action == "off")
@@ -449,63 +470,92 @@
                 desired_known = true;
             }
         }
-
+    
         char payload[160] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0 || !_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+        if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
                                                (const uint8_t *)payload, len))
         {
-            sendText_(request, 400, "text/plain", "Send failed", set_cookie);
+            web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
             return;
         }
 
-        if (desired_known && item)
-            item->state = desired;
-        sendText_(request, 200, "text/plain", desired_known ? (desired ? "on" : "off") : "pending", set_cookie);
+        // Immediately schedule a fresh stack snapshot so UI poll does not read stale state.
+        web.requestStackSockets_(node_id);
+        (void)desired_known;
+        (void)desired;
+        web.sendText_(request, 200, "text/plain", "pending", set_cookie);
     }
-
-
-    bool requestStackSockets_(uint32_t node_id)
+    static void handleStackSocketsEnable_(WebInterface &web, AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie)
     {
-        if (_stack_cache)
-            return _stack_cache->requestSockets(node_id);
-        if (!_stack_master)
-            return false;
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
-            return false;
-        StackSocketsCache *cache = findStackSocketsCache_(node_id, true);
-        if (!cache)
-            return false;
-        const uint32_t now = millis();
-        if (cache->pending)
+        if (!web._stack_master || !web._stack_cache)
         {
-            if ((uint32_t)(now - cache->updated_ms) > 4000u)
-                cache->pending = false;
-            else
-                return false;
+            web.sendText_(request, 400, "text/plain", "Stack unavailable", set_cookie);
+            return;
         }
-        if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
-            return false;
-        const uint16_t cmd_id = nextStackCmdId_();
+        if (!web.webSessionIsAdmin_())
+        {
+            web.sendText_(request, 403, "text/plain", "Admin only", set_cookie);
+            return;
+        }
+        const String id_str = web.paramValueAny_(request, "id");
+        if (!id_str.length())
+        {
+            web.sendText_(request, 400, "text/plain", "Missing id", set_cookie);
+            return;
+        }
+        const uint8_t id = (uint8_t)id_str.toInt();
+        if (id == 0 || !web.webAclCanControlItem_(UsersRegistry::AclController::Sockets, id, node_id))
+        {
+            web.sendText_(request, 403, "text/plain", "ACL deny", set_cookie);
+            return;
+        }
+        const String enabled_str = web.paramValueAny_(request, "enabled");
+        const bool enabled = (enabled_str == "1" || enabled_str == "true" || enabled_str == "on");
         StaticJsonDocument<192> doc;
-        doc["cmd_id"] = cmd_id;
+        doc["cmd_id"] = web.nextStackCmdId_();
         doc["feature"] = (uint8_t)StackFeature::Sockets;
-        doc["action"] = "get";
-        char payload[96] = {};
+        doc["action"] = "set";
+        JsonArray items = doc["params"]["items"].to<JsonArray>();
+        JsonObject o = items.add<JsonObject>();
+        o["id"] = id;
+        o["enabled"] = enabled;
+        char payload[160] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0)
-            return false;
-        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
-                                   (const uint8_t *)payload, len))
-            return false;
-        cache->pending = true;
-        cache->pending_cmd_id = cmd_id;
-        cache->updated_ms = now;
-        return true;
+        if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                    (const uint8_t *)payload, len))
+        {
+            web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
+            return;
+        }
+        auto *cache = web._stack_cache->socketsCache(node_id);
+        if (cache && cache->items)
+        {
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                if (cache->items[i].id == id)
+                {
+                    cache->items[i].enabled = enabled;
+                    break;
+                }
+            }
+            cache->updated_ms = millis();
+        }
+        web.requestStackSockets_(node_id);
+        web.requestStackPorts_(node_id);
+        String dbg = String("{\"ok\":true");
+        dbg += ",\"id\":\"" + id_str + "\"";
+        dbg += ",\"enabled\":\"" + enabled_str + "\"";
+        dbg += ",\"parsed\":" + String(enabled ? "true" : "false");
+        dbg += ",\"result\":\"" + String(enabled ? "1" : "0") + "\"";
+        dbg += "}";
+        web.sendText_(request, 200, "application/json", dbg, set_cookie);
     }
-
-
-    String socketPortOptionsJson_(PortIO::PinType type) const
+    static bool requestStackSockets_(WebInterface &web, uint32_t node_id)
+    {
+        return web._stack_cache && web._stack_cache->requestSockets(node_id);
+    }
+    static String socketPortOptionsJson_(const WebInterface &web, PortIO::PinType type)
     {
         String out;
         out.reserve(128);
@@ -519,21 +569,21 @@
                 continue;
             if (p.backend == PortIO::Backend::Extender)
             {
-                if (!_ext)
+                if (!web._ext)
                     continue;
                 const uint8_t dev = p.u.ext.dev;
-                const auto *devs = _ext->devs();
-                if (!devs || dev >= _ext->devCount())
+                const auto *devs = web._ext->devs();
+                if (!devs || dev >= web._ext->devCount())
                     continue;
                 if (devs[dev].type != Extender::Type::MCP23017)
                     continue;
-                if (!_ext->isPresent(dev))
+                if (!web._ext->isPresent(dev))
                     continue;
             }
             uint8_t ui_id = p.ui_id;
             if (ui_id == 0)
             {
-                const uint8_t loc = locationIndex_(p.location);
+                const uint8_t loc = web.locationIndex_(p.location);
                 if (loc < 11)
                     ui_id = ++next_id[loc];
                 else
@@ -544,63 +594,77 @@
             out += "{\"v\":";
             out += String((unsigned)i);
             out += ",\"l\":\"";
-            appendPortLabel_(out, type, p, ui_id);
+            web.appendPortLabel_(out, type, p, ui_id);
             out += "\"}";
             first = false;
         }
         out += "]";
         return out;
     }
+    static String socketUsedPortsJson_(const WebInterface &web, PortIO::PinType type)
+    {
+        return web.globalUsedPortsJson_(type);
+    }
+};
 
+    size_t socketsLocalRenderCount_() const
+    {
+        return WebInterfaceControllersSocketsHelper::socketsLocalRenderCount_(*this);
+    }
+
+    String listSocketsHtml_(uint8_t start_id, uint8_t end_id)
+    {
+        return WebInterfaceControllersSocketsHelper::listSocketsHtml_(*this, start_id, end_id);
+    }
+
+    size_t stackSocketsVisibleCount_(uint32_t node_id) const
+    {
+        return WebInterfaceControllersSocketsHelper::stackSocketsVisibleCount_(*this, node_id);
+    }
+
+    String listStackSocketsHtml_(uint32_t node_id, size_t offset, size_t limit)
+    {
+        return WebInterfaceControllersSocketsHelper::listStackSocketsHtml_(*this, node_id, offset, limit);
+    }
+
+    String socketsDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
+    {
+        return WebInterfaceControllersSocketsHelper::socketsDeviceSelectHtml_(*this, selected_node_id, stack_view);
+    }
+
+    String stackSocketsStatusText_(uint32_t node_id) const
+    {
+        return WebInterfaceControllersSocketsHelper::stackSocketsStatusText_(*this, node_id);
+    }
+
+    bool isStackSocketsView_(uint32_t node_id) const
+    {
+        return WebInterfaceControllersSocketsHelper::isStackSocketsView_(*this, node_id);
+    }
+
+    void handleStackSocketsToggle_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie)
+    {
+        WebInterfaceControllersSocketsHelper::handleStackSocketsToggle_(*this, request, node_id, set_cookie);
+    }
+
+    void handleStackSocketsEnable_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie)
+    {
+        WebInterfaceControllersSocketsHelper::handleStackSocketsEnable_(*this, request, node_id, set_cookie);
+    }
+
+    bool requestStackSockets_(uint32_t node_id)
+    {
+        return WebInterfaceControllersSocketsHelper::requestStackSockets_(*this, node_id);
+    }
+
+    String socketPortOptionsJson_(PortIO::PinType type) const
+    {
+        return WebInterfaceControllersSocketsHelper::socketPortOptionsJson_(*this, type);
+    }
 
     String socketUsedPortsJson_(PortIO::PinType type) const
     {
-        String out;
-        out.reserve(128);
-        out += "[";
-        bool first = true;
-        if (_controllers)
-        {
-            SocketController &sockets = _controllers->sockets();
-            bool used[PortIO::PORT_COUNT] = {};
-            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
-            {
-                const auto *cfg = sockets.configByIndex(i);
-                if (!cfg)
-                    continue;
-                const uint8_t btn = cfg->button_port;
-                const uint8_t relay = cfg->relay_port;
-                if (btn != SocketController::kInvalidPort && btn < PortIO::PORT_COUNT)
-                    used[btn] = true;
-                if (relay != SocketController::kInvalidPort && relay < PortIO::PORT_COUNT)
-                    used[relay] = true;
-            }
-            for (size_t i = 0; i < SocketController::kLightCount; ++i)
-            {
-                const auto *cfg = sockets.lightConfigByIndex(i);
-                if (!cfg)
-                    continue;
-                const uint8_t btn = cfg->button_port;
-                const uint8_t relay = cfg->relay_port;
-                if (btn != SocketController::kInvalidPort && btn < PortIO::PORT_COUNT)
-                    used[btn] = true;
-                if (relay != SocketController::kInvalidPort && relay < PortIO::PORT_COUNT)
-                    used[relay] = true;
-            }
-            for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
-            {
-                if (!used[i])
-                    continue;
-                const auto &p = ActiveBoardProfile::PORTS[i];
-                if (p.caps == Cap::None || p.type != type)
-                    continue;
-                if (!first)
-                    out += ",";
-                out += String((unsigned)i);
-                first = false;
-            }
-        }
-        out += "]";
-        return out;
+        return WebInterfaceControllersSocketsHelper::socketUsedPortsJson_(*this, type);
     }
 
+#endif

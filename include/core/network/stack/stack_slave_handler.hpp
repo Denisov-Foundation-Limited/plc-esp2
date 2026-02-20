@@ -48,6 +48,7 @@
 #include "controllers/ring_controller.hpp"
 #include "controllers/avr_controller.hpp"
 #include "controllers/leak_controller.hpp"
+#include "controllers/controllers.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/logger.hpp"
 
@@ -350,7 +351,7 @@ public:
                       Extender &ext, SocketController &sockets, MeteoController &meteo,
                       ThermoController &thermo, SepticController &septic, SecurityController &security,
                       TankController &tanks, WateringController &watering, RingController &ring,
-                      AvrController &avr, LeakController &leak)
+                      AvrController &avr, LeakController &leak, Controllers &controllers)
         : _io(io),
           _ds18b20(ds18b20),
           _ow(ow),
@@ -369,7 +370,8 @@ public:
           _watering(watering),
           _ring(ring),
           _avr(avr),
-          _leak(leak)
+          _leak(leak),
+          _controllers(controllers)
     {
     }
     ~StackSlaveHandler()
@@ -508,6 +510,7 @@ private:
     RingController &_ring;
     AvrController &_avr;
     LeakController &_leak;
+    Controllers &_controllers;
     StackNode *_node = nullptr;
     TraceHandler _trace_cb = nullptr;
     void *_trace_ctx = nullptr;
@@ -858,7 +861,7 @@ private:
     {
         if (action == "get_state")
         {
-            static constexpr size_t kDefaultChunk = 6;
+            static constexpr size_t kDefaultChunk = 3;
             static constexpr size_t kMaxChunk = 16;
             const bool has_ids = params.is<JsonObjectConst>() && params["ids"].is<JsonArrayConst>();
             const JsonArrayConst ids = has_ids ? params["ids"].as<JsonArrayConst>() : JsonArrayConst();
@@ -1461,6 +1464,20 @@ private:
                 if (!item["id"].is<unsigned>())
                     continue;
                 const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                if (item["enabled"].is<bool>())
+                    _sockets.setEnabled(id, item["enabled"].as<bool>());
+                else if (item["enabled"].is<int>())
+                    _sockets.setEnabled(id, item["enabled"].as<int>() != 0);
+                if (item["name"].is<const char *>())
+                    _sockets.setName(id, String(item["name"].as<const char *>()));
+                if (item["button"].is<unsigned>())
+                    _sockets.setButtonPort(id, (uint8_t)item["button"].as<unsigned>());
+                else if (item["button"].is<int>() && item["button"].as<int>() < 0)
+                    _sockets.setButtonPort(id, SocketController::kInvalidPort);
+                if (item["relay"].is<unsigned>())
+                    _sockets.setRelayPort(id, (uint8_t)item["relay"].as<unsigned>());
+                else if (item["relay"].is<int>() && item["relay"].as<int>() < 0)
+                    _sockets.setRelayPort(id, SocketController::kInvalidPort);
                 if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
                 {
                     _sockets.toggleRelayById(id);
@@ -2349,15 +2366,19 @@ private:
             JsonArray arr = doc["items"].to<JsonArray>();
             const uint16_t offset = params["offset"] | 0u;
             const uint16_t limit = params["limit"] | 0u;
-            const uint16_t page_limit = (limit == 0) ? 10u : limit;
-            uint16_t enabled_total = 0;
+            static constexpr uint16_t kWateringMaxPageLimit = 1u;
+            uint16_t page_limit = (limit == 0) ? kWateringMaxPageLimit : limit;
+            if (page_limit > kWateringMaxPageLimit)
+                page_limit = kWateringMaxPageLimit;
+            uint16_t total_rules = 0;
             for (size_t i = 0; i < WateringController::kRuleCount; ++i)
             {
                 const auto *cfg = _watering.configByIndex(i);
-                if (cfg && cfg->enabled)
-                    ++enabled_total;
+                const auto *st = _watering.stateByIndex(i);
+                if (cfg && st)
+                    ++total_rules;
             }
-            doc["total"] = enabled_total;
+            doc["total"] = total_rules;
             doc["offset"] = offset;
             uint16_t sent = 0;
             uint16_t skipped = 0;
@@ -2365,7 +2386,7 @@ private:
             {
                 const auto *cfg = _watering.configByIndex(i);
                 const auto *st = _watering.stateByIndex(i);
-                if (!cfg || !st || !cfg->enabled)
+                if (!cfg || !st)
                     continue;
                 if (skipped < offset)
                 {
@@ -2430,6 +2451,96 @@ private:
                 sendErr_(cmd_id, "invalid id");
                 return;
             }
+            bool cfg_changed = false;
+            if (obj["enabled"].is<bool>() || obj["enabled"].is<int>())
+            {
+                const bool on = obj["enabled"].is<bool>() ? obj["enabled"].as<bool>()
+                                                          : (obj["enabled"].as<int>() != 0);
+                if (_watering.setEnabled(id, on))
+                    cfg_changed = true;
+            }
+            if (obj["name"].is<const char *>())
+            {
+                if (_watering.setName(id, String(obj["name"].as<const char *>())))
+                    cfg_changed = true;
+            }
+            if (obj["tank"].is<unsigned>())
+            {
+                const uint8_t tank = (uint8_t)obj["tank"].as<unsigned>();
+                if (_watering.setTankId(id, tank))
+                    cfg_changed = true;
+            }
+            if (obj["weekdays_mask"].is<unsigned>())
+            {
+                const uint8_t mask = (uint8_t)obj["weekdays_mask"].as<unsigned>();
+                if (_watering.setWeekdaysMask(id, mask))
+                    cfg_changed = true;
+            }
+            if (obj["hour"].is<unsigned>() && obj["minute"].is<unsigned>())
+            {
+                const uint8_t hour = (uint8_t)obj["hour"].as<unsigned>();
+                const uint8_t minute = (uint8_t)obj["minute"].as<unsigned>();
+                if (_watering.setStartTimeSlot(id, 0, hour, minute))
+                    cfg_changed = true;
+            }
+            if (obj["duration_s"].is<unsigned long>())
+            {
+                const uint32_t sec = (uint32_t)obj["duration_s"].as<unsigned long>();
+                if (_watering.setDurationSlot(id, 0, sec))
+                    cfg_changed = true;
+            }
+            if (obj["hour2"].is<unsigned>() && obj["minute2"].is<unsigned>())
+            {
+                const uint8_t hour = (uint8_t)obj["hour2"].as<unsigned>();
+                const uint8_t minute = (uint8_t)obj["minute2"].as<unsigned>();
+                if (_watering.setStartTimeSlot(id, 1, hour, minute))
+                    cfg_changed = true;
+            }
+            if (obj["duration2_s"].is<unsigned long>())
+            {
+                const uint32_t sec = (uint32_t)obj["duration2_s"].as<unsigned long>();
+                if (_watering.setDurationSlot(id, 1, sec))
+                    cfg_changed = true;
+            }
+            if (obj["hour3"].is<unsigned>() && obj["minute3"].is<unsigned>())
+            {
+                const uint8_t hour = (uint8_t)obj["hour3"].as<unsigned>();
+                const uint8_t minute = (uint8_t)obj["minute3"].as<unsigned>();
+                if (_watering.setStartTimeSlot(id, 2, hour, minute))
+                    cfg_changed = true;
+            }
+            if (obj["duration3_s"].is<unsigned long>())
+            {
+                const uint32_t sec = (uint32_t)obj["duration3_s"].as<unsigned long>();
+                if (_watering.setDurationSlot(id, 2, sec))
+                    cfg_changed = true;
+            }
+            if (obj["resume"].is<bool>() || obj["resume"].is<int>())
+            {
+                const bool on = obj["resume"].is<bool>() ? obj["resume"].as<bool>()
+                                                         : (obj["resume"].as<int>() != 0);
+                if (_watering.setResumeAfterRefill(id, on))
+                    cfg_changed = true;
+            }
+            if (obj["resume_level"].is<unsigned>())
+            {
+                const uint8_t lvl = (uint8_t)obj["resume_level"].as<unsigned>();
+                if (_watering.setResumeLevel(id, lvl))
+                    cfg_changed = true;
+            }
+            else if (obj["resume_level"].is<const char *>())
+            {
+                String lvl = obj["resume_level"].as<const char *>();
+                lvl.toLowerCase();
+                uint8_t v = 0;
+                if (lvl == "mid")
+                    v = 1;
+                else if (lvl == "full")
+                    v = 2;
+                if (_watering.setResumeLevel(id, v))
+                    cfg_changed = true;
+            }
+
             bool on = false;
             bool has_state = false;
             if (obj["status"].is<bool>() || obj["status"].is<int>())
@@ -2449,16 +2560,23 @@ private:
                 on = (s == "on");
                 has_state = true;
             }
-            if (!has_state)
+            bool state_changed = false;
+            if (has_state)
             {
-                sendErr_(cmd_id, "missing state");
+                if (!_watering.setStatus(id, on))
+                {
+                    sendErr_(cmd_id, "failed");
+                    return;
+                }
+                state_changed = true;
+            }
+            if (!cfg_changed && !state_changed)
+            {
+                sendAck_(cmd_id);
                 return;
             }
-            if (!_watering.setStatus(id, on))
-            {
-                sendErr_(cmd_id, "failed");
-                return;
-            }
+            if (cfg_changed && _configs)
+                _configs->save();
             sendAck_(cmd_id);
             return;
         }
@@ -2857,7 +2975,9 @@ private:
         o["backend"] = (p.backend == PortIO::Backend::Extender) ? "Extender" : "Esp32";
         o["loc"] = stackUnitName_(toStackUnit_(p.location));
         o["type"] = portTypeName_(p.type);
+        o["ptype"] = (uint8_t)p.type;
         o["ctrl"] = p.allow_control;
+        o["used"] = isPortUsed_(id);
         if (p.backend == PortIO::Backend::Extender)
         {
             o["dev"] = p.u.ext.dev;
@@ -2870,6 +2990,11 @@ private:
             o["pin"] = p.u.esp.gpio;
             o["hw"] = "CPU";
         }
+    }
+
+    bool isPortUsed_(uint8_t port) const
+    {
+        return _controllers.gpioPortUsed(port);
     }
 
     static const char *portTypeName_(PortIO::PinType t)

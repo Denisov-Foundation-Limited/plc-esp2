@@ -48,6 +48,7 @@ public:
         page.replace("%DISPLAY_SEPTIC_JSON%", web.displaySepticOptionsJson_());
         page.replace("%DISPLAY_AVR_JSON%", web.displayAvrOptionsJson_());
         page.replace("%DISPLAY_LEAK_JSON%", web.displayLeakOptionsJson_());
+        page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         if (!web._display_status.length())
             web._display_status = "OK";
         page.replace("%DISPLAY_STATUS%", web._display_status);

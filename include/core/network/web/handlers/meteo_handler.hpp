@@ -20,6 +20,7 @@ public:
     {
         server.on("/meteo/remote_sources", HTTP_GET,
                   [&web](AsyncWebServerRequest *request) { handleRemoteSources(web, request); });
+        server.on("/meteo/state", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleMeteoState(web, request); });
         server.on("/meteo", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleMeteoSave(web, request); });
         server.on("/meteo", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleMeteo(web, request); });
     }
@@ -63,8 +64,31 @@ public:
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Meteo, node_id))
             return;
         const bool stack_view = web.isStackMeteoView_(node_id);
+        const uint8_t page_size = 8u;
+        const String page_str = web.paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+        uint8_t max_pages = 1;
         if (stack_view)
+        {
             web.requestStackMeteo_(node_id);
+            const size_t visible = web.stackMeteoVisibleCount_(node_id);
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+        else
+        {
+            const size_t visible = web.meteoLocalRenderCount_();
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
         if (!stack_view)
         {
             if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
@@ -84,17 +108,156 @@ public:
         }
         String page = FPSTR(kWebInterfaceMeteoHtml);
         page.reserve(page.length() + 16384);
+        String pagination = "";
+        if (stack_view && max_pages > 1)
+        {
+            pagination.reserve(256);
+            pagination += "<div class=\"pagination\">";
+            if (page_idx > 0)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/meteo?unit=stack&node=";
+                pagination += String((unsigned long)node_id);
+                pagination += "&page=";
+                pagination += String((unsigned)page_idx);
+                pagination += "\">Назад</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Назад</span>";
+            pagination += "<span class=\"page-info\">Страница ";
+            pagination += String((unsigned)(page_idx + 1));
+            pagination += " / ";
+            pagination += String((unsigned)max_pages);
+            pagination += "</span>";
+            if ((page_idx + 1u) < max_pages)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/meteo?unit=stack&node=";
+                pagination += String((unsigned long)node_id);
+                pagination += "&page=";
+                pagination += String((unsigned)(page_idx + 2u));
+                pagination += "\">Вперёд</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+            pagination += "</div>";
+        }
+        if (!stack_view && max_pages > 1)
+        {
+            pagination.reserve(256);
+            pagination += "<div class=\"pagination\">";
+            if (page_idx > 0)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/meteo?page=";
+                pagination += String((unsigned)page_idx);
+                pagination += "\">Назад</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Назад</span>";
+            pagination += "<span class=\"page-info\">Страница ";
+            pagination += String((unsigned)(page_idx + 1));
+            pagination += " / ";
+            pagination += String((unsigned)max_pages);
+            pagination += "</span>";
+            if ((page_idx + 1u) < max_pages)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/meteo?page=";
+                pagination += String((unsigned)(page_idx + 2u));
+                pagination += "\">Вперёд</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+            pagination += "</div>";
+        }
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%METEO_TILES%", stack_view ? web.listStackMeteoHtml_(node_id) : web.listMeteoHtml_());
+        page.replace("%METEO_TILES%", stack_view ? web.listStackMeteoHtml_(node_id, (size_t)page_idx * page_size, page_size)
+                                                 : web.listMeteoHtml_((size_t)page_idx * page_size, page_size));
+        page.replace("%METEO_PAGINATION%", pagination);
         page.replace("%METEO_STATUS%", stack_view ? web.stackMeteoStatusText_(node_id) : web._meteo_status);
         page.replace("%SENSOR_JSON%", stack_view ? "[]" : web.meteoPortOptionsJson_());
         page.replace("%SENSOR_USED_JSON%",
                      stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Sensor));
         page.replace("%METEO_DEVICE_SELECT%", web.meteoDeviceSelectHtml_(node_id, stack_view));
         page.replace("%METEO_SAVE_BTN%",
-                     (stack_view || !web.webSessionIsAdmin_()) ? "" : "<button class=\"btn\" type=\"submit\">Сохранить</button>");
+                     (stack_view || !web.webSessionIsAdmin_()) ? String("") : (String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>"));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
+    }
+
+    static void handleMeteoState(WebInterface &web, AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Meteo, node_id))
+            return;
+
+        StaticJsonDocument<4096> doc;
+        JsonArray items = doc["items"].to<JsonArray>();
+
+        if (web.isStackMeteoView_(node_id))
+        {
+            auto *cache = web._stack_cache ? web._stack_cache->meteoCache(node_id) : nullptr;
+            if (!cache || !cache->has_data)
+            {
+                if (web._stack_cache)
+                    web._stack_cache->requestMeteo(node_id);
+                doc["pending"] = true;
+            }
+            else
+            {
+                const bool stale = (cache->pending || (uint32_t)(millis() - cache->updated_ms) > 1500u);
+                if (stale && web._stack_cache)
+                    web._stack_cache->requestMeteo(node_id);
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &cfg = cache->items[i];
+                    if (!web.webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg.id, node_id))
+                        continue;
+                    JsonObject o = items.add<JsonObject>();
+                    o["id"] = cfg.id;
+                    o["enabled"] = cfg.enabled;
+                    o["ok"] = cfg.ok;
+                    o["has_temp"] = cfg.has_temp;
+                    o["temp"] = cfg.temp_c;
+                    o["has_hum"] = cfg.has_hum;
+                    o["hum"] = cfg.hum;
+                }
+            }
+        }
+        else
+        {
+            if (!web._controllers)
+            {
+                web.sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+                return;
+            }
+            MeteoController &meteo = web._controllers->meteo();
+            const uint32_t now = millis();
+            for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+            {
+                const auto *cfg = meteo.configByIndex(i);
+                const auto *st = meteo.stateByIndex(i);
+                if (!cfg || !st)
+                    continue;
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg->id))
+                    continue;
+                JsonObject o = items.add<JsonObject>();
+                o["id"] = cfg->id;
+                o["enabled"] = cfg->enabled;
+                o["ok"] = st->ok;
+                o["has_temp"] = st->has_temp;
+                o["temp"] = st->temp_c;
+                o["has_hum"] = st->has_humidity;
+                o["hum"] = st->humidity;
+                const uint32_t age_s = st->last_read_ms ? (uint32_t)((now - st->last_read_ms) / 1000u) : 0u;
+                o["age_s"] = age_s;
+                o["has_read"] = st->last_read_ms != 0;
+            }
+        }
+
+        String body;
+        serializeJson(doc, body);
+        web.sendText_(request, 200, "application/json", body, set_cookie);
     }
 
     static void handleMeteoSave(WebInterface &web, AsyncWebServerRequest *request)

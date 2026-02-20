@@ -153,6 +153,36 @@ static const char kWebInterfaceLeakHtml[] PROGMEM = R"HTML(
     }
 
     .actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin: 8px 0 10px;
+    }
+    .page-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 92px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #0b1220;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .page-btn.disabled {
+      opacity: 0.45;
+      pointer-events: none;
+    }
+    .page-info {
+      color: var(--muted);
+      font-size: 13px;
+      min-width: 120px;
+      text-align: center;
+    }
     button {
       border: none;
       border-radius: 8px;
@@ -182,6 +212,7 @@ static const char kWebInterfaceLeakHtml[] PROGMEM = R"HTML(
       <h1>Протечки</h1>
       %LEAK_DEVICE_SELECT%
       <div class="status">%LEAK_STATUS%</div>
+      %LEAK_PAGINATION%
       <form method="POST" action="%LEAK_FORM_ACTION%" id="leak-save">
         <input type="hidden" name="leak_save" value="1">
         <div class="grid">
@@ -192,7 +223,7 @@ static const char kWebInterfaceLeakHtml[] PROGMEM = R"HTML(
         <input type="hidden" name="leak_ack_all" value="1">
       </form>
       <div class="actions">
-        <button type="submit" form="leak-save">Сохранить</button>
+        <button type="submit" form="leak-save">%SAVE_TEXT%</button>
         <button type="submit" form="leak-ack" class="btn-muted">Сброс тревог</button>
       </div>
       <div class="status">Датчики протечки: DInput. Выходы кран/тревога: Relay.</div>
@@ -296,3 +327,4 @@ static const char kWebInterfaceLeakHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+

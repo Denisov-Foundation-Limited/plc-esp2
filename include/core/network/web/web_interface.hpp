@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -33,6 +33,7 @@
 #include "core/network/stack/stack_slave_handler.hpp"
 #include "core/network/web/interfaces/web_interface_pages.hpp"
 #include "core/network/web/interfaces/web_interface_handler_fwd.hpp"
+#include "core/network/web/interfaces/web_interface_texts_ru.hpp"
 #include "core/rtc.hpp"
 #include "plc/plc_control.hpp"
 #include "core/network/telegram/telegram.hpp"
@@ -169,31 +170,6 @@ private:
     friend class AvrHandler;
     friend class LeakHandler;
     friend class RulesHandler;
-    struct StackSocketItem;
-    struct StackSocketsCache;
-    struct StackLightItem;
-    struct StackLightsCache;
-    struct StackPortItem;
-    struct StackPortsCache;
-    struct StackExtenderItem;
-    struct StackExtendersCache;
-    struct StackI2cItem;
-    struct StackI2cCache;
-    struct StackOwItem;
-    struct StackOwCache;
-    struct StackSecuritySensorItem;
-    struct StackSecurityCache;
-    struct StackMeteoItem;
-    struct StackMeteoCache;
-    struct StackThermoItem;
-    struct StackThermoCache;
-    struct StackSepticItem;
-    struct StackSepticCache;
-    struct StackTankItem;
-    struct StackTankCache;
-    struct StackWateringItem;
-    struct StackWateringCache;
-    struct StackNodeStatusCache;
     void handleAdminSave_(AsyncWebServerRequest *request)
     {
         bool set_cookie = false;
@@ -533,13 +509,13 @@ private:
             items += "</strong></td></tr>";
         }
         if (items.length() == 0)
-            items = "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Extenders отсутствуют</strong></td></tr>";
+            items = "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Extenders РѕС‚СЃСѓС‚СЃС‚РІСѓСЋС‚</strong></td></tr>";
         return items;
     }
 
     String listStackPortsHtml_(uint32_t node_id) const
     {
-        const StackPortsCache *cache = findStackPortsCache_(node_id, false);
+        const auto *cache = _stack_cache ? _stack_cache->portsCache(node_id) : nullptr;
         if (!cache)
             return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
         if (cache->pending)
@@ -550,7 +526,7 @@ private:
         items.reserve(cache->item_count * 120 + 128);
         for (size_t i = 0; i < cache->item_count; ++i)
         {
-            const StackPortItem &it = cache->items[i];
+            const auto &it = cache->items[i];
             items += "<tr><td class=\"right\"><strong>";
             items += String((unsigned)it.id);
             items += "</strong></td><td><strong>";
@@ -595,7 +571,7 @@ private:
 
     String listStackExtendersHtml_(uint32_t node_id) const
     {
-        const StackExtendersCache *cache = findStackExtendersCache_(node_id, false);
+        const auto *cache = _stack_cache ? _stack_cache->extendersCache(node_id) : nullptr;
         if (!cache)
             return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
         if (cache->pending)
@@ -606,7 +582,7 @@ private:
         items.reserve(cache->item_count * 64 + 96);
         for (size_t i = 0; i < cache->item_count; ++i)
         {
-            const StackExtenderItem &it = cache->items[i];
+            const auto &it = cache->items[i];
             if (!it.present)
                 continue;
             items += "<tr><td class=\"right\"><strong>";
@@ -626,11 +602,13 @@ private:
             items += "</strong></td></tr>";
         }
         if (items.length() == 0)
-            items = "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Extenders отсутствуют</strong></td></tr>";
+            items = "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Extenders РѕС‚СЃСѓС‚СЃС‚РІСѓСЋС‚</strong></td></tr>";
         return items;
     }
 
+#define WEB_INTERFACE_CLASS_CONTEXT 1
 #include "core/network/web/interfaces/web_interface_controllers.hpp"
+#undef WEB_INTERFACE_CLASS_CONTEXT
 
     static String paramValue_(AsyncWebServerRequest *request, const String &name)
     {
@@ -1018,10 +996,10 @@ private:
 
     void notifyRingPress_(bool stack_view, uint32_t node_id)
     {
-        String msg = F("Звонок: веб-кнопка");
+        String msg = F("Р—РІРѕРЅРѕРє: РІРµР±-РєРЅРѕРїРєР°");
         if (stack_view)
         {
-            msg += F(" (стек");
+            msg += F(" (СЃС‚РµРє");
             if (node_id)
             {
                 msg += F(" ");
@@ -1031,7 +1009,7 @@ private:
         }
         else
         {
-            msg += F(" (локально)");
+            msg += F(" (Р»РѕРєР°Р»СЊРЅРѕ)");
         }
         if (_log)
             _log->info(F("RING"), F("%s"), msg.c_str());
@@ -1104,7 +1082,7 @@ private:
         String out = "<span class=\"status-dot ";
         out += on ? "status-on" : "status-off";
         out += "\" title=\"";
-        out += on ? "включен" : "выключен";
+        out += on ? "РІРєР»СЋС‡РµРЅ" : "РІС‹РєР»СЋС‡РµРЅ";
         out += "\"></span>";
         return out;
     }
@@ -1114,7 +1092,7 @@ private:
         String out = "<span class=\"status-dot ";
         out += on ? "status-on" : "status-off";
         out += "\" title=\"";
-        out += on ? "включен" : "выключен";
+        out += on ? "РІРєР»СЋС‡РµРЅ" : "РІС‹РєР»СЋС‡РµРЅ";
         out += "\"></span>";
         return out;
     }
@@ -1242,7 +1220,6 @@ private:
         hashAdd_(hash, _device_status);
         hashAdd_(hash, _sockets_status);
         hashAdd_(hash, _controllers_status);
-        hashAdd_(hash, _sockets_status);
         hashAdd_(hash, _lights_status);
         hashAdd_(hash, _meteo_status);
         hashAdd_(hash, _thermo_status);
@@ -1261,12 +1238,10 @@ private:
             hashAdd_(hash, deviceName_());
             hashAdd_(hash, stackRoleName_(stackRole_()));
             hashAdd_(hash, wifiIp_());
-            hashAdd_(hash, formatTemp_(boardTemp_()));
-            hashAdd_(hash, formatTemp_(cpuTemp_()));
-            hashAdd_(hash, formatTemp_(rtcTemp_()));
             hashAdd_(hash, listStackNodesStatusHtml_());
             return hash;
         }
+
         if (path == "/wifi")
         {
             hashAdd_(hash, _wifi.ap() ? "AP" : "STA");
@@ -1286,15 +1261,33 @@ private:
             }
             return hash;
         }
+
         if (path == "/manage")
         {
             hashAdd_(hash, listFilesHtml_());
             return hash;
         }
+
+        if (path == "/ports")
+        {
+            hashAdd_(hash, listPortsHtml_());
+            hashAdd_(hash, listExtendersHtml_());
+            return hash;
+        }
+
+        if (path == "/buses")
+        {
+            hashAdd_(hash, listI2cHtml_());
+            hashAdd_(hash, listOwHtml_());
+            return hash;
+        }
+
         if (path == "/stack")
         {
             hashAdd_(hash, stackRoleName_(stackRole_()));
             hashAdd_(hash, stackMasterHost_());
+            hashAdd_(hash, stackApiKey_());
+            hashAdd_(hash, listStackNodesHtml_());
             if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
             {
                 hashAdd_(hash, _stack_slave->nodeConnected() ? 1u : 0u);
@@ -1302,162 +1295,7 @@ private:
             }
             return hash;
         }
-        if (path == "/controllers")
-        {
-            if (_controllers)
-            {
-                hashAdd_(hash, _controllers->sockets().controllerEnabled() ? 1u : 0u);
-                hashAdd_(hash, _controllers->sockets().lightsEnabled() ? 1u : 0u);
-                hashAdd_(hash, _controllers->meteo().controllerEnabled() ? 1u : 0u);
-                hashAdd_(hash, _controllers->thermo().controllerEnabled() ? 1u : 0u);
-                hashAdd_(hash, _controllers->tanks().controllerEnabled() ? 1u : 0u);
-                hashAdd_(hash, _controllers->watering().controllerEnabled() ? 1u : 0u);
-                hashAdd_(hash, _controllers->septic().controllerEnabled() ? 1u : 0u);
-                hashAdd_(hash, _controllers->ring().controllerEnabled() ? 1u : 0u);
-                hashAdd_(hash, _controllers->avr().controllerEnabled() ? 1u : 0u);
-                hashAdd_(hash, _controllers->leak().controllerEnabled() ? 1u : 0u);
-                hashAdd_(hash, _controllers->security().controllerEnabled() ? 1u : 0u);
-            }
-            return hash;
-        }
-        if (path == "/rules")
-        {
-            if (_rules)
-            {
-                for (size_t i = 1; i <= RulesController::kRuleCount; ++i)
-                {
-                    const auto *r = _rules->rule(i);
-                    if (!r)
-                        continue;
-                    hashAdd_(hash, (uint32_t)r->id);
-                    hashAdd_(hash, r->enabled ? 1u : 0u);
-                    hashAdd_(hash, r->name);
-                    hashAdd_(hash, r->condition_enabled ? 1u : 0u);
-                    hashAdd_(hash, r->condition_node_id);
-                    hashAdd_(hash, r->condition_controller);
-                    hashAdd_(hash, (uint32_t)r->condition_item_id);
-                    hashAdd_(hash, r->condition_parameter);
-                    hashAdd_(hash, r->condition_op);
-                    hashAdd_(hash, r->condition_value);
-                    for (size_t j = 1; j <= RulesController::kActionCount; ++j)
-                    {
-                        const auto *a = _rules->action(i, j);
-                        if (!a)
-                            continue;
-                        hashAdd_(hash, (uint32_t)a->id);
-                        hashAdd_(hash, a->enabled ? 1u : 0u);
-                        hashAdd_(hash, (uint32_t)a->kind);
-                        hashAdd_(hash, (uint32_t)a->delay_ms);
-                        hashAdd_(hash, a->node_id);
-                        hashAdd_(hash, a->controller);
-                        hashAdd_(hash, a->parameter);
-                        hashAdd_(hash, a->value);
-                    }
-                }
-            }
-            return hash;
-        }
-        if (path == "/users")
-        {
-            if (_users)
-            {
-                for (size_t i = 0; i < _users->size(); ++i)
-                {
-                    const auto &u = _users->user(i);
-                    hashAdd_(hash, (uint32_t)u.id);
-                    hashAdd_(hash, u.enabled ? 1u : 0u);
-                    hashAdd_(hash, u.username);
-                    hashAdd_(hash, u.web_password_hash);
-                    hashAdd_(hash, u.web_password_salt);
-                    hashAdd_(hash, u.tg_username);
-                    hashAdd_(hash, String((long long)u.tg_chat_id));
-                    hashAdd_(hash, u.tg_admin ? 1u : 0u);
-                    hashAdd_(hash, u.tg_notify ? 1u : 0u);
-                    hashAdd_(hash, u.gsm_phone);
-                    hashAdd_(hash, u.gsm_sms ? 1u : 0u);
-                    hashAdd_(hash, u.gsm_call ? 1u : 0u);
-                    hashAdd_(hash, u.ibutton_key);
-                    hashAdd_(hash, u.rfid_key);
-                }
-            }
-            return hash;
-        }
-        if (path == "/sockets")
-        {
-            if (_controllers)
-            {
-                SocketController &sockets = _controllers->sockets();
-                for (size_t i = 0; i < SocketController::kSocketCount; ++i)
-                {
-                    const auto *cfg = sockets.configByIndex(i);
-                    const auto *st = sockets.stateByIndex(i);
-                    if (!cfg || !st)
-                        continue;
-                    hashAdd_(hash, (uint32_t)cfg->id);
-                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)cfg->button_port);
-                    hashAdd_(hash, (uint32_t)cfg->relay_port);
-                    hashAdd_(hash, cfg->name);
-                    hashAdd_(hash, st->relay_on ? 1u : 0u);
-                }
-            }
-            const StackSocketsCache &c = _stack_sockets_cache;
-            if (c.node_id != 0)
-            {
-                hashAdd_(hash, (uint32_t)c.node_id);
-                hashAdd_(hash, (uint32_t)c.item_count);
-                hashAdd_(hash, c.pending ? 1u : 0u);
-                hashAdd_(hash, c.last_ok ? 1u : 0u);
-                hashAdd_(hash, c.last_error);
-                for (size_t j = 0; j < c.item_count; ++j)
-                {
-                    const StackSocketItem &it = c.items[j];
-                    hashAdd_(hash, (uint32_t)it.id);
-                    hashAdd_(hash, it.enabled ? 1u : 0u);
-                    hashAdd_(hash, it.state ? 1u : 0u);
-                    hashAdd_(hash, it.name);
-                }
-            }
-            return hash;
-        }
-        if (path == "/lights")
-        {
-            if (_controllers)
-            {
-                SocketController &sockets = _controllers->sockets();
-                for (size_t i = 0; i < SocketController::kLightCount; ++i)
-                {
-                    const auto *cfg = sockets.lightConfigByIndex(i);
-                    const auto *st = sockets.lightStateByIndex(i);
-                    if (!cfg || !st)
-                        continue;
-                    hashAdd_(hash, (uint32_t)cfg->id);
-                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)cfg->button_port);
-                    hashAdd_(hash, (uint32_t)cfg->relay_port);
-                    hashAdd_(hash, cfg->name);
-                    hashAdd_(hash, st->relay_on ? 1u : 0u);
-                }
-            }
-            const StackLightsCache &c = _stack_lights_cache;
-            if (c.node_id != 0)
-            {
-                hashAdd_(hash, (uint32_t)c.node_id);
-                hashAdd_(hash, (uint32_t)c.item_count);
-                hashAdd_(hash, c.pending ? 1u : 0u);
-                hashAdd_(hash, c.last_ok ? 1u : 0u);
-                hashAdd_(hash, c.last_error);
-                for (size_t j = 0; j < c.item_count; ++j)
-                {
-                    const StackLightItem &it = c.items[j];
-                    hashAdd_(hash, (uint32_t)it.id);
-                    hashAdd_(hash, it.enabled ? 1u : 0u);
-                    hashAdd_(hash, it.state ? 1u : 0u);
-                    hashAdd_(hash, it.name);
-                }
-            }
-            return hash;
-        }
+
         if (path == "/meteo")
         {
             if (_controllers)
@@ -1471,10 +1309,10 @@ private:
                         continue;
                     hashAdd_(hash, (uint32_t)cfg->id);
                     hashAdd_(hash, cfg->enabled ? 1u : 0u);
+                    hashAdd_(hash, cfg->name);
                     hashAdd_(hash, (uint32_t)cfg->type);
                     hashAdd_(hash, (uint32_t)cfg->dht_pin);
                     hashAdd_(hash, cfg->ds18_addr_set ? 1u : 0u);
-                    hashAdd_(hash, cfg->name);
                     if (cfg->ds18_addr_set)
                         hashAdd_(hash, cfg->ds18_addr, MeteoController::kAddrLen);
                     hashAdd_(hash, st->ok ? 1u : 0u);
@@ -1487,48 +1325,44 @@ private:
                     hashAdd_(hash, st->last_read_ms);
                 }
             }
-            if (_stack_meteo_cache.node_id != 0)
+            if (_stack_cache && _stack_master)
             {
-                const StackMeteoCache &c = _stack_meteo_cache;
-                hashAdd_(hash, (uint32_t)c.node_id);
-                hashAdd_(hash, (uint32_t)c.item_count);
-                hashAdd_(hash, c.pending ? 1u : 0u);
-                hashAdd_(hash, c.last_ok ? 1u : 0u);
-                hashAdd_(hash, c.last_error);
-                for (size_t j = 0; j < c.item_count; ++j)
+                const size_t count = _stack_master->nodeCount();
+                for (size_t i = 0; i < count; ++i)
                 {
-                    const StackMeteoItem &it = c.items[j];
-                    hashAdd_(hash, (uint32_t)it.id);
-                    hashAdd_(hash, it.enabled ? 1u : 0u);
-                    hashAdd_(hash, it.ok ? 1u : 0u);
-                    hashAdd_(hash, it.has_temp ? 1u : 0u);
-                    hashAdd_(hash, it.has_hum ? 1u : 0u);
-                    hashAdd_(hash, scaled10_(it.temp_c));
-                    hashAdd_(hash, scaled10_(it.hum));
-                    hashAdd_(hash, it.name);
-                    hashAdd_(hash, it.type);
-                    hashAdd_(hash, it.addr);
-                    hashAdd_(hash, it.pin);
+                    const uint32_t node_id = _stack_master->nodeIdAt(i);
+                    const auto *cache = _stack_cache->meteoCache(node_id);
+                    if (!cache)
+                        continue;
+                    hashAdd_(hash, node_id);
+                    hashAdd_(hash, cache->has_data ? 1u : 0u);
+                    hashAdd_(hash, cache->pending ? 1u : 0u);
+                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
+                    hashAdd_(hash, cache->last_error);
+                    hashAdd_(hash, (uint32_t)cache->item_count);
+                    for (size_t j = 0; j < cache->item_count; ++j)
+                    {
+                        const auto &it = cache->items[j];
+                        hashAdd_(hash, (uint32_t)it.id);
+                        hashAdd_(hash, it.enabled ? 1u : 0u);
+                        hashAdd_(hash, it.ok ? 1u : 0u);
+                        hashAdd_(hash, it.has_temp ? 1u : 0u);
+                        hashAdd_(hash, it.has_hum ? 1u : 0u);
+                        if (it.has_temp)
+                            hashAdd_(hash, scaled10_(it.temp_c));
+                        if (it.has_hum)
+                            hashAdd_(hash, scaled10_(it.hum));
+                    }
                 }
             }
             return hash;
         }
+
         if (path == "/thermo")
         {
             if (_controllers)
             {
                 ThermoController &thermo = _controllers->thermo();
-                MeteoController &meteo = _controllers->meteo();
-                const MeteoController::SensorState *sensor_state_by_id[MeteoController::kSensorCount + 1] = {};
-                for (size_t s = 0; s < MeteoController::kSensorCount; ++s)
-                {
-                    const auto *scfg = meteo.configByIndex(s);
-                    const auto *sst = meteo.stateByIndex(s);
-                    if (!scfg || !sst)
-                        continue;
-                    if (scfg->id <= MeteoController::kSensorCount)
-                        sensor_state_by_id[scfg->id] = sst;
-                }
                 for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
                 {
                     const auto *cfg = thermo.configByIndex(i);
@@ -1538,6 +1372,7 @@ private:
                     hashAdd_(hash, (uint32_t)cfg->id);
                     hashAdd_(hash, cfg->enabled ? 1u : 0u);
                     hashAdd_(hash, (uint32_t)cfg->sensor_id);
+                    hashAdd_(hash, cfg->sensor_node_id);
                     hashAdd_(hash, (uint32_t)cfg->heat_port);
                     hashAdd_(hash, (uint32_t)cfg->cool_port);
                     hashAdd_(hash, (uint32_t)cfg->button_port);
@@ -1545,62 +1380,49 @@ private:
                     hashAdd_(hash, (uint32_t)cfg->mode);
                     hashAdd_(hash, scaled10_(cfg->target_c));
                     hashAdd_(hash, scaled10_(cfg->hysteresis));
+                    hashAdd_(hash, st->power_on ? 1u : 0u);
                     hashAdd_(hash, st->heat_on ? 1u : 0u);
                     hashAdd_(hash, st->cool_on ? 1u : 0u);
-                    hashAdd_(hash, st->power_on ? 1u : 0u);
-                    if (cfg->sensor_id <= MeteoController::kSensorCount)
+                }
+            }
+            if (_stack_cache && _stack_master)
+            {
+                const size_t count = _stack_master->nodeCount();
+                for (size_t i = 0; i < count; ++i)
+                {
+                    const uint32_t node_id = _stack_master->nodeIdAt(i);
+                    const auto *cache = _stack_cache->thermoCache(node_id);
+                    if (!cache)
+                        continue;
+                    hashAdd_(hash, node_id);
+                    hashAdd_(hash, cache->has_data ? 1u : 0u);
+                    hashAdd_(hash, cache->pending ? 1u : 0u);
+                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
+                    hashAdd_(hash, cache->last_error);
+                    hashAdd_(hash, (uint32_t)cache->item_count);
+                    for (size_t j = 0; j < cache->item_count; ++j)
                     {
-                        const auto *sst = sensor_state_by_id[cfg->sensor_id];
-                        hashAdd_(hash, sst && sst->has_temp ? 1u : 0u);
-                        if (sst && sst->has_temp)
-                            hashAdd_(hash, scaled10_(sst->temp_c));
+                        const auto &it = cache->items[j];
+                        hashAdd_(hash, (uint32_t)it.id);
+                        hashAdd_(hash, it.enabled ? 1u : 0u);
+                        hashAdd_(hash, it.power_on ? 1u : 0u);
+                        hashAdd_(hash, it.heat_on ? 1u : 0u);
+                        hashAdd_(hash, it.cool_on ? 1u : 0u);
+                        hashAdd_(hash, (uint32_t)it.sensor);
+                        hashAdd_(hash, it.sensor_node);
+                        hashAdd_(hash, scaled10_(it.target));
+                        hashAdd_(hash, scaled10_(it.hyst));
+                        hashAdd_(hash, (uint32_t)it.heat);
+                        hashAdd_(hash, (uint32_t)it.cool);
+                        hashAdd_(hash, (uint32_t)it.button);
+                        hashAdd_(hash, it.name);
+                        hashAdd_(hash, it.mode);
                     }
-                }
-            }
-            if (_stack_thermo_cache.node_id != 0)
-            {
-                const StackThermoCache &c = _stack_thermo_cache;
-                hashAdd_(hash, (uint32_t)c.node_id);
-                hashAdd_(hash, (uint32_t)c.item_count);
-                hashAdd_(hash, c.pending ? 1u : 0u);
-                hashAdd_(hash, c.last_ok ? 1u : 0u);
-                hashAdd_(hash, c.last_error);
-                for (size_t j = 0; j < c.item_count; ++j)
-                {
-                    const StackThermoItem &it = c.items[j];
-                    hashAdd_(hash, (uint32_t)it.id);
-                    hashAdd_(hash, it.enabled ? 1u : 0u);
-                    hashAdd_(hash, it.power_on ? 1u : 0u);
-                    hashAdd_(hash, it.heat_on ? 1u : 0u);
-                    hashAdd_(hash, it.cool_on ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)it.sensor);
-                    hashAdd_(hash, scaled10_(it.target));
-                    hashAdd_(hash, scaled10_(it.hyst));
-                    hashAdd_(hash, (uint32_t)it.heat);
-                    hashAdd_(hash, (uint32_t)it.cool);
-                    hashAdd_(hash, (uint32_t)it.button);
-                    hashAdd_(hash, it.name);
-                    hashAdd_(hash, it.mode);
-                }
-            }
-            if (_stack_meteo_cache.node_id != 0)
-            {
-                const StackMeteoCache &c = _stack_meteo_cache;
-                hashAdd_(hash, (uint32_t)c.node_id);
-                hashAdd_(hash, (uint32_t)c.item_count);
-                hashAdd_(hash, c.pending ? 1u : 0u);
-                hashAdd_(hash, c.last_ok ? 1u : 0u);
-                hashAdd_(hash, c.last_error);
-                for (size_t j = 0; j < c.item_count; ++j)
-                {
-                    const StackMeteoItem &it = c.items[j];
-                    hashAdd_(hash, (uint32_t)it.id);
-                    hashAdd_(hash, it.has_temp ? 1u : 0u);
-                    hashAdd_(hash, scaled10_(it.temp_c));
                 }
             }
             return hash;
         }
+
         if (path == "/tanks")
         {
             if (_controllers)
@@ -1631,38 +1453,105 @@ private:
                     hashAdd_(hash, st->alarm_on ? 1u : 0u);
                 }
             }
-            if (_stack_tanks_cache.node_id != 0)
+            if (_stack_cache && _stack_master)
             {
-                const StackTankCache &c = _stack_tanks_cache;
-                hashAdd_(hash, (uint32_t)c.node_id);
-                hashAdd_(hash, (uint32_t)c.item_count);
-                hashAdd_(hash, c.pending ? 1u : 0u);
-                hashAdd_(hash, c.last_ok ? 1u : 0u);
-                hashAdd_(hash, c.last_error);
-                for (size_t j = 0; j < c.item_count; ++j)
+                const size_t count = _stack_master->nodeCount();
+                for (size_t i = 0; i < count; ++i)
                 {
-                    const StackTankItem &it = c.items[j];
-                    hashAdd_(hash, (uint32_t)it.id);
-                    hashAdd_(hash, it.enabled ? 1u : 0u);
-                    hashAdd_(hash, it.power_on ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)it.low);
-                    hashAdd_(hash, (uint32_t)it.mid);
-                    hashAdd_(hash, (uint32_t)it.full);
-                    hashAdd_(hash, (uint32_t)it.valve);
-                    hashAdd_(hash, (uint32_t)it.pump);
-                    hashAdd_(hash, (uint32_t)it.alarm);
-                    hashAdd_(hash, it.level_low ? 1u : 0u);
-                    hashAdd_(hash, it.level_mid ? 1u : 0u);
-                    hashAdd_(hash, it.level_full ? 1u : 0u);
-                    hashAdd_(hash, it.levels_ok ? 1u : 0u);
-                    hashAdd_(hash, it.valve_on ? 1u : 0u);
-                    hashAdd_(hash, it.pump_on ? 1u : 0u);
-                    hashAdd_(hash, it.alarm_on ? 1u : 0u);
-                    hashAdd_(hash, it.name);
+                    const uint32_t node_id = _stack_master->nodeIdAt(i);
+                    const auto *cache = _stack_cache->tanksCache(node_id);
+                    if (!cache)
+                        continue;
+                    hashAdd_(hash, node_id);
+                    hashAdd_(hash, cache->has_data ? 1u : 0u);
+                    hashAdd_(hash, cache->pending ? 1u : 0u);
+                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
+                    hashAdd_(hash, cache->last_error);
+                    hashAdd_(hash, (uint32_t)cache->item_count);
+                    for (size_t j = 0; j < cache->item_count; ++j)
+                    {
+                        const auto &it = cache->items[j];
+                        hashAdd_(hash, (uint32_t)it.id);
+                        hashAdd_(hash, it.enabled ? 1u : 0u);
+                        hashAdd_(hash, it.power_on ? 1u : 0u);
+                        hashAdd_(hash, (uint32_t)it.low);
+                        hashAdd_(hash, (uint32_t)it.mid);
+                        hashAdd_(hash, (uint32_t)it.full);
+                        hashAdd_(hash, (uint32_t)it.valve);
+                        hashAdd_(hash, (uint32_t)it.pump);
+                        hashAdd_(hash, (uint32_t)it.alarm);
+                        hashAdd_(hash, it.level_low ? 1u : 0u);
+                        hashAdd_(hash, it.level_mid ? 1u : 0u);
+                        hashAdd_(hash, it.level_full ? 1u : 0u);
+                        hashAdd_(hash, it.levels_ok ? 1u : 0u);
+                        hashAdd_(hash, it.valve_on ? 1u : 0u);
+                        hashAdd_(hash, it.pump_on ? 1u : 0u);
+                        hashAdd_(hash, it.alarm_on ? 1u : 0u);
+                        hashAdd_(hash, it.name);
+                    }
                 }
             }
             return hash;
         }
+
+        if (path == "/septic")
+        {
+            if (_controllers)
+            {
+                SepticController &septic = _controllers->septic();
+                for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+                {
+                    const auto *cfg = septic.configByIndex(i);
+                    const auto *st = septic.stateByIndex(i);
+                    if (!cfg || !st)
+                        continue;
+                    hashAdd_(hash, (uint32_t)cfg->id);
+                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
+                    hashAdd_(hash, cfg->monitoring_on ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cfg->warning_port);
+                    hashAdd_(hash, (uint32_t)cfg->alarm_port);
+                    hashAdd_(hash, (uint32_t)cfg->relay_warning);
+                    hashAdd_(hash, (uint32_t)cfg->relay_alarm);
+                    hashAdd_(hash, cfg->name);
+                    hashAdd_(hash, st->warning ? 1u : 0u);
+                    hashAdd_(hash, st->alarm ? 1u : 0u);
+                    hashAdd_(hash, st->relay_warning ? 1u : 0u);
+                    hashAdd_(hash, st->relay_alarm ? 1u : 0u);
+                }
+            }
+            if (_stack_cache && _stack_master)
+            {
+                const size_t count = _stack_master->nodeCount();
+                for (size_t i = 0; i < count; ++i)
+                {
+                    const uint32_t node_id = _stack_master->nodeIdAt(i);
+                    const auto *cache = _stack_cache->septicCache(node_id);
+                    if (!cache)
+                        continue;
+                    hashAdd_(hash, node_id);
+                    hashAdd_(hash, cache->has_data ? 1u : 0u);
+                    hashAdd_(hash, cache->pending ? 1u : 0u);
+                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
+                    hashAdd_(hash, cache->last_error);
+                    hashAdd_(hash, (uint32_t)cache->item_count);
+                    for (size_t j = 0; j < cache->item_count; ++j)
+                    {
+                        const auto &it = cache->items[j];
+                        hashAdd_(hash, (uint32_t)it.id);
+                        hashAdd_(hash, it.enabled ? 1u : 0u);
+                        hashAdd_(hash, it.monitor ? 1u : 0u);
+                        hashAdd_(hash, (uint32_t)it.warning_port);
+                        hashAdd_(hash, (uint32_t)it.alarm_port);
+                        hashAdd_(hash, (uint32_t)it.relay_warning);
+                        hashAdd_(hash, (uint32_t)it.relay_alarm);
+                        hashAdd_(hash, it.warning ? 1u : 0u);
+                        hashAdd_(hash, it.alarm ? 1u : 0u);
+                    }
+                }
+            }
+            return hash;
+        }
+
         if (path == "/watering")
         {
             if (_controllers)
@@ -1697,172 +1586,51 @@ private:
                     hashAdd_(hash, (uint32_t)st->remaining_ms);
                 }
             }
-            if (_stack_watering_cache.node_id != 0)
+            if (_stack_cache && _stack_master)
             {
-                const StackWateringCache &c = _stack_watering_cache;
-                hashAdd_(hash, (uint32_t)c.node_id);
-                hashAdd_(hash, (uint32_t)c.item_count);
-                hashAdd_(hash, c.pending ? 1u : 0u);
-                hashAdd_(hash, c.last_ok ? 1u : 0u);
-                hashAdd_(hash, c.last_error);
-                hashAdd_(hash, (uint32_t)c.total);
-                hashAdd_(hash, (uint32_t)c.offset);
-                for (size_t j = 0; j < c.item_count; ++j)
+                const size_t count = _stack_master->nodeCount();
+                for (size_t i = 0; i < count; ++i)
                 {
-                    const StackWateringItem &it = c.items[j];
-                    hashAdd_(hash, (uint32_t)it.id);
-                    hashAdd_(hash, it.enabled ? 1u : 0u);
-                    hashAdd_(hash, it.status ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)it.port);
-                    hashAdd_(hash, (uint32_t)it.tank_id);
-                    hashAdd_(hash, (uint32_t)it.weekdays_mask);
-                    hashAdd_(hash, (uint32_t)it.hour);
-                    hashAdd_(hash, (uint32_t)it.minute);
-                    hashAdd_(hash, (uint32_t)it.duration_sec);
-                    hashAdd_(hash, (uint32_t)it.hour2);
-                    hashAdd_(hash, (uint32_t)it.minute2);
-                    hashAdd_(hash, (uint32_t)it.duration2_sec);
-                    hashAdd_(hash, (uint32_t)it.hour3);
-                    hashAdd_(hash, (uint32_t)it.minute3);
-                    hashAdd_(hash, (uint32_t)it.duration3_sec);
-                    hashAdd_(hash, it.resume_after_refill ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)it.resume_level);
-                    hashAdd_(hash, it.active ? 1u : 0u);
-                    hashAdd_(hash, it.paused ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)it.remaining_ms);
-                    hashAdd_(hash, it.name);
-                }
-            }
-            return hash;
-        }
-        if (path == "/septic")
-        {
-            if (_controllers)
-            {
-                SepticController &septic = _controllers->septic();
-                for (size_t i = 0; i < SepticController::kSepticCount; ++i)
-                {
-                    const auto *cfg = septic.configByIndex(i);
-                    const auto *st = septic.stateByIndex(i);
-                    if (!cfg || !st)
+                    const uint32_t node_id = _stack_master->nodeIdAt(i);
+                    const auto *cache = _stack_cache->wateringCache(node_id);
+                    if (!cache)
                         continue;
-                    hashAdd_(hash, (uint32_t)cfg->id);
-                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
-                    hashAdd_(hash, cfg->monitoring_on ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)cfg->warning_port);
-                    hashAdd_(hash, (uint32_t)cfg->alarm_port);
-                    hashAdd_(hash, (uint32_t)cfg->relay_warning);
-                    hashAdd_(hash, (uint32_t)cfg->relay_alarm);
-                    hashAdd_(hash, cfg->name);
-                    hashAdd_(hash, st->warning ? 1u : 0u);
-                    hashAdd_(hash, st->alarm ? 1u : 0u);
-                    hashAdd_(hash, st->relay_warning ? 1u : 0u);
-                    hashAdd_(hash, st->relay_alarm ? 1u : 0u);
-                }
-            }
-            if (_stack_septic_cache.node_id != 0)
-            {
-                const StackSepticCache &c = _stack_septic_cache;
-                hashAdd_(hash, (uint32_t)c.node_id);
-                hashAdd_(hash, (uint32_t)c.item_count);
-                hashAdd_(hash, c.pending ? 1u : 0u);
-                hashAdd_(hash, c.last_ok ? 1u : 0u);
-                hashAdd_(hash, c.last_error);
-                for (size_t j = 0; j < c.item_count; ++j)
-                {
-                    const StackSepticItem &it = c.items[j];
-                    hashAdd_(hash, (uint32_t)it.id);
-                    hashAdd_(hash, it.enabled ? 1u : 0u);
-                    hashAdd_(hash, it.monitor ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)it.warning_port);
-                    hashAdd_(hash, (uint32_t)it.alarm_port);
-                    hashAdd_(hash, (uint32_t)it.relay_warning);
-                    hashAdd_(hash, (uint32_t)it.relay_alarm);
-                    hashAdd_(hash, it.warning ? 1u : 0u);
-                    hashAdd_(hash, it.alarm ? 1u : 0u);
+                    hashAdd_(hash, node_id);
+                    hashAdd_(hash, cache->has_data ? 1u : 0u);
+                    hashAdd_(hash, cache->pending ? 1u : 0u);
+                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
+                    hashAdd_(hash, cache->last_error);
+                    hashAdd_(hash, (uint32_t)cache->item_count);
+                    for (size_t j = 0; j < cache->item_count; ++j)
+                    {
+                        const auto &it = cache->items[j];
+                        hashAdd_(hash, (uint32_t)it.id);
+                        hashAdd_(hash, it.enabled ? 1u : 0u);
+                        hashAdd_(hash, it.status ? 1u : 0u);
+                        hashAdd_(hash, (uint32_t)it.port);
+                        hashAdd_(hash, (uint32_t)it.tank_id);
+                        hashAdd_(hash, (uint32_t)it.weekdays_mask);
+                        hashAdd_(hash, (uint32_t)it.hour);
+                        hashAdd_(hash, (uint32_t)it.minute);
+                        hashAdd_(hash, (uint32_t)it.duration_sec);
+                        hashAdd_(hash, (uint32_t)it.hour2);
+                        hashAdd_(hash, (uint32_t)it.minute2);
+                        hashAdd_(hash, (uint32_t)it.duration2_sec);
+                        hashAdd_(hash, (uint32_t)it.hour3);
+                        hashAdd_(hash, (uint32_t)it.minute3);
+                        hashAdd_(hash, (uint32_t)it.duration3_sec);
+                        hashAdd_(hash, it.resume_after_refill ? 1u : 0u);
+                        hashAdd_(hash, (uint32_t)it.resume_level);
+                        hashAdd_(hash, it.active ? 1u : 0u);
+                        hashAdd_(hash, it.paused ? 1u : 0u);
+                        hashAdd_(hash, (uint32_t)it.remaining_ms);
+                        hashAdd_(hash, it.name);
+                    }
                 }
             }
             return hash;
         }
-        if (path == "/ring")
-        {
-            if (_controllers)
-            {
-                const auto &cfg = _controllers->ring().config();
-                hashAdd_(hash, cfg.enabled ? 1u : 0u);
-                hashAdd_(hash, (uint32_t)cfg.button_port);
-                hashAdd_(hash, (uint32_t)cfg.relay_port);
-            }
-            hashAdd_(hash, _ring_status);
-            return hash;
-        }
-        if (path == "/avr")
-        {
-            if (_controllers)
-            {
-                const auto &cfg = _controllers->avr().config();
-                const auto &st = _controllers->avr().state();
-                hashAdd_(hash, cfg.enabled ? 1u : 0u);
-                hashAdd_(hash, cfg.auto_mode ? 1u : 0u);
-                hashAdd_(hash, cfg.prefer_main ? 1u : 0u);
-                hashAdd_(hash, cfg.auto_return_main ? 1u : 0u);
-                hashAdd_(hash, (uint32_t)cfg.main_ok_port);
-                hashAdd_(hash, (uint32_t)cfg.reserve_ok_port);
-                hashAdd_(hash, (uint32_t)cfg.relay_main_port);
-                hashAdd_(hash, (uint32_t)cfg.relay_reserve_port);
-                hashAdd_(hash, (uint32_t)cfg.feedback_main_port);
-                hashAdd_(hash, (uint32_t)cfg.feedback_reserve_port);
-                hashAdd_(hash, cfg.main_ok_active_low ? 1u : 0u);
-                hashAdd_(hash, cfg.reserve_ok_active_low ? 1u : 0u);
-                hashAdd_(hash, cfg.feedback_main_active_low ? 1u : 0u);
-                hashAdd_(hash, cfg.feedback_reserve_active_low ? 1u : 0u);
-                hashAdd_(hash, cfg.relay_main_invert ? 1u : 0u);
-                hashAdd_(hash, cfg.relay_reserve_invert ? 1u : 0u);
-                hashAdd_(hash, cfg.debounce_ms);
-                hashAdd_(hash, cfg.loss_delay_ms);
-                hashAdd_(hash, cfg.return_delay_ms);
-                hashAdd_(hash, cfg.break_ms);
-                hashAdd_(hash, cfg.warmup_ms);
-                hashAdd_(hash, cfg.transfer_timeout_ms);
-                hashAdd_(hash, (uint32_t)st.active_source);
-                hashAdd_(hash, (uint32_t)st.target_source);
-                hashAdd_(hash, (uint32_t)st.manual_source);
-                hashAdd_(hash, (uint32_t)st.fault);
-                hashAdd_(hash, st.transfer_in_progress ? 1u : 0u);
-                hashAdd_(hash, st.main_ok ? 1u : 0u);
-                hashAdd_(hash, st.reserve_ok ? 1u : 0u);
-            }
-            hashAdd_(hash, _avr_status);
-            return hash;
-        }
-        if (path == "/leak")
-        {
-            if (_controllers)
-            {
-                LeakController &leak = _controllers->leak();
-                hashAdd_(hash, leak.controllerEnabled() ? 1u : 0u);
-                for (size_t i = 0; i < LeakController::kZoneCount; ++i)
-                {
-                    const auto *cfg = leak.configByIndex(i);
-                    const auto *st = leak.stateByIndex(i);
-                    if (!cfg || !st)
-                        continue;
-                    hashAdd_(hash, (uint32_t)cfg->id);
-                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
-                    hashAdd_(hash, cfg->power_on ? 1u : 0u);
-                    hashAdd_(hash, cfg->sensor_active_low ? 1u : 0u);
-                    hashAdd_(hash, cfg->valve_open_on_power ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)cfg->sensor_port);
-                    hashAdd_(hash, (uint32_t)cfg->valve_port);
-                    hashAdd_(hash, (uint32_t)cfg->alarm_port);
-                    hashAdd_(hash, cfg->name);
-                    hashAdd_(hash, st->wet ? 1u : 0u);
-                    hashAdd_(hash, st->alarm_latched ? 1u : 0u);
-                }
-            }
-            hashAdd_(hash, _leak_status);
-            return hash;
-        }
+
         if (path == "/security")
         {
             if (_controllers)
@@ -1899,112 +1667,187 @@ private:
                     }
                 }
             }
-            if (_stack_security_cache.node_id != 0)
+            if (_stack_cache && _stack_master)
             {
-                const StackSecurityCache &c = _stack_security_cache;
-                hashAdd_(hash, (uint32_t)c.node_id);
-                hashAdd_(hash, (uint32_t)c.item_count);
-                hashAdd_(hash, c.pending ? 1u : 0u);
-                hashAdd_(hash, c.last_ok ? 1u : 0u);
-                hashAdd_(hash, c.last_error);
-                for (size_t j = 0; j < c.item_count; ++j)
+                const size_t count = _stack_master->nodeCount();
+                for (size_t i = 0; i < count; ++i)
                 {
-                    const StackSecuritySensorItem &it = c.items[j];
-                    hashAdd_(hash, (uint32_t)it.id);
-                    hashAdd_(hash, it.enabled ? 1u : 0u);
-                    hashAdd_(hash, it.detect ? 1u : 0u);
-                    hashAdd_(hash, it.silent ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)it.port);
-                    hashAdd_(hash, it.type ? it.type : "");
-                    hashAdd_(hash, it.name);
+                    const uint32_t node_id = _stack_master->nodeIdAt(i);
+                    const auto *cache = _stack_cache->securityCache(node_id);
+                    if (!cache)
+                        continue;
+                    hashAdd_(hash, node_id);
+                    hashAdd_(hash, cache->has_data ? 1u : 0u);
+                    hashAdd_(hash, cache->pending ? 1u : 0u);
+                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
+                    hashAdd_(hash, cache->last_error);
+                    hashAdd_(hash, cache->enabled ? 1u : 0u);
+                    hashAdd_(hash, cache->armed ? 1u : 0u);
+                    hashAdd_(hash, cache->alarm ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cache->item_count);
+                    for (size_t j = 0; j < cache->item_count; ++j)
+                    {
+                        const auto &it = cache->items[j];
+                        hashAdd_(hash, (uint32_t)it.id);
+                        hashAdd_(hash, it.enabled ? 1u : 0u);
+                        hashAdd_(hash, it.detect ? 1u : 0u);
+                        hashAdd_(hash, it.silent ? 1u : 0u);
+                        hashAdd_(hash, (uint32_t)it.port);
+                        hashAdd_(hash, it.type);
+                        hashAdd_(hash, it.name);
+                    }
                 }
             }
             return hash;
         }
-        if (path == "/ports")
+
+        if (path == "/ring")
         {
-            hashAdd_(hash, listPortsHtml_());
-            hashAdd_(hash, listExtendersHtml_());
-            if (_stack_ports_cache.node_id != 0)
+            if (_controllers)
             {
-                const StackPortsCache &c = _stack_ports_cache;
-                hashAdd_(hash, (uint32_t)c.node_id);
-                hashAdd_(hash, (uint32_t)c.item_count);
-                hashAdd_(hash, c.pending ? 1u : 0u);
-                hashAdd_(hash, c.last_ok ? 1u : 0u);
-                hashAdd_(hash, c.last_error);
-                for (size_t j = 0; j < c.item_count; ++j)
+                const auto &cfg = _controllers->ring().config();
+                hashAdd_(hash, cfg.enabled ? 1u : 0u);
+                hashAdd_(hash, (uint32_t)cfg.button_port);
+                hashAdd_(hash, (uint32_t)cfg.relay_port);
+            }
+            hashAdd_(hash, _ring_status);
+            return hash;
+        }
+
+        if (path == "/avr")
+        {
+            if (_controllers)
+            {
+                const auto &cfg = _controllers->avr().config();
+                const auto &st = _controllers->avr().state();
+                hashAdd_(hash, cfg.enabled ? 1u : 0u);
+                hashAdd_(hash, cfg.auto_mode ? 1u : 0u);
+                hashAdd_(hash, cfg.prefer_main ? 1u : 0u);
+                hashAdd_(hash, cfg.auto_return_main ? 1u : 0u);
+                hashAdd_(hash, (uint32_t)cfg.main_ok_port);
+                hashAdd_(hash, (uint32_t)cfg.reserve_ok_port);
+                hashAdd_(hash, (uint32_t)cfg.relay_main_port);
+                hashAdd_(hash, (uint32_t)cfg.relay_reserve_port);
+                hashAdd_(hash, (uint32_t)cfg.feedback_main_port);
+                hashAdd_(hash, (uint32_t)cfg.feedback_reserve_port);
+                hashAdd_(hash, cfg.main_ok_active_low ? 1u : 0u);
+                hashAdd_(hash, cfg.reserve_ok_active_low ? 1u : 0u);
+                hashAdd_(hash, cfg.feedback_main_active_low ? 1u : 0u);
+                hashAdd_(hash, cfg.feedback_reserve_active_low ? 1u : 0u);
+                hashAdd_(hash, cfg.relay_main_invert ? 1u : 0u);
+                hashAdd_(hash, cfg.relay_reserve_invert ? 1u : 0u);
+                hashAdd_(hash, cfg.debounce_ms);
+                hashAdd_(hash, cfg.loss_delay_ms);
+                hashAdd_(hash, cfg.return_delay_ms);
+                hashAdd_(hash, cfg.break_ms);
+                hashAdd_(hash, cfg.warmup_ms);
+                hashAdd_(hash, cfg.transfer_timeout_ms);
+                hashAdd_(hash, (uint32_t)st.active_source);
+                hashAdd_(hash, (uint32_t)st.target_source);
+                hashAdd_(hash, (uint32_t)st.manual_source);
+                hashAdd_(hash, (uint32_t)st.fault);
+                hashAdd_(hash, st.transfer_in_progress ? 1u : 0u);
+                hashAdd_(hash, st.main_ok ? 1u : 0u);
+                hashAdd_(hash, st.reserve_ok ? 1u : 0u);
+            }
+            if (_stack_cache && _stack_master)
+            {
+                const size_t count = _stack_master->nodeCount();
+                for (size_t i = 0; i < count; ++i)
                 {
-                    const StackPortItem &it = c.items[j];
-                    hashAdd_(hash, (uint32_t)it.id);
-                    hashAdd_(hash, it.ctrl ? 1u : 0u);
-                    hashAdd_(hash, it.is_extender ? 1u : 0u);
-                    hashAdd_(hash, (int32_t)it.dev);
-                    hashAdd_(hash, (int32_t)it.pin);
-                    hashAdd_(hash, it.backend);
-                    hashAdd_(hash, it.loc);
-                    hashAdd_(hash, it.type);
-                    hashAdd_(hash, it.hw);
+                    const uint32_t node_id = _stack_master->nodeIdAt(i);
+                    const auto *cache = _stack_cache->avrCache(node_id);
+                    if (!cache)
+                        continue;
+                    hashAdd_(hash, node_id);
+                    hashAdd_(hash, cache->has_data ? 1u : 0u);
+                    hashAdd_(hash, cache->pending ? 1u : 0u);
+                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
+                    hashAdd_(hash, cache->last_error);
+                    hashAdd_(hash, cache->enabled ? 1u : 0u);
+                    hashAdd_(hash, cache->auto_mode ? 1u : 0u);
+                    hashAdd_(hash, cache->prefer_main ? 1u : 0u);
+                    hashAdd_(hash, cache->auto_return_main ? 1u : 0u);
+                    hashAdd_(hash, cache->main_ok ? 1u : 0u);
+                    hashAdd_(hash, cache->reserve_ok ? 1u : 0u);
+                    hashAdd_(hash, cache->relay_main_on ? 1u : 0u);
+                    hashAdd_(hash, cache->relay_reserve_on ? 1u : 0u);
+                    hashAdd_(hash, cache->transfer ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cache->main_ok_port);
+                    hashAdd_(hash, (uint32_t)cache->reserve_ok_port);
+                    hashAdd_(hash, (uint32_t)cache->relay_main_port);
+                    hashAdd_(hash, (uint32_t)cache->relay_reserve_port);
+                    hashAdd_(hash, (uint32_t)cache->feedback_main_port);
+                    hashAdd_(hash, (uint32_t)cache->feedback_reserve_port);
+                    hashAdd_(hash, cache->active_source);
+                    hashAdd_(hash, cache->target_source);
+                    hashAdd_(hash, cache->fault);
                 }
             }
-            if (_stack_ext_cache.node_id != 0)
+            hashAdd_(hash, _avr_status);
+            return hash;
+        }
+
+        if (path == "/leak")
+        {
+            if (_controllers)
             {
-                const StackExtendersCache &c = _stack_ext_cache;
-                hashAdd_(hash, (uint32_t)c.node_id);
-                hashAdd_(hash, (uint32_t)c.item_count);
-                hashAdd_(hash, c.pending ? 1u : 0u);
-                hashAdd_(hash, c.last_ok ? 1u : 0u);
-                hashAdd_(hash, c.last_error);
-                for (size_t j = 0; j < c.item_count; ++j)
+                LeakController &leak = _controllers->leak();
+                hashAdd_(hash, leak.controllerEnabled() ? 1u : 0u);
+                for (size_t i = 0; i < LeakController::kZoneCount; ++i)
                 {
-                    const StackExtenderItem &it = c.items[j];
-                    hashAdd_(hash, (uint32_t)it.id);
-                    hashAdd_(hash, (uint32_t)it.bus);
-                    hashAdd_(hash, it.present ? 1u : 0u);
-                    hashAdd_(hash, it.addr);
-                    hashAdd_(hash, it.type);
+                    const auto *cfg = leak.configByIndex(i);
+                    const auto *st = leak.stateByIndex(i);
+                    if (!cfg || !st)
+                        continue;
+                    hashAdd_(hash, (uint32_t)cfg->id);
+                    hashAdd_(hash, cfg->enabled ? 1u : 0u);
+                    hashAdd_(hash, cfg->power_on ? 1u : 0u);
+                    hashAdd_(hash, cfg->sensor_active_low ? 1u : 0u);
+                    hashAdd_(hash, cfg->valve_open_on_power ? 1u : 0u);
+                    hashAdd_(hash, (uint32_t)cfg->sensor_port);
+                    hashAdd_(hash, (uint32_t)cfg->valve_port);
+                    hashAdd_(hash, (uint32_t)cfg->alarm_port);
+                    hashAdd_(hash, cfg->name);
+                    hashAdd_(hash, st->wet ? 1u : 0u);
+                    hashAdd_(hash, st->alarm_latched ? 1u : 0u);
                 }
             }
-            return hash;
-        }
-        if (path == "/buses")
-        {
-            hashAdd_(hash, listI2cHtml_());
-            hashAdd_(hash, listOwHtml_());
-            hashAdd_(hash, (uint32_t)_stack_i2c_cache.node_id);
-            hashAdd_(hash, (uint32_t)_stack_i2c_cache.item_count);
-            hashAdd_(hash, _stack_i2c_cache.pending ? 1u : 0u);
-            hashAdd_(hash, _stack_i2c_cache.last_ok ? 1u : 0u);
-            hashAdd_(hash, _stack_i2c_cache.last_error);
-            for (size_t i = 0; i < _stack_i2c_cache.item_count; ++i)
+            if (_stack_cache && _stack_master)
             {
-                hashAdd_(hash, (uint32_t)_stack_i2c_cache.items[i].bus);
-                hashAdd_(hash, (uint32_t)_stack_i2c_cache.items[i].addr);
+                const size_t count = _stack_master->nodeCount();
+                for (size_t i = 0; i < count; ++i)
+                {
+                    const uint32_t node_id = _stack_master->nodeIdAt(i);
+                    const auto *cache = _stack_cache->leakCache(node_id);
+                    if (!cache)
+                        continue;
+                    hashAdd_(hash, node_id);
+                    hashAdd_(hash, cache->has_data ? 1u : 0u);
+                    hashAdd_(hash, cache->pending ? 1u : 0u);
+                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
+                    hashAdd_(hash, cache->last_error);
+                    hashAdd_(hash, (uint32_t)cache->item_count);
+                    for (size_t j = 0; j < cache->item_count; ++j)
+                    {
+                        const auto &it = cache->items[j];
+                        hashAdd_(hash, (uint32_t)it.id);
+                        hashAdd_(hash, it.enabled ? 1u : 0u);
+                        hashAdd_(hash, it.power_on ? 1u : 0u);
+                        hashAdd_(hash, it.sensor_active_low ? 1u : 0u);
+                        hashAdd_(hash, (uint32_t)it.sensor);
+                        hashAdd_(hash, (uint32_t)it.valve);
+                        hashAdd_(hash, (uint32_t)it.alarm);
+                        hashAdd_(hash, it.wet ? 1u : 0u);
+                        hashAdd_(hash, it.alarm_latched ? 1u : 0u);
+                        hashAdd_(hash, it.name);
+                    }
+                }
             }
-            hashAdd_(hash, (uint32_t)_stack_ow_cache.node_id);
-            hashAdd_(hash, (uint32_t)_stack_ow_cache.item_count);
-            hashAdd_(hash, _stack_ow_cache.pending ? 1u : 0u);
-            hashAdd_(hash, _stack_ow_cache.last_ok ? 1u : 0u);
-            hashAdd_(hash, _stack_ow_cache.last_error);
-            for (size_t i = 0; i < _stack_ow_cache.item_count; ++i)
-            {
-                hashAdd_(hash, (uint32_t)_stack_ow_cache.items[i].bus);
-                hashAdd_(hash, _stack_ow_cache.items[i].addr);
-                hashAdd_(hash, _stack_ow_cache.items[i].type);
-            }
+            hashAdd_(hash, _leak_status);
             return hash;
         }
-        if (path == "/stack")
-        {
-            hashAdd_(hash, stackRoleName_(stackRole_()));
-            hashAdd_(hash, stackMasterHost_());
-            hashAdd_(hash, stackFallbackEnabled_() ? 1u : 0u);
-            hashAdd_(hash, stackFallbackHost_());
-            hashAdd_(hash, stackSlaveController_() ? 1u : 0u);
-            hashAdd_(hash, stackApiKey_());
-            hashAdd_(hash, listStackNodesHtml_());
-            return hash;
-        }
+
         if (path == "/admin")
         {
             hashAdd_(hash, rtcDateStr_());
@@ -2012,6 +1855,7 @@ private:
             hashAdd_(hash, (_plc && _plc->buzzerEnabled()) ? 1u : 0u);
             return hash;
         }
+
         if (path == "/logs")
         {
             if (_log)
@@ -2027,6 +1871,7 @@ private:
             }
             return hash;
         }
+
         if (path == "/telegram")
         {
             if (_tgbot)
@@ -2041,6 +1886,7 @@ private:
             }
             return hash;
         }
+
         if (path == "/cloud")
         {
             hashAdd_(hash, cloudEnabled_() ? 1u : 0u);
@@ -2056,9 +1902,9 @@ private:
             hashAdd_(hash, cloudConnected_() ? 1u : 0u);
             return hash;
         }
+
         return hash;
     }
-
     static void appendHex_(String &out, uint32_t value)
     {
         char buf[9] = {};
@@ -2183,7 +2029,7 @@ private:
     String gsmStatusLabel_() const
     {
         if (!_gsm)
-            return "недоступно";
+            return "РЅРµРґРѕСЃС‚СѓРїРЅРѕ";
         if (!_gsm->started())
             return "off";
         const String &err = _gsm->lastError();
@@ -2209,348 +2055,7 @@ private:
     GsmModem *_gsm = nullptr;
     I2CManager *_i2c = nullptr;
     OneWireManager *_ow = nullptr;
-    struct StackSocketItem
-    {
-        uint8_t id = 0;
-        bool enabled = false;
-        bool state = false;
-        static constexpr size_t kNameLen = 48;
-        char name[kNameLen] = {};
-    };
-    struct StackSocketsCache
-    {
-        uint32_t node_id = 0;
-        uint32_t updated_ms = 0;
-        uint16_t pending_cmd_id = 0;
-        bool pending = false;
-        bool has_data = false;
-        bool last_ok = false;
-        String last_error;
-        StackSocketItem items[SocketController::kSocketCount] = {};
-        size_t item_count = 0;
-    };
-    StackSocketsCache _stack_sockets_cache = {};
-    struct StackLightItem
-    {
-        uint8_t id = 0;
-        bool enabled = false;
-        bool state = false;
-        static constexpr size_t kNameLen = 48;
-        char name[kNameLen] = {};
-    };
-    struct StackLightsCache
-    {
-        uint32_t node_id = 0;
-        uint32_t updated_ms = 0;
-        uint16_t pending_cmd_id = 0;
-        bool pending = false;
-        bool has_data = false;
-        bool last_ok = false;
-        String last_error;
-        StackLightItem items[SocketController::kLightCount] = {};
-        size_t item_count = 0;
-    };
-    StackLightsCache _stack_lights_cache = {};
-    struct StackPortItem
-    {
-        uint8_t id = 0;
-        bool ctrl = false;
-        bool is_extender = false;
-        int16_t dev = -1;
-        int16_t pin = -1;
-        static constexpr size_t kBackendLen = 32;
-        static constexpr size_t kLocLen = 32;
-        static constexpr size_t kTypeLen = 32;
-        static constexpr size_t kHwLen = 32;
-        char backend[kBackendLen] = {};
-        char loc[kLocLen] = {};
-        char type[kTypeLen] = {};
-        char hw[kHwLen] = {};
-    };
-    struct StackPortsCache
-    {
-        uint32_t node_id = 0;
-        uint32_t updated_ms = 0;
-        uint16_t pending_cmd_id = 0;
-        bool pending = false;
-        bool has_data = false;
-        bool last_ok = false;
-        String last_error;
-        StackPortItem items[PortIO::PORT_COUNT] = {};
-        size_t item_count = 0;
-    };
-    StackPortsCache _stack_ports_cache = {};
-    struct StackExtenderItem
-    {
-        uint8_t id = 0;
-        uint8_t bus = 0;
-        bool present = false;
-        static constexpr size_t kAddrLen = 24;
-        static constexpr size_t kTypeLen = 24;
-        char addr[kAddrLen] = {};
-        char type[kTypeLen] = {};
-    };
-    struct StackExtendersCache
-    {
-        uint32_t node_id = 0;
-        uint32_t updated_ms = 0;
-        uint16_t pending_cmd_id = 0;
-        bool pending = false;
-        bool has_data = false;
-        bool last_ok = false;
-        String last_error;
-        StackExtenderItem items[Extender::MAX_DEVS] = {};
-        size_t item_count = 0;
-    };
-    StackExtendersCache _stack_ext_cache = {};
-    struct StackI2cItem
-    {
-        uint8_t bus = 0;
-        uint8_t addr = 0;
-    };
-    struct StackI2cCache
-    {
-        uint32_t node_id = 0;
-        uint32_t updated_ms = 0;
-        uint16_t pending_cmd_id = 0;
-        bool pending = false;
-        bool has_data = false;
-        bool last_ok = false;
-        String last_error;
-        StackI2cItem items[127] = {};
-        size_t item_count = 0;
-    };
-    StackI2cCache _stack_i2c_cache = {};
-    struct StackOwItem
-    {
-        uint8_t bus = 0;
-        char addr[17] = {};
-        char type[8] = {};
-    };
-    struct StackOwCache
-    {
-        uint32_t node_id = 0;
-        uint32_t updated_ms = 0;
-        uint16_t pending_cmd_id = 0;
-        bool pending = false;
-        bool has_data = false;
-        bool last_ok = false;
-        String last_error;
-        StackOwItem items[64] = {};
-        size_t item_count = 0;
-    };
-    StackOwCache _stack_ow_cache = {};
-    struct StackSecuritySensorItem
-    {
-        uint8_t id = 0;
-        bool enabled = false;
-        bool detect = false;
-        bool silent = false;
-        uint8_t port = SecurityController::kInvalidPort;
-        static constexpr size_t kTypeLen = 24;
-        static constexpr size_t kNameLen = 48;
-        char type[kTypeLen] = {};
-        char name[kNameLen] = {};
-    };
-    struct StackSecurityCache
-    {
-        uint32_t node_id = 0;
-        uint32_t updated_ms = 0;
-        uint16_t pending_cmd_id = 0;
-        bool pending = false;
-        bool has_data = false;
-        bool last_ok = false;
-        String last_error;
-        StackSecuritySensorItem items[SecurityController::kSensorCount] = {};
-        size_t item_count = 0;
-    };
-    StackSecurityCache _stack_security_cache = {};
-    struct StackMeteoItem
-    {
-        uint8_t id = 0;
-        bool enabled = false;
-        bool ok = false;
-        bool has_temp = false;
-        bool has_hum = false;
-        float temp_c = 0.0f;
-        float hum = 0.0f;
-        static constexpr size_t kNameLen = 48;
-        static constexpr size_t kTypeLen = 24;
-        static constexpr size_t kAddrLen = 24;
-        char name[kNameLen] = {};
-        char type[kTypeLen] = {};
-        char addr[kAddrLen] = {};
-        int pin = -1;
-    };
-    struct StackMeteoCache
-    {
-        uint32_t node_id = 0;
-        uint32_t updated_ms = 0;
-        uint16_t pending_cmd_id = 0;
-        bool pending = false;
-        bool has_data = false;
-        bool last_ok = false;
-        String last_error;
-        StackMeteoItem items[MeteoController::kSensorCount] = {};
-        size_t item_count = 0;
-    };
-    StackMeteoCache _stack_meteo_cache = {};
-    struct StackThermoItem
-    {
-        uint8_t id = 0;
-        bool enabled = false;
-        bool power_on = false;
-        bool heat_on = false;
-        bool cool_on = false;
-        uint8_t sensor = 0;
-        float target = 0.0f;
-        float hyst = 0.0f;
-        uint8_t heat = ThermoController::kInvalidPort;
-        uint8_t cool = ThermoController::kInvalidPort;
-        uint8_t button = ThermoController::kInvalidPort;
-        static constexpr size_t kNameLen = 48;
-        static constexpr size_t kModeLen = 24;
-        char name[kNameLen] = {};
-        char mode[kModeLen] = {};
-    };
-    struct StackThermoCache
-    {
-        uint32_t node_id = 0;
-        uint32_t updated_ms = 0;
-        uint16_t pending_cmd_id = 0;
-        bool pending = false;
-        bool has_data = false;
-        bool last_ok = false;
-        String last_error;
-        StackThermoItem items[ThermoController::kDeviceCount] = {};
-        size_t item_count = 0;
-    };
-    StackThermoCache _stack_thermo_cache = {};
-    struct StackSepticItem
-    {
-        uint8_t id = 0;
-        bool enabled = false;
-        bool monitor = false;
-        uint8_t warning_port = SepticController::kInvalidPort;
-        uint8_t alarm_port = SepticController::kInvalidPort;
-        uint8_t relay_warning = SepticController::kInvalidPort;
-        uint8_t relay_alarm = SepticController::kInvalidPort;
-        bool warning = false;
-        bool alarm = false;
-    };
-    struct StackSepticCache
-    {
-        uint32_t node_id = 0;
-        uint32_t updated_ms = 0;
-        uint16_t pending_cmd_id = 0;
-        bool pending = false;
-        bool has_data = false;
-        bool last_ok = false;
-        String last_error;
-        StackSepticItem items[SepticController::kSepticCount] = {};
-        size_t item_count = 0;
-    };
-    StackSepticCache _stack_septic_cache = {};
-    struct StackTankItem
-    {
-        uint8_t id = 0;
-        bool enabled = false;
-        bool power_on = false;
-        uint8_t low = TankController::kInvalidPort;
-        uint8_t mid = TankController::kInvalidPort;
-        uint8_t full = TankController::kInvalidPort;
-        uint8_t valve = TankController::kInvalidPort;
-        uint8_t pump = TankController::kInvalidPort;
-        uint8_t alarm = TankController::kInvalidPort;
-        bool level_low = false;
-        bool level_mid = false;
-        bool level_full = false;
-        bool levels_ok = false;
-        bool valve_on = false;
-        bool pump_on = false;
-        bool alarm_on = false;
-        static constexpr size_t kNameLen = 48;
-        char name[kNameLen] = {};
-    };
-    struct StackTankCache
-    {
-        uint32_t node_id = 0;
-        uint32_t updated_ms = 0;
-        uint16_t pending_cmd_id = 0;
-        bool pending = false;
-        bool has_data = false;
-        bool last_ok = false;
-        String last_error;
-        StackTankItem items[TankController::kTankCount] = {};
-        size_t item_count = 0;
-    };
-    StackTankCache _stack_tanks_cache = {};
-    struct StackWateringItem
-    {
-        uint8_t id = 0;
-        bool enabled = false;
-        bool status = false;
-        uint8_t port = WateringController::kInvalidPort;
-        uint8_t tank_id = 0;
-        uint8_t weekdays_mask = 0;
-        uint8_t hour = 0;
-        uint8_t minute = 0;
-        uint32_t duration_sec = 0;
-        uint8_t hour2 = 0;
-        uint8_t minute2 = 0;
-        uint32_t duration2_sec = 0;
-        uint8_t hour3 = 0;
-        uint8_t minute3 = 0;
-        uint32_t duration3_sec = 0;
-        bool resume_after_refill = false;
-        uint8_t resume_level = 0;
-        bool active = false;
-        bool paused = false;
-        uint32_t remaining_ms = 0;
-        static constexpr size_t kNameLen = 48;
-        char name[kNameLen] = {};
-    };
-    struct StackWateringCache
-    {
-        uint32_t node_id = 0;
-        uint32_t updated_ms = 0;
-        uint16_t pending_cmd_id = 0;
-        bool pending = false;
-        bool has_data = false;
-        bool last_ok = false;
-        String last_error;
-        uint16_t total = 0;
-        uint16_t offset = 0;
-        StackWateringItem items[WateringController::kRuleCount] = {};
-        size_t item_count = 0;
-    };
-    StackWateringCache _stack_watering_cache = {};
-    struct StackNodeStatusCache
-    {
-        uint32_t node_id = 0;
-        uint32_t plc_updated_ms = 0;
-        uint32_t rtc_updated_ms = 0;
-        uint16_t pending_plc_cmd_id = 0;
-        uint16_t pending_rtc_cmd_id = 0;
-        bool pending_plc = false;
-        bool pending_rtc = false;
-        bool has_plc = false;
-        bool has_rtc = false;
-        bool last_plc_ok = false;
-        bool last_rtc_ok = false;
-        String last_plc_error;
-        String last_rtc_error;
-        float board_temp = 0.0f;
-        float cpu_temp = 0.0f;
-        bool fan_on = false;
-        float fan_on_c = 0.0f;
-        float fan_hyst_c = 0.0f;
-        String rtc_date;
-        String rtc_time;
-        float rtc_temp = 0.0f;
-        uint8_t rtc_weekday = 0;
-    };
-    StackNodeStatusCache _stack_status_cache[StackMaster::MAX_SESSIONS] = {};
+
     uint16_t _stack_cmd_id = 0;
     File _upload;
     bool _upload_ok = true;
@@ -2613,6 +2118,8 @@ private:
 
 #include "core/network/web/interfaces/web_interface_handlers.hpp"
 #include "core/network/web/interfaces/web_interface_routes.hpp"
+
+
 
 
 

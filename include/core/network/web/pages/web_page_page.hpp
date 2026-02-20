@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -102,29 +102,29 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>FCPLC</h1>
-      <p class="status">Плата: <strong>%BOARD_NAME%</strong></p>
+      <p class="status">%INDEX_LABEL_BOARD%: <strong>%BOARD_NAME%</strong></p>
       <div class="section" style="%DEVICE_BLOCK_STYLE%">
-        <h2>Имя устройства</h2>
+        <h2>%INDEX_LABEL_DEVICE_NAME%</h2>
         <form method="POST" action="/device" id="device-form">
           <div class="row">
             <input type="text" name="device_name" value="%DEVICE_NAME%" placeholder="FCPLC" %DEVICE_NAME_DISABLED%>
-            <button type="submit" %DEVICE_SAVE_DISABLED%>Сохранить</button>
+            <button type="submit" %DEVICE_SAVE_DISABLED%>%SAVE_TEXT%</button>
           </div>
           <div class="status">%DEVICE_STATUS%</div>
         </form>
       </div>
       <div class="section">
-        <h2>Статус</h2>
+        <h2>%INDEX_LABEL_STATUS%</h2>
         %INDEX_DEVICE_SELECT%
         <table>
           <tbody>
-            <tr><td>Имя устройства</td><td><strong>%STATUS_DEVICE_NAME%</strong></td></tr>
-            <tr><td>Дата</td><td><strong>%RTC_DATE%</strong></td></tr>
-            <tr><td>Время</td><td><strong>%RTC_TIME%</strong></td></tr>
-            <tr><td>RTC температура</td><td><strong>%RTC_TEMP%</strong></td></tr>
-            <tr><td>Температура платы</td><td><strong>%BOARD_TEMP%</strong></td></tr>
-            <tr><td>CPU</td><td><strong>%CPU_TEMP%</strong></td></tr>
-            <tr><td>Вентилятор</td><td>%FAN_STATUS_ICON%</td></tr>
+            <tr><td>%INDEX_LABEL_DEVICE_NAME%</td><td><strong id="status-device-name">%STATUS_DEVICE_NAME%</strong></td></tr>
+            <tr><td>%INDEX_LABEL_DATE%</td><td><strong id="status-rtc-date">%RTC_DATE%</strong></td></tr>
+            <tr><td>%INDEX_LABEL_TIME%</td><td><strong id="status-rtc-time">%RTC_TIME%</strong></td></tr>
+            <tr><td>%INDEX_LABEL_RTC_TEMP%</td><td><strong id="status-rtc-temp">%RTC_TEMP%</strong></td></tr>
+            <tr><td>%INDEX_LABEL_BOARD_TEMP%</td><td><strong id="status-board-temp">%BOARD_TEMP%</strong></td></tr>
+            <tr><td>CPU</td><td><strong id="status-cpu-temp">%CPU_TEMP%</strong></td></tr>
+            <tr><td>%INDEX_LABEL_FAN%</td><td id="status-fan">%FAN_STATUS_ICON%</td></tr>
           </tbody>
         </table>
       </div>
@@ -158,7 +158,36 @@ static const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
         window.location.href = url.toString();
       });
     }
+    async function pollIndexState() {
+      try {
+        const url = new URL(window.location.origin + '/index/state');
+        const curr = new URL(window.location.href);
+        const node = curr.searchParams.get('node') || curr.searchParams.get('node_id') || '';
+        const unit = curr.searchParams.get('unit') || '';
+        if (node) url.searchParams.set('node_id', node);
+        if (unit) url.searchParams.set('unit', unit);
+        const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) return;
+        const st = await res.json();
+        const setText = (id, val) => {
+          const el = document.getElementById(id);
+          if (el && typeof val === 'string') el.textContent = val;
+        };
+        setText('status-device-name', st.device_name || '');
+        setText('status-rtc-date', st.rtc_date || 'n/a');
+        setText('status-rtc-time', st.rtc_time || 'n/a');
+        setText('status-rtc-temp', st.rtc_temp || 'n/a');
+        setText('status-board-temp', st.board_temp || 'n/a');
+        setText('status-cpu-temp', st.cpu_temp || 'n/a');
+        const fan = document.getElementById('status-fan');
+        if (fan && typeof st.fan_html === 'string') fan.innerHTML = st.fan_html;
+      } catch (e) {
+      }
+    }
+    setTimeout(pollIndexState, 500);
+    setInterval(pollIndexState, 2000);
   </script>
 </body>
 </html>
 )HTML";
+

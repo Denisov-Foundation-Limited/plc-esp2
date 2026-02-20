@@ -142,7 +142,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
           </table>
         </div>
         <div class="row" style="margin-top:10px;">
-          <button type="submit">Сохранить</button>
+          <button type="submit">%SAVE_TEXT%</button>
           <span class="status">%WIFI_STATUS%</span>
           <span class="status">%GSM_STATUS%</span>
         </div>

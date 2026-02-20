@@ -51,6 +51,7 @@ public:
         page.replace("%WIFI_AP_SEL%", web._wifi.ap() ? "selected" : "");
         page.replace("%WIFI_SSID%", web._wifi.ssid());
         page.replace("%WIFI_AP_SSID%", web._wifi.apSsid());
+        page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         page.replace("%WIFI_STATUS%", web._wifi_status);
         page.replace("%GSM_STATUS%", web._gsm_status);
         if (!web._gsm)

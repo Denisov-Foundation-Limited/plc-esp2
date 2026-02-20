@@ -287,6 +287,11 @@ public:
         printPortRow_("CPU", id, p);
     }
 
+    bool gpioPortUsed_(uint8_t id) const
+    {
+        return _controllers.gpioPortUsed(id);
+    }
+
     void cmdShowPorts_()
     {
         _io->println(F("Ports:"));

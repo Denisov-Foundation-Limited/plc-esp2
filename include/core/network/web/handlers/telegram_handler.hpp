@@ -44,6 +44,7 @@ public:
         page.replace("%TGBOT_PROXY_HOST%", web._tgbot ? web._tgbot->proxyHost() : String(""));
         page.replace("%TGBOT_PROXY_PORT%", web._tgbot ? String((unsigned)web._tgbot->proxyPort()) : String("0"));
         page.replace("%TGBOT_PROXY_PATH%", web._tgbot ? web._tgbot->proxyPath() : String(""));
+        page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         page.replace("%TGBOT_STATUS%", web._tgbot_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);

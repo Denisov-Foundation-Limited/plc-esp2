@@ -1,10 +1,18 @@
 #pragma once
 
-    size_t meteoLocalRenderCount_() const
+#ifndef WEB_INTERFACE_CLASS_CONTEXT
+class WebInterface;
+class WebInterfaceControllersMeteoHelper;
+#else
+
+class WebInterfaceControllersMeteoHelper
+{
+public:
+    static size_t meteoLocalRenderCount_(const WebInterface &web)
     {
-        if (!_controllers)
+        if (!web._controllers)
             return 0;
-        MeteoController &meteo = _controllers->meteo();
+        MeteoController &meteo = web._controllers->meteo();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
         {
@@ -17,165 +25,148 @@
         const size_t count = last_enabled_idx + 2u;
         return count > MeteoController::kSensorCount ? MeteoController::kSensorCount : count;
     }
-
-    String meteoDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
+    static String meteoDeviceSelectHtml_(const WebInterface &web, uint32_t selected_node_id, bool stack_view)
     {
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
+        if (web.stackRole_() != ConfigsManagerIface::StackRole::Master || !web._stack_master)
             return "";
         String html;
         html.reserve(512);
         html += "<div class=\"row\">";
-        html += "<span class=\"muted\">Устройство</span>";
+        html += String("<span class=\"muted\">") + WebUiRu::kDevice + "</span>";
         html += "<select id=\"meteo-device\" class=\"field mini\">";
         html += "<option value=\"local\"";
         if (!stack_view)
             html += " selected";
         html += ">local</option>";
-        const size_t count = _stack_master->nodeCount();
+        const size_t count = web._stack_master->nodeCount();
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t id = _stack_master->nodeIdAt(i);
+            const uint32_t id = web._stack_master->nodeIdAt(i);
             html += "<option value=\"";
             html += String((unsigned long)id);
             html += "\"";
             if (stack_view && id == selected_node_id)
                 html += " selected";
             html += ">";
-            String name = _stack_master->nodeNameAt(i);
+            String name = web._stack_master->nodeNameAt(i);
             if (name.length() > 0)
-                appendHtmlEscaped_(html, name.c_str());
+                web.appendHtmlEscaped_(html, name.c_str());
             else
-                html += stackNodeIdHex_(id);
+                html += web.stackNodeIdHex_(id);
             html += "</option>";
         }
         html += "</select></div>";
         return html;
     }
-
-
-    String stackMeteoStatusText_(uint32_t node_id) const
+    static String stackMeteoStatusText_(const WebInterface &web, uint32_t node_id)
     {
-        if (_stack_cache)
-        {
-            const auto *cache = _stack_cache->meteoCache(node_id);
+            const auto *cache = web._stack_cache->meteoCache(node_id);
             if (!cache)
-                return "Нет данных со слейва";
+                return WebUiRu::kNoDataFromSlave;
             if (cache->pending)
-                return "Запрос данных со слейва...";
+                return "";
             if (!cache->last_ok && cache->last_error.length())
             {
-                String msg = "Ошибка: ";
+                String msg = WebUiRu::kErrorPrefix;
                 msg += cache->last_error;
                 return msg;
             }
             if (!cache->has_data)
-                return "Нет данных со слейва";
-            return "OK";
-        }
-        const StackMeteoCache *cache = findStackMeteoCache_(node_id, false);
-        if (!cache)
-            return "Нет данных со слейва";
-        if (cache->pending)
-            return "Запрос данных со слейва...";
-        if (!cache->last_ok && cache->last_error.length())
-        {
-            String msg = "Ошибка: ";
-            msg += cache->last_error;
-            return msg;
-        }
-        if (!cache->has_data)
-            return "Нет данных со слейва";
-        return "OK";
+                return WebUiRu::kNoDataFromSlave;
+            return WebUiRu::kStatusOk;
+        
     }
-
-
-    bool isStackMeteoView_(uint32_t node_id) const
+    static bool isStackMeteoView_(const WebInterface &web, uint32_t node_id)
     {
-        return node_id != 0 && _stack_master &&
-               stackRole_() == ConfigsManagerIface::StackRole::Master;
+        return node_id != 0 && web._stack_master &&
+               web.stackRole_() == ConfigsManagerIface::StackRole::Master;
     }
-
-
-    bool requestStackMeteo_(uint32_t node_id)
+    static bool requestStackMeteo_(WebInterface &web, uint32_t node_id)
     {
-        if (_stack_cache)
-            return _stack_cache->requestMeteo(node_id);
-        if (!_stack_master)
-            return false;
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
-            return false;
-        StackMeteoCache *cache = findStackMeteoCache_(node_id, true);
-        if (!cache)
-            return false;
-        const uint32_t now = millis();
-        if (cache->pending)
-        {
-            if ((uint32_t)(now - cache->updated_ms) > 15000u)
-            {
-                cache->pending = false;
-                cache->pending_cmd_id = 0;
-            }
-            else
-            {
-                return false;
-            }
-        }
-        if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
-            return false;
-        const uint16_t cmd_id = nextStackCmdId_();
-        StaticJsonDocument<192> doc;
-        doc["cmd_id"] = cmd_id;
-        doc["feature"] = (uint8_t)StackFeature::Meteo;
-        doc["action"] = "get";
-        char payload[96] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0)
-            return false;
-        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
-                                   (const uint8_t *)payload, len))
-            return false;
-        cache->pending = true;
-        cache->pending_cmd_id = cmd_id;
-        cache->updated_ms = now;
-        return true;
+        return web._stack_cache && web._stack_cache->requestMeteo(node_id);
     }
-
-
-    String listStackMeteoHtml_(uint32_t node_id)
+    static size_t stackMeteoVisibleCount_(const WebInterface &web, uint32_t node_id)
     {
-        if (_stack_cache)
-        {
-            const auto *cache = _stack_cache->meteoCache(node_id);
-            if (!cache || !cache->has_data)
-                return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
-            if (cache->item_count == 0)
-                return "<div class=\"tile empty\"><strong>Датчики отсутствуют</strong></div>";
-            String items;
-            size_t reserve = 2048u + cache->item_count * 520u;
-            if (reserve < 8192u)
-                reserve = 8192u;
-            items.reserve(reserve);
+            const auto *cache = web._stack_cache ? web._stack_cache->meteoCache(node_id) : nullptr;
+            if (!cache || !cache->has_data || !cache->items)
+                return 0;
+            const bool can_view_disabled = web.webSessionIsAdmin_();
             size_t render_count = cache->item_count;
-            size_t last_enabled_idx = SIZE_MAX;
-            for (size_t i = 0; i < cache->item_count; ++i)
+            if (can_view_disabled)
             {
-                if (cache->items[i].enabled)
-                    last_enabled_idx = i;
+                size_t last_enabled_idx = SIZE_MAX;
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    if (cache->items[i].enabled)
+                        last_enabled_idx = i;
+                }
+                if (last_enabled_idx == SIZE_MAX)
+                    render_count = cache->item_count ? 1u : 0u;
+                else
+                {
+                    const size_t rc = last_enabled_idx + 2u;
+                    render_count = rc > cache->item_count ? cache->item_count : rc;
+                }
             }
-            if (last_enabled_idx == SIZE_MAX)
-                render_count = cache->item_count ? 1u : 0u;
-            else
-            {
-                const size_t count = last_enabled_idx + 2u;
-                render_count = count > cache->item_count ? cache->item_count : count;
-            }
+            size_t count = 0;
             for (size_t i = 0; i < render_count; ++i)
             {
                 const auto &cfg = cache->items[i];
-                if (!webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg.id, node_id))
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg.id, node_id))
                     continue;
-                if (!webSessionIsAdmin_() && !cfg.enabled)
+                if (!can_view_disabled && !cfg.enabled)
                     continue;
+                ++count;
+            }
+            return count;
+        
+    }
+    static String listStackMeteoHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit)
+    {
+            const auto *cache = web._stack_cache->meteoCache(node_id);
+            if (!cache || !cache->has_data)
+                return WebUiRu::Meteo::kText;
+            if (cache->item_count == 0)
+                return WebUiRu::Meteo::kText2;
+            String items;
+            const size_t page_limit = (limit == 0) ? 1u : limit;
+            size_t reserve = 2048u + page_limit * 520u;
+            if (reserve < 8192u)
+                reserve = 8192u;
+            items.reserve(reserve);
+            const bool can_view_disabled = web.webSessionIsAdmin_();
+            size_t render_count = cache->item_count;
+            if (can_view_disabled)
+            {
+                size_t last_enabled_idx = SIZE_MAX;
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    if (cache->items[i].enabled)
+                        last_enabled_idx = i;
+                }
+                if (last_enabled_idx == SIZE_MAX)
+                    render_count = cache->item_count ? 1u : 0u;
+                else
+                {
+                    const size_t rc = last_enabled_idx + 2u;
+                    render_count = rc > cache->item_count ? cache->item_count : rc;
+                }
+            }
+            size_t rendered = 0;
+            size_t visible_idx = 0;
+            for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
+            {
+                const auto &cfg = cache->items[i];
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg.id, node_id))
+                    continue;
+                if (!can_view_disabled && !cfg.enabled)
+                    continue;
+                if (visible_idx < offset)
+                {
+                    ++visible_idx;
+                    continue;
+                }
+                ++visible_idx;
                 char temp_buf[12] = {};
                 char hum_buf[12] = {};
                 const char *temp = "--";
@@ -195,7 +186,7 @@
                 const char *status_class = "status-na";
                 if (has_data)
                     status_class = cfg.ok ? "status-ok" : "status-err";
-
+    
                 String type_label = cfg.type;
                 type_label.toLowerCase();
                 if (type_label == "dht22")
@@ -204,10 +195,12 @@
                     type_label = "DS18B20";
                 else if (type_label.length() == 0)
                     type_label = "none";
-
+    
                 items += "<div class=\"tile";
                 if (!cfg.enabled)
                     items += " disabled";
+                items += "\" data-sensor-id=\"";
+                items += String((unsigned)cfg.id);
                 items += "\">";
                 items += "<div class=\"sensor-visual\">";
                 items += "<span class=\"badge\">#";
@@ -221,14 +214,15 @@
                 items += "<rect x=\"30\" y=\"20\" width=\"4\" height=\"20\" rx=\"2\" fill=\"currentColor\"/>";
                 items += "</svg>";
                 items += "<div class=\"sensor-readout\">";
-                items += "<div class=\"sensor-value\">";
+                items += "<div class=\"sensor-value\"><span class=\"sensor-temp-value\">";
                 items += temp;
-                items += "</div><div class=\"sensor-unit\">°C</div>";
+                items += WebUiRu::Meteo::kC;
+                items += "</span>";
                 if (cfg.has_hum)
                 {
                     items += "<div class=\"sensor-hum\"><svg class=\"sensor-hum-icon\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
                     items += "<path fill=\"currentColor\" d=\"M32 6c7 12 16 22 16 34 0 8.8-7.2 16-16 16S16 48.8 16 40c0-12 9-22 16-34z\"/>";
-                    items += "</svg><div class=\"sensor-value\">";
+                    items += "</svg><div class=\"sensor-value sensor-hum-value\">";
                     items += hum;
                     items += "</div><div class=\"sensor-unit\">%</div></div>";
                 }
@@ -236,177 +230,52 @@
                 items += "<div>";
                 items += "<div class=\"tile-head\"><strong>";
                 if (cfg.name[0])
-                    appendHtmlEscaped_(items, cfg.name);
+                    web.appendHtmlEscaped_(items, cfg.name);
                 else
-                    items += "Датчик";
+                    items += WebUiRu::Meteo::kText3;
                 items += "</strong></div>";
-                items += "<div class=\"status-line\"><span class=\"status-dot ";
+                items += "<div class=\"status-line\"><span class=\"status-dot sensor-status-dot ";
                 items += status_class;
-                items += "\"></span><span class=\"status-text\">";
+                items += "\"></span><span class=\"status-text sensor-status-text\">";
                 if (!cfg.enabled)
-                    items += "Отключен";
+                    items += WebUiRu::Meteo::kText4;
                 else if (!has_data)
-                    items += "Нет данных";
+                    items += WebUiRu::Meteo::kText5;
                 else
-                    items += cfg.ok ? "ОК" : "Ошибка";
+                    items += cfg.ok ? WebUiRu::Meteo::kText6 : WebUiRu::Meteo::kText7;
                 items += "</span></div>";
                 items += "<div class=\"form-grid\">";
-                items += "<div class=\"form-row\"><label>Тип</label><div class=\"field mini\">";
-                appendHtmlEscaped_(items, type_label.c_str());
+                items += WebUiRu::Meteo::kText8;
+                web.appendHtmlEscaped_(items, type_label.c_str());
                 items += "</div></div>";
-                items += "<div class=\"form-row\"><label>Пин</label><div class=\"field mini\">";
+                items += WebUiRu::Meteo::kText9;
                 if (cfg.pin >= 0)
                     items += String(cfg.pin);
                 else
                     items += "--";
                 items += "</div></div>";
-                items += "<div class=\"form-row full\"><label>Адрес</label><div class=\"field\">";
+                items += WebUiRu::Meteo::kText10;
                 if (cfg.addr[0])
-                    appendHtmlEscaped_(items, cfg.addr);
+                    web.appendHtmlEscaped_(items, cfg.addr);
                 else
                     items += "--";
                 items += "</div></div>";
                 items += "</div>";
                 items += "</div></div>";
+                ++rendered;
             }
+            if (items.length() == 0)
+                items = WebUiRu::Meteo::kText2;
             return items;
-        }
-
-        const StackMeteoCache *cache = findStackMeteoCache_(node_id, false);
-        if (!cache || !cache->has_data)
-            return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
-        if (cache->item_count == 0)
-            return "<div class=\"tile empty\"><strong>Датчики отсутствуют</strong></div>";
-        String items;
-        size_t reserve = 2048u + cache->item_count * 520u;
-        if (reserve < 8192u)
-            reserve = 8192u;
-        items.reserve(reserve);
-        size_t render_count = cache->item_count;
-        size_t last_enabled_idx = SIZE_MAX;
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            if (cache->items[i].enabled)
-                last_enabled_idx = i;
-        }
-        if (last_enabled_idx == SIZE_MAX)
-            render_count = cache->item_count ? 1u : 0u;
-        else
-        {
-            const size_t count = last_enabled_idx + 2u;
-            render_count = count > cache->item_count ? cache->item_count : count;
-        }
-        for (size_t i = 0; i < render_count; ++i)
-        {
-            const StackMeteoItem &cfg = cache->items[i];
-            if (!webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg.id, node_id))
-                continue;
-            if (!webSessionIsAdmin_() && !cfg.enabled)
-                continue;
-            char temp_buf[12] = {};
-            char hum_buf[12] = {};
-            const char *temp = "--";
-            const char *hum = "--";
-            if (cfg.has_temp)
-            {
-                dtostrf(cfg.temp_c, 0, 1, temp_buf);
-                temp = temp_buf;
-            }
-            if (cfg.has_hum)
-            {
-                dtostrf(cfg.hum, 0, 1, hum_buf);
-                hum = hum_buf;
-            }
-            const bool has_data = cfg.has_temp || cfg.has_hum;
-            const bool ok_on = has_data && cfg.ok;
-            const char *status_class = "status-na";
-            if (has_data)
-                status_class = cfg.ok ? "status-ok" : "status-err";
-
-            String type_label = cfg.type;
-            type_label.toLowerCase();
-            if (type_label == "dht22")
-                type_label = "DHT22";
-            else if (type_label == "ds18b20")
-                type_label = "DS18B20";
-            else if (type_label.length() == 0)
-                type_label = "none";
-
-            items += "<div class=\"tile";
-            if (!cfg.enabled)
-                items += " disabled";
-            items += "\">";
-            items += "<div class=\"sensor-visual\">";
-            items += "<span class=\"badge\">#";
-            items += String((unsigned)cfg.id);
-            items += "</span>";
-            items += "<svg class=\"sensor-icon ";
-            if (!ok_on)
-                items += "na";
-            items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
-            items += "<path fill=\"currentColor\" d=\"M32 6c-5.5 0-10 4.5-10 10v19.2c-2.6 2.4-4 5.7-4 9.3 0 7.2 5.8 13 13 13s13-5.8 13-13c0-3.6-1.4-6.9-4-9.3V16c0-5.5-4.5-10-10-10zm6 33.1V16c0-3.3-2.7-6-6-6s-6 2.7-6 6v23.1l-0.9 0.9c-1.8 1.7-2.8 3.9-2.8 6.4 0 4.9 4 9 9 9s9-4 9-9c0-2.5-1-4.8-2.8-6.4l-0.5-0.5z\"/>";
-            items += "<rect x=\"30\" y=\"20\" width=\"4\" height=\"20\" rx=\"2\" fill=\"currentColor\"/>";
-            items += "</svg>";
-            items += "<div class=\"sensor-readout\">";
-            items += "<div class=\"sensor-value\">";
-            items += temp;
-            items += "</div><div class=\"sensor-unit\">°C</div>";
-            if (cfg.has_hum)
-            {
-                items += "<div class=\"sensor-hum\"><svg class=\"sensor-hum-icon\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
-                items += "<path fill=\"currentColor\" d=\"M32 6c7 12 16 22 16 34 0 8.8-7.2 16-16 16S16 48.8 16 40c0-12 9-22 16-34z\"/>";
-                items += "</svg><div class=\"sensor-value\">";
-                items += hum;
-                items += "</div><div class=\"sensor-unit\">%</div></div>";
-            }
-            items += "</div></div>";
-            items += "<div>";
-            items += "<div class=\"tile-head\"><strong>";
-            if (cfg.name[0])
-                appendHtmlEscaped_(items, cfg.name);
-            else
-                items += "Датчик";
-            items += "</strong></div>";
-            items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += status_class;
-            items += "\"></span><span class=\"status-text\">";
-            if (!cfg.enabled)
-                items += "Отключен";
-            else if (!has_data)
-                items += "Нет данных";
-            else
-                items += cfg.ok ? "ОК" : "Ошибка";
-            items += "</span></div>";
-            items += "<div class=\"form-grid\">";
-            items += "<div class=\"form-row\"><label>Тип</label><div class=\"field mini\">";
-            appendHtmlEscaped_(items, type_label.c_str());
-            items += "</div></div>";
-            items += "<div class=\"form-row\"><label>Пин</label><div class=\"field mini\">";
-            if (cfg.pin >= 0)
-                items += String(cfg.pin);
-            else
-                items += "--";
-            items += "</div></div>";
-            items += "<div class=\"form-row full\"><label>Адрес</label><div class=\"field\">";
-            if (cfg.addr[0])
-                appendHtmlEscaped_(items, cfg.addr);
-            else
-                items += "--";
-            items += "</div></div>";
-            items += "</div>";
-            items += "</div></div>";
-        }
-        return items;
+        
     }
-
-
-    String listMeteoHtml_()
+    static String listMeteoHtml_(WebInterface &web, size_t offset, size_t limit)
     {
-        if (!_controllers)
-            return "<div class=\"tile empty\"><strong>Метео недоступно</strong></div>";
+        if (!web._controllers)
+            return WebUiRu::Meteo::kText11;
         String items;
         items.reserve(16384);
-        MeteoController &meteo = _controllers->meteo();
+        MeteoController &meteo = web._controllers->meteo();
         const uint32_t now = millis();
         static constexpr size_t kDs18Max = 32;
         char ds18_list[kDs18Max][17] = {};
@@ -438,7 +307,7 @@
                 ++ds18_used_count;
             }
         }
-
+    
         auto appendTypeOption = [&](const char *value, const char *label, bool selected) {
             items += "<option value=\"";
             items += value;
@@ -449,7 +318,7 @@
             items += label;
             items += "</option>";
         };
-
+    
         auto appendRow = [&](const MeteoController::SensorConfig &cfg, const MeteoController::SensorState &st,
                              bool enabled) {
             const bool has_read = st.last_read_ms != 0;
@@ -458,9 +327,9 @@
             char age_buf[16] = {};
             const char *temp = "--";
             const char *hum = "--";
-            String ok = "<span class=\"status-dot status-na\" title=\"N/A\"></span>";
+            String ok = "<span class=\"status-dot sensor-status-dot status-na\" title=\"N/A\"></span>";
             const char *age = "-";
-
+    
             if (st.has_temp)
             {
                 dtostrf(st.temp_c, 0, 1, temp_buf);
@@ -473,17 +342,17 @@
             }
             if (has_read)
             {
-                ok = st.ok ? "<span class=\"status-dot status-ok\" title=\"OK\"></span>"
-                           : "<span class=\"status-dot status-err\" title=\"ERR\"></span>";
+                ok = st.ok ? "<span class=\"status-dot sensor-status-dot status-ok\" title=\"OK\"></span>"
+                           : "<span class=\"status-dot sensor-status-dot status-err\" title=\"ERR\"></span>";
                 const uint32_t age_s = (uint32_t)((now - st.last_read_ms) / 1000u);
                 snprintf(age_buf, sizeof(age_buf), "%lus", (unsigned long)age_s);
                 age = age_buf;
             }
-
+    
             String pin;
             if (cfg.type == MeteoController::SensorType::Dht22 && cfg.dht_pin != MeteoController::kInvalidPin)
                 pin = String((unsigned)cfg.dht_pin);
-
+    
             String addr;
             if (cfg.type == MeteoController::SensorType::Ds18b20 && cfg.ds18_addr_set)
             {
@@ -491,22 +360,24 @@
                 MeteoController::formatHexAddr(cfg.ds18_addr, hex);
                 addr = hex;
             }
-
+    
             const bool has_remote = (cfg.source_node_id != 0 && cfg.source_sensor_id != 0);
             MeteoController::SensorType ui_type = cfg.type;
             if (has_remote)
             {
                 MeteoController::SensorType remote_type = MeteoController::SensorType::None;
-                if (meteoRemoteType_(cfg.source_node_id, cfg.source_sensor_id, remote_type) &&
+                if (web.meteoRemoteType_(cfg.source_node_id, cfg.source_sensor_id, remote_type) &&
                     remote_type != MeteoController::SensorType::None)
                     ui_type = remote_type;
             }
             const bool show_hum = (ui_type == MeteoController::SensorType::Dht22);
             const bool ok_on = has_read && st.ok;
-
+    
             items += "<div class=\"tile";
             if (!enabled)
                 items += " disabled";
+            items += "\" data-sensor-id=\"";
+            items += String((unsigned)cfg.id);
             items += "\">";
             items += "<div class=\"sensor-visual\">";
             items += "<span class=\"badge\">#";
@@ -520,14 +391,15 @@
             items += "<rect x=\"30\" y=\"20\" width=\"4\" height=\"20\" rx=\"2\" fill=\"currentColor\"/>";
             items += "</svg>";
             items += "<div class=\"sensor-readout\">";
-            items += "<div class=\"sensor-value\">";
+            items += "<div class=\"sensor-value\"><span class=\"sensor-temp-value\">";
             items += temp;
-            items += "</div><div class=\"sensor-unit\">°C</div>";
+            items += WebUiRu::Meteo::kC;
+            items += "</span>";
             if (show_hum)
             {
                 items += "<div class=\"sensor-hum\"><svg class=\"sensor-hum-icon\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
                 items += "<path fill=\"currentColor\" d=\"M32 6c7 12 16 22 16 34 0 8.8-7.2 16-16 16S16 48.8 16 40c0-12 9-22 16-34z\"/>";
-                items += "</svg><div class=\"sensor-value\">";
+                items += "</svg><div class=\"sensor-value sensor-hum-value\">";
                 items += hum;
                 items += "</div><div class=\"sensor-unit\">%</div></div>";
             }
@@ -536,12 +408,12 @@
             items += "<div>";
             String remote_label;
             if (has_remote)
-                remote_label = meteoRemoteLabel_(cfg.source_node_id, cfg.source_sensor_id);
+                remote_label = web.meteoRemoteLabel_(cfg.source_node_id, cfg.source_sensor_id);
             items += "<div class=\"tile-head\"><strong>";
             if (cfg.name[0])
-                appendHtmlEscaped_(items, cfg.name);
+                web.appendHtmlEscaped_(items, cfg.name);
             else
-                items += "Датчик";
+                items += WebUiRu::Meteo::kText3;
             items += "</strong>";
             items += "<label class=\"switch\"><input type=\"checkbox\" class=\"meteo-enable\" name=\"m";
             items += String((unsigned)cfg.id);
@@ -549,44 +421,44 @@
             if (enabled)
                 items += " checked";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-            items += "<div class=\"form-row full\" style=\"margin-bottom:8px;\"><label>Устройство</label><select class=\"field meteo-device\">";
-            items += meteoRemoteNodeOptionsHtml_(cfg.source_node_id);
+            items += WebUiRu::Meteo::kText12;
+            items += web.meteoRemoteNodeOptionsHtml_(cfg.source_node_id);
             items += "</select></div>";
-            items += "<div class=\"form-row name-local\"><label>Имя</label><input class=\"field name meteo-name\" type=\"text\" name=\"m";
+            items += WebUiRu::Meteo::kInputClassFieldNameMeteoNameType;
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
-            appendHtmlEscaped_(items, cfg.name.c_str());
+            web.appendHtmlEscaped_(items, cfg.name.c_str());
             items += "\"></div>";
-            items += "<div class=\"form-row name-remote\" style=\"display:none;\"><label>Имя</label><select class=\"field name meteo-source\" name=\"m";
+            items += WebUiRu::Meteo::kSelectClassFieldNameMeteoSourceName;
             items += String((unsigned)cfg.id);
             items += "_src\">";
-            items += meteoRemoteSensorOptionsHtml_(cfg.source_sensor_id, cfg.source_node_id);
+            items += web.meteoRemoteSensorOptionsHtml_(cfg.source_sensor_id, cfg.source_node_id);
             items += "</select></div>";
             if (remote_label.length())
             {
                 items += "<div class=\"muted\">";
-                appendHtmlEscaped_(items, remote_label.c_str());
+                web.appendHtmlEscaped_(items, remote_label.c_str());
                 items += "</div>";
             }
             items += "<div class=\"status-line\">";
             items += ok;
-            items += "<span>Давность: ";
+            items += WebUiRu::Meteo::kText13;
             items += age;
             items += "</span></div>";
             items += "<div class=\"form-grid\">";
-            items += "<div class=\"form-row\"><label>Тип</label><select class=\"field meteo-type\" name=\"m";
+            items += WebUiRu::Meteo::kSelectClassFieldMeteoTypeNameM;
             items += String((unsigned)cfg.id);
             items += "_type\">";
             appendTypeOption("none", "none", ui_type == MeteoController::SensorType::None);
             appendTypeOption("ds18b20", "ds18b20", ui_type == MeteoController::SensorType::Ds18b20);
             appendTypeOption("dht22", "dht22", ui_type == MeteoController::SensorType::Dht22);
             items += "</select></div>";
-            items += "<div class=\"form-row pin-cell\"><label>Пин</label><select class=\"field mini meteo-pin\" data-selected=\"";
+            items += WebUiRu::Meteo::kSelectClassFieldMiniMeteoPinData;
             items += pin;
             items += "\" name=\"m";
             items += String((unsigned)cfg.id);
             items += "_pin\"></select></div>";
-            items += "<div class=\"form-row addr-cell full\"><label>Адрес</label><select class=\"field addr meteo-addr\" name=\"m";
+            items += WebUiRu::Meteo::kSelectClassFieldAddrMeteoAddrName;
             items += String((unsigned)cfg.id);
             items += "_addr\">";
             items += "<option value=\"\">-</option>";
@@ -628,42 +500,54 @@
             items += "</div>";
             items += "</div></div>";
         };
-
-        const size_t render_count = meteoLocalRenderCount_();
-        const bool can_view_disabled = webSessionIsAdmin_();
+    
+        const size_t render_count = web.meteoLocalRenderCount_();
+        const size_t page_limit = (limit == 0) ? 1u : limit;
+        const bool can_view_disabled = web.webSessionIsAdmin_();
+        size_t rendered = 0;
+        size_t visible_idx = 0;
         for (size_t i = 0; i < render_count; ++i)
         {
+            if (rendered >= page_limit)
+                break;
             const auto *cfg = meteo.configByIndex(i);
             const auto *st = meteo.stateByIndex(i);
             if (!cfg || !st)
                 continue;
-            if (!webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg->id))
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg->id))
                 continue;
             if (!can_view_disabled && !cfg->enabled)
                 continue;
+            if (visible_idx < offset)
+            {
+                ++visible_idx;
+                continue;
+            }
+            ++visible_idx;
             appendRow(*cfg, *st, cfg->enabled);
+            ++rendered;
         }
         if (items.length() == 0)
-            items = "<div class=\"tile empty\"><strong>Датчики отсутствуют</strong></div>";
+            items = WebUiRu::Meteo::kText2;
         return items;
     }
-
-
-    String meteoPortOptionsJson_() const
+    static String listMeteoHtml_(WebInterface &web)
     {
-        return socketPortOptionsJson_(PortIO::PinType::Sensor);
+        return listMeteoHtml_(web, 0u, SIZE_MAX);
     }
-
-
-    String meteoUsedPinsJson_() const
+    static String meteoPortOptionsJson_(const WebInterface &web)
+    {
+        return web.socketPortOptionsJson_(PortIO::PinType::Sensor);
+    }
+    static String meteoUsedPinsJson_(const WebInterface &web)
     {
         String out;
         out.reserve(128);
         out += "[";
         bool first = true;
-        if (_controllers)
+        if (web._controllers)
         {
-            MeteoController &meteo = _controllers->meteo();
+            MeteoController &meteo = web._controllers->meteo();
             bool used[PortIO::PORT_COUNT] = {};
             for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
             {
@@ -692,17 +576,17 @@
         out += "]";
         return out;
     }
-
-
-    String meteoSensorOptionsHtml_(uint8_t selected_id, uint32_t selected_node_id,
-                                   const uint8_t used_local[MeteoController::kSensorCount + 1],
-                                   const uint32_t *used_remote, size_t used_remote_count) const
+    static String meteoSensorOptionsHtml_(const WebInterface &web, uint8_t selected_id, uint32_t selected_node_id,
+                                          const uint8_t used_local[MeteoController::kSensorCount + 1],
+                                          const uint32_t *used_remote, size_t used_remote_count)
     {
+        (void)used_remote;
+        (void)used_remote_count;
         String out;
         out += "<option value=\"\">-</option>";
-        if (!_controllers)
+        if (!web._controllers)
             return out;
-        MeteoController &meteo = _controllers->meteo();
+        MeteoController &meteo = web._controllers->meteo();
         for (uint8_t id = 1; id <= MeteoController::kSensorCount; ++id)
         {
             const auto *cfg = meteo.config(id);
@@ -725,44 +609,42 @@
             }
             else if (cfg->source_node_id && cfg->source_sensor_id)
             {
-                label_name = meteoRemoteSensorName_(cfg->source_node_id, cfg->source_sensor_id);
+                label_name = web.meteoRemoteSensorName_(cfg->source_node_id, cfg->source_sensor_id);
             }
             out += String((unsigned)id);
             if (label_name.length())
             {
                 out += ": ";
-                appendHtmlEscaped_(out, label_name.c_str());
+                web.appendHtmlEscaped_(out, label_name.c_str());
             }
             out += "</option>";
         }
         if (selected_node_id != 0 && selected_id != 0)
         {
-            const String remote_name = meteoRemoteSensorName_(selected_node_id, selected_id);
+            const String remote_name = web.meteoRemoteSensorName_(selected_node_id, selected_id);
             out += "<option value=\"";
             out += String((unsigned long)selected_node_id);
             out += ":";
             out += String((unsigned)selected_id);
             out += "\" selected>";
             if (remote_name.length())
-                appendHtmlEscaped_(out, remote_name.c_str());
+                web.appendHtmlEscaped_(out, remote_name.c_str());
             else
                 out += String((unsigned)selected_id);
             out += "</option>";
         }
         return out;
     }
-
-
-    String meteoRemoteSensorOptionsHtml_(uint8_t selected_id, uint32_t selected_node_id) const
+    static String meteoRemoteSensorOptionsHtml_(const WebInterface &web, uint8_t selected_id, uint32_t selected_node_id)
     {
         String out;
         out += "<option value=\"\">-</option>";
-        if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+        if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
         {
-            const size_t slots = _stack_slave->remoteMeteoCacheSlots();
+            const size_t slots = web._stack_slave->remoteMeteoCacheSlots();
             for (size_t i = 0; i < slots; ++i)
             {
-                const auto &cache = _stack_slave->remoteMeteoCacheAt(i);
+                const auto &cache = web._stack_slave->remoteMeteoCacheAt(i);
                 if (cache.node_id == 0 || !cache.has_data || !cache.items)
                     continue;
                 const String node_label = cache.node_name.length()
@@ -785,10 +667,10 @@
                     if (is_selected)
                         out += " selected";
                     out += ">";
-                    appendHtmlEscaped_(out, node_label.c_str());
+                    web.appendHtmlEscaped_(out, node_label.c_str());
                     out += ": ";
                     if (it.name[0])
-                        appendHtmlEscaped_(out, it.name);
+                        web.appendHtmlEscaped_(out, it.name);
                     else
                         out += String((unsigned)it.id);
                     out += "</option>";
@@ -796,24 +678,24 @@
             }
             return out;
         }
-
-        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
+    
+        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master)
         {
-            const size_t count = _stack_master->nodeCount();
+            const size_t count = web._stack_master->nodeCount();
             for (size_t i = 0; i < count; ++i)
             {
-                const uint32_t node_id = _stack_master->nodeIdAt(i);
+                const uint32_t node_id = web._stack_master->nodeIdAt(i);
                 if (node_id == 0)
                     continue;
-                const StackCache::StackMeteoCache *cache = stackCache().meteoCache(node_id);
+                const StackCache::StackMeteoCache *cache = web.stackCache().meteoCache(node_id);
                 if (!cache || !cache->has_data)
                     continue;
                 String node_label;
-                if (_stack_master)
+                if (web._stack_master)
                 {
                     String ip;
                     uint16_t fw_ver = 0;
-                    _stack_master->nodeInfo(node_id, node_label, ip, fw_ver);
+                    web._stack_master->nodeInfo(node_id, node_label, ip, fw_ver);
                 }
                 if (!node_label.length())
                     node_label = String("Node ") + String((unsigned long)node_id);
@@ -834,10 +716,10 @@
                     if (is_selected)
                         out += " selected";
                     out += ">";
-                    appendHtmlEscaped_(out, node_label.c_str());
+                    web.appendHtmlEscaped_(out, node_label.c_str());
                     out += ": ";
                     if (it.name[0])
-                        appendHtmlEscaped_(out, it.name);
+                        web.appendHtmlEscaped_(out, it.name);
                     else
                         out += String((unsigned)it.id);
                     out += "</option>";
@@ -846,21 +728,19 @@
         }
         return out;
     }
-
-
-    String meteoRemoteNodeOptionsHtml_(uint32_t selected_node_id) const
+    static String meteoRemoteNodeOptionsHtml_(const WebInterface &web, uint32_t selected_node_id)
     {
         String out;
         out += "<option value=\"local\"";
         if (selected_node_id == 0)
             out += " selected";
         out += ">local</option>";
-        if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+        if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
         {
-            const size_t slots = _stack_slave->remoteMeteoCacheSlots();
+            const size_t slots = web._stack_slave->remoteMeteoCacheSlots();
             for (size_t i = 0; i < slots; ++i)
             {
-                const auto &cache = _stack_slave->remoteMeteoCacheAt(i);
+                const auto &cache = web._stack_slave->remoteMeteoCacheAt(i);
                 if (cache.node_id == 0 || !cache.has_data || !cache.items)
                     continue;
                 const String node_label = cache.node_name.length()
@@ -872,23 +752,23 @@
                 if (selected_node_id == cache.node_id)
                     out += " selected";
                 out += ">";
-                appendHtmlEscaped_(out, node_label.c_str());
+                web.appendHtmlEscaped_(out, node_label.c_str());
                 out += "</option>";
             }
             return out;
         }
-        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
+        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master)
         {
-            const size_t count = _stack_master->nodeCount();
+            const size_t count = web._stack_master->nodeCount();
             for (size_t i = 0; i < count; ++i)
             {
-                const uint32_t node_id = _stack_master->nodeIdAt(i);
+                const uint32_t node_id = web._stack_master->nodeIdAt(i);
                 if (node_id == 0)
                     continue;
                 String node_label;
                 String ip;
                 uint16_t fw_ver = 0;
-                _stack_master->nodeInfo(node_id, node_label, ip, fw_ver);
+                web._stack_master->nodeInfo(node_id, node_label, ip, fw_ver);
                 if (!node_label.length())
                     node_label = String("Node ") + String((unsigned long)node_id);
                 out += "<option value=\"";
@@ -897,23 +777,21 @@
                 if (selected_node_id == node_id)
                     out += " selected";
                 out += ">";
-                appendHtmlEscaped_(out, node_label.c_str());
+                web.appendHtmlEscaped_(out, node_label.c_str());
                 out += "</option>";
             }
         }
         return out;
     }
-
-
-    String meteoRemoteLabel_(uint32_t node_id, uint8_t sensor_id) const
+    static String meteoRemoteLabel_(const WebInterface &web, uint32_t node_id, uint8_t sensor_id)
     {
         if (node_id == 0 || sensor_id == 0)
             return "";
         String node_label;
         const char *sensor_name = nullptr;
-        if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+        if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
         {
-            const auto *cache = _stack_slave->remoteMeteoCache(node_id);
+            const auto *cache = web._stack_slave->remoteMeteoCache(node_id);
             if (cache && cache->has_data && cache->items)
             {
                 if (cache->node_name.length())
@@ -930,14 +808,14 @@
                 }
             }
         }
-        else if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
+        else if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master)
         {
-            const auto *cache = stackCache().meteoCache(node_id);
+            const auto *cache = web.stackCache().meteoCache(node_id);
             if (cache && cache->has_data)
             {
                 String ip;
                 uint16_t fw_ver = 0;
-                _stack_master->nodeInfo(node_id, node_label, ip, fw_ver);
+                web._stack_master->nodeInfo(node_id, node_label, ip, fw_ver);
                 for (size_t i = 0; i < cache->item_count; ++i)
                 {
                     const auto &it = cache->items[i];
@@ -960,15 +838,13 @@
             out += String((unsigned)sensor_id);
         return out;
     }
-
-
-    String meteoRemoteSensorName_(uint32_t node_id, uint8_t sensor_id) const
+    static String meteoRemoteSensorName_(const WebInterface &web, uint32_t node_id, uint8_t sensor_id)
     {
         if (node_id == 0 || sensor_id == 0)
             return "";
-        if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+        if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
         {
-            const auto *cache = _stack_slave->remoteMeteoCache(node_id);
+            const auto *cache = web._stack_slave->remoteMeteoCache(node_id);
             if (cache && cache->has_data && cache->items)
             {
                 for (size_t i = 0; i < cache->item_count; ++i)
@@ -983,9 +859,9 @@
             }
             return "";
         }
-        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
+        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master)
         {
-            const auto *cache = stackCache().meteoCache(node_id);
+            const auto *cache = web.stackCache().meteoCache(node_id);
             if (cache && cache->has_data)
             {
                 for (size_t i = 0; i < cache->item_count; ++i)
@@ -1001,16 +877,14 @@
         }
         return "";
     }
-
-
-    bool meteoRemoteType_(uint32_t node_id, uint8_t sensor_id, MeteoController::SensorType &out) const
+    static bool meteoRemoteType_(const WebInterface &web, uint32_t node_id, uint8_t sensor_id, MeteoController::SensorType &out)
     {
         out = MeteoController::SensorType::None;
         if (node_id == 0 || sensor_id == 0)
             return false;
-        if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
+        if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
         {
-            const auto *cache = _stack_slave->remoteMeteoCache(node_id);
+            const auto *cache = web._stack_slave->remoteMeteoCache(node_id);
             if (!cache || !cache->has_data || !cache->items)
                 return false;
             for (size_t i = 0; i < cache->item_count; ++i)
@@ -1018,14 +892,14 @@
                 const auto &it = cache->items[i];
                 if (it.id != sensor_id)
                     continue;
-                out = parseMeteoTypeName_(it.type);
+                out = web.parseMeteoTypeName_(it.type);
                 return true;
             }
             return false;
         }
-        if (_stack_master && stackRole_() == ConfigsManagerIface::StackRole::Master)
+        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master)
         {
-            const auto *cache = stackCache().meteoCache(node_id);
+            const auto *cache = web.stackCache().meteoCache(node_id);
             if (!cache || !cache->has_data)
                 return false;
             for (size_t i = 0; i < cache->item_count; ++i)
@@ -1033,30 +907,26 @@
                 const auto &it = cache->items[i];
                 if (it.id != sensor_id)
                     continue;
-                out = parseMeteoTypeName_(it.type);
+                out = web.parseMeteoTypeName_(it.type);
                 return true;
             }
         }
         return false;
     }
-
-
-    bool isMeteoSensorActive_(uint8_t id) const
+    static bool isMeteoSensorActive_(const WebInterface &web, uint8_t id)
     {
-        if (!_controllers)
+        if (!web._controllers)
             return false;
-        const auto *cfg = _controllers->meteo().config(id);
+        const auto *cfg = web._controllers->meteo().config(id);
         return cfg && cfg->enabled;
     }
-
-
-    bool isRemoteMeteoSensorActive_(uint32_t node_id, uint8_t id) const
+    static bool isRemoteMeteoSensorActive_(const WebInterface &web, uint32_t node_id, uint8_t id)
     {
-        if (stackRole_() == ConfigsManagerIface::StackRole::Slave)
+        if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave)
         {
-            if (!_stack_slave)
+            if (!web._stack_slave)
                 return false;
-            const auto *cache = _stack_slave->remoteMeteoCache(node_id);
+            const auto *cache = web._stack_slave->remoteMeteoCache(node_id);
             if (!cache || !cache->has_data || !cache->items)
                 return false;
             for (size_t i = 0; i < cache->item_count; ++i)
@@ -1067,9 +937,9 @@
             }
             return false;
         }
-        if (!_stack_master || stackRole_() != ConfigsManagerIface::StackRole::Master)
+        if (!web._stack_master || web.stackRole_() != ConfigsManagerIface::StackRole::Master)
             return false;
-        const StackCache::StackMeteoCache *cache = stackCache().meteoCache(node_id);
+        const StackCache::StackMeteoCache *cache = web.stackCache().meteoCache(node_id);
         if (!cache || !cache->has_data)
             return false;
         for (size_t i = 0; i < cache->item_count; ++i)
@@ -1080,5 +950,102 @@
         }
         return false;
     }
+};
 
+    size_t meteoLocalRenderCount_() const
+    {
+        return WebInterfaceControllersMeteoHelper::meteoLocalRenderCount_(*this);
+    }
 
+    String meteoDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
+    {
+        return WebInterfaceControllersMeteoHelper::meteoDeviceSelectHtml_(*this, selected_node_id, stack_view);
+    }
+
+    String stackMeteoStatusText_(uint32_t node_id) const
+    {
+        return WebInterfaceControllersMeteoHelper::stackMeteoStatusText_(*this, node_id);
+    }
+
+    bool isStackMeteoView_(uint32_t node_id) const
+    {
+        return WebInterfaceControllersMeteoHelper::isStackMeteoView_(*this, node_id);
+    }
+
+    bool requestStackMeteo_(uint32_t node_id)
+    {
+        return WebInterfaceControllersMeteoHelper::requestStackMeteo_(*this, node_id);
+    }
+
+    size_t stackMeteoVisibleCount_(uint32_t node_id) const
+    {
+        return WebInterfaceControllersMeteoHelper::stackMeteoVisibleCount_(*this, node_id);
+    }
+
+    String listStackMeteoHtml_(uint32_t node_id, size_t offset, size_t limit)
+    {
+        return WebInterfaceControllersMeteoHelper::listStackMeteoHtml_(*this, node_id, offset, limit);
+    }
+
+    String listMeteoHtml_()
+    {
+        return WebInterfaceControllersMeteoHelper::listMeteoHtml_(*this);
+    }
+    String listMeteoHtml_(size_t offset, size_t limit)
+    {
+        return WebInterfaceControllersMeteoHelper::listMeteoHtml_(*this, offset, limit);
+    }
+
+    String meteoPortOptionsJson_() const
+    {
+        return WebInterfaceControllersMeteoHelper::meteoPortOptionsJson_(*this);
+    }
+
+    String meteoUsedPinsJson_() const
+    {
+        return WebInterfaceControllersMeteoHelper::meteoUsedPinsJson_(*this);
+    }
+
+    String meteoSensorOptionsHtml_(uint8_t selected_id, uint32_t selected_node_id,
+                                   const uint8_t used_local[MeteoController::kSensorCount + 1],
+                                   const uint32_t *used_remote, size_t used_remote_count) const
+    {
+        return WebInterfaceControllersMeteoHelper::meteoSensorOptionsHtml_(*this, selected_id, selected_node_id, used_local, used_remote, used_remote_count);
+    }
+
+    String meteoRemoteSensorOptionsHtml_(uint8_t selected_id, uint32_t selected_node_id) const
+    {
+        return WebInterfaceControllersMeteoHelper::meteoRemoteSensorOptionsHtml_(*this, selected_id, selected_node_id);
+    }
+
+    String meteoRemoteNodeOptionsHtml_(uint32_t selected_node_id) const
+    {
+        return WebInterfaceControllersMeteoHelper::meteoRemoteNodeOptionsHtml_(*this, selected_node_id);
+    }
+
+    String meteoRemoteLabel_(uint32_t node_id, uint8_t sensor_id) const
+    {
+        return WebInterfaceControllersMeteoHelper::meteoRemoteLabel_(*this, node_id, sensor_id);
+    }
+
+    String meteoRemoteSensorName_(uint32_t node_id, uint8_t sensor_id) const
+    {
+        return WebInterfaceControllersMeteoHelper::meteoRemoteSensorName_(*this, node_id, sensor_id);
+    }
+
+    bool meteoRemoteType_(uint32_t node_id, uint8_t sensor_id, MeteoController::SensorType &out) const
+    {
+        return WebInterfaceControllersMeteoHelper::meteoRemoteType_(*this, node_id, sensor_id, out);
+    }
+
+    bool isMeteoSensorActive_(uint8_t id) const
+    {
+        return WebInterfaceControllersMeteoHelper::isMeteoSensorActive_(*this, id);
+    }
+
+    bool isRemoteMeteoSensorActive_(uint32_t node_id, uint8_t id) const
+    {
+        return WebInterfaceControllersMeteoHelper::isRemoteMeteoSensorActive_(*this, node_id, id);
+    }
+
+#endif

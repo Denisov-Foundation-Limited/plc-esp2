@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -33,22 +33,111 @@ public:
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Tanks, node_id))
             return;
         const bool stack_view = web.isStackTanksView_(node_id);
+        const uint8_t page_size = 8u;
+        const String page_str = web.paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+        uint8_t max_pages = 1;
         if (stack_view)
+        {
             web.requestStackTanks_(node_id);
+            web.requestStackPorts_(node_id);
+            const size_t visible = web.stackTanksVisibleCount_(node_id);
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+        else
+        {
+            const size_t visible = web.tanksLocalRenderCount_();
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
         String page = FPSTR(kWebInterfaceTanksHtml);
         page.reserve(page.length() + 16384);
+        String pagination = "";
+        if (stack_view && max_pages > 1)
+        {
+            pagination.reserve(256);
+            pagination += "<div class=\"pagination\">";
+            if (page_idx > 0)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/tanks?unit=stack&node=";
+                pagination += String((unsigned long)node_id);
+                pagination += "&page=";
+                pagination += String((unsigned)page_idx);
+                pagination += "\">Назад</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Назад</span>";
+            pagination += "<span class=\"page-info\">Страница ";
+            pagination += String((unsigned)(page_idx + 1));
+            pagination += " / ";
+            pagination += String((unsigned)max_pages);
+            pagination += "</span>";
+            if ((page_idx + 1u) < max_pages)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/tanks?unit=stack&node=";
+                pagination += String((unsigned long)node_id);
+                pagination += "&page=";
+                pagination += String((unsigned)(page_idx + 2u));
+                pagination += "\">Вперёд</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+            pagination += "</div>";
+        }
+        else if (!stack_view && max_pages > 1)
+        {
+            pagination.reserve(256);
+            pagination += "<div class=\"pagination\">";
+            if (page_idx > 0)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/tanks?page=";
+                pagination += String((unsigned)page_idx);
+                pagination += "\">Назад</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Назад</span>";
+            pagination += "<span class=\"page-info\">Страница ";
+            pagination += String((unsigned)(page_idx + 1));
+            pagination += " / ";
+            pagination += String((unsigned)max_pages);
+            pagination += "</span>";
+            if ((page_idx + 1u) < max_pages)
+            {
+                pagination += "<a class=\"page-btn\" href=\"/tanks?page=";
+                pagination += String((unsigned)(page_idx + 2u));
+                pagination += "\">Вперёд</a>";
+            }
+            else
+                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+            pagination += "</div>";
+        }
         page.replace("%NAV%", web.navHtml_());
         page.replace("%TANK_STATUS%", stack_view ? web.stackTanksStatusText_(node_id) : web._tanks_status);
-        page.replace("%TANK_ITEMS%", stack_view ? web.listStackTanksHtml_(node_id) : web.listTanksHtml_());
-        page.replace("%TANK_DINPUT_JSON%", stack_view ? "[]" : web.tankPortOptionsJson_(PortIO::PinType::DInput));
-        page.replace("%TANK_RELAY_JSON%", stack_view ? "[]" : web.tankPortOptionsJson_(PortIO::PinType::Relay));
+        page.replace("%TANK_ITEMS%", stack_view ? web.listStackTanksHtml_(node_id, (size_t)page_idx * page_size, page_size)
+                                                : web.listTanksHtml_((size_t)page_idx * page_size, page_size));
+        page.replace("%TANK_PAGINATION%", pagination);
+        page.replace("%TANK_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
+                                                      : web.tankPortOptionsJson_(PortIO::PinType::DInput));
+        page.replace("%TANK_RELAY_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay)
+                                                     : web.tankPortOptionsJson_(PortIO::PinType::Relay));
         page.replace("%TANK_DINPUT_USED_JSON%",
-                     stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::DInput));
+                     stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput)
+                                : web.globalUsedPortsJson_(PortIO::PinType::DInput));
         page.replace("%TANK_RELAY_USED_JSON%",
-                     stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Relay));
+                     stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
+                                : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%TANK_DEVICE_SELECT%", web.tanksDeviceSelectHtml_(node_id, stack_view));
         page.replace("%TANK_SAVE_BTN%",
-                     (stack_view || !web.webSessionIsAdmin_()) ? "" : "<button type=\"submit\">Сохранить</button>");
+                     (stack_view || !web.webSessionIsAdmin_()) ? String("") : (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>"));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -65,7 +154,7 @@ public:
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackTanksView_(node_id))
         {
-            web._tanks_status = "Р”РѕСЃС‚СѓРїРЅРѕ С‚РѕР»СЊРєРѕ РЅР° Р»РѕРєР°Р»СЊРЅРѕРј СѓСЃС‚СЂРѕР№СЃС‚РІРµ";
+            web._tanks_status = "Доступно только на локальном устройстве";
             web.sendRedirect_(request, "/tanks", set_cookie);
             return;
         }
@@ -146,7 +235,7 @@ public:
                 !web.parseSocketPort_(alarm_str, alarm_port))
             {
                 ok = false;
-                web._tanks_status = String("РќРµРІРµСЂРЅС‹Р№ РїРѕСЂС‚ РґР»СЏ Р±Р°РєР° ") + idx;
+                web._tanks_status = String("Неверный порт для бака ") + idx;
                 break;
             }
 
@@ -204,17 +293,17 @@ public:
                 if (!web._configs_manager)
                 {
                     ok = false;
-                    web._tanks_status = "РњРµРЅРµРґР¶РµСЂ РєРѕРЅС„РёРіСѓСЂР°С†РёРё РЅРµРґРѕСЃС‚СѓРїРµРЅ";
+                    web._tanks_status = "Менеджер конфигурации недоступен";
                 }
                 else if (!web._configs_manager->save())
                 {
                     ok = false;
-                    web._tanks_status = "РЎРѕС…СЂР°РЅРµРЅРёРµ РЅРµ СѓРґР°Р»РѕСЃСЊ";
+                    web._tanks_status = "Сохранение не удалось";
                 }
             }
         }
         if (ok)
-            web._tanks_status = changed ? "РћР±РЅРѕРІР»РµРЅРѕ" : "РЎРѕС…СЂР°РЅРµРЅРѕ";
+            web._tanks_status = changed ? "Обновлено" : "Сохранено";
         web.sendRedirect_(request, "/tanks", set_cookie);
     }
 
@@ -385,3 +474,6 @@ public:
                    st->levels_ok, st->valve_on, st->pump_on, st->alarm_on);
     }
 };
+
+
+

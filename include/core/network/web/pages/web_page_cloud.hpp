@@ -141,7 +141,7 @@ static const char kWebInterfaceCloudHtml[] PROGMEM = R"HTML(
           </div>
         </div>
         <div class="row" style="margin-top:12px;">
-          <button type="submit">Сохранить</button>
+          <button type="submit">%SAVE_TEXT%</button>
           <span class="status"><strong>%CLOUD_STATUS%</strong></span>
         </div>
       </form>
@@ -169,3 +169,4 @@ static const char kWebInterfaceCloudHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+

@@ -1,10 +1,18 @@
 #pragma once
 
-    size_t lightsLocalRenderCount_() const
+#ifndef WEB_INTERFACE_CLASS_CONTEXT
+class WebInterface;
+class WebInterfaceControllersLightsHelper;
+#else
+
+class WebInterfaceControllersLightsHelper
+{
+public:
+    static size_t lightsLocalRenderCount_(const WebInterface &web)
     {
-        if (!_controllers)
+        if (!web._controllers)
             return 0;
-        SocketController &sockets = _controllers->sockets();
+        SocketController &sockets = web._controllers->sockets();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < SocketController::kLightCount; ++i)
         {
@@ -17,135 +25,128 @@
         const size_t count = last_enabled_idx + 2u;
         return count > SocketController::kLightCount ? SocketController::kLightCount : count;
     }
-
-    String lightsDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
+    static String lightsDeviceSelectHtml_(const WebInterface &web, uint32_t selected_node_id, bool stack_view)
     {
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master || !_stack_master)
+        if (web.stackRole_() != ConfigsManagerIface::StackRole::Master || !web._stack_master)
             return "";
         String html;
         html.reserve(512);
         html += "<div class=\"row\">";
-        html += "<span class=\"muted\">Устройство</span>";
+        html += String("<span class=\"muted\">") + WebUiRu::kDevice + "</span>";
         html += "<select id=\"lights-device\" class=\"field mini\">";
         html += "<option value=\"local\"";
         if (!stack_view)
             html += " selected";
         html += ">local</option>";
-        const size_t count = _stack_master->nodeCount();
+        const size_t count = web._stack_master->nodeCount();
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t id = _stack_master->nodeIdAt(i);
+            const uint32_t id = web._stack_master->nodeIdAt(i);
             html += "<option value=\"";
             html += String((unsigned long)id);
             html += "\"";
             if (stack_view && id == selected_node_id)
                 html += " selected";
             html += ">";
-            String name = _stack_master->nodeNameAt(i);
+            String name = web._stack_master->nodeNameAt(i);
             if (name.length() > 0)
-                appendHtmlEscaped_(html, name.c_str());
+                web.appendHtmlEscaped_(html, name.c_str());
             else
-                html += stackNodeIdHex_(id);
+                html += web.stackNodeIdHex_(id);
             html += "</option>";
         }
         html += "</select></div>";
         return html;
     }
-
-
-    String stackLightsStatusText_(uint32_t node_id) const
+    static String stackLightsStatusText_(const WebInterface &web, uint32_t node_id)
     {
-        if (_stack_cache)
-        {
-            const auto *cache = _stack_cache->lightsCache(node_id);
+            const auto *cache = web._stack_cache->lightsCache(node_id);
             if (!cache)
-                return "Нет данных со слейва";
+                return WebUiRu::kNoDataFromSlave;
             if (cache->pending)
-                return "Запрос данных со слейва...";
+                return "";
             if (!cache->last_ok && cache->last_error.length())
             {
-                String msg = "Ошибка: ";
+                String msg = WebUiRu::kErrorPrefix;
                 msg += cache->last_error;
                 return msg;
             }
             if (!cache->has_data)
-                return "Нет данных со слейва";
-            return "OK";
-        }
-        const StackLightsCache *cache = findStackLightsCache_(node_id, false);
-        if (!cache)
-            return "Нет данных со слейва";
-        if (cache->pending)
-            return "Запрос данных со слейва...";
-        if (!cache->last_ok && cache->last_error.length())
-        {
-            String msg = "Ошибка: ";
-            msg += cache->last_error;
-            return msg;
-        }
-        if (!cache->has_data)
-            return "Нет данных со слейва";
-        return "OK";
+                return WebUiRu::kNoDataFromSlave;
+            return WebUiRu::kStatusOk;
+        
     }
-
-
-    bool isStackLightsView_(uint32_t node_id) const
+    static bool isStackLightsView_(const WebInterface &web, uint32_t node_id)
     {
-        return node_id != 0 && _stack_master &&
-               stackRole_() == ConfigsManagerIface::StackRole::Master;
+        return node_id != 0 && web._stack_master &&
+               web.stackRole_() == ConfigsManagerIface::StackRole::Master;
     }
-
-
-    void handleStackLightsToggle_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie)
+    static void handleStackLightsToggle_(WebInterface &web, AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie)
     {
-        if (!_stack_master)
+        if (!web._stack_master)
         {
-            sendText_(request, 400, "text/plain", "Stack master missing", set_cookie);
+            web.sendText_(request, 400, "text/plain", "Stack master missing", set_cookie);
             return;
         }
-        const String id_str = paramValueAny_(request, "id");
+        const String id_str = web.paramValueAny_(request, "id");
         if (!id_str.length())
         {
-            sendText_(request, 400, "text/plain", "Missing id", set_cookie);
+            web.sendText_(request, 400, "text/plain", "Missing id", set_cookie);
             return;
         }
         const uint8_t id = (uint8_t)id_str.toInt();
         if (id == 0)
         {
-            sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
+            web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
             return;
         }
-        String action = paramValueAny_(request, "action");
+        String action = web.paramValueAny_(request, "action");
         action.trim();
         action.toLowerCase();
-        StackLightsCache *cache = findStackLightsCache_(node_id, false);
-        StackLightItem *item = cache ? findStackLightItem_(*cache, id) : nullptr;
-
+        const auto *cache = web._stack_cache ? web._stack_cache->lightsCache(node_id) : nullptr;
+        const StackCache::StackLightItem *item = nullptr;
+        if (cache)
+        {
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                if (cache->items[i].id == id)
+                {
+                    item = &cache->items[i];
+                    break;
+                }
+            }
+        }
+    
         if (action == "state")
         {
             if (!cache || !cache->has_data ||
                 (uint32_t)(millis() - cache->updated_ms) > 1500u)
             {
-                requestStackLights_(node_id);
+                web.requestStackLights_(node_id);
+            }
+            if (cache && cache->pending)
+            {
+                web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                return;
             }
             if (!item)
             {
-                sendText_(request, 200, "text/plain", "unknown", set_cookie);
+                web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
                 return;
             }
-            sendText_(request, 200, "text/plain", item->state ? "on" : "off", set_cookie);
+            web.sendText_(request, 200, "text/plain", item->state ? "on" : "off", set_cookie);
             return;
         }
-
+    
         StaticJsonDocument<192> doc;
-        doc["cmd_id"] = nextStackCmdId_();
+        doc["cmd_id"] = web.nextStackCmdId_();
         doc["feature"] = (uint8_t)StackFeature::Sockets;
         doc["action"] = "set_lights";
         JsonObject params = doc["params"].to<JsonObject>();
         JsonArray items = params["items"].to<JsonArray>();
         JsonObject o = items.add<JsonObject>();
         o["id"] = id;
-
+    
         bool desired_known = false;
         bool desired = false;
         if (action == "on" || action == "off")
@@ -163,71 +164,30 @@
                 desired_known = true;
             }
         }
-
+    
         char payload[160] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0 || !_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+        if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
                                                (const uint8_t *)payload, len))
         {
-            sendText_(request, 400, "text/plain", "Send failed", set_cookie);
+            web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
             return;
         }
 
-        if (desired_known && item)
-            item->state = desired;
-        sendText_(request, 200, "text/plain", desired_known ? (desired ? "on" : "off") : "pending", set_cookie);
+        // Immediately request a fresh snapshot; keep response pending to avoid stale cache flicker.
+        web.requestStackLights_(node_id);
+        (void)desired_known;
+        (void)desired;
+        web.sendText_(request, 200, "text/plain", "pending", set_cookie);
     }
-
-
-    bool requestStackLights_(uint32_t node_id)
+    static bool requestStackLights_(WebInterface &web, uint32_t node_id)
     {
-        if (_stack_cache)
-            return _stack_cache->requestLights(node_id);
-        if (!_stack_master)
-            return false;
-        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
-            return false;
-        StackLightsCache *cache = findStackLightsCache_(node_id, true);
-        if (!cache)
-            return false;
-        const uint32_t now = millis();
-        if (cache->pending)
-        {
-            if ((uint32_t)(now - cache->updated_ms) > 15000u)
-            {
-                cache->pending = false;
-                cache->pending_cmd_id = 0;
-            }
-            else
-            {
-                return false;
-            }
-        }
-        if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
-            return false;
-        const uint16_t cmd_id = nextStackCmdId_();
-        StaticJsonDocument<192> doc;
-        doc["cmd_id"] = cmd_id;
-        doc["feature"] = (uint8_t)StackFeature::Sockets;
-        doc["action"] = "get_lights";
-        char payload[96] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0)
-            return false;
-        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
-                                   (const uint8_t *)payload, len))
-            return false;
-        cache->pending = true;
-        cache->pending_cmd_id = cmd_id;
-        cache->updated_ms = now;
-        return true;
+        return web._stack_cache && web._stack_cache->requestLights(node_id);
     }
-
-
-    String listLightsHtml_(uint8_t start_id, uint8_t end_id)
+    static String listLightsHtml_(WebInterface &web, uint8_t start_id, uint8_t end_id)
     {
-        if (!_controllers)
-            return "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>";
+        if (!web._controllers)
+            return WebUiRu::Lights::kText;
         String items;
         if (start_id == 0)
             start_id = 1;
@@ -237,11 +197,11 @@
         if (reserve < 16384u)
             reserve = 16384u;
         items.reserve(reserve);
-        SocketController &sockets = _controllers->sockets();
+        SocketController &sockets = web._controllers->sockets();
         bool tmp_state = false;
         auto appendRow = [&](const SocketController::LightConfig &cfg, bool enabled) {
-            const bool can_edit = webSessionIsAdmin_();
-            const bool can_control = webAclCanControlItem_(UsersRegistry::AclController::Lights, cfg.id);
+            const bool can_edit = web.webSessionIsAdmin_();
+            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Lights, cfg.id);
             const bool on = enabled && sockets.lightRelayState(cfg.id, tmp_state) ? tmp_state : false;
             items += "<div class=\"tile";
             if (!enabled)
@@ -261,9 +221,9 @@
             items += "<div class=\"tile-head\">";
             items += "<strong>";
             if (cfg.name[0])
-                appendHtmlEscaped_(items, cfg.name);
+                web.appendHtmlEscaped_(items, cfg.name);
             else
-                items += "Свет";
+                items += WebUiRu::Lights::kText2;
             items += "</strong>";
             items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-enable\" data-id=\"";
             items += String((unsigned)cfg.id);
@@ -279,7 +239,7 @@
             items += "<input class=\"field name\" type=\"text\" name=\"s";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
-            appendHtmlEscaped_(items, cfg.name.c_str());
+            web.appendHtmlEscaped_(items, cfg.name.c_str());
             items += "\"";
             if (!can_edit)
                 items += " disabled";
@@ -288,11 +248,11 @@
             items += on ? "status-on" : "status-off";
             items += "\"></span>";
             items += "<span class=\"status-text\">";
-            items += on ? "Включена" : "Выключена";
+            items += on ? WebUiRu::Lights::kText3 : WebUiRu::Lights::kText4;
             items += "</span>";
             items += "</div>";
             items += "<div class=\"form-grid\">";
-            items += "<div class=\"form-row\"><label>Кнопка</label>";
+            items += WebUiRu::Lights::kText5;
             items += "<select class=\"field mini socket-select\" data-type=\"dinput\" data-selected=\"";
             if (cfg.button_port != SocketController::kInvalidPort)
                 items += String((unsigned)cfg.button_port);
@@ -302,7 +262,7 @@
             if (!can_edit)
                 items += " disabled";
             items += "></select></div>";
-            items += "<div class=\"form-row\"><label>Реле</label>";
+            items += WebUiRu::Lights::kText6;
             items += "<select class=\"field mini socket-select\" data-type=\"relay\" data-selected=\"";
             if (cfg.relay_port != SocketController::kInvalidPort)
                 items += String((unsigned)cfg.relay_port);
@@ -312,7 +272,7 @@
             if (!can_edit)
                 items += " disabled";
             items += "></select></div>";
-            items += "<div class=\"form-row\"><label>Перекл.</label>";
+            items += WebUiRu::Lights::kText7;
             items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-id=\"";
             items += String((unsigned)cfg.id);
             items += "\"";
@@ -327,15 +287,15 @@
             items += "_action\" value=\"\">";
             items += "</div></div>";
         };
-
-        const size_t render_count = lightsLocalRenderCount_();
-        const bool can_view_disabled = webSessionIsAdmin_();
+    
+        const size_t render_count = web.lightsLocalRenderCount_();
+        const bool can_view_disabled = web.webSessionIsAdmin_();
         for (size_t i = 0; i < render_count; ++i)
         {
             const auto *cfg = sockets.lightConfigByIndex(i);
             if (!cfg)
                 continue;
-            if (!webAclCanViewItem_(UsersRegistry::AclController::Lights, cfg->id))
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Lights, cfg->id))
                 continue;
             if (cfg->id < start_id || cfg->id > end_id)
                 continue;
@@ -344,47 +304,92 @@
             appendRow(*cfg, cfg->enabled);
         }
         if (items.length() == 0)
-            items = "<div class=\"tile empty\"><strong>Свет отсутствует</strong></div>";
+            items = WebUiRu::Lights::kText8;
         return items;
     }
-
-
-    String listStackLightsHtml_(uint32_t node_id)
+    static size_t stackLightsVisibleCount_(const WebInterface &web, uint32_t node_id)
     {
-        if (_stack_cache)
-        {
-            const auto *cache = _stack_cache->lightsCache(node_id);
-            if (!cache || !cache->has_data)
-                return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
-            if (cache->item_count == 0)
-                return "<div class=\"tile empty\"><strong>Свет отсутствует</strong></div>";
-            String items;
-            size_t reserve = 2048u + cache->item_count * 420u;
-            if (reserve < 8192u)
-                reserve = 8192u;
-            items.reserve(reserve);
+            const auto *cache = web._stack_cache ? web._stack_cache->lightsCache(node_id) : nullptr;
+            if (!cache || !cache->has_data || !cache->items)
+                return 0;
+            const bool can_view_disabled = web.webSessionIsAdmin_();
             size_t render_count = cache->item_count;
-            size_t last_enabled_idx = SIZE_MAX;
-            for (size_t i = 0; i < cache->item_count; ++i)
+            if (can_view_disabled)
             {
-                if (cache->items[i].enabled)
-                    last_enabled_idx = i;
+                size_t last_enabled_idx = SIZE_MAX;
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    if (cache->items[i].enabled)
+                        last_enabled_idx = i;
+                }
+                if (last_enabled_idx == SIZE_MAX)
+                    render_count = cache->item_count ? 1u : 0u;
+                else
+                {
+                    const size_t rc = last_enabled_idx + 2u;
+                    render_count = rc > cache->item_count ? cache->item_count : rc;
+                }
             }
-            if (last_enabled_idx == SIZE_MAX)
-                render_count = cache->item_count ? 1u : 0u;
-            else
-            {
-                const size_t count = last_enabled_idx + 2u;
-                render_count = count > cache->item_count ? cache->item_count : count;
-            }
+            size_t count = 0;
             for (size_t i = 0; i < render_count; ++i)
             {
                 const auto &cfg = cache->items[i];
-                if (!webAclCanViewItem_(UsersRegistry::AclController::Lights, cfg.id, node_id))
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Lights, cfg.id, node_id))
                     continue;
-                if (!webSessionIsAdmin_() && !cfg.enabled)
+                if (!can_view_disabled && !cfg.enabled)
                     continue;
-                const bool can_control = webAclCanControlItem_(UsersRegistry::AclController::Lights, cfg.id, node_id);
+                ++count;
+            }
+            return count;
+        
+    }
+    static String listStackLightsHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit)
+    {
+            const auto *cache = web._stack_cache->lightsCache(node_id);
+            if (!cache || !cache->has_data)
+                return WebUiRu::Lights::kText9;
+            if (cache->item_count == 0)
+                return WebUiRu::Lights::kText8;
+            String items;
+            const size_t page_limit = (limit == 0) ? 1u : limit;
+            size_t reserve = 2048u + page_limit * 420u;
+            if (reserve < 8192u)
+                reserve = 8192u;
+            items.reserve(reserve);
+            const bool can_view_disabled = web.webSessionIsAdmin_();
+            size_t render_count = cache->item_count;
+            if (can_view_disabled)
+            {
+                size_t last_enabled_idx = SIZE_MAX;
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    if (cache->items[i].enabled)
+                        last_enabled_idx = i;
+                }
+                if (last_enabled_idx == SIZE_MAX)
+                    render_count = cache->item_count ? 1u : 0u;
+                else
+                {
+                    const size_t rc = last_enabled_idx + 2u;
+                    render_count = rc > cache->item_count ? cache->item_count : rc;
+                }
+            }
+            size_t rendered = 0;
+            size_t visible_idx = 0;
+            for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
+            {
+                const auto &cfg = cache->items[i];
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Lights, cfg.id, node_id))
+                    continue;
+                if (!can_view_disabled && !cfg.enabled)
+                    continue;
+                if (visible_idx < offset)
+                {
+                    ++visible_idx;
+                    continue;
+                }
+                ++visible_idx;
+                const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Lights, cfg.id, node_id);
                 const bool on = cfg.state;
                 items += "<div class=\"tile\">";
                 items += "<div class=\"sock-visual\">";
@@ -400,17 +405,17 @@
                 items += "<div>";
                 items += "<div class=\"tile-head\"><strong>";
                 if (cfg.name[0])
-                    appendHtmlEscaped_(items, cfg.name);
+                    web.appendHtmlEscaped_(items, cfg.name);
                 else
-                    items += "Свет";
+                    items += WebUiRu::Lights::kText2;
                 items += "</strong></div>";
                 items += "<div class=\"status-line\"><span class=\"status-dot ";
                 items += on ? "status-on" : "status-off";
                 items += "\"></span>";
                 items += "<span class=\"status-text\">";
-                items += on ? "Включена" : "Выключена";
+                items += on ? WebUiRu::Lights::kText3 : WebUiRu::Lights::kText4;
                 items += "</span></div>";
-                items += "<div class=\"form-row\"><label>Перекл.</label>";
+                items += WebUiRu::Lights::kText7;
                 items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-id=\"";
                 items += String((unsigned)cfg.id);
                 items += "\"";
@@ -420,77 +425,58 @@
                     items += " disabled";
                 items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
                 items += "</div></div>";
+                ++rendered;
             }
+            if (items.length() == 0)
+                items = WebUiRu::Lights::kText8;
             return items;
-        }
-        const StackLightsCache *cache = findStackLightsCache_(node_id, false);
-        if (!cache || !cache->has_data)
-            return "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
-        if (cache->item_count == 0)
-            return "<div class=\"tile empty\"><strong>Свет отсутствует</strong></div>";
-        String items;
-        size_t reserve = 2048u + cache->item_count * 420u;
-        if (reserve < 8192u)
-            reserve = 8192u;
-        items.reserve(reserve);
-        size_t render_count = cache->item_count;
-        size_t last_enabled_idx = SIZE_MAX;
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            if (cache->items[i].enabled)
-                last_enabled_idx = i;
-        }
-        if (last_enabled_idx == SIZE_MAX)
-            render_count = cache->item_count ? 1u : 0u;
-        else
-        {
-            const size_t count = last_enabled_idx + 2u;
-            render_count = count > cache->item_count ? cache->item_count : count;
-        }
-        for (size_t i = 0; i < render_count; ++i)
-        {
-            const StackLightItem &cfg = cache->items[i];
-            if (!webAclCanViewItem_(UsersRegistry::AclController::Lights, cfg.id, node_id))
-                continue;
-            if (!webSessionIsAdmin_() && !cfg.enabled)
-                continue;
-            const bool can_control = webAclCanControlItem_(UsersRegistry::AclController::Lights, cfg.id, node_id);
-            const bool on = cfg.state;
-            items += "<div class=\"tile\">";
-            items += "<div class=\"sock-visual\">";
-            items += "<span class=\"badge\">#";
-            items += String((unsigned)cfg.id);
-            items += "</span>";
-            items += "<svg class=\"sock-icon ";
-            items += on ? "on" : "off";
-            items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
-            items += "<path fill=\"currentColor\" d=\"M32 4c-9.9 0-18 8.1-18 18 0 7.1 4.1 13.2 10 16.2V50c0 2.2 1.8 4 4 4h8c2.2 0 4-1.8 4-4V38.2c5.9-3 10-9.1 10-16.2 0-9.9-8.1-18-18-18zm6 42H26v-4h12v4zm0-8H26v-4h12v4z\"/>";
-            items += "</svg>";
-            items += "</div>";
-            items += "<div>";
-            items += "<div class=\"tile-head\"><strong>";
-            if (cfg.name[0])
-                appendHtmlEscaped_(items, cfg.name);
-            else
-                items += "Свет";
-            items += "</strong></div>";
-            items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += on ? "status-on" : "status-off";
-            items += "\"></span>";
-            items += "<span class=\"status-text\">";
-            items += on ? "Включена" : "Выключена";
-            items += "</span></div>";
-            items += "<div class=\"form-row\"><label>Перекл.</label>";
-            items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-id=\"";
-            items += String((unsigned)cfg.id);
-            items += "\"";
-            if (on)
-                items += " checked";
-            if (!can_control)
-                items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-            items += "</div></div>";
-        }
-        return items;
+        
+    }
+};
+
+    size_t lightsLocalRenderCount_() const
+    {
+        return WebInterfaceControllersLightsHelper::lightsLocalRenderCount_(*this);
     }
 
+    String lightsDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
+    {
+        return WebInterfaceControllersLightsHelper::lightsDeviceSelectHtml_(*this, selected_node_id, stack_view);
+    }
+
+    String stackLightsStatusText_(uint32_t node_id) const
+    {
+        return WebInterfaceControllersLightsHelper::stackLightsStatusText_(*this, node_id);
+    }
+
+    bool isStackLightsView_(uint32_t node_id) const
+    {
+        return WebInterfaceControllersLightsHelper::isStackLightsView_(*this, node_id);
+    }
+
+    void handleStackLightsToggle_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie)
+    {
+        WebInterfaceControllersLightsHelper::handleStackLightsToggle_(*this, request, node_id, set_cookie);
+    }
+
+    bool requestStackLights_(uint32_t node_id)
+    {
+        return WebInterfaceControllersLightsHelper::requestStackLights_(*this, node_id);
+    }
+
+    String listLightsHtml_(uint8_t start_id, uint8_t end_id)
+    {
+        return WebInterfaceControllersLightsHelper::listLightsHtml_(*this, start_id, end_id);
+    }
+
+    size_t stackLightsVisibleCount_(uint32_t node_id) const
+    {
+        return WebInterfaceControllersLightsHelper::stackLightsVisibleCount_(*this, node_id);
+    }
+
+    String listStackLightsHtml_(uint32_t node_id, size_t offset, size_t limit)
+    {
+        return WebInterfaceControllersLightsHelper::listStackLightsHtml_(*this, node_id, offset, limit);
+    }
+
+#endif

@@ -42,6 +42,7 @@ public:
         page.replace("%USERS_STATUS%", web._users_status);
         page.replace("%USERS_CARDS%", usersCards_(web, read_only));
         page.replace("%USERS_FORM_DISABLED%", read_only ? "disabled" : "");
+        page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         page.replace("%USERS_READONLY_NOTE%",
                      read_only ? "<p class=\"status\">Редактирование доступно только на master-устройстве</p>" : "");
         page.replace("%USERS_IBUTTON_DATALIST%", ibuttonDatalist_(web));
@@ -207,7 +208,9 @@ public:
         page += "</div><button class=\"btn\" type=\"submit\"";
         if (read_only)
             page += " disabled";
-        page += ">Сохранить ACL</button></form>";
+        page += ">";
+        page += WebUiRu::kSaveAcl;
+        page += "</button></form>";
         page += "<script>function aclSetScope(root,val){if(!root)return;root.querySelectorAll('input[type=checkbox]').forEach(function(cb){if(!cb.disabled)cb.checked=val;});}function aclToggleAll(val){aclSetScope(document,val);}function aclToggleTile(btn,val){var t=btn.closest('.tile');aclSetScope(t,val);}</script>";
         if (page.indexOf("Загрузка данных юнита...") >= 0)
             page += "<script>setTimeout(function(){window.location.reload();},1200);</script>";

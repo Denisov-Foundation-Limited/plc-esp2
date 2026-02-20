@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -85,10 +85,10 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Telegram</h1>
-      <p class="status">Клиент: <strong>%TGBOT_CLIENT%</strong></p>
+      <p class="status">РљР»РёРµРЅС‚: <strong>%TGBOT_CLIENT%</strong></p>
       <form method="POST" action="/telegram" id="telegram-form">
         <div class="section">
-          <h2>Доступ</h2>
+          <h2>Р”РѕСЃС‚СѓРї</h2>
           <div class="grid">
             <div>
               <label>Token</label>
@@ -107,7 +107,7 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
             </div>
           </div>
           <div class="row" style="margin-top:8px;">
-            <span class="status">Последний Chat ID: <span id="last-chat-id" class="id-highlight">%TGBOT_LAST_CHAT_ID%</span></span>
+            <span class="status">РџРѕСЃР»РµРґРЅРёР№ Chat ID: <span id="last-chat-id" class="id-highlight">%TGBOT_LAST_CHAT_ID%</span></span>
           </div>
         </div>
         <div class="section">
@@ -115,7 +115,7 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
           <div class="grid">
             <div class="checkbox" style="margin-top:22px;">
               <input type="checkbox" id="use_proxy" name="use_proxy" %TGBOT_USE_PROXY_CHECKED%>
-              <label for="use_proxy">Использовать proxy</label>
+              <label for="use_proxy">РСЃРїРѕР»СЊР·РѕРІР°С‚СЊ proxy</label>
             </div>
             <div class="proxy-field">
               <label>Proxy host</label>
@@ -132,7 +132,7 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
           </div>
         </div>
         <div class="row" style="margin-top:10px;">
-          <button type="submit">Сохранить</button>
+          <button type="submit">%SAVE_TEXT%</button>
           <span class="status"><strong>%TGBOT_STATUS%</strong></span>
         </div>
       </form>
@@ -156,7 +156,7 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
       const lastChatId = (lastChatIdEl.textContent || '').trim();
       const hasLast = lastChatId && lastChatId !== '0';
       if (!hasLast) {
-        lastChatIdEl.textContent = 'неизвестно';
+        lastChatIdEl.textContent = 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
         const list = document.getElementById('chat-id-list');
         if (list) {
           list.innerHTML = '';
@@ -178,3 +178,4 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+

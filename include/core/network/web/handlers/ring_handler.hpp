@@ -64,6 +64,7 @@ public:
         const auto &cfg = ring.config();
         const String status = stack_view ? String("Стек: управление слейвом") : web._ring_status;
         page.replace("%RING_STATUS%", status);
+        page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         if (stack_view)
         {
             page.replace("%RING_ENABLED_CHECKED%", "");

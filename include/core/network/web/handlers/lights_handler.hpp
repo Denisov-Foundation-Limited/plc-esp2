@@ -68,12 +68,16 @@ public:
         }
         else
         {
-            page_idx = 0;
+            const size_t visible = web.stackLightsVisibleCount_(node_id);
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
         }
         const size_t extra = 4096u + (size_t)page_size * 900u;
         page.reserve(page.length() + extra);
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%LIGHTS%", stack_view ? web.listStackLightsHtml_(node_id) : web.listLightsHtml_(start, end));
+        page.replace("%LIGHTS%", stack_view ? web.listStackLightsHtml_(node_id, (size_t)page_idx * page_size, page_size)
+                                            : web.listLightsHtml_(start, end));
         page.replace("%LIGHTS_PAGE%", String((unsigned)(page_idx + 1)));
         page.replace("%LIGHTS_PAGES%", String((unsigned)max_pages));
         if (stack_view)
@@ -83,7 +87,7 @@ public:
             page.replace("%DINPUT_USED_JSON%", "[]");
             page.replace("%RELAY_USED_JSON%", "[]");
             page.replace("%LIGHTS_STATUS%", web.stackLightsStatusText_(node_id));
-            page.replace("%LIGHTS_PAGINATION_STYLE%", "style=\"display:none\"");
+            page.replace("%LIGHTS_PAGINATION_STYLE%", (max_pages > 1) ? "" : "style=\"display:none\"");
             page.replace("%LIGHTS_SAVE_BTN%", "");
             page.replace("%LIGHTS_UNIT%", "stack");
             page.replace("%LIGHTS_NODE_ID%", String((unsigned long)node_id));
@@ -96,7 +100,7 @@ public:
             page.replace("%RELAY_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
             page.replace("%LIGHTS_STATUS%", web._lights_status);
             page.replace("%LIGHTS_PAGINATION_STYLE%", "");
-            page.replace("%LIGHTS_SAVE_BTN%", web.webSessionIsAdmin_() ? "<button class=\"btn\" type=\"submit\">Сохранить</button>" : "");
+            page.replace("%LIGHTS_SAVE_BTN%", web.webSessionIsAdmin_() ? String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>" : String(""));
             page.replace("%LIGHTS_UNIT%", "local");
             page.replace("%LIGHTS_NODE_ID%", "0");
         }

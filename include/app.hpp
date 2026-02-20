@@ -199,7 +199,7 @@ struct NetworkContext
                       control.controllers.sockets(), control.controllers.meteo(), control.controllers.thermo(),
                       control.controllers.septic(), control.controllers.security(), control.controllers.tanks(),
                       control.controllers.watering(), control.controllers.ring(),
-                      control.controllers.avr(), control.controllers.leak())
+                      control.controllers.avr(), control.controllers.leak(), control.controllers)
     {
     }
 };

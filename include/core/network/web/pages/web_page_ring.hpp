@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -17,7 +17,7 @@ static const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Звонок</title>
+  <title>Р—РІРѕРЅРѕРє</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -86,27 +86,27 @@ static const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Звонок</h1>
+      <h1>Р—РІРѕРЅРѕРє</h1>
       <div class="status">%RING_STATUS%</div>
       %RING_DEVICE_SELECT%
       <form method="POST" action="/ring" id="ring-form">
         <input type="hidden" name="ring_save" value="1">
         <div class="grid">
           <div>
-            <label>Кнопка (вход)</label>
+            <label>РљРЅРѕРїРєР° (РІС…РѕРґ)</label>
             <select class="field ring-select" name="ring_button" data-type="dinput" data-selected="%RING_BUTTON_SELECTED%" %RING_FORM_DISABLED%></select>
           </div>
           <div>
-            <label>Реле</label>
+            <label>Р РµР»Рµ</label>
             <select class="field ring-select" name="ring_relay" data-type="relay" data-selected="%RING_RELAY_SELECTED%" %RING_FORM_DISABLED%></select>
           </div>
         </div>
       </form>
       <div class="actions">
-        <button type="button" class="btn-on" data-ring="on">Звонить</button>
+        <button type="button" class="btn-on" data-ring="on">Р—РІРѕРЅРёС‚СЊ</button>
       </div>
       <div class="actions">
-        <button type="submit" form="ring-form" %RING_SAVE_DISABLED%>Сохранить</button>
+        <button type="submit" form="ring-form" %RING_SAVE_DISABLED%>%SAVE_TEXT%</button>
       </div>
     </div>
   </div>
@@ -193,10 +193,10 @@ static const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
           credentials: 'same-origin'
         }).then(async (res) => {
           const text = (await res.text()).trim();
-          if (!res.ok) throw new Error(text || 'Ошибка');
+          if (!res.ok) throw new Error(text || 'РћС€РёР±РєР°');
           if (text) ringSetStatus(text);
         }).catch((err) => {
-          ringSetStatus(err && err.message ? err.message : 'Ошибка');
+          ringSetStatus(err && err.message ? err.message : 'РћС€РёР±РєР°');
         });
       }
       try {
@@ -209,12 +209,12 @@ static const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
           if (xhr.status >= 200 && xhr.status < 300) {
             if (text) ringSetStatus(text);
           } else {
-            ringSetStatus(text || 'Ошибка');
+            ringSetStatus(text || 'РћС€РёР±РєР°');
           }
         };
         xhr.send(body);
       } catch (e) {
-        ringSetStatus('Ошибка');
+        ringSetStatus('РћС€РёР±РєР°');
       }
       return null;
     }
@@ -267,6 +267,7 @@ static const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 
 

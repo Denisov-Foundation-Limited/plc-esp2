@@ -24,6 +24,8 @@ public:
                   [&web](AsyncWebServerRequest *request) { handleNodesTbody(web, request); });
         server.on("/stack/slave_link", HTTP_GET,
                   [&web](AsyncWebServerRequest *request) { handleSlaveLinkStatus(web, request); });
+        server.on("/stack/online_snapshot", HTTP_GET,
+                  [&web](AsyncWebServerRequest *request) { handleOnlineSnapshot(web, request); });
         server.on("/stack", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleStack(web, request); });
     }
 
@@ -64,6 +66,7 @@ public:
         page.replace("%STACK_FALLBACK_HOST%", web.stackFallbackHost_());
         page.replace("%STACK_SLAVE_CONTROLLER_CHECKED%", web.stackSlaveController_() ? "checked" : "");
         page.replace("%STACK_API_KEY%", web.stackApiKey_());
+        page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         page.replace("%STACK_STATUS%", web._stack_status);
         if (role == ConfigsManagerIface::StackRole::Master)
         {
@@ -125,5 +128,42 @@ public:
             return;
         }
         web.sendText_(request, 200, "text/html; charset=utf-8", web.listStackNodesHtml_(), set_cookie);
+    }
+
+    static void handleOnlineSnapshot(WebInterface &web, AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!web.checkAuth_(request, &set_cookie))
+            return;
+        if (web.stackRole_() != ConfigsManagerIface::StackRole::Master || !web._stack_master)
+        {
+            web.sendText_(request, 200, "application/json", "[]", set_cookie);
+            return;
+        }
+        String out;
+        out.reserve(512);
+        out += "[";
+        const size_t count = web._stack_master->nodeCount();
+        bool first = true;
+        for (size_t i = 0; i < count; ++i)
+        {
+            const uint32_t id = web._stack_master->nodeIdAt(i);
+            if (id == 0)
+                continue;
+            String name = web._stack_master->nodeNameAt(i);
+            if (!first)
+                out += ",";
+            out += "{\"id\":";
+            out += String((unsigned long)id);
+            out += ",\"name\":\"";
+            if (name.length())
+                web.appendJsonEscaped_(out, name.c_str());
+            else
+                out += web.stackNodeIdHex_(id);
+            out += "\"}";
+            first = false;
+        }
+        out += "]";
+        web.sendText_(request, 200, "application/json", out, set_cookie);
     }
 };

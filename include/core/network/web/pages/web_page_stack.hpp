@@ -143,7 +143,7 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
             </div>
           </div>
           <div class="row" style="margin-top:10px;">
-            <button type="submit">Сохранить</button>
+            <button type="submit">%SAVE_TEXT%</button>
             <span class="status">%STACK_STATUS%</span>
           </div>
         </form>
@@ -232,4 +232,5 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 

@@ -66,6 +66,36 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
     .field.mini { padding: 4px 6px; width: 72px; }
     .field.name { min-width: 160px; }
     .actions { display: flex; gap: 10px; margin-top: 16px; }
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin: 12px 0 10px;
+    }
+    .page-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 92px;
+      padding: 6px 10px;
+      border: 1px solid #1f2937;
+      border-radius: 10px;
+      background: #0b1220;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .page-btn.disabled {
+      opacity: 0.45;
+      pointer-events: none;
+    }
+    .page-info {
+      color: var(--muted);
+      font-size: 13px;
+      min-width: 120px;
+      text-align: center;
+    }
     button {
       border: none;
       border-radius: 10px;
@@ -244,6 +274,7 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       <h1>Септик</h1>
       <div class="status">%SEPTIC_STATUS%</div>
       %SEPTIC_DEVICE_SELECT%
+      %SEPTIC_PAGINATION%
       <form method="POST" action="/septic" id="septic-form">
         <div class="grid">
           %SEPTIC_ITEMS%
@@ -476,6 +507,33 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
         }
       });
     });
+    function septicTileId(tile) {
+      if (!tile) return 0;
+      const monitor = tile.querySelector('input.septic-monitor');
+      const action = monitor ? (monitor.dataset.action || '') : '';
+      const m = action.match(/^sep(\d+)_mon$/);
+      return m ? (parseInt(m[1], 10) || 0) : 0;
+    }
+    async function pollSepticTilesState() {
+      const monitors = Array.from(document.querySelectorAll('input.septic-monitor'));
+      for (let i = 0; i < monitors.length; i++) {
+        const el = monitors[i];
+        if (!el || el.dataset.busy === '1') continue;
+        const tile = el.closest('.tile');
+        const id = septicTileId(tile);
+        if (!id) continue;
+        const hidden = document.querySelector('input[name="sep' + String(id) + '_mon"]');
+        try {
+          const st = await postSepticToggle(id, 'state');
+          if (typeof st !== 'object' || !st) continue;
+          el.checked = !!st.monitor;
+          if (hidden) hidden.value = st.monitor ? 'on' : 'off';
+          applySepticStateUi(tile, st);
+        } catch (e) {}
+      }
+    }
+    setInterval(pollSepticTilesState, 2000);
+    setTimeout(pollSepticTilesState, 500);
     const septicDevice = document.getElementById('septic-device');
     if (septicDevice) {
       septicDevice.addEventListener('change', () => {

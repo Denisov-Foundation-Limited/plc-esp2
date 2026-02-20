@@ -671,9 +671,18 @@ private:
     {
         const bool empty = isEmpty_(st);
         const bool full = st.level_full;
-        st.pump_on = !empty;
-        st.valve_on = !full;
         st.alarm_on = empty;
+        if (st.alarm_on)
+        {
+            // Safety interlock: in alarm/empty state stop all actuators.
+            st.pump_on = false;
+            st.valve_on = false;
+        }
+        else
+        {
+            st.pump_on = true;
+            st.valve_on = !full;
+        }
         writeRelay_(cfg.relay_pump, st.pump_on);
         writeRelay_(cfg.relay_valve, st.valve_on);
         writeRelay_(cfg.relay_alarm, st.alarm_on);

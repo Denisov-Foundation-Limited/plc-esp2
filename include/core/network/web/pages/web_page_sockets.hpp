@@ -250,7 +250,6 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Розетки</h1>
-      <div class="status">%SOCKETS_STATUS%</div>
       %SOCKETS_DEVICE_SELECT%
       <div class="pagination" %SOCKETS_PAGINATION_STYLE%>
         <button type="button" class="btn btn-sm" id="sockets-prev">Назад</button>
@@ -260,6 +259,7 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         <button type="button" class="btn btn-sm" id="sockets-next">Вперёд</button>
       </div>
       <form method="POST" action="/sockets" id="sockets-form">
+        %SOCKETS_FORM_HIDDEN%
         <div class="grid">
           %SOCKETS%
         </div>
@@ -282,6 +282,7 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       dinput: %DINPUT_USED_JSON%,
       relay: %RELAY_USED_JSON%
     };
+    const portsWarmupKey = 'sockets_ports_warmup_' + String(socketsNodeId);
     function labelFor(type, val) {
       if (type === 'dinput') return 'in' + val;
       if (type === 'relay') return 'rly' + val;
@@ -328,6 +329,21 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         el.value = selected || '';
       });
     }
+    function warmupStackPorts() {
+      if (socketsUnit !== 'stack') return;
+      const emptyDinput = (!socketOptions.dinput || socketOptions.dinput.length === 0);
+      const emptyRelay = (!socketOptions.relay || socketOptions.relay.length === 0);
+      const emptyOptions = emptyDinput || emptyRelay;
+      if (!emptyOptions) {
+        sessionStorage.removeItem(portsWarmupKey);
+        return;
+      }
+      const n = parseInt(sessionStorage.getItem(portsWarmupKey) || '0', 10);
+      if (n >= 6) return;
+      sessionStorage.setItem(portsWarmupKey, String(n + 1));
+      setTimeout(() => location.reload(), 900);
+    }
+    warmupStackPorts();
     refreshSocketSelects();
     document.querySelectorAll('select.socket-select').forEach((el) => {
       el.addEventListener('change', refreshSocketSelects);

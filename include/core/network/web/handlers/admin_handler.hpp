@@ -42,6 +42,8 @@ public:
         page.replace("%RTC_TIME%", rtc_time);
         page.replace("%RTC_DATE_VAL%", rtc_date_val);
         page.replace("%RTC_TIME_VAL%", rtc_time_val);
+        page.replace("%SAVE_TEXT%", WebUiRu::kSave);
+        page.replace("%SAVE_RTC_TEXT%", WebUiRu::kSaveRtc);
         page.replace("%BUZZER_CHECKED%", (web._plc && web._plc->buzzerEnabled()) ? "checked" : "");
         web.sendHtml_(request, page, set_cookie);
     }

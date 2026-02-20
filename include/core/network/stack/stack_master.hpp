@@ -72,7 +72,12 @@ public:
         _server->begin();
     }
 
-    void loop() {}
+    void loop()
+    {
+        pruneStaleSessions_();
+    }
+
+    void setSessionSilenceTimeoutMs(uint32_t ms) { _session_silence_timeout_ms = ms; }
 
     size_t nodeCount() const
     {
@@ -269,6 +274,7 @@ private:
     Logger *_log = nullptr;
     ConfigsManagerIface *_configs = nullptr;
     DynamicJsonDocument _tx_doc{2048};
+    uint32_t _session_silence_timeout_ms = 7000;
 
     void onClient_(void *ctx, AsyncClient *client)
     {
@@ -445,6 +451,31 @@ private:
                 slot.data = Session{};
                 return;
             }
+    }
+
+    void pruneStaleSessions_()
+    {
+        if (_session_silence_timeout_ms == 0)
+            return;
+        const uint32_t now = millis();
+        for (auto &slot : _sessions)
+        {
+            if (!slot.used)
+                continue;
+            Session &s = slot.data;
+            if (!s.client)
+                continue;
+            const uint32_t silent_ms = (uint32_t)(now - s.last_seen_ms);
+            if (silent_ms <= _session_silence_timeout_ms)
+                continue;
+            const uint32_t node_id = s.has_id ? s.node_id : 0;
+            if (s.client->connected())
+                s.client->close(true);
+            if (node_id != 0)
+                notifyEvent_(node_id, false);
+            slot.used = false;
+            slot.data = Session{};
+        }
     }
 };
 
