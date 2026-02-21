@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -17,7 +17,7 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Розетки</title>
+  <title>%SOCKETS_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -66,7 +66,15 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       background: #0b1220;
       color: var(--text);
     }
-    .btn {
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }    .btn {
       border: none;
       padding: 10px 16px;
       border-radius: 10px;
@@ -133,6 +141,15 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     }
     input:checked + .track { background: #22c55e; }
     input:checked + .track .knob { transform: translateX(20px); }
+    input:disabled + .track {
+      background: #475569;
+      border-color: #334155;
+      cursor: not-allowed;
+    }
+    input:disabled + .track .knob {
+      background: #1f2937;
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.7);
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -249,14 +266,14 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Розетки</h1>
+      <h1>%SOCKETS_PAGE_TITLE%</h1>
       %SOCKETS_DEVICE_SELECT%
       <div class="pagination" %SOCKETS_PAGINATION_STYLE%>
-        <button type="button" class="btn btn-sm" id="sockets-prev">Назад</button>
-        <span class="page-info">Страница</span>
+        <button type="button" class="btn btn-sm" id="sockets-prev">%SOCKETS_PAGE_PREV%</button>
+        <span class="page-info">%SOCKETS_PAGE_LABEL%</span>
         <select id="sockets-page" class="field mini"></select>
         <span class="page-info">/ %SOCKETS_PAGES%</span>
-        <button type="button" class="btn btn-sm" id="sockets-next">Вперёд</button>
+        <button type="button" class="btn btn-sm" id="sockets-next">%SOCKETS_PAGE_NEXT%</button>
       </div>
       <form method="POST" action="/sockets" id="sockets-form">
         %SOCKETS_FORM_HIDDEN%
@@ -272,13 +289,13 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
   <script>
     const socketsUnit = "%SOCKETS_UNIT%";
     const socketsNodeId = %SOCKETS_NODE_ID%;
-    const socketOptions = {
+    let socketOptions = {
       dinput: %DINPUT_JSON%,
       relay: %RELAY_JSON%
     };
     const socketsPage = %SOCKETS_PAGE%;
     const socketsPages = %SOCKETS_PAGES%;
-    const socketUsed = {
+    let socketUsed = {
       dinput: %DINPUT_USED_JSON%,
       relay: %RELAY_USED_JSON%
     };
@@ -344,7 +361,29 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       setTimeout(() => location.reload(), 900);
     }
     warmupStackPorts();
+    async function pollStackPortOptions() {
+      if (socketsUnit !== 'stack' || !socketsNodeId) return;
+      try {
+        const url = '/sockets/ports_options?unit=stack&node_id=' + encodeURIComponent(String(socketsNodeId));
+        const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data || typeof data !== 'object') return;
+        socketOptions = {
+          dinput: Array.isArray(data.dinput) ? data.dinput : [],
+          relay: Array.isArray(data.relay) ? data.relay : []
+        };
+        socketUsed = {
+          dinput: Array.isArray(data.dinput_used) ? data.dinput_used : [],
+          relay: Array.isArray(data.relay_used) ? data.relay_used : []
+        };
+        refreshSocketSelects();
+      } catch (e) {
+      }
+    }
     refreshSocketSelects();
+    setTimeout(pollStackPortOptions, 500);
+    setInterval(pollStackPortOptions, 2000);
     document.querySelectorAll('select.socket-select').forEach((el) => {
       el.addEventListener('change', refreshSocketSelects);
     });
@@ -410,7 +449,7 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         dot.classList.toggle('status-off', !isOn);
       }
       if (text) {
-        text.textContent = isOn ? 'Включена' : 'Выключена';
+        text.textContent = isOn ? '%SOCKETS_ON_TEXT%' : '%SOCKETS_OFF_TEXT%';
       }
     }
     function updateSocketEnabled(tile, enabled) {
@@ -560,6 +599,8 @@ static const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+
 
 
 

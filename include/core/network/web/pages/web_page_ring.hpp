@@ -63,7 +63,15 @@ static const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
       padding: 10px;
       border-radius: 8px;
     }
-    .mini { width: 120px; }
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }    .mini { width: 120px; }
     button {
       background: var(--accent);
       color: #00111a;
@@ -267,6 +275,7 @@ static const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 
 

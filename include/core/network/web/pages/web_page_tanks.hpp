@@ -63,7 +63,15 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       background: #0b1220;
       color: var(--text);
     }
-    .field.mini { padding: 4px 6px; width: 72px; }
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }    .field.mini { padding: 4px 6px; width: 72px; }
     .field.name { min-width: 160px; }
     .actions { display: flex; gap: 10px; margin-top: 16px; }
     .pagination {
@@ -129,6 +137,15 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     }
     .switch input:checked + .track .knob {
       transform: translateX(18px);
+    }
+    .switch input:disabled + .track {
+      background: #475569;
+      border-color: #334155;
+      cursor: not-allowed;
+    }
+    .switch input:disabled + .track .knob {
+      background: #1f2937;
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.7);
     }
     .grid {
       display: grid;
@@ -200,16 +217,17 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       color: var(--muted);
       font-size: 12px;
     }
-    .status-dot {
+    .tank-status-dot {
       display: inline-block;
-      width: 10px;
-      height: 10px;
+      width: 12px;
+      height: 12px;
       border-radius: 50%;
       box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
+      flex: 0 0 auto;
     }
-    .status-on { background: #22c55e; }
-    .status-off { background: #64748b; }
-    .status-bad { background: #ef4444; }
+    .tank-status-on { background: #22c55e; }
+    .tank-status-off { background: #64748b; }
+    .tank-status-bad { background: #ef4444; }
     .tile .field.name {
       margin-bottom: 8px;
     }
@@ -433,30 +451,18 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       if (label) {
         label.textContent = String(levelPct) + '%';
       }
-      const stackDots = tile.querySelectorAll('.status-line .status-dot');
-      if (stackDots.length >= 4) {
-        stackDots[0].classList.remove('status-on', 'status-off', 'status-bad');
-        stackDots[0].classList.add(st.power ? 'status-on' : 'status-off');
-        stackDots[1].classList.remove('status-on', 'status-off', 'status-bad');
-        stackDots[1].classList.add(st.valve ? 'status-on' : 'status-off');
-        stackDots[2].classList.remove('status-on', 'status-off', 'status-bad');
-        stackDots[2].classList.add(st.pump ? 'status-on' : 'status-off');
-        stackDots[3].classList.remove('status-on', 'status-off', 'status-bad');
-        stackDots[3].classList.add(st.alarm ? 'status-bad' : 'status-off');
-      } else {
-        const localDots = tile.querySelectorAll('.status-row .status-dot');
-        if (localDots.length > 0) {
-          localDots[0].classList.remove('status-on', 'status-off', 'status-bad');
-          localDots[0].classList.add(st.pump ? 'status-on' : 'status-off');
-        }
-        if (localDots.length > 1) {
-          localDots[1].classList.remove('status-on', 'status-off', 'status-bad');
-          localDots[1].classList.add(st.valve ? 'status-on' : 'status-off');
-        }
-        if (localDots.length > 2) {
-          localDots[2].classList.remove('status-on', 'status-off', 'status-bad');
-          localDots[2].classList.add(st.alarm ? 'status-bad' : 'status-off');
-        }
+      const dots = tile.querySelectorAll('.status-row .tank-status-dot');
+      if (dots.length > 0) {
+        dots[0].classList.remove('tank-status-on', 'tank-status-off', 'tank-status-bad');
+        dots[0].classList.add(st.pump ? 'tank-status-on' : 'tank-status-off');
+      }
+      if (dots.length > 1) {
+        dots[1].classList.remove('tank-status-on', 'tank-status-off', 'tank-status-bad');
+        dots[1].classList.add(st.valve ? 'tank-status-on' : 'tank-status-off');
+      }
+      if (dots.length > 2) {
+        dots[2].classList.remove('tank-status-on', 'tank-status-off', 'tank-status-bad');
+        dots[2].classList.add(st.alarm ? 'tank-status-bad' : 'tank-status-off');
       }
     }
     function scheduleTankStateRefresh(id, tile, el, hidden, reqId) {
@@ -537,10 +543,8 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
         } catch (e) {}
       }
     }
-    if (tanksIsStackView) {
-      setTimeout(pollTankTilesState, 600);
-      setInterval(pollTankTilesState, 2500);
-    }
+    setTimeout(pollTankTilesState, 600);
+    setInterval(pollTankTilesState, tanksIsStackView ? 2500 : 2000);
     const scrollKey = 'tanks_scroll_y';
     const savedScroll = sessionStorage.getItem(scrollKey);
     if (savedScroll) {
@@ -571,6 +575,7 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 
 

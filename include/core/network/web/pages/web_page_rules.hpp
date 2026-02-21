@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -17,7 +17,7 @@ static const char kWebInterfaceRulesHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Правила</title>
+  <title>РџСЂР°РІРёР»Р°</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -118,6 +118,15 @@ static const char kWebInterfaceRulesHtml[] PROGMEM = R"HTML(
     }
     .switch input:checked + .track { background: #22c55e; }
     .switch input:checked + .track .knob { transform: translateX(20px); }
+    input:disabled + .track {
+      background: #475569;
+      border-color: #334155;
+      cursor: not-allowed;
+    }
+    input:disabled + .track .knob {
+      background: #1f2937;
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.7);
+    }
     button {
       border: none;
       border-radius: 8px;
@@ -137,7 +146,7 @@ static const char kWebInterfaceRulesHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Правила</h1>
+      <h1>РџСЂР°РІРёР»Р°</h1>
       <p class="status">%RULES_STATUS%</p>
       %RULES_BODY%
     </div>
@@ -145,3 +154,4 @@ static const char kWebInterfaceRulesHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+

@@ -151,6 +151,27 @@ public:
             if (id == 0)
                 continue;
             String name = web._stack_master->nodeNameAt(i);
+            bool sync_ready = false;
+            if (web._stack_cache)
+            {
+                auto cacheReady = [](const auto *cache) -> bool {
+                    return cache && (cache->has_data || cache->last_ok || cache->last_error.length());
+                };
+                const auto *sockets = web._stack_cache->socketsCache(id);
+                const auto *lights = web._stack_cache->lightsCache(id);
+                const auto *meteo = web._stack_cache->meteoCache(id);
+                const auto *thermo = web._stack_cache->thermoCache(id);
+                const auto *tanks = web._stack_cache->tanksCache(id);
+                const auto *septic = web._stack_cache->septicCache(id);
+                const auto *security = web._stack_cache->securityCache(id);
+                const auto *watering = web._stack_cache->wateringCache(id);
+                const auto *leak = web._stack_cache->leakCache(id);
+                const auto *avr = web._stack_cache->avrCache(id);
+                sync_ready = cacheReady(sockets) && cacheReady(lights) && cacheReady(meteo) &&
+                             cacheReady(thermo) && cacheReady(tanks) && cacheReady(septic) &&
+                             cacheReady(security) && cacheReady(watering) && cacheReady(leak) &&
+                             cacheReady(avr);
+            }
             if (!first)
                 out += ",";
             out += "{\"id\":";
@@ -160,7 +181,9 @@ public:
                 web.appendJsonEscaped_(out, name.c_str());
             else
                 out += web.stackNodeIdHex_(id);
-            out += "\"}";
+            out += "\",\"sync\":";
+            out += sync_ready ? "1" : "0";
+            out += "}";
             first = false;
         }
         out += "]";

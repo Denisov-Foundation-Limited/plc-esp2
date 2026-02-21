@@ -100,7 +100,15 @@ static const char kWebInterfaceUsersHtml[] PROGMEM = R"HTML(
       min-height: 36px;
       box-sizing: border-box;
     }
-
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }
     .switch { display: inline-flex; align-items: center; }
     .switch input { display: none; }
     .track {
@@ -125,6 +133,15 @@ static const char kWebInterfaceUsersHtml[] PROGMEM = R"HTML(
     }
     .switch input:checked + .track { background: #0ea5e9; }
     .switch input:checked + .track .knob { transform: translateX(20px); }
+    input:disabled + .track {
+      background: #475569;
+      border-color: #334155;
+      cursor: not-allowed;
+    }
+    input:disabled + .track .knob {
+      background: #1f2937;
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.7);
+    }
 
     .btn {
       margin-top: 14px;
@@ -161,4 +178,6 @@ static const char kWebInterfaceUsersHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+
 

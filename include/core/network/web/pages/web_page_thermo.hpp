@@ -66,6 +66,15 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
     .field.mini { padding: 4px 6px; width: 72px; }
     .field.temp { width: 100%; }
     .field.name { min-width: 160px; }
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }
     .actions { display: flex; gap: 10px; margin-top: 16px; }
     .pagination {
       display: flex;
@@ -128,6 +137,15 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
     }
     input:checked + .track { background: #22c55e; }
     input:checked + .track .knob { transform: translateX(20px); }
+    input:disabled + .track {
+      background: #475569;
+      border-color: #334155;
+      cursor: not-allowed;
+    }
+    input:disabled + .track .knob {
+      background: #1f2937;
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.7);
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -633,5 +651,6 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 

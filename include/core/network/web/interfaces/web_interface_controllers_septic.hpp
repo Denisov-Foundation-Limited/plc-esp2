@@ -162,6 +162,7 @@ public:
                     continue;
                 }
                 ++visible_idx;
+                const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Septic, cfg.id, node_id);
                 const bool warn = cfg.warning;
                 const bool alarm = cfg.alarm;
                 const char *water_class = "water-low";
@@ -201,18 +202,25 @@ public:
                 items += "<div class=\"status-line\"><span class=\"status-dot ";
                 items += alarm ? "status-bad" : "status-off";
                 items += WebUiRu::Septic::kText5;
-                items += WebUiRu::Septic::kInputTypeCheckboxClassSepticMonitorData;
-                items += String((unsigned)cfg.id);
-                items += "_mon\"";
-                if (cfg.monitor)
-                    items += " checked";
-                if (!cfg.enabled)
-                    items += " disabled";
-                items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"sep";
-                items += String((unsigned)cfg.id);
-                items += "_mon\" value=\"";
-                items += cfg.monitor ? "on" : "off";
-                items += "\"></div></div></div>";
+                if (can_control)
+                {
+                    items += WebUiRu::Septic::kInputTypeCheckboxClassSepticMonitorData;
+                    items += String((unsigned)cfg.id);
+                    items += "_mon\"";
+                    if (cfg.monitor)
+                        items += " checked";
+                    if (!cfg.enabled)
+                        items += " disabled";
+                    items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"sep";
+                    items += String((unsigned)cfg.id);
+                    items += "_mon\" value=\"";
+                    items += cfg.monitor ? "on" : "off";
+                    items += "\"></div></div></div>";
+                }
+                else
+                {
+                    items += "</div></div></div>";
+                }
                 ++rendered;
             }
             if (items.length() == 0)
@@ -250,6 +258,7 @@ public:
                 continue;
             }
             ++visible_idx;
+            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Septic, cfg->id);
             const bool warn = st->warning;
             const bool alarm = st->alarm;
             const bool relay_warn = st->relay_warning;
@@ -283,36 +292,45 @@ public:
             items += "</strong>";
             if (!cfg->enabled)
                 items += WebUiRu::Septic::kText3;
-            items += "</div><label class=\"switch\"><input type=\"checkbox\" name=\"sep";
-            items += String((unsigned)cfg->id);
-            items += "_en\"";
-            if (cfg->enabled)
-                items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div><input class=\"field name\" type=\"text\" name=\"sep";
-            items += String((unsigned)cfg->id);
-            items += "_name\" value=\"";
-            web.appendHtmlEscaped_(items, cfg->name.c_str());
-            items += WebUiRu::Septic::kSelectClassFieldMiniSepticSelectData;
-            if (cfg->warning_port != SepticController::kInvalidPort)
-                items += String((unsigned)cfg->warning_port);
-            items += "\" name=\"sep";
-            items += String((unsigned)cfg->id);
-            items += WebUiRu::Septic::kWarnSelectClassFieldMiniSepticSelect;
-            if (cfg->alarm_port != SepticController::kInvalidPort)
-                items += String((unsigned)cfg->alarm_port);
-            items += "\" name=\"sep";
-            items += String((unsigned)cfg->id);
-            items += WebUiRu::Septic::kAlarmSelectClassFieldMiniSepticSelect;
-            if (cfg->relay_warning != SepticController::kInvalidPort)
-                items += String((unsigned)cfg->relay_warning);
-            items += "\" name=\"sep";
-            items += String((unsigned)cfg->id);
-            items += WebUiRu::Septic::kRelayWarnSelectClassFieldMiniSeptic;
-            if (cfg->relay_alarm != SepticController::kInvalidPort)
-                items += String((unsigned)cfg->relay_alarm);
-            items += "\" name=\"sep";
-            items += String((unsigned)cfg->id);
-            items += "_relay_alarm\"></select></div></div><div class=\"status-grid\"><div class=\"status-line\"><span class=\"status-dot ";
+            if (can_control)
+            {
+                items += "</div><label class=\"switch\"><input type=\"checkbox\" name=\"sep";
+                items += String((unsigned)cfg->id);
+                items += "_en\"";
+                if (cfg->enabled)
+                    items += " checked";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            }
+            items += "</div>";
+            if (can_control)
+            {
+                items += "<input class=\"field name\" type=\"text\" name=\"sep";
+                items += String((unsigned)cfg->id);
+                items += "_name\" value=\"";
+                web.appendHtmlEscaped_(items, cfg->name.c_str());
+                items += WebUiRu::Septic::kSelectClassFieldMiniSepticSelectData;
+                if (cfg->warning_port != SepticController::kInvalidPort)
+                    items += String((unsigned)cfg->warning_port);
+                items += "\" name=\"sep";
+                items += String((unsigned)cfg->id);
+                items += WebUiRu::Septic::kWarnSelectClassFieldMiniSepticSelect;
+                if (cfg->alarm_port != SepticController::kInvalidPort)
+                    items += String((unsigned)cfg->alarm_port);
+                items += "\" name=\"sep";
+                items += String((unsigned)cfg->id);
+                items += WebUiRu::Septic::kAlarmSelectClassFieldMiniSepticSelect;
+                if (cfg->relay_warning != SepticController::kInvalidPort)
+                    items += String((unsigned)cfg->relay_warning);
+                items += "\" name=\"sep";
+                items += String((unsigned)cfg->id);
+                items += WebUiRu::Septic::kRelayWarnSelectClassFieldMiniSeptic;
+                if (cfg->relay_alarm != SepticController::kInvalidPort)
+                    items += String((unsigned)cfg->relay_alarm);
+                items += "\" name=\"sep";
+                items += String((unsigned)cfg->id);
+                items += "_relay_alarm\"></select></div></div>";
+            }
+            items += "<div class=\"status-grid\"><div class=\"status-line\"><span class=\"status-dot ";
             items += warn ? "status-on" : "status-off";
             items += WebUiRu::Septic::kSpanClassStatusDot;
             items += alarm ? "status-on" : "status-off";
@@ -320,18 +338,25 @@ public:
             items += relay_warn ? "status-on" : "status-off";
             items += WebUiRu::Septic::kSpanClassStatusDot3;
             items += relay_alarm ? "status-on" : "status-off";
-            items += WebUiRu::Septic::kInputTypeCheckboxClassSepticMonitorData2;
-            items += String((unsigned)cfg->id);
-            items += "_mon\"";
-            if (cfg->monitoring_on)
-                items += " checked";
-            if (!cfg->enabled)
-                items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"sep";
-            items += String((unsigned)cfg->id);
-            items += "_mon\" value=\"";
-            items += cfg->monitoring_on ? "on" : "off";
-            items += "\"></div></div></div>";
+            if (can_control)
+            {
+                items += WebUiRu::Septic::kInputTypeCheckboxClassSepticMonitorData2;
+                items += String((unsigned)cfg->id);
+                items += "_mon\"";
+                if (cfg->monitoring_on)
+                    items += " checked";
+                if (!cfg->enabled)
+                    items += " disabled";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"sep";
+                items += String((unsigned)cfg->id);
+                items += "_mon\" value=\"";
+                items += cfg->monitoring_on ? "on" : "off";
+                items += "\"></div></div></div>";
+            }
+            else
+            {
+                items += "</div></div></div>";
+            }
             ++rendered;
         }
         if (items.length() == 0)

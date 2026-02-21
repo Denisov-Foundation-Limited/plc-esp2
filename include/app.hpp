@@ -3214,15 +3214,18 @@ private:
         if ((state->logged_mask & kInvSockets) == 0)
         {
             const auto *cache = stack_cache.socketsCache(node_id);
-            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
+            if (cacheReady(cache))
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
+                if (cacheHasItemsForSyncLog(cache))
                 {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: sockets id: %u name: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: sockets id: %u name: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    }
                 }
                 state->logged_mask |= kInvSockets;
             }
@@ -3231,15 +3234,18 @@ private:
         if ((state->logged_mask & kInvLights) == 0)
         {
             const auto *cache = stack_cache.lightsCache(node_id);
-            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
+            if (cacheReady(cache))
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
+                if (cacheHasItemsForSyncLog(cache))
                 {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: lights id: %u name: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: lights id: %u name: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    }
                 }
                 state->logged_mask |= kInvLights;
             }
@@ -3248,16 +3254,19 @@ private:
         if ((state->logged_mask & kInvMeteo) == 0)
         {
             const auto *cache = stack_cache.meteoCache(node_id);
-            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
+            if (cacheReady(cache))
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
+                if (cacheHasItemsForSyncLog(cache))
                 {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: meteo id: %u name: %s type: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
-                                   it.type[0] ? it.type : "none");
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: meteo id: %u name: %s type: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
+                                       it.type[0] ? it.type : "none");
+                    }
                 }
                 state->logged_mask |= kInvMeteo;
             }
@@ -3266,16 +3275,19 @@ private:
         if ((state->logged_mask & kInvThermo) == 0)
         {
             const auto *cache = stack_cache.thermoCache(node_id);
-            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
+            if (cacheReady(cache))
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
+                if (cacheHasItemsForSyncLog(cache))
                 {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: thermo id: %u name: %s mode: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
-                                   it.mode[0] ? it.mode : "-");
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: thermo id: %u name: %s mode: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
+                                       it.mode[0] ? it.mode : "-");
+                    }
                 }
                 state->logged_mask |= kInvThermo;
             }
@@ -3284,15 +3296,18 @@ private:
         if ((state->logged_mask & kInvTanks) == 0)
         {
             const auto *cache = stack_cache.tanksCache(node_id);
-            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
+            if (cacheReady(cache))
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
+                if (cacheHasItemsForSyncLog(cache))
                 {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: tanks id: %u name: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: tanks id: %u name: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    }
                 }
                 state->logged_mask |= kInvTanks;
             }
@@ -3301,15 +3316,18 @@ private:
         if ((state->logged_mask & kInvSeptic) == 0)
         {
             const auto *cache = stack_cache.septicCache(node_id);
-            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
+            if (cacheReady(cache))
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
+                if (cacheHasItemsForSyncLog(cache))
                 {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: septic id: %u"),
-                                   node.c_str(), (unsigned)it.id);
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: septic id: %u"),
+                                       node.c_str(), (unsigned)it.id);
+                    }
                 }
                 state->logged_mask |= kInvSeptic;
             }
@@ -3318,17 +3336,20 @@ private:
         if ((state->logged_mask & kInvSecurity) == 0)
         {
             const auto *cache = stack_cache.securityCache(node_id);
-            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
+            if (cacheReady(cache))
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
+                if (cacheHasItemsForSyncLog(cache))
                 {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"),
-                                   F("Sync slave unit: %s item: security id: %u name: %s type: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
-                                   it.type[0] ? it.type : "-");
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"),
+                                       F("Sync slave unit: %s item: security id: %u name: %s type: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
+                                       it.type[0] ? it.type : "-");
+                    }
                 }
                 state->logged_mask |= kInvSecurity;
             }
@@ -3337,15 +3358,18 @@ private:
         if ((state->logged_mask & kInvWatering) == 0)
         {
             const auto *cache = stack_cache.wateringCache(node_id);
-            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
+            if (cacheReady(cache))
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
+                if (cacheHasItemsForSyncLog(cache))
                 {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: watering id: %u name: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: watering id: %u name: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    }
                 }
                 state->logged_mask |= kInvWatering;
             }
@@ -3354,15 +3378,18 @@ private:
         if ((state->logged_mask & kInvLeak) == 0)
         {
             const auto *cache = stack_cache.leakCache(node_id);
-            if (cacheReady(cache) && cacheHasItemsForSyncLog(cache))
+            if (cacheReady(cache))
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
+                if (cacheHasItemsForSyncLog(cache))
                 {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: leak id: %u name: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        core.logs.info(F("STACK"), F("Sync slave unit: %s item: leak id: %u name: %s"),
+                                       node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
+                    }
                 }
                 state->logged_mask |= kInvLeak;
             }
@@ -3380,7 +3407,7 @@ private:
         if (!state->sync_complete_logged && state->logged_mask == kInvAll)
         {
             const String unit = stackNodeLabel_(node_id);
-            core.logs.info(F("STACK"), F("Sync unit: %s complete"), unit.c_str());
+            core.logs.info(F("STACK"), F("Sync slave unit complete: %s"), unit.c_str());
             state->sync_complete_logged = true;
         }
     }

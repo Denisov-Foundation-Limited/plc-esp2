@@ -11,6 +11,9 @@ static const char kWebAutoRefreshScript[] PROGMEM = R"HTML(
   document.addEventListener('change', markDirty, true);
   async function poll() {
     try {
+      if (window.__plcDisableAutoRefresh) {
+        return;
+      }
       const path = location.pathname || '/';
       const res = await fetch(endpoint + '?path=' + encodeURIComponent(path), { cache: 'no-store' });
       if (!res.ok) {

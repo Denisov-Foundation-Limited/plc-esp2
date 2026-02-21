@@ -166,6 +166,7 @@ public:
                 continue;
             }
             ++visible_idx;
+            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Tanks, cfg.id, node_id);
             const char *level = "0%";
             const char *level_class = "level-empty";
             unsigned level_pct = 0;
@@ -208,36 +209,91 @@ public:
             items += "</span>";
             items += "</div></div>";
             items += "<div>";
-            items += "<div class=\"tile-head\"><strong>";
+            items += "<div class=\"tile-head\">";
+            items += "<strong>";
             if (cfg.name[0])
                 web.appendHtmlEscaped_(items, cfg.name);
             else
                 items += WebUiRu::Tanks::kText3;
-            items += "</strong></div>";
-            items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += (cfg.power_on ? "status-on" : "status-off");
-            items += WebUiRu::Tanks::kText4;
-            items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += (cfg.valve_on ? "status-on" : "status-off");
-            items += WebUiRu::Tanks::kText5;
-            items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += (cfg.pump_on ? "status-on" : "status-off");
-            items += WebUiRu::Tanks::kText6;
-            items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += (cfg.alarm_on ? "status-bad" : "status-off");
-            items += WebUiRu::Tanks::kText7;
-            items += WebUiRu::Tanks::kInputTypeCheckboxClassTankPowerData;
+            items += "</strong>";
+            items += "<label class=\"switch\"><input type=\"checkbox\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_power\"";
-            if (cfg.power_on)
+            items += "_en\"";
+            if (cfg.enabled)
                 items += " checked";
-            if (!cfg.enabled)
-                items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"k";
+            items += " disabled><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "</div>";
+            items += "<input class=\"field name\" type=\"text\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_power\" value=\"";
-            items += cfg.power_on ? "on" : "off";
-            items += "\"></div>";
+            items += "_name\" value=\"";
+            if (cfg.name[0])
+                web.appendHtmlEscaped_(items, cfg.name);
+            else
+                items += WebUiRu::Tanks::kText3;
+            items += "\" readonly>";
+            items += "<div class=\"form-grid\">";
+            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData;
+            if (cfg.low != TankController::kInvalidPort)
+                items += String((unsigned)cfg.low);
+            items += "\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_low\" disabled></select></div>";
+            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData2;
+            if (cfg.mid != TankController::kInvalidPort)
+                items += String((unsigned)cfg.mid);
+            items += "\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_mid\" disabled></select></div>";
+            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData3;
+            if (cfg.full != TankController::kInvalidPort)
+                items += String((unsigned)cfg.full);
+            items += "\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_full\" disabled></select></div>";
+            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData4;
+            if (cfg.valve != TankController::kInvalidPort)
+                items += String((unsigned)cfg.valve);
+            items += "\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_valve\" disabled></select></div>";
+            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData5;
+            if (cfg.pump != TankController::kInvalidPort)
+                items += String((unsigned)cfg.pump);
+            items += "\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_pump\" disabled></select></div>";
+            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData6;
+            if (cfg.alarm != TankController::kInvalidPort)
+                items += String((unsigned)cfg.alarm);
+            items += "\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_alarm\" disabled></select></div>";
+            items += "</div>";
+            if (can_control)
+            {
+                items += WebUiRu::Tanks::kInputTypeCheckboxClassTankPowerData;
+                items += String((unsigned)cfg.id);
+                items += "_power\"";
+                if (cfg.power_on)
+                    items += " checked";
+                if (!cfg.enabled)
+                    items += " disabled";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"k";
+                items += String((unsigned)cfg.id);
+                items += "_power\" value=\"";
+                items += cfg.power_on ? "on" : "off";
+                items += "\"></div>";
+            }
+            items += "<div class=\"status-row\">";
+            items += "<span class=\"tank-status-dot ";
+            items += (cfg.pump_on ? "tank-status-on" : "tank-status-off");
+            items += WebUiRu::Tanks::kText11;
+            items += "<span class=\"tank-status-dot ";
+            items += (cfg.valve_on ? "tank-status-on" : "tank-status-off");
+            items += WebUiRu::Tanks::kText12;
+            items += "<span class=\"tank-status-dot ";
+            items += (cfg.alarm_on ? "tank-status-bad" : "tank-status-off");
+            items += WebUiRu::Tanks::kText14;
             items += "</div></div>";
             ++rendered;
         }
@@ -255,6 +311,8 @@ public:
     
         auto appendRow = [&](const TankController::TankConfig &cfg, const TankController::TankState &st,
                              bool enabled) {
+            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Tanks, cfg.id);
+            const bool can_admin = web.webSessionIsAdmin_();
             const char *level = "0%";
             const char *level_class = "level-empty";
             unsigned level_pct = 0;
@@ -307,75 +365,104 @@ public:
             else
                 items += WebUiRu::Tanks::kText3;
             items += "</strong>";
-            items += "<label class=\"switch\"><input type=\"checkbox\" name=\"k";
-            items += String((unsigned)cfg.id);
-            items += "_en\"";
-            if (enabled)
-                items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            if (can_control)
+            {
+                items += "<label class=\"switch\"><input type=\"checkbox\" name=\"k";
+                items += String((unsigned)cfg.id);
+                items += "_en\"";
+                if (enabled)
+                    items += " checked";
+                if (!can_admin)
+                    items += " disabled";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            }
             items += "</div>";
-            items += "<input class=\"field name\" type=\"text\" name=\"k";
-            items += String((unsigned)cfg.id);
-            items += "_name\" value=\"";
-            web.appendHtmlEscaped_(items, cfg.name.c_str());
-            items += "\">";
-            items += "<div class=\"form-grid\">";
-            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData;
-            if (cfg.level_low != TankController::kInvalidPort)
-                items += String((unsigned)cfg.level_low);
-            items += "\" name=\"k";
-            items += String((unsigned)cfg.id);
-            items += "_low\"></select></div>";
-            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData2;
-            if (cfg.level_mid != TankController::kInvalidPort)
-                items += String((unsigned)cfg.level_mid);
-            items += "\" name=\"k";
-            items += String((unsigned)cfg.id);
-            items += "_mid\"></select></div>";
-            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData3;
-            if (cfg.level_full != TankController::kInvalidPort)
-                items += String((unsigned)cfg.level_full);
-            items += "\" name=\"k";
-            items += String((unsigned)cfg.id);
-            items += "_full\"></select></div>";
-            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData4;
-            if (cfg.relay_valve != TankController::kInvalidPort)
-                items += String((unsigned)cfg.relay_valve);
-            items += "\" name=\"k";
-            items += String((unsigned)cfg.id);
-            items += "_valve\"></select></div>";
-            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData5;
-            if (cfg.relay_pump != TankController::kInvalidPort)
-                items += String((unsigned)cfg.relay_pump);
-            items += "\" name=\"k";
-            items += String((unsigned)cfg.id);
-            items += "_pump\"></select></div>";
-            items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData6;
-            if (cfg.relay_alarm != TankController::kInvalidPort)
-                items += String((unsigned)cfg.relay_alarm);
-            items += "\" name=\"k";
-            items += String((unsigned)cfg.id);
-            items += "_alarm\"></select></div>";
-            items += "<div>";
-            items += WebUiRu::Tanks::kInputTypeCheckboxClassTankPowerData2;
-            items += String((unsigned)cfg.id);
-            items += "_power\"";
-            if (cfg.power_on)
-                items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"k";
-            items += String((unsigned)cfg.id);
-            items += "_power\" value=\"";
-            items += cfg.power_on ? "on" : "off";
-            items += "\"></div>";
+            if (can_control)
+            {
+                items += "<input class=\"field name\" type=\"text\" name=\"k";
+                items += String((unsigned)cfg.id);
+                items += "_name\" value=\"";
+                web.appendHtmlEscaped_(items, cfg.name.c_str());
+                items += "\"";
+                if (!can_admin)
+                    items += " readonly";
+                items += ">";
+                items += "<div class=\"form-grid\">";
+                items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData;
+                if (cfg.level_low != TankController::kInvalidPort)
+                    items += String((unsigned)cfg.level_low);
+                items += "\" name=\"k";
+                items += String((unsigned)cfg.id);
+                items += "_low\"";
+                if (!can_admin)
+                    items += " disabled";
+                items += "></select></div>";
+                items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData2;
+                if (cfg.level_mid != TankController::kInvalidPort)
+                    items += String((unsigned)cfg.level_mid);
+                items += "\" name=\"k";
+                items += String((unsigned)cfg.id);
+                items += "_mid\"";
+                if (!can_admin)
+                    items += " disabled";
+                items += "></select></div>";
+                items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData3;
+                if (cfg.level_full != TankController::kInvalidPort)
+                    items += String((unsigned)cfg.level_full);
+                items += "\" name=\"k";
+                items += String((unsigned)cfg.id);
+                items += "_full\"";
+                if (!can_admin)
+                    items += " disabled";
+                items += "></select></div>";
+                items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData4;
+                if (cfg.relay_valve != TankController::kInvalidPort)
+                    items += String((unsigned)cfg.relay_valve);
+                items += "\" name=\"k";
+                items += String((unsigned)cfg.id);
+                items += "_valve\"";
+                if (!can_admin)
+                    items += " disabled";
+                items += "></select></div>";
+                items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData5;
+                if (cfg.relay_pump != TankController::kInvalidPort)
+                    items += String((unsigned)cfg.relay_pump);
+                items += "\" name=\"k";
+                items += String((unsigned)cfg.id);
+                items += "_pump\"";
+                if (!can_admin)
+                    items += " disabled";
+                items += "></select></div>";
+                items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData6;
+                if (cfg.relay_alarm != TankController::kInvalidPort)
+                    items += String((unsigned)cfg.relay_alarm);
+                items += "\" name=\"k";
+                items += String((unsigned)cfg.id);
+                items += "_alarm\"";
+                if (!can_admin)
+                    items += " disabled";
+                items += "></select></div>";
+                items += "<div>";
+                items += WebUiRu::Tanks::kInputTypeCheckboxClassTankPowerData2;
+                items += String((unsigned)cfg.id);
+                items += "_power\"";
+                if (cfg.power_on)
+                    items += " checked";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"k";
+                items += String((unsigned)cfg.id);
+                items += "_power\" value=\"";
+                items += cfg.power_on ? "on" : "off";
+                items += "\"></div>";
+            }
             items += "<div class=\"status-row\">";
-            items += "<span class=\"status-dot ";
-            items += (st.pump_on ? "status-on" : "status-off");
+            items += "<span class=\"tank-status-dot ";
+            items += (st.pump_on ? "tank-status-on" : "tank-status-off");
             items += WebUiRu::Tanks::kText11;
-            items += "<span class=\"status-dot ";
-            items += (st.valve_on ? "status-on" : "status-off");
+            items += "<span class=\"tank-status-dot ";
+            items += (st.valve_on ? "tank-status-on" : "tank-status-off");
             items += WebUiRu::Tanks::kText12;
-            items += "<span class=\"status-dot ";
-            items += (st.alarm_on ? "status-bad" : "status-off");
+            items += "<span class=\"tank-status-dot ";
+            items += (st.alarm_on ? "tank-status-bad" : "tank-status-off");
             items += WebUiRu::Tanks::kText14;
             items += "</div></div>";
             items += "</div></div></div>";

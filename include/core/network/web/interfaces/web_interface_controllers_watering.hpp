@@ -172,6 +172,7 @@ public:
                 continue;
             }
             ++visible_idx;
+            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Watering, cfg.id, node_id);
             const char *state_label = cfg.active ? WebUiRu::Watering::kText3
                                                  : (cfg.paused ? WebUiRu::Watering::kText4 : WebUiRu::Watering::kText5);
 
@@ -189,125 +190,133 @@ public:
                 web.appendHtmlEscaped_(items, cfg.name);
             else
                 items += WebUiRu::Watering::kText10;
-            items += "</strong><input type=\"hidden\" name=\"w";
-            items += String((unsigned)cfg.id);
-            items += "_en\" value=\"0\"><label class=\"switch\"><input type=\"checkbox\" value=\"1\" name=\"w";
-            items += String((unsigned)cfg.id);
-            items += "_en\"";
-            if (cfg.enabled)
-                items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-
-            items += "<input class=\"field name\" type=\"text\" name=\"w";
-            items += String((unsigned)cfg.id);
-            items += "_name\" value=\"";
-            web.appendHtmlEscaped_(items, String(cfg.name).c_str());
-            items += "\"><div class=\"form-grid\">";
-
-            items += WebUiRu::Watering::kInputTypeCheckboxNameW;
-            items += String((unsigned)cfg.id);
-            items += "_status\"";
-            if (cfg.status)
-                items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-
-            items += WebUiRu::Watering::kText28;
-            for (size_t wi = 0; wi < 7; ++wi)
+            items += "</strong>";
+            if (can_control)
             {
-                const uint8_t dow = kWeekdayMap[wi];
-                items += "<label class=\"weekday-item\"><input type=\"checkbox\" name=\"w";
+                items += "<input type=\"hidden\" name=\"w";
                 items += String((unsigned)cfg.id);
-                items += "_d";
-                items += String((unsigned)dow);
-                items += "\"";
-                if (cfg.weekdays_mask & (uint8_t)(1u << (dow - 1u)))
+                items += "_en\" value=\"0\"><label class=\"switch\"><input type=\"checkbox\" value=\"1\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_en\"";
+                if (cfg.enabled)
                     items += " checked";
-                items += "><span>";
-                items += kWeekdayLabels[wi];
-                items += "</span></label>";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
             }
-            items += "</div></div>";
+            items += "</div>";
 
-            items += WebUiRu::Watering::kInputClassFieldMiniTypeTimeName;
-            items += String((unsigned)cfg.id);
-            items += "_time\" value=\"";
-            if (cfg.weekdays_mask && cfg.duration_sec && cfg.hour <= 23 && cfg.minute <= 59)
+            if (can_control)
             {
-                char buf[8] = {};
-                snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour, (unsigned)cfg.minute);
-                items += buf;
+                items += "<input class=\"field name\" type=\"text\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_name\" value=\"";
+                web.appendHtmlEscaped_(items, String(cfg.name).c_str());
+                items += "\"><div class=\"form-grid\">";
+
+                items += WebUiRu::Watering::kInputTypeCheckboxNameW;
+                items += String((unsigned)cfg.id);
+                items += "_status\"";
+                if (cfg.status)
+                    items += " checked";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+
+                items += WebUiRu::Watering::kText28;
+                for (size_t wi = 0; wi < 7; ++wi)
+                {
+                    const uint8_t dow = kWeekdayMap[wi];
+                    items += "<label class=\"weekday-item\"><input type=\"checkbox\" name=\"w";
+                    items += String((unsigned)cfg.id);
+                    items += "_d";
+                    items += String((unsigned)dow);
+                    items += "\"";
+                    if (cfg.weekdays_mask & (uint8_t)(1u << (dow - 1u)))
+                        items += " checked";
+                    items += "><span>";
+                    items += kWeekdayLabels[wi];
+                    items += "</span></label>";
+                }
+                items += "</div></div>";
+
+                items += WebUiRu::Watering::kInputClassFieldMiniTypeTimeName;
+                items += String((unsigned)cfg.id);
+                items += "_time\" value=\"";
+                if (cfg.weekdays_mask && cfg.duration_sec && cfg.hour <= 23 && cfg.minute <= 59)
+                {
+                    char buf[8] = {};
+                    snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour, (unsigned)cfg.minute);
+                    items += buf;
+                }
+                items += "\"></div>";
+
+                items += WebUiRu::Watering::kInputClassFieldMiniTypeNumberMin;
+                items += String((unsigned)cfg.id);
+                items += "_dur\" value=\"";
+                if (cfg.duration_sec)
+                    items += String((unsigned long)((cfg.duration_sec + 59) / 60));
+                items += "\"></div>";
+
+                items += WebUiRu::Watering::kText2InputClassFieldMiniTypeTime;
+                items += String((unsigned)cfg.id);
+                items += "_time2\" value=\"";
+                if (cfg.weekdays_mask && cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
+                {
+                    char buf2[8] = {};
+                    snprintf(buf2, sizeof(buf2), "%02u:%02u", (unsigned)cfg.hour2, (unsigned)cfg.minute2);
+                    items += buf2;
+                }
+                items += "\"></div>";
+
+                items += WebUiRu::Watering::kText2InputClassFieldMiniTypeNumber;
+                items += String((unsigned)cfg.id);
+                items += "_dur2\" value=\"";
+                if (cfg.duration2_sec)
+                    items += String((unsigned long)((cfg.duration2_sec + 59) / 60));
+                items += "\"></div>";
+
+                items += WebUiRu::Watering::kText3InputClassFieldMiniTypeTime;
+                items += String((unsigned)cfg.id);
+                items += "_time3\" value=\"";
+                if (cfg.weekdays_mask && cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
+                {
+                    char buf3[8] = {};
+                    snprintf(buf3, sizeof(buf3), "%02u:%02u", (unsigned)cfg.hour3, (unsigned)cfg.minute3);
+                    items += buf3;
+                }
+                items += "\"></div>";
+
+                items += WebUiRu::Watering::kText3InputClassFieldMiniTypeNumber;
+                items += String((unsigned)cfg.id);
+                items += "_dur3\" value=\"";
+                if (cfg.duration3_sec)
+                    items += String((unsigned long)((cfg.duration3_sec + 59) / 60));
+                items += "\"></div>";
+
+                items += WebUiRu::Watering::kSelectClassFieldMiniWateringSelectData2;
+                if (cfg.tank_id)
+                    items += String((unsigned)cfg.tank_id);
+                items += "\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_tank\"></select></div>";
+
+                items += WebUiRu::Watering::kInputTypeCheckboxNameW2;
+                items += String((unsigned)cfg.id);
+                items += "_resume\"";
+                if (cfg.resume_after_refill)
+                    items += " checked";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+
+                items += WebUiRu::Watering::kGeSelectClassFieldMiniNameW;
+                items += String((unsigned)cfg.id);
+                items += "_resume_level\"><option value=\"low\"";
+                if (cfg.resume_level == 0)
+                    items += " selected";
+                items += ">low</option><option value=\"mid\"";
+                if (cfg.resume_level == 1)
+                    items += " selected";
+                items += ">mid</option><option value=\"full\"";
+                if (cfg.resume_level == 2)
+                    items += " selected";
+                items += ">full</option></select></div>";
             }
-            items += "\"></div>";
-
-            items += WebUiRu::Watering::kInputClassFieldMiniTypeNumberMin;
-            items += String((unsigned)cfg.id);
-            items += "_dur\" value=\"";
-            if (cfg.duration_sec)
-                items += String((unsigned long)((cfg.duration_sec + 59) / 60));
-            items += "\"></div>";
-
-            items += WebUiRu::Watering::kText2InputClassFieldMiniTypeTime;
-            items += String((unsigned)cfg.id);
-            items += "_time2\" value=\"";
-            if (cfg.weekdays_mask && cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
-            {
-                char buf2[8] = {};
-                snprintf(buf2, sizeof(buf2), "%02u:%02u", (unsigned)cfg.hour2, (unsigned)cfg.minute2);
-                items += buf2;
-            }
-            items += "\"></div>";
-
-            items += WebUiRu::Watering::kText2InputClassFieldMiniTypeNumber;
-            items += String((unsigned)cfg.id);
-            items += "_dur2\" value=\"";
-            if (cfg.duration2_sec)
-                items += String((unsigned long)((cfg.duration2_sec + 59) / 60));
-            items += "\"></div>";
-
-            items += WebUiRu::Watering::kText3InputClassFieldMiniTypeTime;
-            items += String((unsigned)cfg.id);
-            items += "_time3\" value=\"";
-            if (cfg.weekdays_mask && cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
-            {
-                char buf3[8] = {};
-                snprintf(buf3, sizeof(buf3), "%02u:%02u", (unsigned)cfg.hour3, (unsigned)cfg.minute3);
-                items += buf3;
-            }
-            items += "\"></div>";
-
-            items += WebUiRu::Watering::kText3InputClassFieldMiniTypeNumber;
-            items += String((unsigned)cfg.id);
-            items += "_dur3\" value=\"";
-            if (cfg.duration3_sec)
-                items += String((unsigned long)((cfg.duration3_sec + 59) / 60));
-            items += "\"></div>";
-
-            items += WebUiRu::Watering::kSelectClassFieldMiniWateringSelectData2;
-            if (cfg.tank_id)
-                items += String((unsigned)cfg.tank_id);
-            items += "\" name=\"w";
-            items += String((unsigned)cfg.id);
-            items += "_tank\"></select></div>";
-
-            items += WebUiRu::Watering::kInputTypeCheckboxNameW2;
-            items += String((unsigned)cfg.id);
-            items += "_resume\"";
-            if (cfg.resume_after_refill)
-                items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-
-            items += WebUiRu::Watering::kGeSelectClassFieldMiniNameW;
-            items += String((unsigned)cfg.id);
-            items += "_resume_level\"><option value=\"low\"";
-            if (cfg.resume_level == 0)
-                items += " selected";
-            items += ">low</option><option value=\"mid\"";
-            if (cfg.resume_level == 1)
-                items += " selected";
-            items += ">mid</option><option value=\"full\"";
-            if (cfg.resume_level == 2)
-                items += " selected";
-            items += ">full</option></select></div>";
 
             items += "</div></div></div>";
             ++rendered;
@@ -325,6 +334,7 @@ public:
         WateringController &watering = web._controllers->watering();
         auto appendRule = [&](const WateringController::RuleConfig &cfg, const WateringController::RuleState &st)
         {
+            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Watering, cfg.id);
             const char *state_label = st.active ? WebUiRu::Watering::kText3 : (st.paused ? WebUiRu::Watering::kText4 : WebUiRu::Watering::kText5);
             items += "<div class=\"tile\" data-active=\"";
             items += st.active ? "1\">" : "0\">";
@@ -340,121 +350,133 @@ public:
                 web.appendHtmlEscaped_(items, cfg.name.c_str());
             else
                 items += WebUiRu::Watering::kText10;
-            items += "</strong><input type=\"hidden\" name=\"w";
-            items += String((unsigned)cfg.id);
-            items += "_en\" value=\"0\"><label class=\"switch\"><input type=\"checkbox\" value=\"1\" name=\"w";
-            items += String((unsigned)cfg.id);
-            items += "_en\"";
-            if (cfg.enabled)
-                items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-            items += "<input class=\"field name\" type=\"text\" name=\"w";
-            items += String((unsigned)cfg.id);
-            items += "_name\" value=\"";
-            web.appendHtmlEscaped_(items, cfg.name.c_str());
-            items += "\"><div class=\"form-grid\">";
-            items += WebUiRu::Watering::kInputTypeCheckboxNameW;
-            items += String((unsigned)cfg.id);
-            items += "_status\"";
-            if (st.status)
-                items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-            items += WebUiRu::Watering::kSelectClassFieldMiniWateringSelectData;
-            if (cfg.port != WateringController::kInvalidPort)
-                items += String((unsigned)cfg.port);
-            items += "\" name=\"w";
-            items += String((unsigned)cfg.id);
-            items += "_port\"></select></div>";
-            items += WebUiRu::Watering::kText28;
+            items += "</strong>";
+            if (can_control)
+            {
+                items += "<input type=\"hidden\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_en\" value=\"0\"><label class=\"switch\"><input type=\"checkbox\" value=\"1\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_en\"";
+                if (cfg.enabled)
+                    items += " checked";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            }
+            items += "</div>";
+            if (can_control)
+            {
+                items += "<input class=\"field name\" type=\"text\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_name\" value=\"";
+                web.appendHtmlEscaped_(items, cfg.name.c_str());
+                items += "\"><div class=\"form-grid\">";
+                items += WebUiRu::Watering::kInputTypeCheckboxNameW;
+                items += String((unsigned)cfg.id);
+                items += "_status\"";
+                if (st.status)
+                    items += " checked";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+                items += WebUiRu::Watering::kSelectClassFieldMiniWateringSelectData;
+                if (cfg.port != WateringController::kInvalidPort)
+                    items += String((unsigned)cfg.port);
+                items += "\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_port\"></select></div>";
+                items += WebUiRu::Watering::kText28;
+            }
             static const uint8_t kWeekdayMap[7] = {2, 3, 4, 5, 6, 7, 1};
             static const char *kWeekdayLabels[7] = {WebUiRu::Watering::kText14, WebUiRu::Watering::kText15, WebUiRu::Watering::kText16, WebUiRu::Watering::kText17, WebUiRu::Watering::kText18, WebUiRu::Watering::kText19, WebUiRu::Watering::kText20};
-            for (size_t wi = 0; wi < 7; ++wi)
+            if (can_control)
             {
-                const uint8_t dow = kWeekdayMap[wi];
-                items += "<label class=\"weekday-item\"><input type=\"checkbox\" name=\"w";
+                for (size_t wi = 0; wi < 7; ++wi)
+                {
+                    const uint8_t dow = kWeekdayMap[wi];
+                    items += "<label class=\"weekday-item\"><input type=\"checkbox\" name=\"w";
+                    items += String((unsigned)cfg.id);
+                    items += "_d";
+                    items += String((unsigned)dow);
+                    items += "\"";
+                    if (cfg.weekdays_mask & (uint8_t)(1u << (dow - 1u)))
+                        items += " checked";
+                    items += "><span>";
+                    items += kWeekdayLabels[wi];
+                    items += "</span></label>";
+                }
+                items += "</div></div>";
+
+                items += WebUiRu::Watering::kInputClassFieldMiniTypeTimeName;
                 items += String((unsigned)cfg.id);
-                items += "_d";
-                items += String((unsigned)dow);
-                items += "\"";
-                if (cfg.weekdays_mask & (uint8_t)(1u << (dow - 1u)))
+                items += "_time\" value=\"";
+                if (cfg.weekdays_mask && cfg.duration_sec && cfg.hour <= 23 && cfg.minute <= 59)
+                {
+                    char buf[8] = {};
+                    snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour, (unsigned)cfg.minute);
+                    items += buf;
+                }
+                items += "\"></div>";
+                items += WebUiRu::Watering::kInputClassFieldMiniTypeNumberMin;
+                items += String((unsigned)cfg.id);
+                items += "_dur\" value=\"";
+                if (cfg.duration_sec)
+                    items += String((unsigned long)((cfg.duration_sec + 59) / 60));
+                items += "\"></div>";
+                items += WebUiRu::Watering::kText2InputClassFieldMiniTypeTime;
+                items += String((unsigned)cfg.id);
+                items += "_time2\" value=\"";
+                if (cfg.weekdays_mask && cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
+                {
+                    char buf2[8] = {};
+                    snprintf(buf2, sizeof(buf2), "%02u:%02u", (unsigned)cfg.hour2, (unsigned)cfg.minute2);
+                    items += buf2;
+                }
+                items += "\"></div>";
+                items += WebUiRu::Watering::kText2InputClassFieldMiniTypeNumber;
+                items += String((unsigned)cfg.id);
+                items += "_dur2\" value=\"";
+                if (cfg.duration2_sec)
+                    items += String((unsigned long)((cfg.duration2_sec + 59) / 60));
+                items += "\"></div>";
+                items += WebUiRu::Watering::kText3InputClassFieldMiniTypeTime;
+                items += String((unsigned)cfg.id);
+                items += "_time3\" value=\"";
+                if (cfg.weekdays_mask && cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
+                {
+                    char buf3[8] = {};
+                    snprintf(buf3, sizeof(buf3), "%02u:%02u", (unsigned)cfg.hour3, (unsigned)cfg.minute3);
+                    items += buf3;
+                }
+                items += "\"></div>";
+                items += WebUiRu::Watering::kText3InputClassFieldMiniTypeNumber;
+                items += String((unsigned)cfg.id);
+                items += "_dur3\" value=\"";
+                if (cfg.duration3_sec)
+                    items += String((unsigned long)((cfg.duration3_sec + 59) / 60));
+                items += "\"></div>";
+                items += WebUiRu::Watering::kSelectClassFieldMiniWateringSelectData2;
+                if (cfg.tank_id)
+                    items += String((unsigned)cfg.tank_id);
+                items += "\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_tank\"></select></div>";
+                items += WebUiRu::Watering::kInputTypeCheckboxNameW2;
+                items += String((unsigned)cfg.id);
+                items += "_resume\"";
+                if (cfg.resume_after_refill)
                     items += " checked";
-                items += "><span>";
-                items += kWeekdayLabels[wi];
-                items += "</span></label>";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+                items += WebUiRu::Watering::kGeSelectClassFieldMiniNameW;
+                items += String((unsigned)cfg.id);
+                items += "_resume_level\"><option value=\"low\"";
+                if (cfg.resume_level == 0)
+                    items += " selected";
+                items += ">low</option><option value=\"mid\"";
+                if (cfg.resume_level == 1)
+                    items += " selected";
+                items += ">mid</option><option value=\"full\"";
+                if (cfg.resume_level == 2)
+                    items += " selected";
+                items += ">full</option></select></div>";
             }
-            items += "</div></div>";
-            items += WebUiRu::Watering::kInputClassFieldMiniTypeTimeName;
-            items += String((unsigned)cfg.id);
-            items += "_time\" value=\"";
-            if (cfg.weekdays_mask && cfg.duration_sec && cfg.hour <= 23 && cfg.minute <= 59)
-            {
-                char buf[8] = {};
-                snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour, (unsigned)cfg.minute);
-                items += buf;
-            }
-            items += "\"></div>";
-            items += WebUiRu::Watering::kInputClassFieldMiniTypeNumberMin;
-            items += String((unsigned)cfg.id);
-            items += "_dur\" value=\"";
-            if (cfg.duration_sec)
-                items += String((unsigned long)((cfg.duration_sec + 59) / 60));
-            items += "\"></div>";
-            items += WebUiRu::Watering::kText2InputClassFieldMiniTypeTime;
-            items += String((unsigned)cfg.id);
-            items += "_time2\" value=\"";
-            if (cfg.weekdays_mask && cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
-            {
-                char buf2[8] = {};
-                snprintf(buf2, sizeof(buf2), "%02u:%02u", (unsigned)cfg.hour2, (unsigned)cfg.minute2);
-                items += buf2;
-            }
-            items += "\"></div>";
-            items += WebUiRu::Watering::kText2InputClassFieldMiniTypeNumber;
-            items += String((unsigned)cfg.id);
-            items += "_dur2\" value=\"";
-            if (cfg.duration2_sec)
-                items += String((unsigned long)((cfg.duration2_sec + 59) / 60));
-            items += "\"></div>";
-            items += WebUiRu::Watering::kText3InputClassFieldMiniTypeTime;
-            items += String((unsigned)cfg.id);
-            items += "_time3\" value=\"";
-            if (cfg.weekdays_mask && cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
-            {
-                char buf3[8] = {};
-                snprintf(buf3, sizeof(buf3), "%02u:%02u", (unsigned)cfg.hour3, (unsigned)cfg.minute3);
-                items += buf3;
-            }
-            items += "\"></div>";
-            items += WebUiRu::Watering::kText3InputClassFieldMiniTypeNumber;
-            items += String((unsigned)cfg.id);
-            items += "_dur3\" value=\"";
-            if (cfg.duration3_sec)
-                items += String((unsigned long)((cfg.duration3_sec + 59) / 60));
-            items += "\"></div>";
-            items += WebUiRu::Watering::kSelectClassFieldMiniWateringSelectData2;
-            if (cfg.tank_id)
-                items += String((unsigned)cfg.tank_id);
-            items += "\" name=\"w";
-            items += String((unsigned)cfg.id);
-            items += "_tank\"></select></div>";
-            items += WebUiRu::Watering::kInputTypeCheckboxNameW2;
-            items += String((unsigned)cfg.id);
-            items += "_resume\"";
-            if (cfg.resume_after_refill)
-                items += " checked";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-            items += WebUiRu::Watering::kGeSelectClassFieldMiniNameW;
-            items += String((unsigned)cfg.id);
-            items += "_resume_level\"><option value=\"low\"";
-            if (cfg.resume_level == 0)
-                items += " selected";
-            items += ">low</option><option value=\"mid\"";
-            if (cfg.resume_level == 1)
-                items += " selected";
-            items += ">mid</option><option value=\"full\"";
-            if (cfg.resume_level == 2)
-                items += " selected";
-            items += ">full</option></select></div>";
             items += "</div></div></div>";
         };
     

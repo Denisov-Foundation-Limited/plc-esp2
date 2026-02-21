@@ -65,6 +65,8 @@ public:
         uint8_t id = 0;
         bool enabled = false;
         bool state = false;
+        uint8_t button_port = SocketController::kInvalidPort;
+        uint8_t relay_port = SocketController::kInvalidPort;
         static constexpr size_t kNameLen = 48;
         char name[kNameLen] = {};
     };
@@ -1362,6 +1364,10 @@ private:
                         o["id"] = (unsigned)it.id;
                         o["enabled"] = it.enabled;
                         o["state"] = it.state;
+                        if (it.button_port != SocketController::kInvalidPort)
+                            o["button"] = it.button_port;
+                        if (it.relay_port != SocketController::kInvalidPort)
+                            o["relay"] = it.relay_port;
                         if (it.name[0])
                             o["name"] = it.name;
                     }
@@ -1728,6 +1734,20 @@ private:
                     i2c_cache = c;
                 break;
             }
+            case StackFeature::Ports:
+            {
+                StackPortsCache *c = findStackPortsCache_(node_id, false);
+                if (c && c->pending)
+                    ports_cache = c;
+                break;
+            }
+            case StackFeature::Extenders:
+            {
+                StackExtendersCache *c = findStackExtendersCache_(node_id, false);
+                if (c && c->pending)
+                    ext_cache = c;
+                break;
+            }
             case StackFeature::OwScan:
             {
                 StackOwCache *c = findStackOwCache_(node_id, false);
@@ -1876,6 +1896,10 @@ private:
                         dst.id = (uint8_t)item["id"].as<unsigned>();
                         dst.enabled = item["enabled"] | false;
                         dst.state = item["state"] | false;
+                        dst.button_port = item["button"].is<unsigned>() ? (uint8_t)item["button"].as<unsigned>()
+                                                                         : SocketController::kInvalidPort;
+                        dst.relay_port = item["relay"].is<unsigned>() ? (uint8_t)item["relay"].as<unsigned>()
+                                                                       : SocketController::kInvalidPort;
                         copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
                     }
                 }
@@ -1917,6 +1941,10 @@ private:
                     port_items = items;
                 if (!port_items.isNull())
                 {
+                    if (ports_cache->parts_received == 0 && part > 1)
+                    {
+                        return;
+                    }
                     // Start (or restart) multipart aggregation on first received frame for this cmd.
                     if (ports_cache->parts_received == 0)
                     {
@@ -1959,23 +1987,28 @@ private:
                         copyStr_(dst.hw, sizeof(dst.hw), item["hw"].as<const char *>());
                         ports_cache->present[id] = 1;
                     }
+                    // Build a compact partial list so web can use available ports immediately.
+                    size_t w_partial = 0;
+                    for (size_t i = 0; i < PortIO::PORT_COUNT; ++i)
+                    {
+                        if (!ports_cache->present[i])
+                            continue;
+                        if (w_partial != i)
+                            ports_cache->items[w_partial] = ports_cache->items[i];
+                        ++w_partial;
+                    }
+                    ports_cache->item_count = w_partial;
+                    ports_cache->has_data = (w_partial > 0);
                     const bool all_parts_received = (ports_cache->parts_expected > 0 &&
                                                      ports_cache->parts_received >= ports_cache->parts_expected);
-                    if (done && all_parts_received)
+                    if (done)
                     {
-                        size_t w = 0;
-                        for (size_t i = 0; i < PortIO::PORT_COUNT; ++i)
-                        {
-                            if (!ports_cache->present[i])
-                                continue;
-                            if (w != i)
-                                ports_cache->items[w] = ports_cache->items[i];
-                            ++w;
-                        }
-                        ports_cache->item_count = w;
                         ports_cache->pending = false;
-                        ports_cache->has_data = true;
-                        ports_cache->last_ok = true;
+                        ports_cache->last_ok = all_parts_received && (ports_cache->item_count > 0);
+                        if (!all_parts_received)
+                            ports_cache->last_error = "partial ports data";
+                        else
+                            ports_cache->last_error = "";
                         ports_cache->node_id = node_id;
                         ports_cache->parts_expected = 0;
                         ports_cache->parts_received = 0;
@@ -2765,7 +2798,7 @@ private:
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Sockets;
         doc["action"] = "get";
-        doc["params"]["chunk"] = 3;
+        doc["params"]["chunk"] = 16;
         char payload[160] = {};
         const size_t need = measureJson(doc);
         if (need >= sizeof(payload))
@@ -2799,7 +2832,7 @@ private:
         const uint32_t now = millis();
         if (cache->pending)
         {
-            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            if ((uint32_t)(now - cache->updated_ms) > 12000u)
             {
                 cache->pending = false;
                 cache->pending_cmd_id = 0;
@@ -3276,6 +3309,23 @@ private:
         {
             if ((uint32_t)(now - cache->updated_ms) > 6000u)
             {
+                if (cache->parts_received > 0)
+                {
+                    size_t w = 0;
+                    for (size_t i = 0; i < PortIO::PORT_COUNT; ++i)
+                    {
+                        if (!cache->present[i])
+                            continue;
+                        if (w != i)
+                            cache->items[w] = cache->items[i];
+                        ++w;
+                    }
+                    cache->item_count = w;
+                    cache->has_data = (w > 0);
+                    cache->last_ok = false;
+                    cache->last_error = "ports timeout partial";
+                    cache->updated_ms = now;
+                }
                 cache->pending = false;
                 cache->pending_cmd_id = 0;
                 cache->parts_expected = 0;
@@ -3295,7 +3345,8 @@ private:
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Ports;
         doc["action"] = "get_state";
-        doc["params"]["chunk"] = 3;
+        // Keep payload below stack frame limit (1024 bytes) to avoid truncated JSON.
+        doc["params"]["chunk"] = 5;
         char payload[96] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)

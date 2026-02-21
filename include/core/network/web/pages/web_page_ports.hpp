@@ -65,7 +65,15 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
       padding: 8px;
       border-radius: 8px;
     }
-    select {
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }    select {
       width: 100%;
       background: #0b1220;
       border: 1px solid #334155;
@@ -122,6 +130,7 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 
 

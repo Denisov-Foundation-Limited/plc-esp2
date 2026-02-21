@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -17,7 +17,7 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Охрана</title>
+  <title>РћС…СЂР°РЅР°</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -116,6 +116,15 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
     }
     input:checked + .track { background: #22c55e; }
     input:checked + .track .knob { transform: translateX(20px); }
+    input:disabled + .track {
+      background: #475569;
+      border-color: #334155;
+      cursor: not-allowed;
+    }
+    input:disabled + .track .knob {
+      background: #1f2937;
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.7);
+    }
     .buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
     button {
       border: none;
@@ -141,7 +150,15 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       background: #0b1220;
       color: var(--text);
     }
-    .mini { width: 88px; }
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }    .mini { width: 88px; }
     .name { width: 180px; }
     .serial {
       width: 220px;
@@ -277,7 +294,15 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       table { min-width: 640px; font-size: 12px; }
       th, td { padding: 5px; }
       .field { padding: 5px 6px; }
-      .mini { width: 72px; }
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }      .mini { width: 72px; }
       .name { width: 140px; }
       .serial { width: 180px; }
     }
@@ -293,35 +318,35 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Охрана</h1>
+      <h1>РћС…СЂР°РЅР°</h1>
       <form method="POST" action="/security" id="security-form">
         <div class="status">
-          <span class="pill">Статус: <span class="status-dot" data-state="%SECURITY_ARMED_LABEL%" title="%SECURITY_ARMED_LABEL%"></span></span>
-          <span class="pill">Тревога: <span class="status-dot" data-state="%SECURITY_ALARM_LABEL%" title="%SECURITY_ALARM_LABEL%"></span></span>
+          <span class="pill">РЎС‚Р°С‚СѓСЃ: <span class="status-dot" data-state="%SECURITY_ARMED_LABEL%" title="%SECURITY_ARMED_LABEL%"></span></span>
+          <span class="pill">РўСЂРµРІРѕРіР°: <span class="status-dot" data-state="%SECURITY_ALARM_LABEL%" title="%SECURITY_ALARM_LABEL%"></span></span>
           <span class="pill">GSM: <span class="status-dot" data-kind="gsm" data-state="%SECURITY_GSM_LABEL%" title="%SECURITY_GSM_LABEL%"></span></span>
         </div>
         <div class="status-msg" id="security-status">%SECURITY_STATUS%</div>
         <div class="grid">
           <div>
-            <label>Охрана</label>
+            <label>РћС…СЂР°РЅР°</label>
             <div class="buttons">
-              <button class="primary" name="action" value="arm">Поставить</button>
-              <button class="warn" name="action" value="disarm">Снять</button>
+              <button class="primary" name="action" value="arm">РџРѕСЃС‚Р°РІРёС‚СЊ</button>
+              <button class="warn" name="action" value="disarm">РЎРЅСЏС‚СЊ</button>
             </div>
           </div>
           <div>
-            <label>Порт сирены</label>
+            <label>РџРѕСЂС‚ СЃРёСЂРµРЅС‹</label>
             <select class="field mini siren-select" data-selected="%SECURITY_SIREN%" name="security_siren"></select>
           </div>
         </div>
         <h2>%SECURITY_SENSORS_TITLE%</h2>
         %SECURITY_DEVICE_SELECT%
         <div class="pagination" %SECURITY_SENSORS_PAGINATION_STYLE%>
-          <button type="button" class="btn btn-sm" id="security-prev">Назад</button>
-          <span class="page-info">Страница</span>
+          <button type="button" class="btn btn-sm" id="security-prev">РќР°Р·Р°Рґ</button>
+          <span class="page-info">РЎС‚СЂР°РЅРёС†Р°</span>
           <select id="security-page" class="field mini"></select>
           <span class="page-info">/ %SECURITY_SENSORS_PAGES%</span>
-          <button type="button" class="btn btn-sm" id="security-next">Вперёд</button>
+          <button type="button" class="btn btn-sm" id="security-next">Р’РїРµСЂС‘Рґ</button>
         </div>
         <div class="grid">
           %SECURITY_SENSORS%
@@ -337,9 +362,9 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       const s = String(value || '').trim().toLowerCase();
       if (!s) return false;
       if (s === '1' || s === 'true' || s === 'on' || s === 'ok' || s === 'ready' || s === 'active') return true;
-      if (s.indexOf('вкл') !== -1) return true;
-      if (s.indexOf('под охраной') !== -1) return true;
-      if (s.indexOf('включ') !== -1) return true;
+      if (s.indexOf('РІРєР»') !== -1) return true;
+      if (s.indexOf('РїРѕРґ РѕС…СЂР°РЅРѕР№') !== -1) return true;
+      if (s.indexOf('РІРєР»СЋС‡') !== -1) return true;
       if (s.indexOf('armed') !== -1) return true;
       if (s.indexOf('enabled') !== -1) return true;
       if (s.indexOf('alarm') !== -1) return true;
@@ -353,7 +378,7 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       if (kind === 'gsm') {
         const s = String(state).trim().toLowerCase();
         const ok = s === 'ok' || s === '1' || s === 'true' || s === 'on';
-        const off = s === 'off' || s === 'недоступно' || s === 'выкл' || s === 'not started';
+        const off = s === 'off' || s === 'РЅРµРґРѕСЃС‚СѓРїРЅРѕ' || s === 'РІС‹РєР»' || s === 'not started';
         dot.classList.toggle('status-on', ok);
         dot.classList.toggle('status-off', off);
         dot.classList.toggle('status-bad', !ok && !off);
@@ -577,3 +602,5 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+

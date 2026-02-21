@@ -472,11 +472,13 @@ class WebInterface;
             return "[]";
 
         bool first = true;
+        size_t matched = 0;
         for (size_t i = 0; i < cache->item_count; ++i)
         {
             const auto &it = cache->items[i];
             if (!stackPortTypeMatch_(it, type))
                 continue;
+            ++matched;
             if (!first)
                 out += ",";
             out += "{\"v\":";
@@ -501,6 +503,41 @@ class WebInterface;
             }
             out += "\"}";
             first = false;
+        }
+        // Fallback: old/incompatible slave may send unknown type/ptype values.
+        // Keep dropdown usable by exposing all controllable ports.
+        if (matched == 0)
+        {
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                if (!it.ctrl)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += "{\"v\":";
+                out += String((unsigned)it.id);
+                out += ",\"l\":\"";
+                out += "#";
+                out += String((unsigned)it.id);
+                if (it.type[0])
+                {
+                    out += " ";
+                    appendJsonEscaped_(out, it.type);
+                }
+                if (it.loc[0])
+                {
+                    out += " @";
+                    appendJsonEscaped_(out, it.loc);
+                }
+                if (it.pin >= 0)
+                {
+                    out += " GPIO";
+                    out += String((int)it.pin);
+                }
+                out += "\"}";
+                first = false;
+            }
         }
         out += "]";
         return out;
@@ -1492,24 +1529,83 @@ sendRedirect_(request, "/", set_cookie);
           const id = String((n && n.id != null) ? n.id : '').trim();
           if(!id) return;
           const name = String((n && n.name) ? n.name : id);
-          next.set(id, name);
+          const sync = !!(n && (n.sync === 1 || n.sync === true || n.sync === '1'));
+          next.set(id, { name, sync });
         });
       }
       if (known === null){
         known = next;
         return;
       }
-      next.forEach((name,id)=>{
-        if(!known.has(id)) showToast('Подключен слейв: ' + name + ' id: 0x' + Number(id).toString(16).toUpperCase().padStart(8, '0'), 'success');
+      next.forEach((cur,id)=>{
+        const prev = known.get(id);
+        if(!prev) showToast('Подключен слейв: ' + cur.name + ' id: 0x' + Number(id).toString(16).toUpperCase().padStart(8, '0'), 'success');
+        if((!prev || !prev.sync) && cur.sync){
+          showToast('Sync slave unit complete: ' + cur.name + ' id: 0x' + Number(id).toString(16).toUpperCase().padStart(8, '0'), 'success');
+        }
       });
-      known.forEach((name,id)=>{
-        if(!next.has(id)) showToast('Отключен слейв: ' + name + ' id: 0x' + Number(id).toString(16).toUpperCase().padStart(8, '0'), 'error');
+      known.forEach((prev,id)=>{
+        if(!next.has(id)) showToast('Отключен слейв: ' + prev.name + ' id: 0x' + Number(id).toString(16).toUpperCase().padStart(8, '0'), 'error');
       });
       known = next;
     }catch(e){}
   }
   poll();
   setInterval(poll, 3000);
+})();
+(function(){
+  function isStackGpioVisiblePage(){
+    try{
+      if (!window.location) return false;
+      const p0 = window.location.pathname || '';
+      const p = p0.endsWith('/') && p0.length > 1 ? p0.slice(0, -1) : p0;
+      return p === '/thermo' || p === '/tanks';
+    }catch(e){
+      return false;
+    }
+  }
+  function isStackView(){
+    try{
+      const u = new URL(window.location.href);
+      const unit = (u.searchParams.get('unit') || '').toLowerCase();
+      if (unit === 'stack') return true;
+      if (u.searchParams.get('node') || u.searchParams.get('node_id')) return true;
+      return false;
+    }catch(e){
+      return false;
+    }
+  }
+  function hideNode(el){
+    if(!el) return;
+    const row = el.closest('.form-row') || el.closest('td') || el.closest('th') || el.parentElement;
+    if (row) row.style.display = 'none';
+    else el.style.display = 'none';
+  }
+  function hideGpioFields(){
+    if (isStackGpioVisiblePage()) return;
+    if(!isStackView()) return;
+    const sels = document.querySelectorAll(
+      'select.socket-select,select.light-select,select.security-port,select.meteo-pin,select.thermo-select,' +
+      'select.tank-select,select.septic-select,select.watering-select,select.ring-select,select.avr-select,' +
+      'select.leak-select,select[data-type=\"relay\"],select[data-type=\"dinput\"],select[data-type=\"input\"],' +
+      'select[data-type=\"button\"]'
+    );
+    sels.forEach(hideNode);
+    const ins = document.querySelectorAll(
+      'input[name$=\"_relay\"],input[name$=\"_btn\"],input[name$=\"_pin\"],input[name*=\"_port\"]'
+    );
+    ins.forEach(hideNode);
+  }
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', hideGpioFields, { once: true });
+  else
+    hideGpioFields();
+  let n = 0;
+  const t = setInterval(()=>{
+    hideGpioFields();
+    n++;
+    if(n >= 20) clearInterval(t);
+  }, 500);
 })();
 </script>
 )HTML");

@@ -81,6 +81,15 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
     }
     input:checked + .track { background: #22c55e; }
     input:checked + .track .knob { transform: translateX(20px); }
+    input:disabled + .track {
+      background: #475569;
+      border-color: #334155;
+      cursor: not-allowed;
+    }
+    input:disabled + .track .knob {
+      background: #1f2937;
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.7);
+    }
     .status { color: var(--muted); font-size: 12px; }
     .grid {
       display: grid;
@@ -360,6 +369,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 
 

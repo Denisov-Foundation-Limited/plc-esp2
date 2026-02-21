@@ -170,9 +170,51 @@ public:
         {
             page.replace("%THERMO_FORM_HIDDEN%", "");
         }
+        bool can_save = false;
+        const bool can_view_disabled = web.webSessionIsAdmin_();
+        if (stack_view)
+        {
+            const auto *cache = web._stack_cache ? web._stack_cache->thermoCache(node_id) : nullptr;
+            if (cache && cache->has_data && cache->items)
+            {
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (!web.webAclCanViewItem_(UsersRegistry::AclController::Thermo, it.id, node_id))
+                        continue;
+                    if (!can_view_disabled && !it.enabled)
+                        continue;
+                    if (web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, it.id, node_id))
+                    {
+                        can_save = true;
+                        break;
+                    }
+                }
+            }
+        }
+        else if (web._controllers)
+        {
+            ThermoController &thermo = web._controllers->thermo();
+            for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+            {
+                const auto *cfg = thermo.configByIndex(i);
+                if (!cfg)
+                    continue;
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Thermo, cfg->id))
+                    continue;
+                if (!can_view_disabled && !cfg->enabled)
+                    continue;
+                if (web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, cfg->id))
+                {
+                    can_save = true;
+                    break;
+                }
+            }
+        }
         page.replace("%THERMO_DEVICE_SELECT%", web.thermoDeviceSelectHtml_(node_id, stack_view));
         page.replace("%THERMO_SAVE_BTN%",
-                     ((!stack_view) && !web.webSessionIsAdmin_()) ? String("") : (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>"));
+                     can_save ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>")
+                              : (String("<button type=\"submit\" disabled>") + WebUiRu::kSave + "</button>"));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }

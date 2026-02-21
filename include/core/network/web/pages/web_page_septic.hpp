@@ -63,7 +63,15 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       background: #0b1220;
       color: var(--text);
     }
-    .field.mini { padding: 4px 6px; width: 72px; }
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }    .field.mini { padding: 4px 6px; width: 72px; }
     .field.name { min-width: 160px; }
     .actions { display: flex; gap: 10px; margin-top: 16px; }
     .pagination {
@@ -133,6 +141,15 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
     }
     .switch input:checked + .track { background: #22c55e; }
     .switch input:checked + .track .knob { transform: translateX(18px); }
+    .switch input:disabled + .track {
+      background: #475569;
+      border-color: #334155;
+      cursor: not-allowed;
+    }
+    .switch input:disabled + .track .knob {
+      background: #1f2937;
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.7);
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -553,4 +570,5 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 

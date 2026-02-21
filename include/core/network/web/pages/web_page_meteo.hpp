@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -17,7 +17,7 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Метео</title>
+  <title>%METEO_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -60,6 +60,53 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       border: 1px solid #1f2937;
       background: #0b1220;
       color: var(--text);
+    }
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }
+    .switch {
+      display: inline-block;
+      width: 40px;
+      height: 20px;
+      vertical-align: middle;
+      flex: 0 0 auto;
+    }
+    .switch input { display: none; }
+    .track {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      height: 100%;
+      padding: 2px;
+      background: #64748b;
+      border-radius: 999px;
+      border: 1px solid #1f2937;
+      transition: .2s;
+    }
+    .knob {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #0b1220;
+      transition: .2s;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.3);
+    }
+    input:checked + .track { background: #22c55e; }
+    input:checked + .track .knob { transform: translateX(20px); }
+    input:disabled + .track {
+      background: #475569;
+      border-color: #334155;
+      cursor: not-allowed;
+    }
+    input:disabled + .track .knob {
+      background: #1f2937;
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.7);
     }
     .btn {
       border: none;
@@ -252,8 +299,7 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Метео</h1>
-      <div class="status">%METEO_STATUS%</div>
+      <h1>%METEO_PAGE_TITLE%</h1>
       %METEO_DEVICE_SELECT%
       %METEO_PAGINATION%
       <form method="POST" action="/meteo" id="meteo-form">
@@ -267,6 +313,8 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     </div>
   </div>
   <script>
+    window.__plcDisableAutoRefresh = true;
+    const meteoCanEdit = %METEO_CAN_EDIT%;
     const sensorOptions = %SENSOR_JSON%;
     const sensorUsed = %SENSOR_USED_JSON%;
 
@@ -344,6 +392,7 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     }
 
     function updateRow(row) {
+      const stackView = (new URLSearchParams(window.location.search)).get('unit') === 'stack';
       const type = row.querySelector('select.meteo-type');
       const pinCell = row.querySelector('.pin-cell');
       const addrCell = row.querySelector('.addr-cell');
@@ -356,10 +405,11 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       const nameRemote = row.querySelector('.name-remote');
       const nameInput = nameLocal ? nameLocal.querySelector('input') : null;
       const isLocal = !device || device.value === 'local' || device.value === '';
+      const lockAll = stackView;
       if (nameLocal) nameLocal.style.display = isLocal ? '' : 'none';
       if (nameRemote) nameRemote.style.display = isLocal ? 'none' : '';
-      setDisabled(nameInput, !isLocal);
-      setDisabled(source, false);
+      setDisabled(nameInput, lockAll || !isLocal || !meteoCanEdit);
+      setDisabled(source, lockAll || !meteoCanEdit);
       if (!isLocal) {
         filterRemoteOptions(source, device ? device.value : '');
       } else if (source) {
@@ -368,7 +418,14 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       const val = type ? type.value : 'none';
       const showPin = (val === 'dht22');
       const showAddr = (val === 'ds18b20');
-      if (!isLocal) {
+      if (lockAll) {
+        if (pinCell) pinCell.style.display = '';
+        if (addrCell) addrCell.style.display = '';
+        setDisabled(type, true);
+        setDisabled(pinSelect, true);
+        setDisabled(addrInput, true);
+        setDisabled(addrSelect, true);
+      } else if (!isLocal) {
         if (pinCell) pinCell.style.display = 'none';
         if (addrCell) addrCell.style.display = 'none';
         setDisabled(type, true);
@@ -378,11 +435,12 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       } else {
         if (pinCell) pinCell.style.display = showPin ? '' : 'none';
         if (addrCell) addrCell.style.display = showAddr ? '' : 'none';
-        setDisabled(type, false);
-        setDisabled(pinSelect, !showPin);
-        setDisabled(addrInput, !showAddr);
-        setDisabled(addrSelect, !showAddr);
+        setDisabled(type, !meteoCanEdit);
+        setDisabled(pinSelect, !showPin || !meteoCanEdit);
+        setDisabled(addrInput, !showAddr || !meteoCanEdit);
+        setDisabled(addrSelect, !showAddr || !meteoCanEdit);
       }
+      setDisabled(device, lockAll || !meteoCanEdit);
     }
 
     function updateMeteoEnabled(tile, enabled) {
@@ -459,10 +517,10 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       return String(Math.round(v * 10) / 10);
     }
     function meteoStatusText(item) {
-      if (!item || !item.enabled) return 'выключен';
+      if (!item || !item.enabled) return '%METEO_STATUS_OFF_TEXT%';
       const hasData = !!item.has_temp || !!item.has_hum;
-      if (!hasData) return 'нет данных';
-      return item.ok ? 'ok' : 'ошибка';
+      if (!hasData) return '%METEO_STATUS_NODATA_TEXT%';
+      return item.ok ? '%METEO_STATUS_OK_TEXT%' : '%METEO_STATUS_ERR_TEXT%';
     }
     function applyMeteoTileState(tile, item) {
       if (!tile || !item) return;
@@ -475,7 +533,7 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       }
       const temp = tile.querySelector('.sensor-temp-value');
       if (temp) {
-        temp.textContent = (item.has_temp ? formatMeteoValue(item.temp) : '--') + ' C';
+        temp.textContent = (item.has_temp ? formatMeteoValue(item.temp) : '--') + ' °C';
       }
       const hum = tile.querySelector('.sensor-hum-value');
       if (hum) {
@@ -572,6 +630,7 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 
 

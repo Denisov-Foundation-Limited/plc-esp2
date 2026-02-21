@@ -79,7 +79,15 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
       background: #0b1220;
       color: var(--text);
     }
-    .row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }    .row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
     .actions { margin-top: 16px; }
     .btn {
       border: none;
@@ -288,6 +296,7 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 
 

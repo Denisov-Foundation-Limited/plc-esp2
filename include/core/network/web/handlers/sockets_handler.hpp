@@ -20,6 +20,8 @@ class SocketsHandler
 public:
     static void registerRoutes(WebInterface &web, AsyncWebServer &server)
     {
+        server.on("/sockets/ports_options", HTTP_GET,
+                  [&web](AsyncWebServerRequest *request) { handleSocketsPortsOptions(web, request); });
         server.on("/sockets/toggle", HTTP_POST,
                   [&web](AsyncWebServerRequest *request) { handleSocketsToggle(web, request); });
         server.on("/sockets/toggle", HTTP_GET,
@@ -81,12 +83,22 @@ public:
         page.reserve(page.length() + extra);
         page.replace("%SOCKETS%", stack_view ? web.listStackSocketsHtml_(node_id, (size_t)page_idx * page_size, page_size)
                                              : web.listSocketsHtml_(start, end));
+        page.replace("%SOCKETS_PAGE_TITLE%", WebUiRu::Sockets::kPageTitle);
+        page.replace("%SOCKETS_PAGE_PREV%", WebUiRu::Sockets::kPagePrev);
+        page.replace("%SOCKETS_PAGE_LABEL%", WebUiRu::Sockets::kPagePage);
+        page.replace("%SOCKETS_PAGE_NEXT%", WebUiRu::Sockets::kPageNext);
+        page.replace("%SOCKETS_ON_TEXT%", WebUiRu::Sockets::kText3);
+        page.replace("%SOCKETS_OFF_TEXT%", WebUiRu::Sockets::kText4);
         page.replace("%SOCKETS_PAGE%", String((unsigned)(page_idx + 1)));
         page.replace("%SOCKETS_PAGES%", String((unsigned)max_pages));
         if (stack_view)
         {
-            page.replace("%DINPUT_JSON%", web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput));
-            page.replace("%RELAY_JSON%", web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay));
+            const auto *pcache = web._stack_cache ? web._stack_cache->portsCache(node_id) : nullptr;
+            const String djson = web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput);
+            const String rjson = web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay);
+            (void)pcache;
+            page.replace("%DINPUT_JSON%", djson);
+            page.replace("%RELAY_JSON%", rjson);
             page.replace("%DINPUT_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput));
             page.replace("%RELAY_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay));
             page.replace("%SOCKETS_STATUS%", web.stackSocketsStatusText_(node_id));
@@ -484,6 +496,47 @@ public:
                                (unsigned)id, name, action.c_str());
         }
         web.sendText_(request, 200, "text/plain", state ? "on" : "off", set_cookie);
+    }
+
+    static void handleSocketsPortsOptions(WebInterface &web, AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Sockets, node_id))
+            return;
+        const bool stack_view = web.isStackSocketsView_(node_id);
+        if (stack_view)
+            web.requestStackPorts_(node_id);
+
+        const String djson = stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
+                                        : web.socketPortOptionsJson_(PortIO::PinType::DInput);
+        const String rjson = stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay)
+                                        : web.socketPortOptionsJson_(PortIO::PinType::Relay);
+        const String duse = stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput)
+                                       : web.globalUsedPortsJson_(PortIO::PinType::DInput);
+        const String ruse = stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
+                                       : web.globalUsedPortsJson_(PortIO::PinType::Relay);
+        const auto *pcache = stack_view && web._stack_cache ? web._stack_cache->portsCache(node_id) : nullptr;
+        const bool ready = !stack_view || (pcache && pcache->has_data);
+        const bool pending = stack_view && pcache && pcache->pending;
+        String body;
+        body.reserve(djson.length() + rjson.length() + duse.length() + ruse.length() + 128);
+        body += "{\"ready\":";
+        body += ready ? "true" : "false";
+        body += ",\"pending\":";
+        body += pending ? "true" : "false";
+        body += ",\"dinput\":";
+        body += djson;
+        body += ",\"relay\":";
+        body += rjson;
+        body += ",\"dinput_used\":";
+        body += duse;
+        body += ",\"relay_used\":";
+        body += ruse;
+        body += "}";
+        web.sendText_(request, 200, "application/json", body, set_cookie);
     }
 
     static void handleSocketsEnable(WebInterface &web, AsyncWebServerRequest *request)

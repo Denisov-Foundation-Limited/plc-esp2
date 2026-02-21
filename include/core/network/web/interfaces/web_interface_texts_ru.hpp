@@ -52,6 +52,10 @@ inline constexpr const char kText[] = "<div class=\"tile empty\"><strong>Кон�
 inline constexpr const char kText2[] = "Свет";
 inline constexpr const char kText3[] = "Включена";
 inline constexpr const char kText4[] = "Выключена";
+inline constexpr const char kPageTitle[] = "Свет";
+inline constexpr const char kPagePrev[] = "Назад";
+inline constexpr const char kPagePage[] = "Страница";
+inline constexpr const char kPageNext[] = "Вперёд";
 inline constexpr const char kText5[] = "<div class=\"form-row\"><label>Кнопка</label>";
 inline constexpr const char kText6[] = "<div class=\"form-row\"><label>Реле</label>";
 inline constexpr const char kText7[] = "<div class=\"form-row\"><label>Перекл.</label>";
@@ -63,12 +67,17 @@ namespace Meteo
 {
 inline constexpr const char kText[] = "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
 inline constexpr const char kText2[] = "<div class=\"tile empty\"><strong>Датчики отсутствуют</strong></div>";
+inline constexpr const char kPageTitle[] = "Метео";
+inline constexpr const char kPagePrev[] = "Назад";
+inline constexpr const char kPagePage[] = "Страница";
+inline constexpr const char kPageNext[] = "Вперёд";
 inline constexpr const char kC[] = "</div><div class=\"sensor-unit\">°C</div>";
 inline constexpr const char kText3[] = "Датчик";
 inline constexpr const char kText4[] = "Отключен";
 inline constexpr const char kText5[] = "Нет данных";
 inline constexpr const char kText6[] = "ОК";
 inline constexpr const char kText7[] = "Ошибка";
+inline constexpr const char kText14[] = "Доступно только на локальном устройстве";
 inline constexpr const char kText8[] = "<div class=\"form-row\"><label>Тип</label><div class=\"field mini\">";
 inline constexpr const char kText9[] = "<div class=\"form-row\"><label>Пин</label><div class=\"field mini\">";
 inline constexpr const char kText10[] = "<div class=\"form-row full\"><label>Адрес</label><div class=\"field\">";
@@ -76,7 +85,7 @@ inline constexpr const char kText11[] = "<div class=\"tile empty\"><strong>Ме�
 inline constexpr const char kText12[] = "<div class=\"form-row full\" style=\"margin-bottom:8px;\"><label>Устройство</label><select class=\"field meteo-device\">";
 inline constexpr const char kInputClassFieldNameMeteoNameType[] = "<div class=\"form-row name-local\"><label>Имя</label><input class=\"field name meteo-name\" type=\"text\" name=\"m";
 inline constexpr const char kSelectClassFieldNameMeteoSourceName[] = "<div class=\"form-row name-remote\" style=\"display:none;\"><label>Имя</label><select class=\"field name meteo-source\" name=\"m";
-inline constexpr const char kText13[] = "<span>Давность: ";
+inline constexpr const char kText13[] = "Давность: ";
 inline constexpr const char kSelectClassFieldMeteoTypeNameM[] = "<div class=\"form-row\"><label>Тип</label><select class=\"field meteo-type\" name=\"m";
 inline constexpr const char kSelectClassFieldMiniMeteoPinData[] = "<div class=\"form-row pin-cell\"><label>Пин</label><select class=\"field mini meteo-pin\" data-selected=\"";
 inline constexpr const char kSelectClassFieldAddrMeteoAddrName[] = "<div class=\"form-row addr-cell full\"><label>Адрес</label><select class=\"field addr meteo-addr\" name=\"m";
@@ -143,6 +152,10 @@ inline constexpr const char kText[] = "<div class=\"tile empty\"><strong>Кон�
 inline constexpr const char kText2[] = "Розетка";
 inline constexpr const char kText3[] = "Включена";
 inline constexpr const char kText4[] = "Выключена";
+inline constexpr const char kPageTitle[] = "Розетки";
+inline constexpr const char kPagePrev[] = "Назад";
+inline constexpr const char kPagePage[] = "Страница";
+inline constexpr const char kPageNext[] = "Вперёд";
 inline constexpr const char kText5[] = "<div class=\"form-row\"><label>Кнопка</label>";
 inline constexpr const char kText6[] = "<div class=\"form-row\"><label>Реле</label>";
 inline constexpr const char kText7[] = "<div class=\"form-row\"><label>Перекл.</label>";
@@ -197,6 +210,14 @@ inline constexpr const char kText14[] = "<div class=\"status-line\"><span class=
 inline constexpr const char kText15[] = "</div><div class=\"temp-pill target\">Цель: <span class=\"temp-value\">";
 inline constexpr const char kNum[] = "</div><div><div class=\"tile-head\"><div><strong>Термо #";
 inline constexpr const char kText16[] = " <span class=\"badge\">выкл</span>";
+inline constexpr const char kLabelPowerBadge[] = "Питание: ";
+inline constexpr const char kLabelModeBadge[] = "Режим: ";
+inline constexpr const char kLabelSensorBadge[] = "Датчик: ";
+inline constexpr const char kLabelActive[] = "Активн.";
+inline constexpr const char kLabelStatus[] = "Статус";
+inline constexpr const char kLabelMode[] = "Режим";
+inline constexpr const char kLabelTarget[] = "Цель";
+inline constexpr const char kLabelHyst[] = "Гист.";
 inline constexpr const char kInputTypeCheckboxClassThermoPowerData[] = "><div class=\"form-grid\"><div class=\"form-row\"><label>Активн.</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
 inline constexpr const char kSelectClassFieldMiniNameT[] = "<div class=\"form-row full\"><label>Датчик</label><select class=\"field mini\" name=\"t";
 inline constexpr const char kSelectClassFieldMiniNameT2[] = "</select></div><div class=\"form-row\"><label>Режим</label><select class=\"field mini\" name=\"t";

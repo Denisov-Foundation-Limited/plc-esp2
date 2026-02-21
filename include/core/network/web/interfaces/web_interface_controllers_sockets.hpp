@@ -86,7 +86,7 @@ public:
             web.appendHtmlEscaped_(items, cfg.name.c_str());
             items += "\"";
             if (!can_edit)
-                items += " disabled";
+                items += " readonly";
             items += ">";
             items += "<div class=\"status-line\"><span class=\"status-dot ";
             items += on ? "status-on" : "status-off";
@@ -235,7 +235,7 @@ public:
                 ++visible_idx;
                 const bool can_edit = web.webSessionIsAdmin_();
                 const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id);
-                const bool on = cfg.state;
+                const bool on = cfg.enabled && cfg.state;
                 items += "<div class=\"tile";
                 if (!cfg.enabled)
                     items += " disabled";
@@ -278,7 +278,7 @@ public:
                 web.appendHtmlEscaped_(items, cfg.name);
                 items += "\"";
                 if (!can_edit)
-                    items += " disabled";
+                    items += " readonly";
                 items += ">";
                 items += "<div class=\"status-line\"><span class=\"status-dot ";
                 items += on ? "status-on" : "status-off";
@@ -440,7 +440,7 @@ public:
                 web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
                 return;
             }
-            web.sendText_(request, 200, "text/plain", item->state ? "on" : "off", set_cookie);
+            web.sendText_(request, 200, "text/plain", (item->enabled && item->state) ? "on" : "off", set_cookie);
             return;
         }
     

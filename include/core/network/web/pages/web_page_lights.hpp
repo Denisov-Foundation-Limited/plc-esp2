@@ -17,7 +17,7 @@ static const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Свет</title>
+  <title>%LIGHTS_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -66,7 +66,15 @@ static const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
       background: #0b1220;
       color: var(--text);
     }
-    .btn {
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }    .btn {
       border: none;
       padding: 10px 16px;
       border-radius: 10px;
@@ -234,6 +242,15 @@ static const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
     }
     input:checked + .track { background: #22c55e; }
     input:checked + .track .knob { transform: translateX(20px); }
+    input:disabled + .track {
+      background: #475569;
+      border-color: #334155;
+      cursor: not-allowed;
+    }
+    input:disabled + .track .knob {
+      background: #1f2937;
+      box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.7);
+    }
     .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
     table { min-width: 720px; }
         @media (max-width: 900px) {
@@ -251,17 +268,18 @@ static const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Свет</h1>
+      <h1>%LIGHTS_PAGE_TITLE%</h1>
       <div class="status">%LIGHTS_STATUS%</div>
       %LIGHTS_DEVICE_SELECT%
       <div class="pagination" %LIGHTS_PAGINATION_STYLE%>
-        <button type="button" class="btn btn-sm" id="lights-prev">Назад</button>
-        <span class="page-info">Страница</span>
+        <button type="button" class="btn btn-sm" id="lights-prev">%LIGHTS_PAGE_PREV%</button>
+        <span class="page-info">%LIGHTS_PAGE_LABEL%</span>
         <select id="lights-page" class="field mini"></select>
         <span class="page-info">/ %LIGHTS_PAGES%</span>
-        <button type="button" class="btn btn-sm" id="lights-next">Вперёд</button>
+        <button type="button" class="btn btn-sm" id="lights-next">%LIGHTS_PAGE_NEXT%</button>
       </div>
       <form method="POST" action="/lights" id="lights-form">
+        %LIGHTS_FORM_HIDDEN%
         <div class="grid">
           %LIGHTS%
         </div>
@@ -396,7 +414,7 @@ static const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
         dot.classList.toggle('status-off', !isOn);
       }
       if (text) {
-        text.textContent = isOn ? 'Включена' : 'Выключена';
+        text.textContent = isOn ? '%LIGHTS_ON_TEXT%' : '%LIGHTS_OFF_TEXT%';
       }
     }
     function updateSocketEnabled(tile, enabled) {
@@ -544,6 +562,8 @@ static const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
+
 
 
 

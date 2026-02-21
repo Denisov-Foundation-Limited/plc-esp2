@@ -861,8 +861,8 @@ private:
     {
         if (action == "get_state")
         {
-            static constexpr size_t kDefaultChunk = 3;
-            static constexpr size_t kMaxChunk = 16;
+            static constexpr size_t kDefaultChunk = 5;
+            static constexpr size_t kMaxChunk = 8;
             const bool has_ids = params.is<JsonObjectConst>() && params["ids"].is<JsonArrayConst>();
             const JsonArrayConst ids = has_ids ? params["ids"].as<JsonArrayConst>() : JsonArrayConst();
             size_t chunk = kDefaultChunk;
@@ -926,25 +926,75 @@ private:
                 }
                 else
                 {
+                    uint8_t relay_ids[IoStack::PORT_COUNT] = {};
+                    uint8_t dinput_ids[IoStack::PORT_COUNT] = {};
+                    uint8_t other_ids[IoStack::PORT_COUNT] = {};
+                    size_t relay_n = 0;
+                    size_t dinput_n = 0;
+                    size_t other_n = 0;
                     for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
                     {
                         const auto &p = ActiveBoardProfile::PORTS[i];
                         if (p.caps == Cap::None)
                             continue;
+                        if (p.type == PortIO::PinType::Relay)
+                            relay_ids[relay_n++] = i;
+                        else if (p.type == PortIO::PinType::DInput || p.type == PortIO::PinType::Button)
+                            dinput_ids[dinput_n++] = i;
+                        else
+                            other_ids[other_n++] = i;
+                    }
+                    // Interleave relay/dinput first so first chunks contain both selector types.
+                    size_t ri = 0;
+                    size_t di = 0;
+                    while ((ri < relay_n || di < dinput_n) && pos < to)
+                    {
+                        if (ri < relay_n)
+                        {
+                            const uint8_t id = relay_ids[ri++];
+                            if (pos >= from && pos < to)
+                            {
+                                JsonObject o = arr.add<JsonObject>();
+                                fillPortItem_(o, id, _io.read(id));
+                            }
+                            ++pos;
+                            if (pos >= to)
+                                break;
+                        }
+                        if (di < dinput_n)
+                        {
+                            const uint8_t id = dinput_ids[di++];
+                            if (pos >= from && pos < to)
+                            {
+                                JsonObject o = arr.add<JsonObject>();
+                                fillPortItem_(o, id, _io.read(id));
+                            }
+                            ++pos;
+                            if (pos >= to)
+                                break;
+                        }
+                    }
+                    for (size_t oi = 0; oi < other_n && pos < to; ++oi)
+                    {
+                        const uint8_t id = other_ids[oi];
                         if (pos >= from && pos < to)
                         {
                             JsonObject o = arr.add<JsonObject>();
-                            fillPortItem_(o, i, _io.read(i));
+                            fillPortItem_(o, id, _io.read(id));
                         }
                         ++pos;
-                        if (pos >= to)
-                            break;
                     }
                 }
                 doc["part"] = (unsigned)(part + 1);
                 doc["parts"] = (unsigned)parts;
                 doc["done"] = (part + 1) >= parts;
                 sendAck_(cmd_id, doc);
+                // Prevent flooding the TCP writer with a long multipart burst; this improves delivery stability.
+                if ((part + 1) < parts)
+                {
+                    delay(1);
+                    yield();
+                }
             }
             return;
         }

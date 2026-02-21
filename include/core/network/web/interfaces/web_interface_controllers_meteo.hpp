@@ -187,14 +187,10 @@ public:
                 if (has_data)
                     status_class = cfg.ok ? "status-ok" : "status-err";
     
-                String type_label = cfg.type;
-                type_label.toLowerCase();
-                if (type_label == "dht22")
-                    type_label = "DHT22";
-                else if (type_label == "ds18b20")
-                    type_label = "DS18B20";
-                else if (type_label.length() == 0)
-                    type_label = "none";
+                String type_value = cfg.type;
+                type_value.toLowerCase();
+                if (type_value != "dht22" && type_value != "ds18b20")
+                    type_value = "none";
     
                 items += "<div class=\"tile";
                 if (!cfg.enabled)
@@ -233,33 +229,81 @@ public:
                     web.appendHtmlEscaped_(items, cfg.name);
                 else
                     items += WebUiRu::Meteo::kText3;
-                items += "</strong></div>";
-                items += "<div class=\"status-line\"><span class=\"status-dot sensor-status-dot ";
-                items += status_class;
-                items += "\"></span><span class=\"status-text sensor-status-text\">";
-                if (!cfg.enabled)
-                    items += WebUiRu::Meteo::kText4;
-                else if (!has_data)
-                    items += WebUiRu::Meteo::kText5;
+                items += "</strong>";
+                items += "<label class=\"switch\"><input type=\"checkbox\" class=\"meteo-enable\" name=\"m";
+                items += String((unsigned)cfg.id);
+                items += "_en\"";
+                if (cfg.enabled)
+                    items += " checked";
+                items += " disabled><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+                items += WebUiRu::Meteo::kText12;
+                items += "<option value=\"local\" selected>local</option></select></div>";
+                items += WebUiRu::Meteo::kInputClassFieldNameMeteoNameType;
+                items += String((unsigned)cfg.id);
+                items += "_name\" value=\"";
+                if (cfg.name[0])
+                    web.appendHtmlEscaped_(items, cfg.name);
                 else
-                    items += cfg.ok ? WebUiRu::Meteo::kText6 : WebUiRu::Meteo::kText7;
-                items += "</span></div>";
+                    items += WebUiRu::Meteo::kText3;
+                items += "\" readonly></div>";
                 items += "<div class=\"form-grid\">";
-                items += WebUiRu::Meteo::kText8;
-                web.appendHtmlEscaped_(items, type_label.c_str());
-                items += "</div></div>";
-                items += WebUiRu::Meteo::kText9;
+                items += WebUiRu::Meteo::kSelectClassFieldMeteoTypeNameM;
+                items += String((unsigned)cfg.id);
+                items += "_type\" disabled>";
+                items += "<option value=\"none\"";
+                if (type_value == "none")
+                    items += " selected";
+                items += ">none</option>";
+                items += "<option value=\"ds18b20\"";
+                if (type_value == "ds18b20")
+                    items += " selected";
+                items += ">ds18b20</option>";
+                items += "<option value=\"dht22\"";
+                if (type_value == "dht22")
+                    items += " selected";
+                items += ">dht22</option>";
+                items += "</select></div>";
+                items += WebUiRu::Meteo::kSelectClassFieldMiniMeteoPinData;
                 if (cfg.pin >= 0)
                     items += String(cfg.pin);
+                items += "\" name=\"m";
+                items += String((unsigned)cfg.id);
+                items += "_pin\" disabled>";
+                if (cfg.pin >= 0)
+                {
+                    items += "<option value=\"";
+                    items += String(cfg.pin);
+                    items += "\" selected>";
+                    items += String(cfg.pin);
+                    items += "</option>";
+                }
                 else
-                    items += "--";
-                items += "</div></div>";
-                items += WebUiRu::Meteo::kText10;
+                {
+                    items += "<option value=\"\" selected>-</option>";
+                }
+                items += "</select></div>";
+                items += WebUiRu::Meteo::kSelectClassFieldAddrMeteoAddrName;
+                items += String((unsigned)cfg.id);
+                items += "_addr\" disabled>";
                 if (cfg.addr[0])
+                {
+                    items += "<option value=\"";
                     web.appendHtmlEscaped_(items, cfg.addr);
+                    items += "\" selected>";
+                    web.appendHtmlEscaped_(items, cfg.addr);
+                    items += "</option>";
+                }
                 else
-                    items += "--";
+                {
+                    items += "<option value=\"\" selected>-</option>";
+                }
                 items += "</div></div>";
+                items += "<div class=\"status-line\"><span class=\"status-dot sensor-status-dot ";
+                items += status_class;
+                items += "\"></span><span>";
+                items += WebUiRu::Meteo::kText13;
+                items += "-";
+                items += "</span></div>";
                 items += "</div>";
                 items += "</div></div>";
                 ++rendered;
@@ -321,6 +365,7 @@ public:
     
         auto appendRow = [&](const MeteoController::SensorConfig &cfg, const MeteoController::SensorState &st,
                              bool enabled) {
+            const bool can_edit = web.webSessionIsAdmin_();
             const bool has_read = st.last_read_ms != 0;
             char temp_buf[12] = {};
             char hum_buf[12] = {};
@@ -420,6 +465,8 @@ public:
             items += "_en\"";
             if (enabled)
                 items += " checked";
+            if (!can_edit)
+                items += " disabled";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
             items += WebUiRu::Meteo::kText12;
             items += web.meteoRemoteNodeOptionsHtml_(cfg.source_node_id);
@@ -428,7 +475,10 @@ public:
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
             web.appendHtmlEscaped_(items, cfg.name.c_str());
-            items += "\"></div>";
+            items += "\"";
+            if (!can_edit)
+                items += " readonly";
+            items += "></div>";
             items += WebUiRu::Meteo::kSelectClassFieldNameMeteoSourceName;
             items += String((unsigned)cfg.id);
             items += "_src\">";
@@ -440,15 +490,13 @@ public:
                 web.appendHtmlEscaped_(items, remote_label.c_str());
                 items += "</div>";
             }
-            items += "<div class=\"status-line\">";
-            items += ok;
-            items += WebUiRu::Meteo::kText13;
-            items += age;
-            items += "</span></div>";
             items += "<div class=\"form-grid\">";
             items += WebUiRu::Meteo::kSelectClassFieldMeteoTypeNameM;
             items += String((unsigned)cfg.id);
-            items += "_type\">";
+            items += "_type\"";
+            if (!can_edit)
+                items += " disabled";
+            items += ">";
             appendTypeOption("none", "none", ui_type == MeteoController::SensorType::None);
             appendTypeOption("ds18b20", "ds18b20", ui_type == MeteoController::SensorType::Ds18b20);
             appendTypeOption("dht22", "dht22", ui_type == MeteoController::SensorType::Dht22);
@@ -460,7 +508,10 @@ public:
             items += "_pin\"></select></div>";
             items += WebUiRu::Meteo::kSelectClassFieldAddrMeteoAddrName;
             items += String((unsigned)cfg.id);
-            items += "_addr\">";
+            items += "_addr\"";
+            if (!can_edit)
+                items += " disabled";
+            items += ">";
             items += "<option value=\"\">-</option>";
             bool addr_found = false;
             for (size_t i = 0; i < ds18_count; ++i)
@@ -498,6 +549,12 @@ public:
             }
             items += "</select></div>";
             items += "</div>";
+            items += "<div class=\"status-line\">";
+            items += ok;
+            items += "<span>";
+            items += WebUiRu::Meteo::kText13;
+            items += age;
+            items += "</span></div>";
             items += "</div></div>";
         };
     

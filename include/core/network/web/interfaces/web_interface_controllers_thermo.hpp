@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #ifndef WEB_INTERFACE_CLASS_CONTEXT
 class WebInterface;
@@ -168,6 +168,7 @@ public:
                     continue;
                 }
                 ++visible_idx;
+                const bool can_admin = web.webSessionIsAdmin_();
                 const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, cfg.id, node_id);
                 const bool mode_off = strcmp(cfg.mode, "off") == 0;
                 const bool mode_heat = strcmp(cfg.mode, "heat") == 0;
@@ -192,7 +193,6 @@ public:
                     state_label = WebUiRu::Thermo::kText6;
                     state_class = "status-cool";
                 }
-    
                 bool show_heat = true;
                 bool show_cool = true;
                 String heat_class = "icon heat ";
@@ -221,7 +221,6 @@ public:
                 const char *sensor_label = WebUiRu::Thermo::kText8;
                 const char *sensor_suffix = "";
                 char sensor_buf[16] = {};
-                String sensor_name_label = "--";
                 if (cfg.sensor != 0)
                 {
                     bool found = false;
@@ -233,10 +232,6 @@ public:
                             if (ms.id == cfg.sensor)
                             {
                                 found = true;
-                                if (ms.name[0])
-                                    sensor_name_label = String(ms.name);
-                                else
-                                    sensor_name_label = String("#") + String((unsigned)cfg.sensor);
                                 if (ms.has_temp)
                                 {
                                     dtostrf(ms.temp_c, 0, 1, sensor_buf);
@@ -254,7 +249,6 @@ public:
                     if (!found && cfg.sensor != 0)
                     {
                         sensor_label = "--";
-                        sensor_name_label = String("#") + String((unsigned)cfg.sensor);
                     }
                 }
     
@@ -264,8 +258,9 @@ public:
                 items += WebUiRu::Thermo::kText9;
                 items += sensor_label;
                 items += sensor_suffix;
-                items += WebUiRu::Thermo::kText10;
-                items += String(cfg.target, 1);
+                items += "</span>";
+                items += WebUiRu::Thermo::kText15;
+                items += String((int)(cfg.target + 0.5f));
                 items += "&deg;C</span></div>";
                 if (show_heat)
                 {
@@ -280,7 +275,46 @@ public:
                     items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"18\" y=\"28\" width=\"84\" height=\"46\" rx=\"10\"/><line x1=\"28\" y1=\"44\" x2=\"92\" y2=\"44\"/><line x1=\"28\" y1=\"56\" x2=\"92\" y2=\"56\"/><line x1=\"40\" y1=\"78\" x2=\"34\" y2=\"92\"/><line x1=\"60\" y1=\"78\" x2=\"60\" y2=\"94\"/><line x1=\"80\" y1=\"78\" x2=\"86\" y2=\"92\"/></svg>";
                 }
                 items += "</div>";
-                items += "<div class=\"status-line\"><span class=\"status-dot ";
+                items += WebUiRu::Thermo::kNum;
+                items += String((unsigned)cfg.id);
+                items += "</strong> <span class=\"badge\">";
+                items += mode_label;
+                items += "</span>";
+                if (!cfg.enabled)
+                    items += WebUiRu::Thermo::kText16;
+                items += "</div><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-enable\" name=\"t";
+                items += String((unsigned)cfg.id);
+                items += "_en\"";
+                if (cfg.enabled)
+                    items += " checked";
+                if (!(can_admin && can_control))
+                    items += " disabled";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+                items += "</div>";
+                items += "<input class=\"field name\" type=\"text\" name=\"t";
+                items += String((unsigned)cfg.id);
+                items += "_name\" value=\"";
+                if (cfg.name[0])
+                    web.appendHtmlEscaped_(items, cfg.name);
+                else
+                    items += WebUiRu::Thermo::kText11;
+                items += "\"";
+                if (!(can_admin && can_control))
+                    items += " readonly";
+                items += ">";
+                items += "<div class=\"form-grid\"><div class=\"form-row\"><label>";
+                items += WebUiRu::Thermo::kLabelActive;
+                items += "</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
+                items += String((unsigned)cfg.id);
+                items += "_power\"";
+                if (cfg.power_on)
+                    items += " checked";
+                if (!cfg.enabled || !can_control)
+                    items += " disabled";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+                items += "<div class=\"form-row\"><label>";
+                items += WebUiRu::Thermo::kLabelStatus;
+                items += "</label><div class=\"status-line\" style=\"margin:0;\"><span class=\"status-dot ";
                 items += state_class;
                 items += "\"></span><span><span class=\"status-value ";
                 if (strcmp(state_class, "status-heat") == 0)
@@ -292,23 +326,46 @@ public:
                 items += "\">";
                 items += state_label;
                 items += "</span></span></div></div>";
-                items += "<div><div class=\"tile-head\"><strong>";
-                if (cfg.name[0])
-                    web.appendHtmlEscaped_(items, cfg.name);
-                else
-                    items += WebUiRu::Thermo::kText11;
-                items += "</strong><span class=\"badge\">ID ";
+                items += "<input type=\"hidden\" name=\"t";
                 items += String((unsigned)cfg.id);
-                items += "</span></div>";
-                items += "<div class=\"status-line\"><span class=\"badge\">Питание: ";
-                items += cfg.power_on ? "on" : "off";
-                items += "</span><span class=\"badge\">Режим: ";
-                items += mode_label;
-                items += "</span><span class=\"badge\">Датчик: ";
-                web.appendHtmlEscaped_(items, sensor_name_label.c_str());
-                items += "</span></div>";
-                items += "<div class=\"form-grid\">";
-                items += "<div class=\"form-row\"><label>Режим</label><select class=\"field mini\" name=\"t";
+                items += "_en_force\" value=\"\">";
+                items += WebUiRu::Thermo::kSelectClassFieldMiniNameT;
+                items += String((unsigned)cfg.id);
+                items += "_sensor\"";
+                if (!can_admin || !can_control)
+                    items += " disabled";
+                items += ">";
+                bool selected_sensor_present = (cfg.sensor == 0);
+                if (meteo_cache && meteo_cache->has_data)
+                {
+                    for (size_t s = 0; s < meteo_cache->item_count; ++s)
+                    {
+                        const auto &ms = meteo_cache->items[s];
+                        items += "<option value=\"";
+                        items += String((unsigned)ms.id);
+                        items += "\"";
+                        if (ms.id == cfg.sensor)
+                        {
+                            items += " selected";
+                            selected_sensor_present = true;
+                        }
+                        items += ">";
+                        if (ms.name[0])
+                            web.appendHtmlEscaped_(items, ms.name);
+                        else
+                            items += String("#") + String((unsigned)ms.id);
+                        items += "</option>";
+                    }
+                }
+                if (!selected_sensor_present && cfg.sensor != 0)
+                {
+                    items += "<option value=\"";
+                    items += String((unsigned)cfg.sensor);
+                    items += "\" selected>#";
+                    items += String((unsigned)cfg.sensor);
+                    items += "</option>";
+                }
+                items += WebUiRu::Thermo::kSelectClassFieldMiniNameT2;
                 items += String((unsigned)cfg.id);
                 items += "_mode\"";
                 if (!can_control)
@@ -325,36 +382,50 @@ public:
                 items += ">cool only</option><option value=\"auto\"";
                 if (!mode_off && !mode_heat && !mode_cool)
                     items += " selected";
-                items += ">auto</option></select></div>";
-                items += "<div class=\"form-row\"><label>Цель</label><input class=\"field temp\" type=\"number\" step=\"1\" name=\"t";
+                items += WebUiRu::Thermo::kAutoInputClassFieldTempTypeNumber;
                 items += String((unsigned)cfg.id);
                 items += "_target\" value=\"";
                 items += String((int)(cfg.target + 0.5f));
                 items += "\"";
                 if (!can_control)
                     items += " disabled";
-                items += "></div>";
-                items += "<div class=\"form-row\"><label>Гист.</label><input class=\"field temp\" type=\"number\" min=\"1\" step=\"1\" name=\"t";
+                items += WebUiRu::Thermo::kInputClassFieldTempTypeNumberStep;
                 items += String((unsigned)cfg.id);
                 items += "_hyst\" value=\"";
                 items += String((int)(cfg.hyst + 0.5f));
                 items += "\"";
                 if (!can_control)
                     items += " disabled";
-                items += "></div>";
-                items += "</div>";
-                items += "<div class=\"form-row\" style=\"margin-top:8px;\"><label>Active</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
+                items += WebUiRu::Thermo::kSelectClassFieldMiniThermoSelectData;
+                if (cfg.heat != ThermoController::kInvalidPort)
+                    items += String((unsigned)cfg.heat);
+                items += "\" name=\"t";
                 items += String((unsigned)cfg.id);
-                items += "_power\"";
-                if (cfg.power_on)
-                    items += " checked";
-                if (!cfg.enabled || !can_control)
+                items += "_heat\"";
+                if (!can_admin || !can_control)
                     items += " disabled";
-                items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"t";
+                items += WebUiRu::Thermo::kSelectClassFieldMiniThermoSelectData2;
+                if (cfg.cool != ThermoController::kInvalidPort)
+                    items += String((unsigned)cfg.cool);
+                items += "\" name=\"t";
+                items += String((unsigned)cfg.id);
+                items += "_cool\"";
+                if (!can_admin || !can_control)
+                    items += " disabled";
+                items += WebUiRu::Thermo::kSelectClassFieldMiniThermoSelectData3;
+                if (cfg.button != ThermoController::kInvalidPort)
+                    items += String((unsigned)cfg.button);
+                items += "\" name=\"t";
+                items += String((unsigned)cfg.id);
+                items += "_button\"";
+                if (!can_admin || !can_control)
+                    items += " disabled";
+                items += "></select></div></div>";
+                items += "<input type=\"hidden\" name=\"t";
                 items += String((unsigned)cfg.id);
                 items += "_power\" value=\"";
                 items += cfg.power_on ? "on" : "off";
-                items += "\"></div>";
+                items += "\">";
                 items += "</div></div>";
                 ++rendered;
             }
@@ -394,7 +465,7 @@ public:
     
         auto appendTile = [&](const ThermoController::DeviceConfig &cfg, const ThermoController::DeviceState &st,
                               bool enabled) {
-            const bool can_edit = web.webSessionIsAdmin_();
+            const bool can_admin = web.webSessionIsAdmin_();
             const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, cfg.id);
             const MeteoController::SensorState *sensor_st = nullptr;
             bool remote_has_temp = false;
@@ -505,7 +576,6 @@ public:
                 state_label = WebUiRu::Thermo::kText6;
                 state_class = "status-cool";
             }
-    
             bool show_heat = true;
             bool show_cool = true;
             String heat_class = "icon heat ";
@@ -532,7 +602,7 @@ public:
             }
     
             items += "<div class=\"tile";
-            if (!enabled || !can_control)
+            if (!enabled)
                 items += " disabled";
             items += WebUiRu::Thermo::kText9;
             items += sensor_label;
@@ -566,16 +636,21 @@ public:
             items += "_en\"";
             if (enabled)
                 items += " checked";
-            if (!can_edit)
+            if (!(can_admin && can_control))
                 items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div><input class=\"field name\" type=\"text\" name=\"t";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "</div>";
+            items += "<input class=\"field name\" type=\"text\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
             web.appendHtmlEscaped_(items, cfg.name.c_str());
             items += "\"";
-            if (!can_edit)
-                items += " disabled";
-            items += WebUiRu::Thermo::kInputTypeCheckboxClassThermoPowerData;
+            if (!(can_admin && can_control))
+                items += " readonly";
+            items += ">";
+            items += "<div class=\"form-grid\"><div class=\"form-row\"><label>";
+            items += WebUiRu::Thermo::kLabelActive;
+            items += "</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
             items += String((unsigned)cfg.id);
             items += "_power\"";
             const bool ui_power_on = enabled ? st.power_on : false;
@@ -583,10 +658,12 @@ public:
                 items += " checked";
             if (!enabled || !can_control)
                 items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
-            items += "<span class=\"status-dot ";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+            items += "<div class=\"form-row\"><label>";
+            items += WebUiRu::Thermo::kLabelStatus;
+            items += "</label><div class=\"status-line\" style=\"margin:0;\"><span class=\"status-dot ";
             items += state_class;
-            items += "\"></span><span class=\"status-value ";
+            items += "\"></span><span><span class=\"status-value ";
             if (strcmp(state_class, "status-heat") == 0)
                 items += "status-text-heat";
             else if (strcmp(state_class, "status-cool") == 0)
@@ -595,20 +672,21 @@ public:
                 items += "status-text-idle";
             items += "\">";
             items += state_label;
-            items += "</span></div><input type=\"hidden\" name=\"t";
+            items += "</span></span></div></div>";
+            items += "<input type=\"hidden\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_en_force\" value=\"\">";
             items += WebUiRu::Thermo::kSelectClassFieldMiniNameT;
             items += String((unsigned)cfg.id);
             items += "_sensor\"";
-            if (!can_edit)
+            if (!can_admin || !can_control)
                 items += " disabled";
             items += ">";
             items += web.meteoSensorOptionsHtml_(cfg.sensor_id, cfg.sensor_node_id, sensor_used, remote_used, remote_used_count);
             items += WebUiRu::Thermo::kSelectClassFieldMiniNameT2;
             items += String((unsigned)cfg.id);
             items += "_mode\"";
-            if (!can_edit)
+            if (!can_control)
                 items += " disabled";
             items += "><option value=\"off\"";
             if (cfg.mode == ThermoController::Mode::Off)
@@ -627,14 +705,14 @@ public:
             items += "_target\" value=\"";
             items += String((int)(cfg.target_c + 0.5f));
             items += "\"";
-            if (!can_edit)
+            if (!can_control)
                 items += " disabled";
             items += WebUiRu::Thermo::kInputClassFieldTempTypeNumberStep;
             items += String((unsigned)cfg.id);
             items += "_hyst\" value=\"";
             items += String((int)(cfg.hysteresis + 0.5f));
             items += "\"";
-            if (!can_edit)
+            if (!can_control)
                 items += " disabled";
             items += WebUiRu::Thermo::kSelectClassFieldMiniThermoSelectData;
             if (cfg.heat_port != ThermoController::kInvalidPort)
@@ -642,7 +720,7 @@ public:
             items += "\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_heat\"";
-            if (!can_edit)
+            if (!can_admin || !can_control)
                 items += " disabled";
             items += WebUiRu::Thermo::kSelectClassFieldMiniThermoSelectData2;
             if (cfg.cool_port != ThermoController::kInvalidPort)
@@ -650,7 +728,7 @@ public:
             items += "\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_cool\"";
-            if (!can_edit)
+            if (!can_admin || !can_control)
                 items += " disabled";
             items += WebUiRu::Thermo::kSelectClassFieldMiniThermoSelectData3;
             if (cfg.button_port != ThermoController::kInvalidPort)
@@ -658,7 +736,7 @@ public:
             items += "\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_button\"";
-            if (!can_edit)
+            if (!can_admin || !can_control)
                 items += " disabled";
             items += "></select></div></div>";
             items += "<input type=\"hidden\" name=\"t";

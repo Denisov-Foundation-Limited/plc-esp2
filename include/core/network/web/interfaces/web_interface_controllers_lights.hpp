@@ -134,7 +134,7 @@ public:
                 web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
                 return;
             }
-            web.sendText_(request, 200, "text/plain", item->state ? "on" : "off", set_cookie);
+            web.sendText_(request, 200, "text/plain", (item->enabled && item->state) ? "on" : "off", set_cookie);
             return;
         }
     
@@ -242,7 +242,7 @@ public:
             web.appendHtmlEscaped_(items, cfg.name.c_str());
             items += "\"";
             if (!can_edit)
-                items += " disabled";
+                items += " readonly";
             items += ">";
             items += "<div class=\"status-line\"><span class=\"status-dot ";
             items += on ? "status-on" : "status-off";
@@ -389,9 +389,13 @@ public:
                     continue;
                 }
                 ++visible_idx;
+                const bool can_edit = web.webSessionIsAdmin_();
                 const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Lights, cfg.id, node_id);
-                const bool on = cfg.state;
-                items += "<div class=\"tile\">";
+                const bool on = cfg.enabled && cfg.state;
+                items += "<div class=\"tile";
+                if (!cfg.enabled)
+                    items += " disabled";
+                items += "\">";
                 items += "<div class=\"sock-visual\">";
                 items += "<span class=\"badge\">#";
                 items += String((unsigned)cfg.id);
@@ -403,27 +407,72 @@ public:
                 items += "</svg>";
                 items += "</div>";
                 items += "<div>";
-                items += "<div class=\"tile-head\"><strong>";
+                items += "<div class=\"tile-head\">";
+                items += "<strong>";
                 if (cfg.name[0])
                     web.appendHtmlEscaped_(items, cfg.name);
                 else
                     items += WebUiRu::Lights::kText2;
-                items += "</strong></div>";
+                items += "</strong>";
+                items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-enable\" data-id=\"";
+                items += String((unsigned)cfg.id);
+                items += "\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_en\"";
+                if (cfg.enabled)
+                    items += " checked";
+                if (!can_edit)
+                    items += " disabled";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+                items += "</div>";
+                items += "<input class=\"field name\" type=\"text\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_name\" value=\"";
+                web.appendHtmlEscaped_(items, cfg.name);
+                items += "\"";
+                if (!can_edit)
+                    items += " readonly";
+                items += ">";
                 items += "<div class=\"status-line\"><span class=\"status-dot ";
                 items += on ? "status-on" : "status-off";
                 items += "\"></span>";
                 items += "<span class=\"status-text\">";
                 items += on ? WebUiRu::Lights::kText3 : WebUiRu::Lights::kText4;
                 items += "</span></div>";
+                items += "<div class=\"form-grid\">";
+                items += WebUiRu::Lights::kText5;
+                items += "<select class=\"field mini socket-select\" data-type=\"dinput\" data-selected=\"";
+                if (cfg.button_port != SocketController::kInvalidPort)
+                    items += String((unsigned)cfg.button_port);
+                items += "\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_btn\"";
+                if (!can_edit)
+                    items += " disabled";
+                items += "></select></div>";
+                items += WebUiRu::Lights::kText6;
+                items += "<select class=\"field mini socket-select\" data-type=\"relay\" data-selected=\"";
+                if (cfg.relay_port != SocketController::kInvalidPort)
+                    items += String((unsigned)cfg.relay_port);
+                items += "\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_relay\"";
+                if (!can_edit)
+                    items += " disabled";
+                items += "></select></div>";
                 items += WebUiRu::Lights::kText7;
                 items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-toggle\" data-id=\"";
                 items += String((unsigned)cfg.id);
                 items += "\"";
                 if (on)
                     items += " checked";
-                if (!can_control)
+                if (!cfg.enabled || !can_control)
                     items += " disabled";
                 items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+                items += "</div>";
+                items += "<input type=\"hidden\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_action\" value=\"\">";
                 items += "</div></div>";
                 ++rendered;
             }

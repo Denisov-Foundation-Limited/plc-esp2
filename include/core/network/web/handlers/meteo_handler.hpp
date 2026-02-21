@@ -119,11 +119,13 @@ public:
                 pagination += String((unsigned long)node_id);
                 pagination += "&page=";
                 pagination += String((unsigned)page_idx);
-                pagination += "\">Назад</a>";
+                pagination += "\">";
+                pagination += WebUiRu::Meteo::kPagePrev;
+                pagination += "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Назад</span>";
-            pagination += "<span class=\"page-info\">Страница ";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Meteo::kPagePrev + "</span>";
+            pagination += String("<span class=\"page-info\">") + WebUiRu::Meteo::kPagePage + " ";
             pagination += String((unsigned)(page_idx + 1));
             pagination += " / ";
             pagination += String((unsigned)max_pages);
@@ -134,10 +136,12 @@ public:
                 pagination += String((unsigned long)node_id);
                 pagination += "&page=";
                 pagination += String((unsigned)(page_idx + 2u));
-                pagination += "\">Вперёд</a>";
+                pagination += "\">";
+                pagination += WebUiRu::Meteo::kPageNext;
+                pagination += "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Meteo::kPageNext + "</span>";
             pagination += "</div>";
         }
         if (!stack_view && max_pages > 1)
@@ -148,11 +152,13 @@ public:
             {
                 pagination += "<a class=\"page-btn\" href=\"/meteo?page=";
                 pagination += String((unsigned)page_idx);
-                pagination += "\">Назад</a>";
+                pagination += "\">";
+                pagination += WebUiRu::Meteo::kPagePrev;
+                pagination += "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Назад</span>";
-            pagination += "<span class=\"page-info\">Страница ";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Meteo::kPagePrev + "</span>";
+            pagination += String("<span class=\"page-info\">") + WebUiRu::Meteo::kPagePage + " ";
             pagination += String((unsigned)(page_idx + 1));
             pagination += " / ";
             pagination += String((unsigned)max_pages);
@@ -161,12 +167,15 @@ public:
             {
                 pagination += "<a class=\"page-btn\" href=\"/meteo?page=";
                 pagination += String((unsigned)(page_idx + 2u));
-                pagination += "\">Вперёд</a>";
+                pagination += "\">";
+                pagination += WebUiRu::Meteo::kPageNext;
+                pagination += "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Meteo::kPageNext + "</span>";
             pagination += "</div>";
         }
+        page.replace("%METEO_PAGE_TITLE%", WebUiRu::Meteo::kPageTitle);
         page.replace("%NAV%", web.navHtml_());
         page.replace("%METEO_TILES%", stack_view ? web.listStackMeteoHtml_(node_id, (size_t)page_idx * page_size, page_size)
                                                  : web.listMeteoHtml_((size_t)page_idx * page_size, page_size));
@@ -178,6 +187,11 @@ public:
         page.replace("%METEO_DEVICE_SELECT%", web.meteoDeviceSelectHtml_(node_id, stack_view));
         page.replace("%METEO_SAVE_BTN%",
                      (stack_view || !web.webSessionIsAdmin_()) ? String("") : (String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>"));
+        page.replace("%METEO_STATUS_OFF_TEXT%", WebUiRu::Meteo::kText4);
+        page.replace("%METEO_STATUS_NODATA_TEXT%", WebUiRu::Meteo::kText5);
+        page.replace("%METEO_STATUS_OK_TEXT%", WebUiRu::Meteo::kText6);
+        page.replace("%METEO_STATUS_ERR_TEXT%", WebUiRu::Meteo::kText7);
+        page.replace("%METEO_CAN_EDIT%", web.webSessionIsAdmin_() ? "true" : "false");
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -272,7 +286,7 @@ public:
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackMeteoView_(node_id))
         {
-            web._meteo_status = "Доступно только на локальном устройстве";
+            web._meteo_status = WebUiRu::Meteo::kText14;
             web.sendRedirect_(request, "/meteo", set_cookie);
             return;
         }

@@ -63,7 +63,15 @@ static const char kWebInterfaceCloudHtml[] PROGMEM = R"HTML(
       padding: 10px;
       border-radius: 8px;
     }
-    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
     .checkbox { display: flex; gap: 8px; align-items: center; }
     button {
       background: var(--accent);
@@ -169,4 +177,5 @@ static const char kWebInterfaceCloudHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 

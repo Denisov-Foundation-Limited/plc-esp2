@@ -54,7 +54,15 @@ static const char kWebInterfaceAvrHtml[] PROGMEM = R"HTML(
       padding: 10px;
       border-radius: 8px;
     }
-    .row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+    .field:disabled,
+    select.field:disabled,
+    input.field[readonly] {
+      color: var(--muted);
+      -webkit-text-fill-color: var(--muted);
+      background: #0a1220;
+      border-color: #1a2436;
+      cursor: not-allowed;
+    }    .row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
     .radio-group {
       display: flex;
       gap: 14px;
@@ -235,6 +243,7 @@ static const char kWebInterfaceAvrHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 
 
