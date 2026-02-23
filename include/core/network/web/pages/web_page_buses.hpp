@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -17,7 +17,7 @@ static const char kWebInterfaceBusesHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Шины</title>
+  <title>%BUSES_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -80,12 +80,12 @@ static const char kWebInterfaceBusesHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Шины</h1>
+      <h1>%BUSES_TITLE%</h1>
       <div class="status">%BUS_STACK_STATUS%</div>
       %BUS_DEVICE_SELECT%
       <h2>I2C</h2>
       <div class="row" style="gap:8px; margin-bottom:8px;">
-        <a class="btn" href="%BUS_I2C_SCAN_URL%">Сканировать I2C</a>
+        <a class="btn" href="%BUS_I2C_SCAN_URL%">%BUSES_SCAN_I2C%</a>
       </div>
       <table>
         <thead>
@@ -100,7 +100,7 @@ static const char kWebInterfaceBusesHtml[] PROGMEM = R"HTML(
       </table>
       <h2>OneWire</h2>
       <div class="row" style="gap:8px; margin-bottom:8px;">
-        <a class="btn" href="%BUS_OW_SCAN_URL%">Сканировать OW</a>
+        <a class="btn" href="%BUS_OW_SCAN_URL%">%BUSES_SCAN_OW%</a>
       </div>
       <table>
         <thead>

@@ -165,6 +165,8 @@ public:
                 const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Septic, cfg.id, node_id);
                 const bool warn = cfg.warning;
                 const bool alarm = cfg.alarm;
+                const bool relay_warn = cfg.monitor && warn;
+                const bool relay_alarm = cfg.monitor && alarm;
                 const char *water_class = "water-low";
                 const char *water_level = "20%";
                 const char *water_label = WebUiRu::Septic::kText20;
@@ -194,17 +196,57 @@ public:
                 items += "</strong>";
                 if (!cfg.enabled)
                     items += WebUiRu::Septic::kText3;
-                items += "</div></div>";
-                items += "<div class=\"status-grid\">";
-                items += "<div class=\"status-line\"><span class=\"status-dot ";
-                items += warn ? "status-on" : "status-off";
-                items += WebUiRu::Septic::kText4;
-                items += "<div class=\"status-line\"><span class=\"status-dot ";
-                items += alarm ? "status-bad" : "status-off";
-                items += WebUiRu::Septic::kText5;
                 if (can_control)
                 {
-                    items += WebUiRu::Septic::kInputTypeCheckboxClassSepticMonitorData;
+                    items += "</div><label class=\"switch\"><input type=\"checkbox\" name=\"sep";
+                    items += String((unsigned)cfg.id);
+                    items += "_en\"";
+                    if (cfg.enabled)
+                        items += " checked";
+                    items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+                }
+                items += "</div></div>";
+                if (can_control)
+                {
+                    items += "<input class=\"field name\" type=\"text\" name=\"sep";
+                    items += String((unsigned)cfg.id);
+                    items += "_name\" value=\"";
+                    if (cfg.name[0])
+                        web.appendHtmlEscaped_(items, cfg.name);
+                    items += "\">";
+                    items += WebUiRu::Septic::kSelectClassFieldMiniSepticSelectData;
+                    if (cfg.warning_port != SepticController::kInvalidPort)
+                        items += String((unsigned)cfg.warning_port);
+                    items += "\" name=\"sep";
+                    items += String((unsigned)cfg.id);
+                    items += WebUiRu::Septic::kWarnSelectClassFieldMiniSepticSelect;
+                    if (cfg.alarm_port != SepticController::kInvalidPort)
+                        items += String((unsigned)cfg.alarm_port);
+                    items += "\" name=\"sep";
+                    items += String((unsigned)cfg.id);
+                    items += WebUiRu::Septic::kAlarmSelectClassFieldMiniSepticSelect;
+                    if (cfg.relay_warning != SepticController::kInvalidPort)
+                        items += String((unsigned)cfg.relay_warning);
+                    items += "\" name=\"sep";
+                    items += String((unsigned)cfg.id);
+                    items += WebUiRu::Septic::kRelayWarnSelectClassFieldMiniSeptic;
+                    if (cfg.relay_alarm != SepticController::kInvalidPort)
+                        items += String((unsigned)cfg.relay_alarm);
+                    items += "\" name=\"sep";
+                    items += String((unsigned)cfg.id);
+                    items += "_relay_alarm\"></select></div>";
+                }
+                items += "<div class=\"status-grid\"><div class=\"status-line\"><span class=\"status-dot ";
+                items += warn ? "status-on" : "status-off";
+                items += WebUiRu::Septic::kSpanClassStatusDot;
+                items += alarm ? "status-on" : "status-off";
+                items += WebUiRu::Septic::kSpanClassStatusDot2;
+                items += relay_warn ? "status-on" : "status-off";
+                items += WebUiRu::Septic::kSpanClassStatusDot3;
+                items += relay_alarm ? "status-on" : "status-off";
+                if (can_control)
+                {
+                    items += WebUiRu::Septic::kInputTypeCheckboxClassSepticMonitorData2;
                     items += String((unsigned)cfg.id);
                     items += "_mon\"";
                     if (cfg.monitor)

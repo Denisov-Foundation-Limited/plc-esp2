@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -17,7 +17,7 @@ static const char kWebInterfaceStatusHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Статус</title>
+  <title>%STATUS_PAGE_TITLE%</title>
   <style>
     html, body { height: 100%; }
     body {
@@ -40,7 +40,7 @@ static const char kWebInterfaceStatusHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h2>Статус</h2>
+      <h2>%STATUS_TITLE%</h2>
       <pre><strong>%STATUS%</strong></pre>
       
     </div>

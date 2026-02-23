@@ -17,7 +17,7 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Система</title>
+  <title>%ADMIN_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -99,11 +99,11 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Система</h1>
-      <p class="status">Статус: <strong>%ADMIN_STATUS%</strong></p>
+      <h1>%ADMIN_PAGE_TITLE%</h1>
+      <p class="status">%ADMIN_STATUS_LABEL% <strong>%ADMIN_STATUS%</strong></p>
       <form method="POST" action="/admin" id="admin-form">
-        <label for="password">Новый пароль</label>
-        <input id="password" type="password" name="password" placeholder="Введите новый пароль">
+        <label for="password">%ADMIN_NEW_PASSWORD%</label>
+        <input id="password" type="password" name="password" placeholder="%ADMIN_NEW_PASSWORD_PLACEHOLDER%">
         <label style="margin-top:10px;display:flex;align-items:center;gap:8px;color:var(--text)">
           <input type="hidden" name="buzzer_present" value="1">
           <input type="checkbox" name="buzzer_enabled" %BUZZER_CHECKED%>
@@ -112,15 +112,15 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
         <button type="submit">%SAVE_TEXT%</button>
       </form>
       <div class="section">
-        <p class="status">RTC сейчас: <strong>%RTC_DATE%</strong> <strong>%RTC_TIME%</strong></p>
+        <p class="status">%ADMIN_RTC_NOW% <strong>%RTC_DATE%</strong> <strong>%RTC_TIME%</strong></p>
         <form method="POST" action="/admin" id="rtc-form">
           <div class="row">
             <div>
-              <label for="rtc-date">Дата</label>
+              <label for="rtc-date">%ADMIN_DATE%</label>
               <input id="rtc-date" type="date" name="rtc_date" value="%RTC_DATE_VAL%">
             </div>
             <div>
-              <label for="rtc-time">Время</label>
+              <label for="rtc-time">%ADMIN_TIME%</label>
               <input id="rtc-time" type="time" step="1" name="rtc_time" value="%RTC_TIME_VAL%">
             </div>
           </div>
@@ -130,7 +130,7 @@ static const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
 
       <div class="section">
         <form method="POST" action="/reboot">
-          <button type="submit">Перезагрузить</button>
+          <button type="submit">%ADMIN_REBOOT%</button>
         </form>
       </div>
     </div>

@@ -216,6 +216,28 @@ class WebInterface;
         return _stack_cache && _stack_cache->requestPorts(node_id);
     }
 
+    bool refreshStackPorts_(uint32_t node_id)
+    {
+        if (!_stack_cache)
+            return false;
+        if (auto *cache = _stack_cache->portsCache(node_id))
+        {
+            // Force a new ports request without dropping the currently visible list,
+            // so stack GPIO selectors do not become empty between redirect and first page.
+            cache->pending = false;
+            cache->pending_cmd_id = 0;
+            cache->parts_expected = 0;
+            cache->parts_received = 0;
+            cache->next_offset = 0;
+            cache->page_limit = 0;
+            cache->last_error = "";
+            cache->updated_ms = 0;
+            memset(cache->part_seen, 0, sizeof(cache->part_seen));
+            memset(cache->present, 0, sizeof(cache->present));
+        }
+        return _stack_cache->requestPorts(node_id);
+    }
+
     bool requestStackExtenders_(uint32_t node_id)
     {
         return _stack_cache && _stack_cache->requestExtenders(node_id);
@@ -229,6 +251,28 @@ class WebInterface;
     bool requestStackOw_(uint32_t node_id, bool run)
     {
         return _stack_cache && _stack_cache->requestOw(node_id, run);
+    }
+
+    bool requestStackTempSensors_(uint32_t node_id)
+    {
+        return _stack_cache && _stack_cache->requestTempSensors(node_id);
+    }
+
+    bool refreshStackTempSensors_(uint32_t node_id)
+    {
+        if (!_stack_cache)
+            return false;
+        if (auto *cache = _stack_cache->tempSensorsCache(node_id))
+        {
+            cache->pending = false;
+            cache->pending_cmd_id = 0;
+            cache->next_offset = 0;
+            cache->page_limit = 0;
+            cache->last_error = "";
+            cache->updated_ms = 0;
+            // Keep visible items until the first page of the new request arrives.
+        }
+        return _stack_cache->requestTempSensors(node_id);
     }
 
     bool requestStackPlcStatus_(uint32_t node_id)
@@ -471,10 +515,14 @@ class WebInterface;
         if (!cache || !cache->has_data || !cache->items)
             return "[]";
 
+        const bool pending_indexed = (cache->pending && cache->parts_received > 0 && cache->parts_expected > 0);
         bool first = true;
         size_t matched = 0;
-        for (size_t i = 0; i < cache->item_count; ++i)
+        const size_t scan_limit = pending_indexed ? (size_t)PortIO::PORT_COUNT : cache->item_count;
+        for (size_t i = 0; i < scan_limit; ++i)
         {
+            if (pending_indexed && !cache->present[i])
+                continue;
             const auto &it = cache->items[i];
             if (!stackPortTypeMatch_(it, type))
                 continue;
@@ -484,47 +532,17 @@ class WebInterface;
             out += "{\"v\":";
             out += String((unsigned)it.id);
             out += ",\"l\":\"";
-            out += "#";
-            out += String((unsigned)it.id);
-            out += " ";
-            if (it.type[0])
-                appendJsonEscaped_(out, it.type);
+            if (it.alias[0])
+                appendJsonEscaped_(out, it.alias);
             else
-                out += "Port";
-            if (it.loc[0])
             {
-                out += " @";
-                appendJsonEscaped_(out, it.loc);
-            }
-            if (it.pin >= 0)
-            {
-                out += " GPIO";
-                out += String((int)it.pin);
-            }
-            out += "\"}";
-            first = false;
-        }
-        // Fallback: old/incompatible slave may send unknown type/ptype values.
-        // Keep dropdown usable by exposing all controllable ports.
-        if (matched == 0)
-        {
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                const auto &it = cache->items[i];
-                if (!it.ctrl)
-                    continue;
-                if (!first)
-                    out += ",";
-                out += "{\"v\":";
-                out += String((unsigned)it.id);
-                out += ",\"l\":\"";
                 out += "#";
                 out += String((unsigned)it.id);
+                out += " ";
                 if (it.type[0])
-                {
-                    out += " ";
                     appendJsonEscaped_(out, it.type);
-                }
+                else
+                    out += "Port";
                 if (it.loc[0])
                 {
                     out += " @";
@@ -534,6 +552,50 @@ class WebInterface;
                 {
                     out += " GPIO";
                     out += String((int)it.pin);
+                }
+            }
+            out += "\"}";
+            first = false;
+        }
+        // Fallback: old/incompatible slave may send unknown type/ptype values.
+        // Keep dropdown usable by exposing all controllable ports.
+        if (matched == 0)
+        {
+            for (size_t i = 0; i < scan_limit; ++i)
+            {
+                if (pending_indexed && !cache->present[i])
+                    continue;
+                const auto &it = cache->items[i];
+                if (!it.ctrl)
+                    continue;
+                if (!first)
+                    out += ",";
+                out += "{\"v\":";
+                out += String((unsigned)it.id);
+                out += ",\"l\":\"";
+                if (it.alias[0])
+                {
+                    appendJsonEscaped_(out, it.alias);
+                }
+                else
+                {
+                    out += "#";
+                    out += String((unsigned)it.id);
+                    if (it.type[0])
+                    {
+                        out += " ";
+                        appendJsonEscaped_(out, it.type);
+                    }
+                    if (it.loc[0])
+                    {
+                        out += " @";
+                        appendJsonEscaped_(out, it.loc);
+                    }
+                    if (it.pin >= 0)
+                    {
+                        out += " GPIO";
+                        out += String((int)it.pin);
+                    }
                 }
                 out += "\"}";
                 first = false;
@@ -552,9 +614,13 @@ class WebInterface;
         if (!cache || !cache->has_data || !cache->items)
             return "[]";
 
+        const bool pending_indexed = (cache->pending && cache->parts_received > 0 && cache->parts_expected > 0);
+        const size_t scan_limit = pending_indexed ? (size_t)PortIO::PORT_COUNT : cache->item_count;
         bool first = true;
-        for (size_t i = 0; i < cache->item_count; ++i)
+        for (size_t i = 0; i < scan_limit; ++i)
         {
+            if (pending_indexed && !cache->present[i])
+                continue;
             const auto &it = cache->items[i];
             if (!stackPortTypeMatch_(it, type))
                 continue;
@@ -563,6 +629,58 @@ class WebInterface;
             if (!first)
                 out += ",";
             out += String((unsigned)it.id);
+            first = false;
+        }
+        out += "]";
+        return out;
+    }
+
+    String stackMeteoDs18OptionsJson_(uint32_t node_id) const
+    {
+        String out;
+        out.reserve(256);
+        out += "[";
+        const auto *cache = _stack_cache ? _stack_cache->tempSensorsCache(node_id) : nullptr;
+        if (!cache || !cache->has_data || !cache->items)
+            return "[]";
+        bool first = true;
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const auto &it = cache->items[i];
+            if (!it.addr[0])
+                continue;
+            if (!first)
+                out += ",";
+            out += "{\"v\":\"";
+            appendJsonEscaped_(out, it.addr);
+            out += "\",\"l\":\"";
+            appendJsonEscaped_(out, it.addr);
+            out += "\"}";
+            first = false;
+        }
+        out += "]";
+        return out;
+    }
+
+    String stackMeteoDs18UsedJson_(uint32_t node_id) const
+    {
+        String out;
+        out.reserve(128);
+        out += "[";
+        const auto *cache = _stack_cache ? _stack_cache->tempSensorsCache(node_id) : nullptr;
+        if (!cache || !cache->has_data || !cache->items)
+            return "[]";
+        bool first = true;
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const auto &it = cache->items[i];
+            if (!it.used || !it.addr[0])
+                continue;
+            if (!first)
+                out += ",";
+            out += "\"";
+            appendJsonEscaped_(out, it.addr);
+            out += "\"";
             first = false;
         }
         out += "]";
@@ -1505,19 +1623,41 @@ sendRedirect_(request, "/", set_cookie);
 (function(){
   const wrap = document.getElementById('global-stack-toast-wrap');
   if (!wrap) return;
-  function showToast(msg, kind){
+  const TOAST_SLAVE_CONNECTED_PREFIX = '%TOAST_SLAVE_CONNECTED_PREFIX%';
+  const TOAST_SLAVE_DISCONNECTED_PREFIX = '%TOAST_SLAVE_DISCONNECTED_PREFIX%';
+  const TOAST_SLAVE_SYNC_COMPLETE_PREFIX = '%TOAST_SLAVE_SYNC_COMPLETE_PREFIX%';
+  function makeToastEl(kind){
     const el = document.createElement('div');
-    el.textContent = msg;
     const ok = kind !== 'error';
     const border = ok ? 'rgba(34,197,94,0.45)' : 'rgba(239,68,68,0.50)';
     const bg = ok ? 'rgba(6,33,23,.94)' : 'rgba(46,12,12,.94)';
     const color = ok ? '#d1fae5' : '#fee2e2';
     el.style.cssText = 'min-width:220px;max-width:340px;padding:10px 12px;border-radius:10px;border:1px solid ' + border + ';background:' + bg + ';color:' + color + ';font-size:13px;box-shadow:0 8px 20px rgba(0,0,0,.35);opacity:0;transform:translateY(8px);transition:opacity .18s ease,transform .18s ease';
+    return { el, ok };
+  }
+  function showToast(msg, kind){
+    const { el } = makeToastEl(kind);
+    el.textContent = msg;
+    wrap.appendChild(el);
+    requestAnimationFrame(()=>{ el.style.opacity='1'; el.style.transform='translateY(0)'; });
+    setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(8px)'; setTimeout(()=>{ if(el.parentNode) el.parentNode.removeChild(el); },220); },3200);
+  }
+  function showToastName(prefix, name, kind){
+    const { el, ok } = makeToastEl(kind);
+    const pre = document.createElement('span');
+    pre.textContent = prefix;
+    const who = document.createElement('span');
+    who.textContent = name || '-';
+    who.style.fontWeight = '700';
+    who.style.color = ok ? '#86efac' : '#fecaca';
+    el.appendChild(pre);
+    el.appendChild(who);
     wrap.appendChild(el);
     requestAnimationFrame(()=>{ el.style.opacity='1'; el.style.transform='translateY(0)'; });
     setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(8px)'; setTimeout(()=>{ if(el.parentNode) el.parentNode.removeChild(el); },220); },3200);
   }
   let known = null;
+  const syncShown = new Set();
   async function poll(){
     try{
       const r = await fetch('/stack/online_snapshot', {cache:'no-store', credentials:'same-origin'});
@@ -1534,18 +1674,25 @@ sendRedirect_(request, "/", set_cookie);
         });
       }
       if (known === null){
+        next.forEach((cur,id)=>{
+          if(cur && cur.sync) syncShown.add(id);
+        });
         known = next;
         return;
       }
       next.forEach((cur,id)=>{
         const prev = known.get(id);
-        if(!prev) showToast('Подключен слейв: ' + cur.name + ' id: 0x' + Number(id).toString(16).toUpperCase().padStart(8, '0'), 'success');
-        if((!prev || !prev.sync) && cur.sync){
-          showToast('Sync slave unit complete: ' + cur.name + ' id: 0x' + Number(id).toString(16).toUpperCase().padStart(8, '0'), 'success');
+        if(!prev) showToastName(TOAST_SLAVE_CONNECTED_PREFIX, cur.name, 'success');
+        if(cur.sync && !syncShown.has(id)){
+          showToastName(TOAST_SLAVE_SYNC_COMPLETE_PREFIX, cur.name, 'success');
+          syncShown.add(id);
         }
       });
       known.forEach((prev,id)=>{
-        if(!next.has(id)) showToast('Отключен слейв: ' + prev.name + ' id: 0x' + Number(id).toString(16).toUpperCase().padStart(8, '0'), 'error');
+        if(!next.has(id)){
+          showToastName(TOAST_SLAVE_DISCONNECTED_PREFIX, prev.name, 'error');
+          syncShown.delete(id);
+        }
       });
       known = next;
     }catch(e){}
@@ -1553,62 +1700,11 @@ sendRedirect_(request, "/", set_cookie);
   poll();
   setInterval(poll, 3000);
 })();
-(function(){
-  function isStackGpioVisiblePage(){
-    try{
-      if (!window.location) return false;
-      const p0 = window.location.pathname || '';
-      const p = p0.endsWith('/') && p0.length > 1 ? p0.slice(0, -1) : p0;
-      return p === '/thermo' || p === '/tanks';
-    }catch(e){
-      return false;
-    }
-  }
-  function isStackView(){
-    try{
-      const u = new URL(window.location.href);
-      const unit = (u.searchParams.get('unit') || '').toLowerCase();
-      if (unit === 'stack') return true;
-      if (u.searchParams.get('node') || u.searchParams.get('node_id')) return true;
-      return false;
-    }catch(e){
-      return false;
-    }
-  }
-  function hideNode(el){
-    if(!el) return;
-    const row = el.closest('.form-row') || el.closest('td') || el.closest('th') || el.parentElement;
-    if (row) row.style.display = 'none';
-    else el.style.display = 'none';
-  }
-  function hideGpioFields(){
-    if (isStackGpioVisiblePage()) return;
-    if(!isStackView()) return;
-    const sels = document.querySelectorAll(
-      'select.socket-select,select.light-select,select.security-port,select.meteo-pin,select.thermo-select,' +
-      'select.tank-select,select.septic-select,select.watering-select,select.ring-select,select.avr-select,' +
-      'select.leak-select,select[data-type=\"relay\"],select[data-type=\"dinput\"],select[data-type=\"input\"],' +
-      'select[data-type=\"button\"]'
-    );
-    sels.forEach(hideNode);
-    const ins = document.querySelectorAll(
-      'input[name$=\"_relay\"],input[name$=\"_btn\"],input[name$=\"_pin\"],input[name*=\"_port\"]'
-    );
-    ins.forEach(hideNode);
-  }
-  if (document.readyState === 'loading')
-    document.addEventListener('DOMContentLoaded', hideGpioFields, { once: true });
-  else
-    hideGpioFields();
-  let n = 0;
-  const t = setInterval(()=>{
-    hideGpioFields();
-    n++;
-    if(n >= 20) clearInterval(t);
-  }, 500);
-})();
 </script>
 )HTML");
+        nav.replace("%TOAST_SLAVE_CONNECTED_PREFIX%", WebUiRu::Common::kToastSlaveConnectedPrefix);
+        nav.replace("%TOAST_SLAVE_DISCONNECTED_PREFIX%", WebUiRu::Common::kToastSlaveDisconnectedPrefix);
+        nav.replace("%TOAST_SLAVE_SYNC_COMPLETE_PREFIX%", WebUiRu::Common::kToastSlaveSyncCompletePrefix);
         return nav;
     }
 

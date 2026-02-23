@@ -17,7 +17,7 @@ static const char kWebInterfaceCloudHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Облако</title>
+  <title>%CLOUD_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -104,47 +104,47 @@ static const char kWebInterfaceCloudHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Облако</h1>
+      <h1>%CLOUD_PAGE_TITLE%</h1>
       <div class="row" style="margin: 8px 0 16px;">
         <span class="badge %CLOUD_CONNECTED_CLASS%">%CLOUD_CONNECTED_TEXT%</span>
-        <span class="status">Версия FW: <span class="fw">%CLOUD_FW_VERSION%</span></span>
-        <span class="status">ID устройства: <span class="fw">%CLOUD_DEVICE_ID%</span></span>
+        <span class="status">%CLOUD_FW_LABEL% <span class="fw">%CLOUD_FW_VERSION%</span></span>
+        <span class="status">%CLOUD_DEVICE_ID_LABEL% <span class="fw">%CLOUD_DEVICE_ID%</span></span>
       </div>
       <form method="POST" action="/cloud" id="cloud-form">
         <div class="row" style="margin-bottom: 12px;">
           <div class="checkbox">
             <input type="checkbox" id="cloud_enabled" name="cloud_enabled" %CLOUD_ENABLED_CHECKED%>
-            <label for="cloud_enabled">Включить облако</label>
+            <label for="cloud_enabled">%CLOUD_ENABLE_LABEL%</label>
           </div>
         </div>
         <div class="grid" id="cloud-fields">
           <div class="form-row">
-            <label>Хост</label>
+            <label>%CLOUD_HOST_LABEL%</label>
             <input class="field" type="text" name="host" value="%CLOUD_HOST%" placeholder="cloud.example.com">
           </div>
           <div class="form-row">
-            <label>Порт</label>
+            <label>%CLOUD_PORT_LABEL%</label>
             <input class="field" type="number" name="port" value="%CLOUD_PORT%" placeholder="443">
           </div>
           <div class="form-row">
-            <label>Путь</label>
+            <label>%CLOUD_PATH_LABEL%</label>
             <input class="field" type="text" name="path" value="%CLOUD_PATH%" placeholder="/">
           </div>
           <div class="checkbox" style="margin-top:22px;">
             <input type="checkbox" id="ssl" name="ssl" %CLOUD_SSL_CHECKED%>
-            <label for="ssl">Использовать SSL</label>
+            <label for="ssl">%CLOUD_SSL_LABEL%</label>
           </div>
           <div class="form-row">
-            <label>Переподключение (мс)</label>
+            <label>%CLOUD_RECONNECT_LABEL%</label>
             <input class="field" type="number" name="reconnect_ms" value="%CLOUD_RECONNECT_MS%" placeholder="5000">
           </div>
           <div class="form-row">
-            <label>Интервал событий (мс)</label>
+            <label>%CLOUD_EVENT_LABEL%</label>
             <input class="field" type="number" name="event_ms" value="%CLOUD_EVENT_MS%" placeholder="0">
-            <div class="hint">0 - отключить авто-события</div>
+            <div class="hint">%CLOUD_EVENT_HINT%</div>
           </div>
           <div class="form-row full">
-            <label>API ключ</label>
+            <label>%CLOUD_API_KEY_LABEL%</label>
             <input class="field" type="password" name="api_key" value="%CLOUD_API_KEY%" placeholder="api_key">
           </div>
         </div>

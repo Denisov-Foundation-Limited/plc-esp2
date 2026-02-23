@@ -17,7 +17,7 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Термо</title>
+  <title>%THERMO_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -296,7 +296,7 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Термо</h1>
+      <h1>%THERMO_PAGE_TITLE%</h1>
       %THERMO_DEVICE_SELECT%
       %THERMO_PAGINATION%
       <form method="POST" action="/thermo" id="thermo-form">
@@ -348,21 +348,26 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
     }
     function refreshThermoSelects() {
       const usedByType = {};
+      const readSelected = (el) => {
+        if (el.dataset.rendered === '1') return String(el.value || '');
+        return String(el.dataset.selected || el.value || '');
+      };
       document.querySelectorAll('select.thermo-select').forEach((el) => {
         const type = el.dataset.type;
         if (!usedByType[type]) {
           const base = thermoUsed[type] || [];
           usedByType[type] = new Set(base.map((v) => parseInt(v, 10)).filter((v) => !Number.isNaN(v)));
         }
-        const v = parseInt(el.value || el.dataset.selected || '', 10);
+        const v = parseInt(readSelected(el), 10);
         if (!Number.isNaN(v)) usedByType[type].add(v);
       });
       document.querySelectorAll('select.thermo-select').forEach((el) => {
         const type = el.dataset.type;
-        const selected = el.value || el.dataset.selected || '';
+        const selected = readSelected(el);
         const list = thermoOptions[type] || [];
         el.innerHTML = buildOptions(list, selected, type, usedByType[type]);
         el.value = selected || '';
+        el.dataset.rendered = '1';
       });
     }
     refreshThermoSelects();
@@ -465,13 +470,13 @@ static const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
         sv.classList.remove('status-text-heat', 'status-text-cool', 'status-text-idle');
         if (activeHeat) {
           sv.classList.add('status-text-heat');
-          sv.textContent = 'нагрев';
+          sv.textContent = '%THERMO_JS_HEAT%';
         } else if (activeCool) {
           sv.classList.add('status-text-cool');
-          sv.textContent = 'охлаждение';
+          sv.textContent = '%THERMO_JS_COOL%';
         } else {
           sv.classList.add('status-text-idle');
-          sv.textContent = 'ожидание';
+          sv.textContent = '%THERMO_JS_IDLE%';
         }
       }
     }

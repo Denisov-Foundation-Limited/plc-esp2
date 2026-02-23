@@ -17,7 +17,7 @@ static const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Р—РІРѕРЅРѕРє</title>
+  <title>%RING_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -94,24 +94,24 @@ static const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Р—РІРѕРЅРѕРє</h1>
+      <h1>%RING_PAGE_TITLE%</h1>
       <div class="status">%RING_STATUS%</div>
       %RING_DEVICE_SELECT%
       <form method="POST" action="/ring" id="ring-form">
         <input type="hidden" name="ring_save" value="1">
         <div class="grid">
           <div>
-            <label>РљРЅРѕРїРєР° (РІС…РѕРґ)</label>
+            <label>%RING_LABEL_BUTTON%</label>
             <select class="field ring-select" name="ring_button" data-type="dinput" data-selected="%RING_BUTTON_SELECTED%" %RING_FORM_DISABLED%></select>
           </div>
           <div>
-            <label>Р РµР»Рµ</label>
+            <label>%RING_LABEL_RELAY%</label>
             <select class="field ring-select" name="ring_relay" data-type="relay" data-selected="%RING_RELAY_SELECTED%" %RING_FORM_DISABLED%></select>
           </div>
         </div>
       </form>
       <div class="actions">
-        <button type="button" class="btn-on" data-ring="on">Р—РІРѕРЅРёС‚СЊ</button>
+        <button type="button" class="btn-on" data-ring="on">%RING_BTN_ON%</button>
       </div>
       <div class="actions">
         <button type="submit" form="ring-form" %RING_SAVE_DISABLED%>%SAVE_TEXT%</button>
@@ -201,10 +201,10 @@ static const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
           credentials: 'same-origin'
         }).then(async (res) => {
           const text = (await res.text()).trim();
-          if (!res.ok) throw new Error(text || 'РћС€РёР±РєР°');
+          if (!res.ok) throw new Error(text || '%RING_JS_ERROR%');
           if (text) ringSetStatus(text);
         }).catch((err) => {
-          ringSetStatus(err && err.message ? err.message : 'РћС€РёР±РєР°');
+          ringSetStatus(err && err.message ? err.message : '%RING_JS_ERROR%');
         });
       }
       try {
@@ -217,12 +217,12 @@ static const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
           if (xhr.status >= 200 && xhr.status < 300) {
             if (text) ringSetStatus(text);
           } else {
-            ringSetStatus(text || 'РћС€РёР±РєР°');
+            ringSetStatus(text || '%RING_JS_ERROR%');
           }
         };
         xhr.send(body);
       } catch (e) {
-        ringSetStatus('РћС€РёР±РєР°');
+        ringSetStatus('%RING_JS_ERROR%');
       }
       return null;
     }
@@ -275,6 +275,7 @@ static const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 
 

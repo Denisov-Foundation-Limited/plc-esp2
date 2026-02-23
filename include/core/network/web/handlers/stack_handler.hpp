@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -44,19 +44,32 @@ public:
         page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
         page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
         page.replace("%STACK_SLAVE_STYLE%", role == ConfigsManagerIface::StackRole::Slave ? "" : "display:none");
+        page.replace("%STACK_PAGE_TITLE%", WebUiRu::StackPage::kPageTitle);
+        page.replace("%STACK_TITLE%", WebUiRu::StackPage::kTitle);
+        page.replace("%STACK_LABEL_ROLE%", WebUiRu::StackPage::kRole);
+        page.replace("%STACK_LABEL_MASTER_HOST%", WebUiRu::StackPage::kMasterHost);
+        page.replace("%STACK_LABEL_FALLBACK_MASTER%", WebUiRu::StackPage::kFallbackMaster);
+        page.replace("%STACK_LABEL_ENABLE%", WebUiRu::StackPage::kEnable);
+        page.replace("%STACK_LABEL_FALLBACK_HOST%", WebUiRu::StackPage::kFallbackHost);
+        page.replace("%STACK_LABEL_SLAVE_CONTROLLER%", WebUiRu::StackPage::kSlaveController);
+        page.replace("%STACK_LABEL_FULL_CONTROLLER%", WebUiRu::StackPage::kFullController);
+        page.replace("%STACK_LABEL_API_KEY%", WebUiRu::StackPage::kApiKey);
+        page.replace("%STACK_API_KEY_PLACEHOLDER%", WebUiRu::StackPage::kApiKeyPlaceholder);
+        page.replace("%STACK_BTN_GEN_KEY%", WebUiRu::StackPage::kGenerate);
+        page.replace("%STACK_SLAVE_LINK_DISCONNECTED%", WebUiRu::StackPage::kSlaveLinkDisconnected);
         String slave_link_class = "bad";
-        String slave_link_text = "Slave link: disconnected";
+        String slave_link_text = WebUiRu::StackPage::kSlaveLinkDisconnected;
         if (role == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
         {
             if (web._stack_slave->linkReadyAfterHello())
             {
                 slave_link_class = "ok";
-                slave_link_text = "Slave link: connected";
+                slave_link_text = WebUiRu::StackPage::kSlaveLinkConnected;
             }
             else if (web._stack_slave->nodeConnected())
             {
                 slave_link_class = "bad";
-                slave_link_text = "Slave link: connected, waiting hello";
+                slave_link_text = WebUiRu::StackPage::kSlaveLinkWaitingHello;
             }
         }
         page.replace("%STACK_SLAVE_LINK_CLASS%", slave_link_class);
@@ -70,8 +83,8 @@ public:
         page.replace("%STACK_STATUS%", web._stack_status);
         if (role == ConfigsManagerIface::StackRole::Master)
         {
-            String self = String("<p class=\"status\">Текущий контроллер: <strong>") + web.deviceName_() +
-                          "</strong> | IP: <strong>" + web.wifiIp_() + "</strong></p>";
+            String self = String("<p class=\"status\">") + WebUiRu::StackPage::kCurrentControllerPrefix + ": <strong>" +
+                          web.deviceName_() + "</strong> | IP: <strong>" + web.wifiIp_() + "</strong></p>";
             page.replace("%STACK_SELF_BLOCK%", self);
             page.replace("%STACK_NODES_BLOCK%", web.stackNodesBlockHtml_());
         }
@@ -92,17 +105,17 @@ public:
         if (!web.requireWebAdmin_(request, &set_cookie))
             return;
         String cls = "bad";
-        String text = "Slave link: disconnected";
+        String text = WebUiRu::StackPage::kSlaveLinkDisconnected;
         if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
         {
             if (web._stack_slave->linkReadyAfterHello())
             {
                 cls = "ok";
-                text = "Slave link: connected";
+                text = WebUiRu::StackPage::kSlaveLinkConnected;
             }
             else if (web._stack_slave->nodeConnected())
             {
-                text = "Slave link: connected, waiting hello";
+                text = WebUiRu::StackPage::kSlaveLinkWaitingHello;
             }
         }
         String json;
@@ -150,6 +163,8 @@ public:
             const uint32_t id = web._stack_master->nodeIdAt(i);
             if (id == 0)
                 continue;
+            if (!web._stack_master->nodeIsOnline(id, 6000))
+                continue;
             String name = web._stack_master->nodeNameAt(i);
             bool sync_ready = false;
             if (web._stack_cache)
@@ -166,11 +181,9 @@ public:
                 const auto *security = web._stack_cache->securityCache(id);
                 const auto *watering = web._stack_cache->wateringCache(id);
                 const auto *leak = web._stack_cache->leakCache(id);
-                const auto *avr = web._stack_cache->avrCache(id);
                 sync_ready = cacheReady(sockets) && cacheReady(lights) && cacheReady(meteo) &&
                              cacheReady(thermo) && cacheReady(tanks) && cacheReady(septic) &&
-                             cacheReady(security) && cacheReady(watering) && cacheReady(leak) &&
-                             cacheReady(avr);
+                             cacheReady(security) && cacheReady(watering) && cacheReady(leak);
             }
             if (!first)
                 out += ",";
@@ -190,3 +203,4 @@ public:
         web.sendText_(request, 200, "application/json", out, set_cookie);
     }
 };
+

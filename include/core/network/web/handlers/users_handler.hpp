@@ -37,14 +37,16 @@ public:
         const bool read_only = (web.stackRole_() == ConfigsManagerIface::StackRole::Slave);
         String page = FPSTR(kWebInterfaceUsersHtml);
         page.replace("%NAV%", web.navHtml_());
+        page.replace("%USERS_PAGE_TITLE%", WebUiRu::Users::kUsersLink);
+        page.replace("%USERS_PAGE_H1%", WebUiRu::Users::kUsersLink);
         if (!web._users_status.length())
-            web._users_status = "Готово";
+            web._users_status = WebUiRu::Users::kReady;
         page.replace("%USERS_STATUS%", web._users_status);
         page.replace("%USERS_CARDS%", usersCards_(web, read_only));
         page.replace("%USERS_FORM_DISABLED%", read_only ? "disabled" : "");
         page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         page.replace("%USERS_READONLY_NOTE%",
-                     read_only ? "<p class=\"status\">Редактирование доступно только на master-устройстве</p>" : "");
+                     read_only ? (String("<p class=\"status\">") + WebUiRu::Users::kMasterOnlyEdit + "</p>") : "");
         page.replace("%USERS_IBUTTON_DATALIST%", ibuttonDatalist_(web));
         page.replace("%USERS_RFID_DATALIST%", rfidDatalist_(web));
         web.sendHtml_(request, page, set_cookie);
@@ -59,13 +61,13 @@ public:
             return;
         if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave)
         {
-            web._users_status = "Редактирование доступно только на master-устройстве";
+            web._users_status = WebUiRu::Users::kMasterOnlyEdit;
             web.sendRedirect_(request, "/users", set_cookie);
             return;
         }
         if (!web._users)
         {
-            web._users_status = "Реестр пользователей недоступен";
+            web._users_status = WebUiRu::Users::kRegistryUnavailable;
             web.sendRedirect_(request, "/users", set_cookie);
             return;
         }
@@ -100,9 +102,9 @@ public:
             u.rfid_key = UsersRegistry::normalizeHex(web.paramValue_(request, k_rfid), 20);
         }
         if (web._configs_manager && !web._configs_manager->save())
-            web._users_status = "Ошибка сохранения";
+            web._users_status = WebUiRu::Common::kSaveFailed;
         else
-            web._users_status = "Сохранено";
+            web._users_status = WebUiRu::Common::kSaved;
         web.sendRedirect_(request, "/users", set_cookie);
     }
 
@@ -115,7 +117,7 @@ public:
             return;
         if (!web._users)
         {
-            web._users_status = "Реестр пользователей недоступен";
+            web._users_status = WebUiRu::Users::kRegistryUnavailable;
             web.sendRedirect_(request, "/users", set_cookie);
             return;
         }
@@ -144,19 +146,25 @@ public:
         page += "@media (max-width:720px){.items{max-height:none}}";
         page += "</style></head><body><div class=\"wrap\"><div class=\"card\">";
         page += web.navHtml_();
-        page += "<div class=\"row\"><a href=\"/users\">&larr; Пользователи</a><strong>ACL: user #";
+        page += "<div class=\"row\"><a href=\"/users\">&larr; ";
+        page += WebUiRu::Users::kUsersLink;
+        page += "</a><strong>ACL: user #";
         page += String((unsigned)(user_idx + 1));
         page += "</strong></div>";
         if (!web._users_status.length())
-            web._users_status = "Готово";
+            web._users_status = WebUiRu::Users::kReady;
         page += "<p class=\"status\">";
         WebInterface::appendHtmlEscaped_(page, web._users_status.c_str());
         page += "</p>";
         if (read_only)
-            page += "<p class=\"status\">Редактирование ACL доступно только на master-устройстве</p>";
+            page += "<p class=\"status\">";
+            page += WebUiRu::Users::kMasterOnlyAclEdit;
+            page += "</p>";
         page += "<form method=\"GET\" action=\"/users/acl\" class=\"row\" style=\"margin-top:8px\"><input type=\"hidden\" name=\"uid\" value=\"";
         page += String((unsigned)(user_idx + 1));
-        page += "\"><label class=\"muted\">Юнит</label><select class=\"select\" name=\"unit\" onchange=\"this.form.submit()\">";
+        page += "\"><label class=\"muted\">";
+        page += WebUiRu::Users::kUnit;
+        page += "</label><select class=\"select\" name=\"unit\" onchange=\"this.form.submit()\">";
         for (uint8_t i = 0; i < UsersRegistry::kAclUnitCount; ++i)
         {
             page += "<option value=\"";
@@ -167,7 +175,7 @@ public:
             page += ">";
             if (i == 0)
             {
-                page += "Локальный";
+                page += WebUiRu::Users::kUnitLocal;
             }
             else
             {
@@ -202,7 +210,11 @@ public:
         page += "\"><input type=\"hidden\" name=\"unit\" value=\"";
         page += String((unsigned)(unit + 1));
         page += "\">";
-        page += "<div class=\"row-actions\"><button class=\"btn-lite\" type=\"button\" onclick=\"aclToggleAll(true)\">Выбрать все</button><button class=\"btn-lite\" type=\"button\" onclick=\"aclToggleAll(false)\">Снять все</button></div>";
+        page += "<div class=\"row-actions\"><button class=\"btn-lite\" type=\"button\" onclick=\"aclToggleAll(true)\">";
+        page += WebUiRu::Users::kSelectAll;
+        page += "</button><button class=\"btn-lite\" type=\"button\" onclick=\"aclToggleAll(false)\">";
+        page += WebUiRu::Users::kClearAll;
+        page += "</button></div>";
         page += "<div class=\"tiles\">";
         page += aclTiles_(web, web._users->user(user_idx), unit, read_only);
         page += "</div><button class=\"btn\" type=\"submit\"";
@@ -212,7 +224,7 @@ public:
         page += WebUiRu::kSaveAcl;
         page += "</button></form>";
         page += "<script>function aclSetScope(root,val){if(!root)return;root.querySelectorAll('input[type=checkbox]').forEach(function(cb){if(!cb.disabled)cb.checked=val;});}function aclToggleAll(val){aclSetScope(document,val);}function aclToggleTile(btn,val){var t=btn.closest('.tile');aclSetScope(t,val);}</script>";
-        if (page.indexOf("Загрузка данных юнита...") >= 0)
+        if (page.indexOf(WebUiRu::Users::kAclLoadingUnit) >= 0)
             page += "<script>setTimeout(function(){window.location.reload();},1200);</script>";
         page += "</div></div></body></html>";
         web.sendHtml_(request, page, set_cookie);
@@ -227,13 +239,13 @@ public:
             return;
         if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave)
         {
-            web._users_status = "Редактирование ACL доступно только на master-устройстве";
+            web._users_status = WebUiRu::Users::kMasterOnlyAclEdit;
             web.sendRedirect_(request, "/users", set_cookie);
             return;
         }
         if (!web._users)
         {
-            web._users_status = "Реестр пользователей недоступен";
+            web._users_status = WebUiRu::Users::kRegistryUnavailable;
             web.sendRedirect_(request, "/users", set_cookie);
             return;
         }
@@ -258,9 +270,9 @@ public:
         });
 
         if (web._configs_manager && !web._configs_manager->save())
-            web._users_status = "Ошибка сохранения ACL";
+            web._users_status = WebUiRu::Users::kAclSaveFailed;
         else
-            web._users_status = "ACL сохранен";
+            web._users_status = WebUiRu::Users::kAclSaved;
 
         String to = "/users/acl?uid=";
         to += String((unsigned)(user_idx + 1));
@@ -273,7 +285,7 @@ private:
     static String usersCards_(WebInterface &web, bool read_only)
     {
         if (!web._users)
-            return "<div class=\"tile empty\"><strong>Реестр пользователей недоступен</strong></div>";
+            return String("<div class=\"tile empty\"><strong>") + WebUiRu::Users::kRegistryUnavailable + "</strong></div>";
 
         String out;
         out.reserve(16384);
@@ -331,7 +343,9 @@ private:
 
             out += "<div class=\"grid\">";
 
-            out += "<div class=\"form-row full\"><label>Имя пользователя</label><input class=\"field\" name=\"u";
+            out += "<div class=\"form-row full\"><label>";
+            out += WebUiRu::Users::kLabelUsername;
+            out += "</label><input class=\"field\" name=\"u";
             out += p;
             out += "_username\" value=\"";
             WebInterface::appendHtmlEscaped_(out, u.username.c_str());
@@ -339,13 +353,19 @@ private:
             out += disabled;
             out += "></div>";
 
-            out += "<div class=\"form-row full\"><label>Пароль</label><input class=\"field\" type=\"password\" name=\"u";
+            out += "<div class=\"form-row full\"><label>";
+            out += WebUiRu::Users::kLabelPassword;
+            out += "</label><input class=\"field\" type=\"password\" name=\"u";
             out += p;
-            out += "_web_password\" value=\"\" placeholder=\"оставьте пустым, чтобы не менять\" autocomplete=\"new-password\"";
+            out += "_web_password\" value=\"\" placeholder=\"";
+            out += WebUiRu::Users::kPasswordPlaceholder;
+            out += "\" autocomplete=\"new-password\"";
             out += disabled;
             out += "></div>";
 
-            out += "<div class=\"form-row full\"><label>Telegram логин</label><input class=\"field\" name=\"u";
+            out += "<div class=\"form-row full\"><label>";
+            out += WebUiRu::Users::kLabelTelegramLogin;
+            out += "</label><input class=\"field\" name=\"u";
             out += p;
             out += "_tg_username\" value=\"";
             WebInterface::appendHtmlEscaped_(out, u.tg_username.c_str());
@@ -353,7 +373,9 @@ private:
             out += disabled;
             out += "></div>";
 
-            out += "<div class=\"form-row\"><label>Админ</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
+            out += "<div class=\"form-row\"><label>";
+            out += WebUiRu::Users::kLabelAdmin;
+            out += "</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
             out += p;
             out += "_is_admin\"";
             if (u.tg_admin)
@@ -361,7 +383,9 @@ private:
             out += disabled;
             out += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
 
-            out += "<div class=\"form-row\"><label>Уведомления Telegram</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
+            out += "<div class=\"form-row\"><label>";
+            out += WebUiRu::Users::kLabelTelegramNotify;
+            out += "</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
             out += p;
             out += "_tg_notify\"";
             if (u.tg_notify)
@@ -370,7 +394,9 @@ private:
             out += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
 
 
-            out += "<div class=\"form-row full\"><label>Ключ iButton</label><input class=\"field\" list=\"users-ibutton-last\" name=\"u";
+            out += "<div class=\"form-row full\"><label>";
+            out += WebUiRu::Users::kLabelIButtonKey;
+            out += "</label><input class=\"field\" list=\"users-ibutton-last\" name=\"u";
             out += p;
             out += "_ibutton\" value=\"";
             WebInterface::appendHtmlEscaped_(out, u.ibutton_key.c_str());
@@ -378,14 +404,18 @@ private:
             out += disabled;
             out += "></div>";
 
-            out += "<div class=\"form-row full\"><label>Ключ RFID</label><input class=\"field\" list=\"users-rfid-last\" name=\"u";
+            out += "<div class=\"form-row full\"><label>";
+            out += WebUiRu::Users::kLabelRfidKey;
+            out += "</label><input class=\"field\" list=\"users-rfid-last\" name=\"u";
             out += p;
             out += "_rfid\" value=\"";
             WebInterface::appendHtmlEscaped_(out, u.rfid_key.c_str());
             out += "\"";
             out += disabled;
             out += "></div>";
-            out += "<div class=\"form-row full\"><label>Телефон (GSM)</label><input class=\"field\" name=\"u";
+            out += "<div class=\"form-row full\"><label>";
+            out += WebUiRu::Users::kLabelPhoneGsm;
+            out += "</label><input class=\"field\" name=\"u";
             out += p;
             out += "_gsm_phone\" value=\"";
             WebInterface::appendHtmlEscaped_(out, u.gsm_phone.c_str());
@@ -401,7 +431,9 @@ private:
             out += disabled;
             out += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
 
-            out += "<div class=\"form-row\"><label>Звонок</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
+            out += "<div class=\"form-row\"><label>";
+            out += WebUiRu::Users::kLabelCall;
+            out += "</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
             out += p;
             out += "_gsm_call\"";
             if (u.gsm_call)
@@ -436,27 +468,27 @@ private:
         switch (ctrl)
         {
         case UsersRegistry::AclController::Sockets:
-            return "Розетки";
+            return WebUiRu::Users::kCtrlSockets;
         case UsersRegistry::AclController::Lights:
-            return "Свет";
+            return WebUiRu::Users::kCtrlLights;
         case UsersRegistry::AclController::Meteo:
-            return "Метео";
+            return WebUiRu::Users::kCtrlMeteo;
         case UsersRegistry::AclController::Thermo:
-            return "Термо";
+            return WebUiRu::Users::kCtrlThermo;
         case UsersRegistry::AclController::Tanks:
-            return "Баки";
+            return WebUiRu::Users::kCtrlTanks;
         case UsersRegistry::AclController::Septic:
-            return "Септик";
+            return WebUiRu::Users::kCtrlSeptic;
         case UsersRegistry::AclController::Security:
-            return "Охрана";
+            return WebUiRu::Users::kCtrlSecurity;
         case UsersRegistry::AclController::Watering:
-            return "Полив";
+            return WebUiRu::Users::kCtrlWatering;
         case UsersRegistry::AclController::Leak:
-            return "Протечки";
+            return WebUiRu::Users::kCtrlLeak;
         case UsersRegistry::AclController::Avr:
-            return "АВР";
+            return WebUiRu::Users::kCtrlAvr;
         case UsersRegistry::AclController::Ring:
-            return "Звонок";
+            return WebUiRu::Users::kCtrlRing;
         default:
             return "Controller";
         }
@@ -530,7 +562,7 @@ private:
                     const auto *cfg = c.sockets().configByIndex(i);
                     if (!cfg || !cfg->enabled)
                         continue;
-                    const String label = aclItemLabel_("Розетка", cfg->id, cfg->name);
+                    const String label = aclItemLabel_(WebUiRu::Users::kItemSocket, cfg->id, cfg->name);
                     fn(cfg->id, label);
                 }
                 return;
@@ -540,7 +572,7 @@ private:
                     const auto *cfg = c.sockets().lightConfigByIndex(i);
                     if (!cfg || !cfg->enabled)
                         continue;
-                    const String label = aclItemLabel_("Свет", cfg->id, cfg->name);
+                    const String label = aclItemLabel_(WebUiRu::Users::kItemLight, cfg->id, cfg->name);
                     fn(cfg->id, label);
                 }
                 return;
@@ -550,7 +582,7 @@ private:
                     const auto *cfg = c.meteo().configByIndex(i);
                     if (!cfg || !cfg->enabled)
                         continue;
-                    const String label = aclItemLabel_("Метео", cfg->id, cfg->name);
+                    const String label = aclItemLabel_(WebUiRu::Users::kItemMeteo, cfg->id, cfg->name);
                     fn(cfg->id, label);
                 }
                 return;
@@ -560,7 +592,7 @@ private:
                     const auto *cfg = c.thermo().configByIndex(i);
                     if (!cfg || !cfg->enabled)
                         continue;
-                    const String label = aclItemLabel_("Термо", cfg->id, cfg->name);
+                    const String label = aclItemLabel_(WebUiRu::Users::kItemThermo, cfg->id, cfg->name);
                     fn(cfg->id, label);
                 }
                 return;
@@ -570,7 +602,7 @@ private:
                     const auto *cfg = c.tanks().configByIndex(i);
                     if (!cfg || !cfg->enabled)
                         continue;
-                    const String label = aclItemLabel_("Бак", cfg->id, cfg->name);
+                    const String label = aclItemLabel_(WebUiRu::Users::kItemTank, cfg->id, cfg->name);
                     fn(cfg->id, label);
                 }
                 return;
@@ -580,7 +612,7 @@ private:
                     const auto *cfg = c.septic().configByIndex(i);
                     if (!cfg || !cfg->enabled)
                         continue;
-                    const String label = aclItemLabel_("Септик", cfg->id, cfg->name);
+                    const String label = aclItemLabel_(WebUiRu::Users::kItemSeptic, cfg->id, cfg->name);
                     fn(cfg->id, label);
                 }
                 return;
@@ -590,7 +622,7 @@ private:
                     const auto *cfg = c.security().configByIndex(i);
                     if (!cfg || !cfg->enabled)
                         continue;
-                    const String label = aclItemLabel_("Сенсор", cfg->id, cfg->name);
+                    const String label = aclItemLabel_(WebUiRu::Users::kItemSensor, cfg->id, cfg->name);
                     fn(cfg->id, label);
                 }
                 return;
@@ -600,7 +632,7 @@ private:
                     const auto *cfg = c.watering().configByIndex(i);
                     if (!cfg || !cfg->enabled)
                         continue;
-                    const String label = aclItemLabel_("Правило", cfg->id, cfg->name);
+                    const String label = aclItemLabel_(WebUiRu::Users::kItemRule, cfg->id, cfg->name);
                     fn(cfg->id, label);
                 }
                 return;
@@ -610,7 +642,7 @@ private:
                     const auto *cfg = c.leak().configByIndex(i);
                     if (!cfg || !cfg->enabled)
                         continue;
-                    const String label = aclItemLabel_("Протечка", cfg->id, cfg->name);
+                    const String label = aclItemLabel_(WebUiRu::Users::kItemLeak, cfg->id, cfg->name);
                     fn(cfg->id, label);
                 }
                 return;
@@ -642,7 +674,7 @@ private:
                         const auto &it = cache->items[i];
                         if (!it.enabled)
                             continue;
-                        fn(it.id, aclItemLabel_("Розетка", it.id, it.name[0] ? String(it.name) : String()));
+                        fn(it.id, aclItemLabel_(WebUiRu::Users::kItemSocket, it.id, it.name[0] ? String(it.name) : String()));
                     }
                 }
                 else
@@ -663,7 +695,7 @@ private:
                         const auto &it = cache->items[i];
                         if (!it.enabled)
                             continue;
-                        fn(it.id, aclItemLabel_("Свет", it.id, it.name[0] ? String(it.name) : String()));
+                        fn(it.id, aclItemLabel_(WebUiRu::Users::kItemLight, it.id, it.name[0] ? String(it.name) : String()));
                     }
                 }
                 else
@@ -684,7 +716,7 @@ private:
                         const auto &it = cache->items[i];
                         if (!it.enabled)
                             continue;
-                        fn(it.id, aclItemLabel_("Метео", it.id, it.name[0] ? String(it.name) : String()));
+                        fn(it.id, aclItemLabel_(WebUiRu::Users::kItemMeteo, it.id, it.name[0] ? String(it.name) : String()));
                     }
                 }
                 else
@@ -705,7 +737,7 @@ private:
                         const auto &it = cache->items[i];
                         if (!it.enabled)
                             continue;
-                        fn(it.id, aclItemLabel_("Термо", it.id, it.name[0] ? String(it.name) : String()));
+                        fn(it.id, aclItemLabel_(WebUiRu::Users::kItemThermo, it.id, it.name[0] ? String(it.name) : String()));
                     }
                 }
                 else
@@ -726,7 +758,7 @@ private:
                         const auto &it = cache->items[i];
                         if (!it.enabled)
                             continue;
-                        fn(it.id, aclItemLabel_("Бак", it.id, it.name[0] ? String(it.name) : String()));
+                        fn(it.id, aclItemLabel_(WebUiRu::Users::kItemTank, it.id, it.name[0] ? String(it.name) : String()));
                     }
                 }
                 else
@@ -747,7 +779,7 @@ private:
                         const auto &it = cache->items[i];
                         if (!it.enabled)
                             continue;
-                        fn(it.id, aclItemLabel_("Септик", it.id, String()));
+                        fn(it.id, aclItemLabel_(WebUiRu::Users::kItemSeptic, it.id, String()));
                     }
                 }
                 else
@@ -768,7 +800,7 @@ private:
                         const auto &it = cache->items[i];
                         if (!it.enabled)
                             continue;
-                        fn(it.id, aclItemLabel_("Сенсор", it.id, it.name[0] ? String(it.name) : String()));
+                        fn(it.id, aclItemLabel_(WebUiRu::Users::kItemSensor, it.id, it.name[0] ? String(it.name) : String()));
                     }
                 }
                 else
@@ -789,7 +821,7 @@ private:
                         const auto &it = cache->items[i];
                         if (!it.enabled)
                             continue;
-                        fn(it.id, aclItemLabel_("Правило", it.id, it.name[0] ? String(it.name) : String()));
+                        fn(it.id, aclItemLabel_(WebUiRu::Users::kItemRule, it.id, it.name[0] ? String(it.name) : String()));
                     }
                 }
                 else
@@ -810,7 +842,7 @@ private:
                         const auto &it = cache->items[i];
                         if (!it.enabled)
                             continue;
-                        fn(it.id, aclItemLabel_("Протечка", it.id, it.name[0] ? String(it.name) : String()));
+                        fn(it.id, aclItemLabel_(WebUiRu::Users::kItemLeak, it.id, it.name[0] ? String(it.name) : String()));
                     }
                 }
                 else
@@ -858,7 +890,11 @@ private:
             const bool allow_ctrl = u.controllerAllowed(unit, ctrl);
             out += "<div class=\"tile\"><div class=\"tile-head\"><strong>";
             out += aclControllerTitle_(ctrl);
-            out += "</strong><div class=\"tile-actions\"><button class=\"btn-lite\" type=\"button\" onclick=\"aclToggleTile(this,true)\">Все</button><button class=\"btn-lite\" type=\"button\" onclick=\"aclToggleTile(this,false)\">Ничего</button><label class=\"switch\"><input type=\"checkbox\" name=\"c_";
+            out += "</strong><div class=\"tile-actions\"><button class=\"btn-lite\" type=\"button\" onclick=\"aclToggleTile(this,true)\">";
+            out += WebUiRu::Users::kAclAll;
+            out += "</button><button class=\"btn-lite\" type=\"button\" onclick=\"aclToggleTile(this,false)\">";
+            out += WebUiRu::Users::kAclNone;
+            out += "</button><label class=\"switch\"><input type=\"checkbox\" name=\"c_";
             out += String((unsigned)ci);
             out += "\"";
             if (allow_ctrl)
@@ -893,9 +929,17 @@ private:
             if (!any)
             {
                 if (loading)
-                    out += "<div class=\"item\"><div class=\"muted\">Загрузка данных юнита...</div><div></div><div></div></div>";
+                {
+                    out += "<div class=\"item\"><div class=\"muted\">";
+                    out += WebUiRu::Users::kAclLoadingUnit;
+                    out += "</div><div></div><div></div></div>";
+                }
                 else
-                    out += "<div class=\"item\"><div class=\"muted\">Нет enabled элементов</div><div></div><div></div></div>";
+                {
+                    out += "<div class=\"item\"><div class=\"muted\">";
+                    out += WebUiRu::Users::kAclNoEnabledItems;
+                    out += "</div><div></div><div></div></div>";
+                }
             }
             out += "</div></div>";
         });

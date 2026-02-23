@@ -123,6 +123,8 @@ public:
     }
     static String listStackMeteoHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit)
     {
+            if (web._stack_cache)
+                web.requestStackTempSensors_(node_id);
             const auto *cache = web._stack_cache->meteoCache(node_id);
             if (!cache || !cache->has_data)
                 return WebUiRu::Meteo::kText;
@@ -154,6 +156,7 @@ public:
             }
             size_t rendered = 0;
             size_t visible_idx = 0;
+            const auto *ds_cache = web._stack_cache ? web._stack_cache->tempSensorsCache(node_id) : nullptr;
             for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
             {
                 const auto &cfg = cache->items[i];
@@ -167,6 +170,8 @@ public:
                     continue;
                 }
                 ++visible_idx;
+                const bool can_admin = web.webSessionIsAdmin_();
+                const bool can_edit_stack = can_admin;
                 char temp_buf[12] = {};
                 char hum_buf[12] = {};
                 const char *temp = "--";
@@ -180,6 +185,13 @@ public:
                 {
                     dtostrf(cfg.hum, 0, 1, hum_buf);
                     hum = hum_buf;
+                }
+                char age_buf[16] = {};
+                const char *age = "-";
+                if (cfg.has_read)
+                {
+                    snprintf(age_buf, sizeof(age_buf), "%lus", (unsigned long)cfg.age_s);
+                    age = age_buf;
                 }
                 const bool has_data = cfg.has_temp || cfg.has_hum;
                 const bool ok_on = has_data && cfg.ok;
@@ -235,7 +247,9 @@ public:
                 items += "_en\"";
                 if (cfg.enabled)
                     items += " checked";
-                items += " disabled><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+                if (!can_edit_stack)
+                    items += " disabled";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
                 items += WebUiRu::Meteo::kText12;
                 items += "<option value=\"local\" selected>local</option></select></div>";
                 items += WebUiRu::Meteo::kInputClassFieldNameMeteoNameType;
@@ -245,11 +259,17 @@ public:
                     web.appendHtmlEscaped_(items, cfg.name);
                 else
                     items += WebUiRu::Meteo::kText3;
-                items += "\" readonly></div>";
+                items += "\"";
+                if (!can_edit_stack)
+                    items += " readonly";
+                items += "></div>";
                 items += "<div class=\"form-grid\">";
                 items += WebUiRu::Meteo::kSelectClassFieldMeteoTypeNameM;
                 items += String((unsigned)cfg.id);
-                items += "_type\" disabled>";
+                items += "_type\"";
+                if (!can_edit_stack)
+                    items += " disabled";
+                items += ">";
                 items += "<option value=\"none\"";
                 if (type_value == "none")
                     items += " selected";
@@ -268,7 +288,10 @@ public:
                     items += String(cfg.pin);
                 items += "\" name=\"m";
                 items += String((unsigned)cfg.id);
-                items += "_pin\" disabled>";
+                items += "_pin\"";
+                if (!can_edit_stack)
+                    items += " disabled";
+                items += ">";
                 if (cfg.pin >= 0)
                 {
                     items += "<option value=\"";
@@ -284,27 +307,55 @@ public:
                 items += "</select></div>";
                 items += WebUiRu::Meteo::kSelectClassFieldAddrMeteoAddrName;
                 items += String((unsigned)cfg.id);
-                items += "_addr\" disabled>";
-                if (cfg.addr[0])
+                items += "_addr\"";
+                if (!can_edit_stack)
+                    items += " disabled";
+                items += ">";
+                String addr_value = cfg.addr[0] ? String(cfg.addr) : String();
+                bool addr_found = false;
+                items += "<option value=\"\"";
+                if (!addr_value.length())
+                    items += " selected";
+                items += ">-</option>";
+                if (ds_cache && ds_cache->has_data && ds_cache->items)
+                {
+                    for (size_t ai = 0; ai < ds_cache->item_count; ++ai)
+                    {
+                        const auto &a = ds_cache->items[ai];
+                        if (!a.addr[0])
+                            continue;
+                        const bool selected = (addr_value.length() && addr_value == a.addr);
+                        items += "<option value=\"";
+                        web.appendHtmlEscaped_(items, a.addr);
+                        items += "\"";
+                        if (selected)
+                        {
+                            items += " selected";
+                            addr_found = true;
+                        }
+                        if (a.used && !selected)
+                            items += " disabled";
+                        items += ">";
+                        web.appendHtmlEscaped_(items, a.addr);
+                        items += "</option>";
+                    }
+                }
+                if (addr_value.length() && !addr_found)
                 {
                     items += "<option value=\"";
-                    web.appendHtmlEscaped_(items, cfg.addr);
+                    web.appendHtmlEscaped_(items, addr_value.c_str());
                     items += "\" selected>";
-                    web.appendHtmlEscaped_(items, cfg.addr);
+                    web.appendHtmlEscaped_(items, addr_value.c_str());
                     items += "</option>";
                 }
-                else
-                {
-                    items += "<option value=\"\" selected>-</option>";
-                }
-                items += "</div></div>";
+                items += "</select></div>";
+                items += "</div>";
                 items += "<div class=\"status-line\"><span class=\"status-dot sensor-status-dot ";
                 items += status_class;
-                items += "\"></span><span>";
+                items += "\"></span><span class=\"meteo-age-text\">";
                 items += WebUiRu::Meteo::kText13;
-                items += "-";
+                items += age;
                 items += "</span></div>";
-                items += "</div>";
                 items += "</div></div>";
                 ++rendered;
             }
@@ -365,7 +416,8 @@ public:
     
         auto appendRow = [&](const MeteoController::SensorConfig &cfg, const MeteoController::SensorState &st,
                              bool enabled) {
-            const bool can_edit = web.webSessionIsAdmin_();
+            const bool can_edit = web.webSessionIsAdmin_() &&
+                                  web.webAclCanControlItem_(UsersRegistry::AclController::Meteo, cfg.id);
             const bool has_read = st.last_read_ms != 0;
             char temp_buf[12] = {};
             char hum_buf[12] = {};
@@ -451,9 +503,6 @@ public:
             items += "</div>";
             items += "</div>";
             items += "<div>";
-            String remote_label;
-            if (has_remote)
-                remote_label = web.meteoRemoteLabel_(cfg.source_node_id, cfg.source_sensor_id);
             items += "<div class=\"tile-head\"><strong>";
             if (cfg.name[0])
                 web.appendHtmlEscaped_(items, cfg.name);
@@ -484,12 +533,6 @@ public:
             items += "_src\">";
             items += web.meteoRemoteSensorOptionsHtml_(cfg.source_sensor_id, cfg.source_node_id);
             items += "</select></div>";
-            if (remote_label.length())
-            {
-                items += "<div class=\"muted\">";
-                web.appendHtmlEscaped_(items, remote_label.c_str());
-                items += "</div>";
-            }
             items += "<div class=\"form-grid\">";
             items += WebUiRu::Meteo::kSelectClassFieldMeteoTypeNameM;
             items += String((unsigned)cfg.id);
@@ -551,7 +594,7 @@ public:
             items += "</div>";
             items += "<div class=\"status-line\">";
             items += ok;
-            items += "<span>";
+            items += "<span class=\"meteo-age-text\">";
             items += WebUiRu::Meteo::kText13;
             items += age;
             items += "</span></div>";

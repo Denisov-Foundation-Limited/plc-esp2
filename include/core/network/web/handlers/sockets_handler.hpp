@@ -1,4 +1,4 @@
-﻿/**********************************************************************/
+/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -304,7 +304,7 @@ public:
             if (changed_stack)
             {
                 web.requestStackSockets_(node_id);
-                web.requestStackPorts_(node_id);
+                web.refreshStackPorts_(node_id);
                 web._sockets_status = "Updated";
             }
             else

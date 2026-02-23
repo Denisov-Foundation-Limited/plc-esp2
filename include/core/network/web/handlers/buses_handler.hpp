@@ -33,6 +33,10 @@ public:
         String page = FPSTR(kWebInterfaceBusesHtml);
         page.reserve(page.length() + 3072);
         page.replace("%NAV%", web.navHtml_());
+        page.replace("%BUSES_PAGE_TITLE%", WebUiRu::BusesPage::kPageTitle);
+        page.replace("%BUSES_TITLE%", WebUiRu::BusesPage::kTitle);
+        page.replace("%BUSES_SCAN_I2C%", WebUiRu::BusesPage::kScanI2C);
+        page.replace("%BUSES_SCAN_OW%", WebUiRu::BusesPage::kScanOw);
         page.replace("%I2C%", web.listI2cHtml_());
         page.replace("%OW%", web.listOwHtml_());
         page.replace("%BUS_DEVICE_SELECT%", "");

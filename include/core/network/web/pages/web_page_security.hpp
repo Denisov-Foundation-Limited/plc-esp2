@@ -17,7 +17,7 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>РћС…СЂР°РЅР°</title>
+  <title>%SECURITY_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -318,35 +318,35 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>РћС…СЂР°РЅР°</h1>
+      <h1>%SECURITY_PAGE_TITLE%</h1>
       <form method="POST" action="/security" id="security-form">
         <div class="status">
-          <span class="pill">РЎС‚Р°С‚СѓСЃ: <span class="status-dot" data-state="%SECURITY_ARMED_LABEL%" title="%SECURITY_ARMED_LABEL%"></span></span>
-          <span class="pill">РўСЂРµРІРѕРіР°: <span class="status-dot" data-state="%SECURITY_ALARM_LABEL%" title="%SECURITY_ALARM_LABEL%"></span></span>
+          <span class="pill">%SECURITY_LABEL_STATUS%: <span class="status-dot" data-state="%SECURITY_ARMED_LABEL%" title="%SECURITY_ARMED_LABEL%"></span></span>
+          <span class="pill">%SECURITY_LABEL_ALARM%: <span class="status-dot" data-state="%SECURITY_ALARM_LABEL%" title="%SECURITY_ALARM_LABEL%"></span></span>
           <span class="pill">GSM: <span class="status-dot" data-kind="gsm" data-state="%SECURITY_GSM_LABEL%" title="%SECURITY_GSM_LABEL%"></span></span>
         </div>
         <div class="status-msg" id="security-status">%SECURITY_STATUS%</div>
         <div class="grid">
           <div>
-            <label>РћС…СЂР°РЅР°</label>
+            <label>%SECURITY_PAGE_TITLE%</label>
             <div class="buttons">
-              <button class="primary" name="action" value="arm">РџРѕСЃС‚Р°РІРёС‚СЊ</button>
-              <button class="warn" name="action" value="disarm">РЎРЅСЏС‚СЊ</button>
+              <button class="primary" name="action" value="arm">%SECURITY_BTN_ARM%</button>
+              <button class="warn" name="action" value="disarm">%SECURITY_BTN_DISARM%</button>
             </div>
           </div>
           <div>
-            <label>РџРѕСЂС‚ СЃРёСЂРµРЅС‹</label>
+            <label>%SECURITY_LABEL_SIREN_PORT%</label>
             <select class="field mini siren-select" data-selected="%SECURITY_SIREN%" name="security_siren"></select>
           </div>
         </div>
         <h2>%SECURITY_SENSORS_TITLE%</h2>
         %SECURITY_DEVICE_SELECT%
         <div class="pagination" %SECURITY_SENSORS_PAGINATION_STYLE%>
-          <button type="button" class="btn btn-sm" id="security-prev">РќР°Р·Р°Рґ</button>
-          <span class="page-info">РЎС‚СЂР°РЅРёС†Р°</span>
+          <button type="button" class="btn btn-sm" id="security-prev">%SECURITY_PAGE_PREV%</button>
+          <span class="page-info">%SECURITY_PAGE_PAGE%</span>
           <select id="security-page" class="field mini"></select>
           <span class="page-info">/ %SECURITY_SENSORS_PAGES%</span>
-          <button type="button" class="btn btn-sm" id="security-next">Р’РїРµСЂС‘Рґ</button>
+          <button type="button" class="btn btn-sm" id="security-next">%SECURITY_PAGE_NEXT%</button>
         </div>
         <div class="grid">
           %SECURITY_SENSORS%
@@ -362,9 +362,9 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       const s = String(value || '').trim().toLowerCase();
       if (!s) return false;
       if (s === '1' || s === 'true' || s === 'on' || s === 'ok' || s === 'ready' || s === 'active') return true;
-      if (s.indexOf('РІРєР»') !== -1) return true;
-      if (s.indexOf('РїРѕРґ РѕС…СЂР°РЅРѕР№') !== -1) return true;
-      if (s.indexOf('РІРєР»СЋС‡') !== -1) return true;
+      if (s.indexOf('%SECURITY_JS_ON1%') !== -1) return true;
+      if (s.indexOf('%SECURITY_JS_ARMED%') !== -1) return true;
+      if (s.indexOf('%SECURITY_JS_ON2%') !== -1) return true;
       if (s.indexOf('armed') !== -1) return true;
       if (s.indexOf('enabled') !== -1) return true;
       if (s.indexOf('alarm') !== -1) return true;
@@ -378,7 +378,7 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       if (kind === 'gsm') {
         const s = String(state).trim().toLowerCase();
         const ok = s === 'ok' || s === '1' || s === 'true' || s === 'on';
-        const off = s === 'off' || s === 'РЅРµРґРѕСЃС‚СѓРїРЅРѕ' || s === 'РІС‹РєР»' || s === 'not started';
+        const off = s === 'off' || s === '%SECURITY_JS_UNAVAILABLE%' || s === '%SECURITY_JS_OFF%' || s === 'not started';
         dot.classList.toggle('status-on', ok);
         dot.classList.toggle('status-off', off);
         dot.classList.toggle('status-bad', !ok && !off);
@@ -571,7 +571,7 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
     const reloadKey = 'security_reload';
     if (sessionStorage.getItem(reloadKey)) {
       sessionStorage.removeItem(reloadKey);
-      location.replace(location.pathname);
+      location.replace(location.pathname + location.search);
     }
     if (securityForm) {
       securityForm.addEventListener('submit', (e) => {
@@ -582,6 +582,72 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
         sessionStorage.setItem(reloadKey, '1');
       });
     }
+    function setStatusDot(dot, on, bad) {
+      if (!dot) return;
+      dot.classList.toggle('status-on', !!on && !bad);
+      dot.classList.toggle('status-off', !on && !bad);
+      dot.classList.toggle('status-bad', !!bad);
+    }
+    function applySecurityState(payload) {
+      if (!payload || typeof payload !== 'object') return;
+      document.querySelectorAll('.status-dot[data-state]').forEach((dot) => {
+        const kind = dot.dataset.kind || '';
+        if (kind === 'gsm') return;
+        if (dot.closest('.pill')) {
+          if (dot.title && dot.title.toLowerCase().indexOf('alarm') !== -1) {
+            setStatusDot(dot, !!payload.alarm, !!payload.alarm);
+          }
+        }
+      });
+      const pills = document.querySelectorAll('.status .pill .status-dot[data-state]');
+      if (pills.length > 0) setStatusDot(pills[0], !!payload.armed, false);
+      if (pills.length > 1) setStatusDot(pills[1], !!payload.alarm, !!payload.alarm);
+      const map = new Map();
+      (payload.items || []).forEach((it) => map.set(Number(it.id), it));
+      document.querySelectorAll('.tile[data-sensor-id]').forEach((tile) => {
+        const id = Number(tile.dataset.sensorId || 0);
+        if (!map.has(id)) return;
+        const it = map.get(id);
+        const enabled = !!it.enabled;
+        const detect = !!it.detect;
+        tile.classList.toggle('disabled', !enabled);
+        const icon = tile.querySelector('.sock-icon');
+        if (icon) {
+          icon.classList.remove('on', 'off', 'alert');
+          icon.classList.add(!enabled ? 'off' : (detect ? 'alert' : 'on'));
+        }
+        const dot = tile.querySelector('.status-line .status-dot');
+        if (dot) setStatusDot(dot, enabled && !detect, enabled && detect);
+        const text = tile.querySelector('.status-line .status-text');
+        if (text) {
+          if (!enabled) text.textContent = '��������';
+          else if (detect) text.textContent = '��������';
+          else text.textContent = '�����';
+        }
+      });
+    }
+    let securityPollBusy = false;
+    async function pollSecurityState() {
+      if (securityPollBusy) return;
+      securityPollBusy = true;
+      try {
+        const url = new URL('/security/state', window.location.origin);
+        const cur = new URL(window.location.href);
+        const unit = cur.searchParams.get('unit');
+        const node = cur.searchParams.get('node');
+        if (unit) url.searchParams.set('unit', unit);
+        if (node) url.searchParams.set('node', node);
+        const res = await fetch(url.toString(), { credentials: 'same-origin' });
+        if (!res.ok) throw new Error('state fetch failed');
+        const payload = await res.json();
+        if (!payload.pending) applySecurityState(payload);
+      } catch (_) {
+      } finally {
+        securityPollBusy = false;
+      }
+    }
+    setTimeout(pollSecurityState, 500);
+    setInterval(pollSecurityState, 2000);
     const securityDevice = document.getElementById('security-device');
     if (securityDevice) {
       securityDevice.addEventListener('change', () => {
@@ -602,5 +668,6 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 

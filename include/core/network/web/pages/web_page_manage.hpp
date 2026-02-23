@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -17,7 +17,7 @@ static const char kWebInterfaceManageHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Прошивка и файлы</title>
+  <title>%MANAGE_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -91,35 +91,35 @@ static const char kWebInterfaceManageHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Прошивка и файлы</h1>
+      <h1>%MANAGE_TITLE%</h1>
       <div class="section">
-        <h2>Прошивка</h2>
-        <p class="status">OTA загрузка (.bin)</p>
+        <h2>%MANAGE_FW_SECTION%</h2>
+        <p class="status">%MANAGE_FW_HINT%</p>
         <form method="POST" action="/ota" enctype="multipart/form-data">
           <div class="row">
             <input type="file" name="firmware">
-            <button type="submit">Загрузить прошивку</button>
+            <button type="submit">%MANAGE_UPLOAD_FW%</button>
           </div>
         </form>
       </div>
       <div class="section">
-        <h2>Файлы</h2>
+        <h2>%MANAGE_FILES_SECTION%</h2>
         <form method="POST" action="/upload" enctype="multipart/form-data">
           <div class="row">
             <input type="file" name="file">
-            <button type="submit">Загрузить файл</button>
+            <button type="submit">%MANAGE_UPLOAD_FILE%</button>
           </div>
         </form>
-        <p><a href="/status">Статус</a></p>
+        <p><a href="/status">%MANAGE_STATUS_LINK%</a></p>
       </div>
       <div class="section">
-        <h2>Список файлов</h2>
+        <h2>%MANAGE_FILE_LIST%</h2>
         <table>
           <thead>
             <tr>
-              <th>Имя</th>
-              <th class="right">Размер</th>
-              <th class="right">Удалить</th>
+              <th>%MANAGE_COL_NAME%</th>
+              <th class="right">%MANAGE_COL_SIZE%</th>
+              <th class="right">%MANAGE_COL_DELETE%</th>
             </tr>
           </thead>
           <tbody>

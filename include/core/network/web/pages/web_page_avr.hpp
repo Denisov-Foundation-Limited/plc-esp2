@@ -17,7 +17,7 @@ static const char kWebInterfaceAvrHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Автоматический ввод резерва (АВР)</title>
+  <title>%AVR_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -118,61 +118,61 @@ static const char kWebInterfaceAvrHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Автоматический ввод резерва (АВР)</h1>
+      <h1>%AVR_PAGE_TITLE%</h1>
       %AVR_DEVICE_SELECT%
       <div class="status">%AVR_STATUS%</div>
       <div class="status">%AVR_STATE_TEXT%</div>
       <form method="POST" action="%AVR_FORM_ACTION%" id="avr-form">
         <input type="hidden" name="avr_save" value="1">
         <div class="row">
-          <label><input type="checkbox" name="avr_enabled" %AVR_ENABLED_CHECKED%> Включено</label>
-          <label><input type="checkbox" name="avr_auto_mode" %AVR_AUTO_MODE_CHECKED%> Авто режим</label>
-          <label><input type="checkbox" name="avr_prefer_main" %AVR_PREFER_MAIN_CHECKED%> Приоритет Основной сети</label>
-          <label><input type="checkbox" name="avr_auto_return_main" %AVR_AUTO_RETURN_MAIN_CHECKED%> Автовозврат на Основную сеть</label>
+          <label><input type="checkbox" name="avr_enabled" %AVR_ENABLED_CHECKED%> %AVR_CHK_ENABLED%</label>
+          <label><input type="checkbox" name="avr_auto_mode" %AVR_AUTO_MODE_CHECKED%> %AVR_CHK_AUTO_MODE%</label>
+          <label><input type="checkbox" name="avr_prefer_main" %AVR_PREFER_MAIN_CHECKED%> %AVR_CHK_PREFER_MAIN%</label>
+          <label><input type="checkbox" name="avr_auto_return_main" %AVR_AUTO_RETURN_MAIN_CHECKED%> %AVR_CHK_AUTO_RETURN_MAIN%</label>
         </div>
 
-        <div class="group-title">Ручной источник (используется только в ручном режиме)</div>
+        <div class="group-title">%AVR_GROUP_MANUAL_SOURCE%</div>
         <div class="grid">
           <div>
-            <label>Источник</label>
+            <label>%AVR_LABEL_SOURCE%</label>
             <div class="radio-group">
-              <label class="radio-item"><input type="radio" name="avr_manual_source" value="off" %AVR_MANUAL_OFF_SELECTED%>Отключен</label>
-              <label class="radio-item"><input type="radio" name="avr_manual_source" value="main" %AVR_MANUAL_MAIN_SELECTED%>Основная сеть</label>
-              <label class="radio-item"><input type="radio" name="avr_manual_source" value="reserve" %AVR_MANUAL_RESERVE_SELECTED%>Резервная сеть</label>
+              <label class="radio-item"><input type="radio" name="avr_manual_source" value="off" %AVR_MANUAL_OFF_SELECTED%>%AVR_RADIO_OFF%</label>
+              <label class="radio-item"><input type="radio" name="avr_manual_source" value="main" %AVR_MANUAL_MAIN_SELECTED%>%AVR_RADIO_MAIN%</label>
+              <label class="radio-item"><input type="radio" name="avr_manual_source" value="reserve" %AVR_MANUAL_RESERVE_SELECTED%>%AVR_RADIO_RESERVE%</label>
             </div>
           </div>
         </div>
 
-        <div class="group-title">Порты</div>
+        <div class="group-title">%AVR_GROUP_PORTS%</div>
         <div class="grid">
-          <div><label>Вход Основная сеть OK</label><select class="field avr-select" data-type="dinput" data-selected="%AVR_MAIN_OK_SELECTED%" name="avr_main_ok"></select></div>
-          <div><label>Обратная связь Основная сеть</label><select class="field avr-select" data-type="dinput" data-selected="%AVR_FB_MAIN_SELECTED%" name="avr_feedback_main"></select></div>
-          <div><label>Реле Основная сеть</label><select class="field avr-select" data-type="relay" data-selected="%AVR_RELAY_MAIN_SELECTED%" name="avr_relay_main"></select></div>
-          <div><label>Вход Резервная сеть OK</label><select class="field avr-select" data-type="dinput" data-selected="%AVR_RESERVE_OK_SELECTED%" name="avr_reserve_ok"></select></div>
-          <div><label>Обратная связь Резервная сеть</label><select class="field avr-select" data-type="dinput" data-selected="%AVR_FB_RESERVE_SELECTED%" name="avr_feedback_reserve"></select></div>
-          <div><label>Реле Резервная сеть</label><select class="field avr-select" data-type="relay" data-selected="%AVR_RELAY_RESERVE_SELECTED%" name="avr_relay_reserve"></select></div>
+          <div><label>%AVR_PORT_MAIN_OK%</label><select class="field avr-select" data-type="dinput" data-selected="%AVR_MAIN_OK_SELECTED%" name="avr_main_ok"></select></div>
+          <div><label>%AVR_PORT_FEEDBACK_MAIN%</label><select class="field avr-select" data-type="dinput" data-selected="%AVR_FB_MAIN_SELECTED%" name="avr_feedback_main"></select></div>
+          <div><label>%AVR_PORT_RELAY_MAIN%</label><select class="field avr-select" data-type="relay" data-selected="%AVR_RELAY_MAIN_SELECTED%" name="avr_relay_main"></select></div>
+          <div><label>%AVR_PORT_RESERVE_OK%</label><select class="field avr-select" data-type="dinput" data-selected="%AVR_RESERVE_OK_SELECTED%" name="avr_reserve_ok"></select></div>
+          <div><label>%AVR_PORT_FEEDBACK_RESERVE%</label><select class="field avr-select" data-type="dinput" data-selected="%AVR_FB_RESERVE_SELECTED%" name="avr_feedback_reserve"></select></div>
+          <div><label>%AVR_PORT_RELAY_RESERVE%</label><select class="field avr-select" data-type="relay" data-selected="%AVR_RELAY_RESERVE_SELECTED%" name="avr_relay_reserve"></select></div>
         </div>
 
-        <div class="group-title">Логика портов</div>
+        <div class="group-title">%AVR_GROUP_PORT_LOGIC%</div>
         <div class="row">
-          <label><input type="checkbox" name="avr_main_ok_active_low" %AVR_MAIN_OK_AL_CHECKED%> Основная сеть OK активный ноль</label>
-          <label><input type="checkbox" name="avr_reserve_ok_active_low" %AVR_RESERVE_OK_AL_CHECKED%> Резервная сеть OK активный ноль</label>
-          <label><input type="checkbox" name="avr_feedback_main_active_low" %AVR_FB_MAIN_AL_CHECKED%> Обратная связь Основная сеть активный ноль</label>
-          <label><input type="checkbox" name="avr_feedback_reserve_active_low" %AVR_FB_RESERVE_AL_CHECKED%> Обратная связь Резервная сеть активный ноль</label>
+          <label><input type="checkbox" name="avr_main_ok_active_low" %AVR_MAIN_OK_AL_CHECKED%> %AVR_AL_MAIN_OK%</label>
+          <label><input type="checkbox" name="avr_reserve_ok_active_low" %AVR_RESERVE_OK_AL_CHECKED%> %AVR_AL_RESERVE_OK%</label>
+          <label><input type="checkbox" name="avr_feedback_main_active_low" %AVR_FB_MAIN_AL_CHECKED%> %AVR_AL_FEEDBACK_MAIN%</label>
+          <label><input type="checkbox" name="avr_feedback_reserve_active_low" %AVR_FB_RESERVE_AL_CHECKED%> %AVR_AL_FEEDBACK_RESERVE%</label>
         </div>
         <div class="row">
-          <label><input type="checkbox" name="avr_relay_main_invert" %AVR_RELAY_MAIN_INV_CHECKED%> Инверсия реле Основная сеть</label>
-          <label><input type="checkbox" name="avr_relay_reserve_invert" %AVR_RELAY_RESERVE_INV_CHECKED%> Инверсия реле Резервная сеть</label>
+          <label><input type="checkbox" name="avr_relay_main_invert" %AVR_RELAY_MAIN_INV_CHECKED%> %AVR_INV_RELAY_MAIN%</label>
+          <label><input type="checkbox" name="avr_relay_reserve_invert" %AVR_RELAY_RESERVE_INV_CHECKED%> %AVR_INV_RELAY_RESERVE%</label>
         </div>
 
-        <div class="group-title">Тайминги (ms)</div>
+        <div class="group-title">%AVR_GROUP_TIMINGS%</div>
         <div class="grid">
-          <div><label>Дребезг</label><input class="field" type="number" min="0" name="avr_debounce_ms" value="%AVR_DEBOUNCE_MS%"></div>
-          <div><label>Задержка потери</label><input class="field" type="number" min="0" name="avr_loss_delay_ms" value="%AVR_LOSS_DELAY_MS%"></div>
-          <div><label>Задержка возврата</label><input class="field" type="number" min="0" name="avr_return_delay_ms" value="%AVR_RETURN_DELAY_MS%"></div>
-          <div><label>Пауза переключения</label><input class="field" type="number" min="0" name="avr_break_ms" value="%AVR_BREAK_MS%"></div>
-          <div><label>Прогрев</label><input class="field" type="number" min="0" name="avr_warmup_ms" value="%AVR_WARMUP_MS%"></div>
-          <div><label>Таймаут переключения</label><input class="field" type="number" min="0" name="avr_transfer_timeout_ms" value="%AVR_TRANSFER_TIMEOUT_MS%"></div>
+          <div><label>%AVR_TIMING_DEBOUNCE%</label><input class="field" type="number" min="0" name="avr_debounce_ms" value="%AVR_DEBOUNCE_MS%"></div>
+          <div><label>%AVR_TIMING_LOSS_DELAY%</label><input class="field" type="number" min="0" name="avr_loss_delay_ms" value="%AVR_LOSS_DELAY_MS%"></div>
+          <div><label>%AVR_TIMING_RETURN_DELAY%</label><input class="field" type="number" min="0" name="avr_return_delay_ms" value="%AVR_RETURN_DELAY_MS%"></div>
+          <div><label>%AVR_TIMING_BREAK%</label><input class="field" type="number" min="0" name="avr_break_ms" value="%AVR_BREAK_MS%"></div>
+          <div><label>%AVR_TIMING_WARMUP%</label><input class="field" type="number" min="0" name="avr_warmup_ms" value="%AVR_WARMUP_MS%"></div>
+          <div><label>%AVR_TIMING_TRANSFER_TIMEOUT%</label><input class="field" type="number" min="0" name="avr_transfer_timeout_ms" value="%AVR_TRANSFER_TIMEOUT_MS%"></div>
         </div>
       </form>
 
@@ -184,7 +184,7 @@ static const char kWebInterfaceAvrHtml[] PROGMEM = R"HTML(
         %AVR_SAVE_BTN%
         %AVR_FAULT_BTN%
       </div>
-      <div class="status">Для входов используется список DInput, для выходов - список Relay.</div>
+      <div class="status">%AVR_PORTS_HELP%</div>
     </div>
   </div>
   <script>

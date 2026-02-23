@@ -19,8 +19,77 @@ class WateringHandler
 public:
     static void registerRoutes(WebInterface &web, AsyncWebServer &server)
     {
+        server.on("/watering/state", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleWateringState(web, request); });
         server.on("/watering", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleWateringSave(web, request); });
         server.on("/watering", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleWatering(web, request); });
+    }
+
+    static void handleWateringState(WebInterface &web, AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Watering, node_id))
+            return;
+        StaticJsonDocument<4096> doc;
+        JsonArray items = doc["items"].to<JsonArray>();
+        const bool stack_view = web.isStackWateringView_(node_id);
+        if (stack_view)
+        {
+            auto *cache = web._stack_cache ? web._stack_cache->wateringCache(node_id) : nullptr;
+            if (!cache || !cache->has_data)
+            {
+                if (web._stack_cache)
+                    web._stack_cache->requestWatering(node_id);
+                doc["pending"] = true;
+            }
+            else
+            {
+                const bool stale = (cache->pending || (uint32_t)(millis() - cache->updated_ms) > 1500u);
+                if (stale && web._stack_cache)
+                    web._stack_cache->requestWatering(node_id);
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (!web.webAclCanViewItem_(UsersRegistry::AclController::Watering, it.id, node_id))
+                        continue;
+                    JsonObject o = items.add<JsonObject>();
+                    o["id"] = it.id;
+                    o["enabled"] = it.enabled;
+                    o["status"] = it.status;
+                    o["active"] = it.active;
+                    o["paused"] = it.paused;
+                }
+            }
+        }
+        else
+        {
+            if (!web._controllers)
+            {
+                web.sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+                return;
+            }
+            WateringController &watering = web._controllers->watering();
+            for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+            {
+                const auto *cfg = watering.configByIndex(i);
+                const auto *st = watering.stateByIndex(i);
+                if (!cfg || !st)
+                    continue;
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Watering, cfg->id))
+                    continue;
+                JsonObject o = items.add<JsonObject>();
+                o["id"] = cfg->id;
+                o["enabled"] = cfg->enabled;
+                o["status"] = st->status;
+                o["active"] = st->active;
+                o["paused"] = st->paused;
+            }
+        }
+        String body;
+        serializeJson(doc, body);
+        web.sendText_(request, 200, "application/json", body, set_cookie);
     }
 
     static void handleWatering(WebInterface &web, AsyncWebServerRequest *request)
@@ -85,11 +154,11 @@ public:
                 }
                 pagination += "page=";
                 pagination += String((unsigned)(page_idx));
-                pagination += "\">Назад</a>";
+                pagination += String("\">") + WebUiRu::Common::kPagePrev + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Назад</span>";
-            pagination += "<span class=\"page-info\">Страница ";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPagePrev + "</span>";
+            pagination += String("<span class=\"page-info\">") + WebUiRu::Common::kPagePage + " ";
             pagination += String((unsigned)(page_idx + 1u));
             pagination += " / ";
             pagination += String((unsigned)max_pages);
@@ -105,10 +174,10 @@ public:
                 }
                 pagination += "page=";
                 pagination += String((unsigned)(page_idx + 2u));
-                pagination += "\">Вперёд</a>";
+                pagination += String("\">") + WebUiRu::Common::kPageNext + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
         String form_action = "/watering";
@@ -120,6 +189,7 @@ public:
             form_action += String((unsigned)(page_idx + 1u));
         }
         page.replace("%NAV%", web.navHtml_());
+        page.replace("%WATERING_PAGE_TITLE%", WebUiRu::Watering::kPageTitle);
         page.replace("%WATERING_ROWS%", rows);
         page.replace("%WATERING_PAGINATION%", pagination);
         page.replace("%WATERING_FORM_ACTION%", form_action);
@@ -132,8 +202,52 @@ public:
         page.replace("%WATERING_TANK_JSON%",
                      stack_view ? web.stackWateringTankOptionsJson_(node_id) : web.wateringTankOptionsJson_());
         page.replace("%WATERING_DEVICE_SELECT%", web.wateringDeviceSelectHtml_(node_id, stack_view));
+        page.replace("%WATERING_JS_STATE_ACTIVE%", WebUiRu::Watering::kText3);
+        page.replace("%WATERING_JS_STATE_PAUSED%", WebUiRu::Watering::kText4);
+        page.replace("%WATERING_JS_STATE_WAIT%", WebUiRu::Watering::kText5);
+        page.replace("%WATERING_JS_ON%", WebUiRu::Watering::kText7);
+        page.replace("%WATERING_JS_OFF%", WebUiRu::Watering::kText8);
+        bool can_save = web.webSessionIsAdmin_();
+        if (!can_save)
+        {
+            if (stack_view)
+            {
+                const auto *cache = web._stack_cache ? web._stack_cache->wateringCache(node_id) : nullptr;
+                if (cache && cache->has_data && cache->items)
+                {
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!web.webAclCanViewItem_(UsersRegistry::AclController::Watering, it.id, node_id))
+                            continue;
+                        if (web.webAclCanControlItem_(UsersRegistry::AclController::Watering, it.id, node_id))
+                        {
+                            can_save = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            else if (web._controllers)
+            {
+                WateringController &watering = web._controllers->watering();
+                for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+                {
+                    const auto *cfg = watering.configByIndex(i);
+                    if (!cfg)
+                        continue;
+                    if (!web.webAclCanViewItem_(UsersRegistry::AclController::Watering, cfg->id))
+                        continue;
+                    if (web.webAclCanControlItem_(UsersRegistry::AclController::Watering, cfg->id))
+                    {
+                        can_save = true;
+                        break;
+                    }
+                }
+            }
+        }
         page.replace("%WATERING_SAVE_BTN%",
-                     (!web.webSessionIsAdmin_()) ? String("") : (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>"));
+                     can_save ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>") : String(""));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -142,8 +256,6 @@ public:
     {
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
-            return;
-        if (!web.requireWebAdmin_(request, &set_cookie))
             return;
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Watering))
             return;
@@ -186,6 +298,7 @@ public:
                 const String en_key = prefix + "en";
                 const String status_key = prefix + "status";
                 const String name_key = prefix + "name";
+                const String port_key = prefix + "port";
                 const String tank_key = prefix + "tank";
                 const String time_key = prefix + "time";
                 const String time2_key = prefix + "time2";
@@ -198,6 +311,7 @@ public:
                 bool has_any = request->hasParam(en_key, true) ||
                                request->hasParam(status_key, true) ||
                                request->hasParam(name_key, true) ||
+                               request->hasParam(port_key, true) ||
                                request->hasParam(tank_key, true) ||
                                request->hasParam(time_key, true) ||
                                request->hasParam(time2_key, true) ||
@@ -225,6 +339,9 @@ public:
                 const bool status_on = request->hasParam(status_key, true);
                 String name = web.paramValue_(request, name_key);
                 name.trim();
+                uint8_t port = WateringController::kInvalidPort;
+                if (!parsePort_(web.paramValue_(request, port_key), port))
+                    port = WateringController::kInvalidPort;
                 uint8_t tank_id = 0;
                 if (!parseTank_(web.paramValue_(request, tank_key), tank_id))
                     tank_id = 0;
@@ -265,6 +382,7 @@ public:
                 const bool item_changed = (enabled != it.enabled) ||
                                           (status_on != it.status) ||
                                           (name != String(it.name)) ||
+                                          (port != it.port) ||
                                           (tank_id != it.tank_id) ||
                                           (weekdays_mask != it.weekdays_mask) ||
                                           (hour != it.hour) || (minute != it.minute) ||
@@ -287,6 +405,7 @@ public:
                 p["enabled"] = enabled;
                 p["status"] = status_on;
                 p["name"] = name;
+                p["port"] = (port == WateringController::kInvalidPort) ? -1 : (int)port;
                 p["tank"] = tank_id;
                 p["weekdays_mask"] = weekdays_mask;
                 p["hour"] = hour;
@@ -321,6 +440,7 @@ public:
                         dst.enabled = enabled;
                         dst.status = status_on;
                         dst.tank_id = tank_id;
+                        dst.port = port;
                         dst.weekdays_mask = weekdays_mask;
                         dst.hour = hour;
                         dst.minute = minute;
@@ -344,14 +464,17 @@ public:
                 }
             }
             if (changed)
+            {
                 web._stack_cache->requestWatering(node_id);
+                web.refreshStackPorts_(node_id);
+            }
             web._watering_status = changed ? "Updated" : "No changes";
             web.sendRedirect_(request, back, set_cookie);
             return;
         }
         if (!web._controllers)
         {
-            web.sendText_(request, 500, "text/plain", "Контроллеры недоступны", set_cookie);
+            web.sendText_(request, 500, "text/plain", WebUiRu::Common::kControllersUnavailable, set_cookie);
             return;
         }
         WateringController &watering = web._controllers->watering();
@@ -555,16 +678,16 @@ public:
             if (!web._configs_manager)
             {
                 ok = false;
-                web._watering_status = "Менеджер конфигурации недоступен";
+                web._watering_status = WebUiRu::Common::kConfigManagerUnavailable;
             }
             else if (!web._configs_manager->save())
             {
                 ok = false;
-                web._watering_status = "Сохранение не удалось";
+                web._watering_status = WebUiRu::Common::kSaveFailed;
             }
         }
         if (ok)
-            web._watering_status = changed ? "Обновлено" : "Без изменений";
+            web._watering_status = changed ? WebUiRu::Common::kUpdated : WebUiRu::Common::kNoChanges;
         web.sendRedirect_(request, "/watering", set_cookie);
     }
 
@@ -666,4 +789,5 @@ private:
         return true;
     }
 };
+
 

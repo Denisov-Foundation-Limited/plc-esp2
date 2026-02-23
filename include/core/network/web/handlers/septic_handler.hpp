@@ -74,11 +74,11 @@ public:
                 pagination += String((unsigned long)node_id);
                 pagination += "&page=";
                 pagination += String((unsigned)page_idx);
-                pagination += "\">Назад</a>";
+                pagination += String("\">") + WebUiRu::Common::kPagePrev + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Назад</span>";
-            pagination += "<span class=\"page-info\">Страница ";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPagePrev + "</span>";
+            pagination += String("<span class=\"page-info\">") + WebUiRu::Common::kPagePage + " ";
             pagination += String((unsigned)(page_idx + 1));
             pagination += " / ";
             pagination += String((unsigned)max_pages);
@@ -89,10 +89,10 @@ public:
                 pagination += String((unsigned long)node_id);
                 pagination += "&page=";
                 pagination += String((unsigned)(page_idx + 2u));
-                pagination += "\">Вперёд</a>";
+                pagination += String("\">") + WebUiRu::Common::kPageNext + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
         else if (!stack_view && max_pages > 1)
@@ -103,11 +103,11 @@ public:
             {
                 pagination += "<a class=\"page-btn\" href=\"/septic?page=";
                 pagination += String((unsigned)page_idx);
-                pagination += "\">Назад</a>";
+                pagination += String("\">") + WebUiRu::Common::kPagePrev + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Назад</span>";
-            pagination += "<span class=\"page-info\">Страница ";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPagePrev + "</span>";
+            pagination += String("<span class=\"page-info\">") + WebUiRu::Common::kPagePage + " ";
             pagination += String((unsigned)(page_idx + 1));
             pagination += " / ";
             pagination += String((unsigned)max_pages);
@@ -116,19 +116,23 @@ public:
             {
                 pagination += "<a class=\"page-btn\" href=\"/septic?page=";
                 pagination += String((unsigned)(page_idx + 2u));
-                pagination += "\">Вперёд</a>";
+                pagination += String("\">") + WebUiRu::Common::kPageNext + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
         page.replace("%NAV%", web.navHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        page.replace("%SEPTIC_PAGE_TITLE%", WebUiRu::Septic::kPageTitle);
+        page.replace("%SEPTIC_WATER_LABEL_20%", WebUiRu::Septic::kText20);
+        page.replace("%SEPTIC_WATER_LABEL_80%", WebUiRu::Septic::kText80);
+        page.replace("%SEPTIC_WATER_LABEL_100%", WebUiRu::Septic::kText100);
         page.replace("%SEPTIC_STATUS%", stack_view ? web.stackSepticStatusText_(node_id) : web._septic_status);
         page.replace("%SEPTIC_DEVICE_SELECT%", web.septicDeviceSelectHtml_(node_id, stack_view));
         page.replace("%SEPTIC_PAGINATION%", pagination);
         page.replace("%SEPTIC_SAVE_BTN%",
-                     (stack_view || !web.webSessionIsAdmin_()) ? String("") : (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>"));
+                     web.webSessionIsAdmin_() ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>") : String(""));
         if (!web._controllers)
         {
             page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id, (size_t)page_idx * page_size, page_size) : "");
@@ -146,7 +150,7 @@ public:
             page.replace("%SEPTIC_RELAY_ALARM_LABEL%", "off");
             page.replace("%SEPTIC_WATER_CLASS%", "water-low");
             page.replace("%SEPTIC_WATER_LEVEL%", "20%");
-            page.replace("%SEPTIC_WATER_LABEL%", "Уровень: 20%");
+            page.replace("%SEPTIC_WATER_LABEL%", WebUiRu::Septic::kText20);
             web.sendHtml_(request, page, set_cookie);
             return;
         }
@@ -173,18 +177,18 @@ public:
             const bool relay_alarm = st ? st->relay_alarm : false;
             const char *water_class = "water-low";
             const char *water_level = "20%";
-            const char *water_label = "Уровень: 20%";
+            const char *water_label = WebUiRu::Septic::kText20;
             if (alarm)
             {
                 water_class = "water-alarm";
                 water_level = "100%";
-                water_label = "Уровень: 100%";
+                water_label = WebUiRu::Septic::kText100;
             }
             else if (warn)
             {
                 water_class = "water-warn";
                 water_level = "80%";
-                water_label = "Уровень: 80%";
+                water_label = WebUiRu::Septic::kText80;
             }
             page.replace("%SEPTIC_WARN_CLASS%", warn ? "status-on" : "status-off");
             page.replace("%SEPTIC_ALARM_CLASS%", alarm ? "status-on" : "status-off");
@@ -198,7 +202,7 @@ public:
             page.replace("%SEPTIC_WATER_LEVEL%", water_level);
             page.replace("%SEPTIC_WATER_LABEL%", water_label);
             if (!cfg || !cfg->enabled)
-                page.replace("%SEPTIC_STATUS%", "Септик выключен");
+                page.replace("%SEPTIC_STATUS%", WebUiRu::Septic::kDisabledStatus);
         }
         web.sendHtml_(request, page, set_cookie);
     }
@@ -215,8 +219,177 @@ public:
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackSepticView_(node_id))
         {
-            web._septic_status = "Доступно только на локальном устройстве";
-            web.sendRedirect_(request, "/septic", set_cookie);
+            String back = String("/septic?unit=stack&node=") + String((unsigned long)node_id);
+            const String page_str = web.paramValueAny_(request, "page");
+            if (page_str.length())
+            {
+                const int pv = page_str.toInt();
+                if (pv > 0)
+                {
+                    back += "&page=";
+                    back += String((unsigned)pv);
+                }
+            }
+            if (!web._stack_master || !web._stack_cache)
+            {
+                web._septic_status = "Stack unavailable";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            auto *cache = web._stack_cache->septicCache(node_id);
+            if (!cache || !cache->has_data || !cache->items)
+            {
+                web._stack_cache->requestSeptic(node_id);
+                web._septic_status = "No data";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            auto *cache_mut = web._stack_cache->septicCache(node_id);
+            bool changed = false;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                const String idx = String((unsigned)it.id);
+                const String prefix = String("sep") + idx + "_";
+                const String en_key = prefix + "en";
+                const String name_key = prefix + "name";
+                const String warn_key = prefix + "warn";
+                const String alarm_key = prefix + "alarm";
+                const String relay_warn_key = prefix + "relay_warn";
+                const String relay_alarm_key = prefix + "relay_alarm";
+                const String monitor_key = prefix + "mon";
+                const bool has_any = request->hasParam(en_key, true) || request->hasParam(name_key, true) ||
+                                     request->hasParam(warn_key, true) || request->hasParam(alarm_key, true) ||
+                                     request->hasParam(relay_warn_key, true) || request->hasParam(relay_alarm_key, true) ||
+                                     request->hasParam(monitor_key, true);
+                if (!has_any)
+                    continue;
+                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Septic, it.id, node_id))
+                {
+                    web._septic_status = String("ACL deny item: ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+
+                const bool can_admin = web.webSessionIsAdmin_();
+                const bool enabled = request->hasParam(en_key, true);
+                const String monitor_val = web.paramValue_(request, monitor_key);
+                const bool monitoring = (monitor_val == "on" || monitor_val == "1" || monitor_val == "true");
+                String name = web.paramValue_(request, name_key);
+                name.trim();
+                String warn = web.paramValue_(request, warn_key);
+                String alarm = web.paramValue_(request, alarm_key);
+                String relay_warn = web.paramValue_(request, relay_warn_key);
+                String relay_alarm = web.paramValue_(request, relay_alarm_key);
+                uint8_t warn_port = SepticController::kInvalidPort;
+                uint8_t alarm_port = SepticController::kInvalidPort;
+                uint8_t relay_warn_port = SepticController::kInvalidPort;
+                uint8_t relay_alarm_port = SepticController::kInvalidPort;
+                if (!web.parseSocketPort_(warn, warn_port) || !web.parseSocketPort_(alarm, alarm_port) ||
+                    !web.parseSocketPort_(relay_warn, relay_warn_port) || !web.parseSocketPort_(relay_alarm, relay_alarm_port))
+                {
+                    web._septic_status = String("Invalid port for septic ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+
+                bool item_changed = false;
+                StaticJsonDocument<384> doc;
+                doc["cmd_id"] = 0;
+                doc["feature"] = (uint8_t)StackFeature::Septic;
+                doc["action"] = "set";
+                JsonObject p = doc["params"].to<JsonObject>();
+                p["id"] = (unsigned)it.id;
+
+                if (it.monitor != monitoring)
+                {
+                    p["monitor"] = monitoring;
+                    item_changed = true;
+                }
+                if (can_admin)
+                {
+                    if (it.enabled != enabled)
+                    {
+                        p["enabled"] = enabled;
+                        item_changed = true;
+                    }
+                    if (name != String(it.name))
+                    {
+                        p["name"] = name;
+                        item_changed = true;
+                    }
+                    if (it.warning_port != warn_port)
+                    {
+                        p["warning_port"] = (warn_port == SepticController::kInvalidPort) ? -1 : (int)warn_port;
+                        item_changed = true;
+                    }
+                    if (it.alarm_port != alarm_port)
+                    {
+                        p["alarm_port"] = (alarm_port == SepticController::kInvalidPort) ? -1 : (int)alarm_port;
+                        item_changed = true;
+                    }
+                    if (it.relay_warning != relay_warn_port)
+                    {
+                        p["relay_warning"] = (relay_warn_port == SepticController::kInvalidPort) ? -1 : (int)relay_warn_port;
+                        item_changed = true;
+                    }
+                    if (it.relay_alarm != relay_alarm_port)
+                    {
+                        p["relay_alarm"] = (relay_alarm_port == SepticController::kInvalidPort) ? -1 : (int)relay_alarm_port;
+                        item_changed = true;
+                    }
+                }
+                if (!item_changed)
+                    continue;
+
+                char payload[384] = {};
+                const size_t len = serializeJson(doc, payload, sizeof(payload));
+                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                           reinterpret_cast<const uint8_t *>(payload), len))
+                {
+                    web._septic_status = String("Send failed item: ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+                changed = true;
+
+                if (cache_mut && cache_mut->items)
+                {
+                    for (size_t k = 0; k < cache_mut->item_count; ++k)
+                    {
+                        auto &dst = cache_mut->items[k];
+                        if (dst.id != it.id)
+                            continue;
+                        dst.monitor = monitoring;
+                        if (can_admin)
+                        {
+                            dst.enabled = enabled;
+                            dst.warning_port = warn_port;
+                            dst.alarm_port = alarm_port;
+                            dst.relay_warning = relay_warn_port;
+                            dst.relay_alarm = relay_alarm_port;
+                            size_t n = 0;
+                            for (; n + 1 < sizeof(dst.name) && n < name.length(); ++n)
+                                dst.name[n] = name[n];
+                            dst.name[n] = '\0';
+                        }
+                        cache_mut->updated_ms = millis();
+                        cache_mut->has_data = true;
+                        break;
+                    }
+                }
+            }
+            if (changed)
+            {
+                web._stack_cache->requestSeptic(node_id);
+                web.refreshStackPorts_(node_id);
+                web._septic_status = "Updated";
+            }
+            else
+            {
+                web._septic_status = "Saved";
+            }
+            web.sendRedirect_(request, back, set_cookie);
             return;
         }
         if (!web._controllers)

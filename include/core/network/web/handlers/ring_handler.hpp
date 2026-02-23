@@ -43,10 +43,15 @@ public:
         String page = FPSTR(kWebInterfaceRingHtml);
         page.reserve(page.length() + 1024);
         page.replace("%NAV%", web.navHtml_());
+        page.replace("%RING_PAGE_TITLE%", WebUiRu::Ring::kPageTitle);
+        page.replace("%RING_LABEL_BUTTON%", WebUiRu::Ring::kLabelButton);
+        page.replace("%RING_LABEL_RELAY%", WebUiRu::Ring::kLabelRelay);
+        page.replace("%RING_BTN_ON%", WebUiRu::Ring::kBtnRing);
+        page.replace("%RING_JS_ERROR%", WebUiRu::Ring::kJsError);
         page.replace("%RING_DEVICE_SELECT%", web.ringDeviceSelectHtml_(node_id, stack_view));
         if (!web._controllers)
         {
-            page.replace("%RING_STATUS%", "Контроллеры недоступны");
+            page.replace("%RING_STATUS%", WebUiRu::Common::kControllersUnavailable);
             page.replace("%RING_ENABLED_CHECKED%", "");
             page.replace("%RING_ENABLED_LABEL%", "");
             page.replace("%RING_BUTTON_SELECTED%", "");
@@ -62,7 +67,7 @@ public:
         }
         const RingController &ring = web._controllers->ring();
         const auto &cfg = ring.config();
-        const String status = stack_view ? String("Стек: управление слейвом") : web._ring_status;
+        const String status = stack_view ? String(WebUiRu::Ring::kStackControlSlave) : web._ring_status;
         page.replace("%RING_STATUS%", status);
         page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         if (stack_view)
@@ -137,14 +142,14 @@ public:
         }
         if (stack_view)
         {
-            web._ring_status = "Настройки доступны только локально";
+            web._ring_status = WebUiRu::Ring::kLocalOnlySettings;
             const String path = String("/ring?node=") + String((unsigned long)node_id) + "&unit=stack";
             web.sendRedirect_(request, path.c_str(), set_cookie);
             return;
         }
         if (!web._controllers)
         {
-            web.sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            web.sendText_(request, 500, "text/plain", WebUiRu::Common::kControllersUnavailable, set_cookie);
             return;
         }
         RingController &ring = web._controllers->ring();
@@ -166,13 +171,13 @@ public:
         uint8_t relay_port = RingController::kInvalidPort;
         if (!web.parseSocketPort_(button_str, button_port))
         {
-            web._ring_status = "Неверный порт кнопки";
+            web._ring_status = WebUiRu::Ring::kInvalidButtonPort;
             web.sendRedirect_(request, "/ring", set_cookie);
             return;
         }
         if (!web.parseSocketPort_(relay_str, relay_port))
         {
-            web._ring_status = "Неверный порт реле";
+            web._ring_status = WebUiRu::Ring::kInvalidRelayPort;
             web.sendRedirect_(request, "/ring", set_cookie);
             return;
         }
@@ -186,16 +191,16 @@ public:
             if (!web._configs_manager)
             {
                 ok = false;
-                web._ring_status = "Config manager missing";
+                web._ring_status = WebUiRu::Common::kConfigManagerUnavailable;
             }
             else if (!web._configs_manager->save())
             {
                 ok = false;
-                web._ring_status = "Save failed";
+                web._ring_status = WebUiRu::Common::kSaveFailed;
             }
         }
         if (ok)
-            web._ring_status = changed ? "Сохранено" : "Нет изменений";
+            web._ring_status = changed ? WebUiRu::Common::kSaved : WebUiRu::Common::kNoChangesAlt;
         web.sendRedirect_(request, "/ring", set_cookie);
     }
 
@@ -217,10 +222,10 @@ public:
         {
             if (request->hasParam("state", true))
             {
-                web.sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+                web.sendText_(request, 500, "text/plain", WebUiRu::Common::kControllersUnavailable, set_cookie);
                 return;
             }
-            web._ring_status = "Контроллеры недоступны";
+            web._ring_status = WebUiRu::Common::kControllersUnavailable;
             web.sendRedirect_(request, "/ring", set_cookie);
             return;
         }

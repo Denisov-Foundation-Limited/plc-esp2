@@ -17,7 +17,7 @@ static const char kWebInterfaceLeakHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Протечки</title>
+  <title>%LEAK_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -209,7 +209,7 @@ static const char kWebInterfaceLeakHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Протечки</h1>
+      <h1>%LEAK_PAGE_TITLE%</h1>
       %LEAK_DEVICE_SELECT%
       <div class="status">%LEAK_STATUS%</div>
       %LEAK_PAGINATION%
@@ -224,9 +224,9 @@ static const char kWebInterfaceLeakHtml[] PROGMEM = R"HTML(
       </form>
       <div class="actions">
         <button type="submit" form="leak-save">%SAVE_TEXT%</button>
-        <button type="submit" form="leak-ack" class="btn-muted">Сброс тревог</button>
+        <button type="submit" form="leak-ack" class="btn-muted">%LEAK_BTN_ACK_ALL%</button>
       </div>
-      <div class="status">Датчики протечки: DInput. Выходы кран/тревога: Relay.</div>
+      <div class="status">%LEAK_HELP_PORTS%</div>
     </div>
   </div>
   <script>

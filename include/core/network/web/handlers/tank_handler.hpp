@@ -72,11 +72,11 @@ public:
                 pagination += String((unsigned long)node_id);
                 pagination += "&page=";
                 pagination += String((unsigned)page_idx);
-                pagination += "\">Назад</a>";
+                pagination += String("\">") + WebUiRu::Common::kPagePrev + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Назад</span>";
-            pagination += "<span class=\"page-info\">Страница ";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPagePrev + "</span>";
+            pagination += String("<span class=\"page-info\">") + WebUiRu::Common::kPagePage + " ";
             pagination += String((unsigned)(page_idx + 1));
             pagination += " / ";
             pagination += String((unsigned)max_pages);
@@ -87,10 +87,10 @@ public:
                 pagination += String((unsigned long)node_id);
                 pagination += "&page=";
                 pagination += String((unsigned)(page_idx + 2u));
-                pagination += "\">Вперёд</a>";
+                pagination += String("\">") + WebUiRu::Common::kPageNext + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
         else if (!stack_view && max_pages > 1)
@@ -101,11 +101,11 @@ public:
             {
                 pagination += "<a class=\"page-btn\" href=\"/tanks?page=";
                 pagination += String((unsigned)page_idx);
-                pagination += "\">Назад</a>";
+                pagination += String("\">") + WebUiRu::Common::kPagePrev + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Назад</span>";
-            pagination += "<span class=\"page-info\">Страница ";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPagePrev + "</span>";
+            pagination += String("<span class=\"page-info\">") + WebUiRu::Common::kPagePage + " ";
             pagination += String((unsigned)(page_idx + 1));
             pagination += " / ";
             pagination += String((unsigned)max_pages);
@@ -114,13 +114,14 @@ public:
             {
                 pagination += "<a class=\"page-btn\" href=\"/tanks?page=";
                 pagination += String((unsigned)(page_idx + 2u));
-                pagination += "\">Вперёд</a>";
+                pagination += String("\">") + WebUiRu::Common::kPageNext + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
         page.replace("%NAV%", web.navHtml_());
+        page.replace("%TANK_PAGE_TITLE%", WebUiRu::Tanks::kPageTitle);
         page.replace("%TANK_STATUS%", stack_view ? web.stackTanksStatusText_(node_id) : web._tanks_status);
         page.replace("%TANK_ITEMS%", stack_view ? web.listStackTanksHtml_(node_id, (size_t)page_idx * page_size, page_size)
                                                 : web.listTanksHtml_((size_t)page_idx * page_size, page_size));
@@ -137,7 +138,7 @@ public:
                                 : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%TANK_DEVICE_SELECT%", web.tanksDeviceSelectHtml_(node_id, stack_view));
         page.replace("%TANK_SAVE_BTN%",
-                     (stack_view || !web.webSessionIsAdmin_()) ? String("") : (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>"));
+                     web.webSessionIsAdmin_() ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>") : String(""));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -154,13 +155,190 @@ public:
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackTanksView_(node_id))
         {
-            web._tanks_status = "Доступно только на локальном устройстве";
-            web.sendRedirect_(request, "/tanks", set_cookie);
+            String back = String("/tanks?unit=stack&node=") + String((unsigned long)node_id);
+            const String page_str = web.paramValueAny_(request, "page");
+            if (page_str.length())
+            {
+                const int pv = page_str.toInt();
+                if (pv > 0)
+                {
+                    back += "&page=";
+                    back += String((unsigned)pv);
+                }
+            }
+            if (!web._stack_master || !web._stack_cache)
+            {
+                web._tanks_status = "Stack unavailable";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            const auto *cache = web._stack_cache->tanksCache(node_id);
+            if (!cache || !cache->has_data || !cache->items)
+            {
+                web.requestStackTanks_(node_id);
+                web._tanks_status = "No data";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            auto *cache_mut = web._stack_cache->tanksCache(node_id);
+            bool changed_any = false;
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &cfg = cache->items[i];
+                const String idx = String((unsigned)cfg.id);
+                const String prefix = String("k") + idx + "_";
+                const String en_key = prefix + "en";
+                const String power_key = prefix + "power";
+                const String name_key = prefix + "name";
+                const String low_key = prefix + "low";
+                const String mid_key = prefix + "mid";
+                const String full_key = prefix + "full";
+                const String valve_key = prefix + "valve";
+                const String pump_key = prefix + "pump";
+                const String alarm_key = prefix + "alarm";
+                const bool has_any = request->hasParam(en_key, true) ||
+                                     request->hasParam(power_key, true) ||
+                                     request->hasParam(name_key, true) ||
+                                     request->hasParam(low_key, true) ||
+                                     request->hasParam(mid_key, true) ||
+                                     request->hasParam(full_key, true) ||
+                                     request->hasParam(valve_key, true) ||
+                                     request->hasParam(pump_key, true) ||
+                                     request->hasParam(alarm_key, true);
+                if (!has_any)
+                    continue;
+                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Tanks, cfg.id, node_id))
+                {
+                    web._tanks_status = String("ACL deny item: ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+                const bool can_admin = web.webSessionIsAdmin_();
+                const bool enabled = request->hasParam(en_key, true);
+                const String power_str = web.paramValue_(request, power_key);
+                const bool power_on = (power_str == "on" || power_str == "1" || power_str == "true");
+                String name = web.paramValue_(request, name_key);
+                name.trim();
+
+                uint8_t low_port = cfg.low;
+                uint8_t mid_port = cfg.mid;
+                uint8_t full_port = cfg.full;
+                uint8_t valve_port = cfg.valve;
+                uint8_t pump_port = cfg.pump;
+                uint8_t alarm_port = cfg.alarm;
+                if (can_admin)
+                {
+                    if (!web.parseSocketPort_(web.paramValue_(request, low_key), low_port) ||
+                        !web.parseSocketPort_(web.paramValue_(request, mid_key), mid_port) ||
+                        !web.parseSocketPort_(web.paramValue_(request, full_key), full_port) ||
+                        !web.parseSocketPort_(web.paramValue_(request, valve_key), valve_port) ||
+                        !web.parseSocketPort_(web.paramValue_(request, pump_key), pump_port) ||
+                        !web.parseSocketPort_(web.paramValue_(request, alarm_key), alarm_port))
+                    {
+                        web._tanks_status = String(WebUiRu::Tanks::kInvalidPortForTankPrefix) + idx;
+                        web.sendRedirect_(request, back, set_cookie);
+                        return;
+                    }
+                }
+
+                bool item_changed = false;
+                StaticJsonDocument<320> doc;
+                doc["cmd_id"] = 0;
+                doc["feature"] = (uint8_t)StackFeature::Tanks;
+                doc["action"] = "set";
+                JsonArray arr = doc["params"]["items"].to<JsonArray>();
+                JsonObject obj = arr.add<JsonObject>();
+                obj["id"] = (unsigned)cfg.id;
+                if (cfg.enabled != enabled)
+                {
+                    obj["enabled"] = enabled;
+                    item_changed = true;
+                }
+                if (cfg.power_on != power_on)
+                {
+                    obj["power_on"] = power_on;
+                    item_changed = true;
+                }
+                if (can_admin && strcmp(cfg.name, name.c_str()) != 0)
+                {
+                    obj["name"] = name;
+                    item_changed = true;
+                }
+                auto put_port = [&](const char *key, uint8_t old_p, uint8_t new_p) {
+                    if (old_p == new_p)
+                        return;
+                    if (new_p == TankController::kInvalidPort)
+                        obj[key] = -1;
+                    else
+                        obj[key] = (unsigned)new_p;
+                    item_changed = true;
+                };
+                if (can_admin)
+                {
+                    put_port("low", cfg.low, low_port);
+                    put_port("mid", cfg.mid, mid_port);
+                    put_port("full", cfg.full, full_port);
+                    put_port("valve", cfg.valve, valve_port);
+                    put_port("pump", cfg.pump, pump_port);
+                    put_port("alarm", cfg.alarm, alarm_port);
+                }
+                if (!item_changed)
+                    continue;
+
+                char payload[320] = {};
+                const size_t len = serializeJson(doc, payload, sizeof(payload));
+                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                           reinterpret_cast<const uint8_t *>(payload), len))
+                {
+                    web._tanks_status = String("Send failed for tank ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+                changed_any = true;
+                if (cache_mut && cache_mut->items)
+                {
+                    for (size_t k = 0; k < cache_mut->item_count; ++k)
+                    {
+                        auto &dst = cache_mut->items[k];
+                        if (dst.id != cfg.id)
+                            continue;
+                        dst.enabled = enabled;
+                        dst.power_on = power_on;
+                        if (can_admin)
+                        {
+                            dst.low = low_port;
+                            dst.mid = mid_port;
+                            dst.full = full_port;
+                            dst.valve = valve_port;
+                            dst.pump = pump_port;
+                            dst.alarm = alarm_port;
+                            const char *src = name.c_str();
+                            size_t p = 0;
+                            for (; p + 1 < sizeof(dst.name) && src[p]; ++p)
+                                dst.name[p] = src[p];
+                            dst.name[p] = '\0';
+                        }
+                        break;
+                    }
+                    cache_mut->updated_ms = millis();
+                }
+            }
+            if (changed_any)
+            {
+                web.requestStackTanks_(node_id);
+                web.refreshStackPorts_(node_id);
+                web._tanks_status = WebUiRu::Common::kUpdated;
+            }
+            else
+            {
+                web._tanks_status = WebUiRu::Common::kSaved;
+            }
+            web.sendRedirect_(request, back, set_cookie);
             return;
         }
         if (!web._controllers)
         {
-            web.sendText_(request, 500, "text/plain", "Controllers unavailable", set_cookie);
+            web.sendText_(request, 500, "text/plain", WebUiRu::Common::kControllersUnavailable, set_cookie);
             return;
         }
         TankController &tanks = web._controllers->tanks();
@@ -235,7 +413,7 @@ public:
                 !web.parseSocketPort_(alarm_str, alarm_port))
             {
                 ok = false;
-                web._tanks_status = String("Неверный порт для бака ") + idx;
+                web._tanks_status = String(WebUiRu::Tanks::kInvalidPortForTankPrefix) + idx;
                 break;
             }
 
@@ -293,17 +471,17 @@ public:
                 if (!web._configs_manager)
                 {
                     ok = false;
-                    web._tanks_status = "Менеджер конфигурации недоступен";
+                    web._tanks_status = WebUiRu::Common::kConfigManagerUnavailable;
                 }
                 else if (!web._configs_manager->save())
                 {
                     ok = false;
-                    web._tanks_status = "Сохранение не удалось";
+                    web._tanks_status = WebUiRu::Common::kSaveFailed;
                 }
             }
         }
         if (ok)
-            web._tanks_status = changed ? "Обновлено" : "Сохранено";
+            web._tanks_status = changed ? WebUiRu::Common::kUpdated : WebUiRu::Common::kSaved;
         web.sendRedirect_(request, "/tanks", set_cookie);
     }
 

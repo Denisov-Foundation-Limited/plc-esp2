@@ -299,7 +299,7 @@ public:
             if (changed_stack)
             {
                 web.requestStackLights_(node_id);
-                web.requestStackPorts_(node_id);
+                web.refreshStackPorts_(node_id);
                 web._lights_status = "Updated";
             }
             else

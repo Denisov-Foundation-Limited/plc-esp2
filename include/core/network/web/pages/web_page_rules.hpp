@@ -17,7 +17,7 @@ static const char kWebInterfaceRulesHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>РџСЂР°РІРёР»Р°</title>
+  <title>%RULES_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -146,7 +146,7 @@ static const char kWebInterfaceRulesHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>РџСЂР°РІРёР»Р°</h1>
+      <h1>%RULES_PAGE_H1%</h1>
       <p class="status">%RULES_STATUS%</p>
       %RULES_BODY%
     </div>
@@ -154,4 +154,5 @@ static const char kWebInterfaceRulesHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 

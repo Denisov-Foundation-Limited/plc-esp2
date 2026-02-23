@@ -17,7 +17,7 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Стек</title>
+  <title>%STACK_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -98,7 +98,7 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Стек</h1>
+      <h1>%STACK_TITLE%</h1>
       <div class="row" id="slave-link-field" style="%STACK_SLAVE_STYLE%">
         <span class="badge %STACK_SLAVE_LINK_CLASS%">%STACK_SLAVE_LINK_TEXT%</span>
       </div>
@@ -106,39 +106,39 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
         <form method="POST" action="/stack" id="stack-form">
           <div class="grid">
             <div>
-              <label>Роль</label>
+              <label>%STACK_LABEL_ROLE%</label>
               <select name="role">
                 <option value="master" %STACK_ROLE_MASTER_SEL%>master</option>
                 <option value="slave" %STACK_ROLE_SLAVE_SEL%>slave</option>
               </select>
             </div>
             <div id="master-host-field" style="%STACK_SLAVE_STYLE%">
-              <label>Хост/IP мастера</label>
+              <label>%STACK_LABEL_MASTER_HOST%</label>
               <input type="text" name="master_host" value="%STACK_MASTER_HOST%" placeholder="192.168.1.10">
             </div>
             <div id="fallback-enabled-field" style="%STACK_SLAVE_STYLE%">
-              <label>Резервный мастер</label>
+              <label>%STACK_LABEL_FALLBACK_MASTER%</label>
               <div class="row">
                 <input type="checkbox" name="fallback_enabled" id="fallback-enabled" %STACK_FALLBACK_ENABLED_CHECKED%>
-                <span class="status">Включить</span>
+                <span class="status">%STACK_LABEL_ENABLE%</span>
               </div>
             </div>
             <div id="fallback-host-field" style="%STACK_SLAVE_STYLE%">
-              <label>Хост/IP резервного мастера</label>
+              <label>%STACK_LABEL_FALLBACK_HOST%</label>
               <input type="text" name="fallback_host" value="%STACK_FALLBACK_HOST%" placeholder="192.168.1.20">
             </div>
             <div id="slave-controller-field" style="%STACK_SLAVE_STYLE%">
-              <label>Слейв-контроллер</label>
+              <label>%STACK_LABEL_SLAVE_CONTROLLER%</label>
               <div class="row">
                 <input type="checkbox" name="slave_controller" id="slave-controller" %STACK_SLAVE_CONTROLLER_CHECKED%>
-                <span class="status">Полноценный контроллер</span>
+                <span class="status">%STACK_LABEL_FULL_CONTROLLER%</span>
               </div>
             </div>
             <div>
-              <label>API ключ</label>
+              <label>%STACK_LABEL_API_KEY%</label>
               <div class="row">
-                <input type="text" name="api_key" value="%STACK_API_KEY%" placeholder="необязательно">
-                <button class="mini" type="button" id="gen-api-key">Сгенерировать</button>
+                <input type="text" name="api_key" value="%STACK_API_KEY%" placeholder="%STACK_API_KEY_PLACEHOLDER%">
+                <button class="mini" type="button" id="gen-api-key">%STACK_BTN_GEN_KEY%</button>
               </div>
             </div>
           </div>
@@ -219,7 +219,7 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
         if (!resp.ok) return;
         const data = await resp.json();
         const cls = (data && data.class) ? String(data.class) : 'bad';
-        const text = (data && data.text) ? String(data.text) : 'Slave link: disconnected';
+        const text = (data && data.text) ? String(data.text) : '%STACK_SLAVE_LINK_DISCONNECTED%';
         slaveLinkBadge.classList.remove('ok', 'bad');
         slaveLinkBadge.classList.add(cls === 'ok' ? 'ok' : 'bad');
         slaveLinkBadge.textContent = text;

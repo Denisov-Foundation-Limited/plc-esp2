@@ -85,10 +85,10 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>Telegram</h1>
-      <p class="status">РљР»РёРµРЅС‚: <strong>%TGBOT_CLIENT%</strong></p>
+      <p class="status">%TGBOT_CLIENT_LABEL% <strong>%TGBOT_CLIENT%</strong></p>
       <form method="POST" action="/telegram" id="telegram-form">
         <div class="section">
-          <h2>Р”РѕСЃС‚СѓРї</h2>
+          <h2>%TGBOT_ACCESS_TITLE%</h2>
           <div class="grid">
             <div>
               <label>Token</label>
@@ -107,7 +107,7 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
             </div>
           </div>
           <div class="row" style="margin-top:8px;">
-            <span class="status">РџРѕСЃР»РµРґРЅРёР№ Chat ID: <span id="last-chat-id" class="id-highlight">%TGBOT_LAST_CHAT_ID%</span></span>
+            <span class="status">%TGBOT_LAST_CHAT_ID_LABEL% <span id="last-chat-id" class="id-highlight">%TGBOT_LAST_CHAT_ID%</span></span>
           </div>
         </div>
         <div class="section">
@@ -115,7 +115,7 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
           <div class="grid">
             <div class="checkbox" style="margin-top:22px;">
               <input type="checkbox" id="use_proxy" name="use_proxy" %TGBOT_USE_PROXY_CHECKED%>
-              <label for="use_proxy">РСЃРїРѕР»СЊР·РѕРІР°С‚СЊ proxy</label>
+              <label for="use_proxy">%TGBOT_USE_PROXY_LABEL%</label>
             </div>
             <div class="proxy-field">
               <label>Proxy host</label>
@@ -156,7 +156,7 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
       const lastChatId = (lastChatIdEl.textContent || '').trim();
       const hasLast = lastChatId && lastChatId !== '0';
       if (!hasLast) {
-        lastChatIdEl.textContent = 'РЅРµРёР·РІРµСЃС‚РЅРѕ';
+        lastChatIdEl.textContent = '%TGBOT_UNKNOWN_TEXT%';
         const list = document.getElementById('chat-id-list');
         if (list) {
           list.innerHTML = '';
@@ -178,4 +178,5 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 

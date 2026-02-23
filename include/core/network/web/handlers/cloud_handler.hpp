@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -34,9 +34,21 @@ public:
         String page = FPSTR(kWebInterfaceCloudHtml);
         page.reserve(page.length() + 1536);
         page.replace("%NAV%", web.navHtml_());
+        page.replace("%CLOUD_PAGE_TITLE%", WebUiRu::CloudPage::kPageTitle);
+        page.replace("%CLOUD_FW_LABEL%", String(WebUiRu::CloudPage::kFwVersion) + " ");
+        page.replace("%CLOUD_DEVICE_ID_LABEL%", String(WebUiRu::CloudPage::kDeviceId) + " ");
+        page.replace("%CLOUD_ENABLE_LABEL%", WebUiRu::CloudPage::kEnableCloud);
+        page.replace("%CLOUD_HOST_LABEL%", WebUiRu::CloudPage::kHost);
+        page.replace("%CLOUD_PORT_LABEL%", WebUiRu::CloudPage::kPort);
+        page.replace("%CLOUD_PATH_LABEL%", WebUiRu::CloudPage::kPath);
+        page.replace("%CLOUD_SSL_LABEL%", WebUiRu::CloudPage::kUseSsl);
+        page.replace("%CLOUD_RECONNECT_LABEL%", WebUiRu::CloudPage::kReconnectMs);
+        page.replace("%CLOUD_EVENT_LABEL%", WebUiRu::CloudPage::kEventMs);
+        page.replace("%CLOUD_EVENT_HINT%", WebUiRu::CloudPage::kEventHint);
+        page.replace("%CLOUD_API_KEY_LABEL%", WebUiRu::CloudPage::kApiKey);
         const bool connected = web.cloudConnected_();
         page.replace("%CLOUD_CONNECTED_CLASS%", connected ? "ok" : "bad");
-        page.replace("%CLOUD_CONNECTED_TEXT%", connected ? "Подключен" : "Отключен");
+        page.replace("%CLOUD_CONNECTED_TEXT%", connected ? WebUiRu::CloudPage::kConnected : WebUiRu::CloudPage::kDisconnected);
         page.replace("%CLOUD_ENABLED_CHECKED%", web.cloudEnabled_() ? "checked" : "");
         page.replace("%CLOUD_HOST%", web.cloudHost_());
         page.replace("%CLOUD_PORT%", web.cloudPort_() ? String(web.cloudPort_()) : String(""));
@@ -61,7 +73,7 @@ public:
             return;
         if (!web._configs_manager)
         {
-            web._cloud_status = "Менеджер конфигурации недоступен";
+            web._cloud_status = WebUiRu::Common::kConfigManagerUnavailable;
             web.sendRedirect_(request, "/cloud", set_cookie);
             return;
         }
@@ -145,12 +157,12 @@ public:
             save_ok = web.saveWifiConfig_();
 
         if (!changed)
-            web._cloud_status = "Без изменений";
+            web._cloud_status = WebUiRu::Common::kNoChangesAlt;
         else if (!save_ok)
-            web._cloud_status = "Ошибка сохранения";
+            web._cloud_status = WebUiRu::Common::kSaveFailed;
         else
-            web._cloud_status = "Сохранено";
-
+            web._cloud_status = WebUiRu::Common::kSaved;
         web.sendRedirect_(request, "/cloud", set_cookie);
     }
 };
+

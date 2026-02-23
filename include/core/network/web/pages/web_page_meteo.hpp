@@ -264,6 +264,10 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       grid-column: 1 / -1;
       grid-template-columns: 64px minmax(0, 1fr);
     }
+    .form-row.name-local,
+    .form-row.name-remote {
+      margin-bottom: 8px;
+    }
     .form-row > label:not(.switch) {
       color: var(--muted);
       font-size: 12px;
@@ -303,6 +307,7 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       %METEO_DEVICE_SELECT%
       %METEO_PAGINATION%
       <form method="POST" action="/meteo" id="meteo-form">
+        %METEO_FORM_HIDDEN%
         <div class="grid">
           %METEO_TILES%
         </div>
@@ -405,7 +410,8 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       const nameRemote = row.querySelector('.name-remote');
       const nameInput = nameLocal ? nameLocal.querySelector('input') : null;
       const isLocal = !device || device.value === 'local' || device.value === '';
-      const lockAll = stackView;
+      const lockAll = false;
+      const lockDevice = stackView;
       if (nameLocal) nameLocal.style.display = isLocal ? '' : 'none';
       if (nameRemote) nameRemote.style.display = isLocal ? 'none' : '';
       setDisabled(nameInput, lockAll || !isLocal || !meteoCanEdit);
@@ -440,7 +446,7 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
         setDisabled(addrInput, !showAddr || !meteoCanEdit);
         setDisabled(addrSelect, !showAddr || !meteoCanEdit);
       }
-      setDisabled(device, lockAll || !meteoCanEdit);
+      setDisabled(device, lockDevice || !meteoCanEdit);
     }
 
     function updateMeteoEnabled(tile, enabled) {
@@ -522,6 +528,11 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       if (!hasData) return '%METEO_STATUS_NODATA_TEXT%';
       return item.ok ? '%METEO_STATUS_OK_TEXT%' : '%METEO_STATUS_ERR_TEXT%';
     }
+    function meteoAgeText(item) {
+      const hasRead = !!(item && item.has_read);
+      const age = (item && typeof item.age_s === 'number' && !Number.isNaN(item.age_s)) ? Math.max(0, Math.floor(item.age_s)) : 0;
+      return '%METEO_STATUS_AGE_PREFIX%' + (hasRead ? (String(age) + 's') : '-');
+    }
     function applyMeteoTileState(tile, item) {
       if (!tile || !item) return;
       tile.classList.toggle('disabled', !item.enabled);
@@ -545,9 +556,9 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
         if (!item.enabled || !hasData) dot.classList.add('status-na');
         else dot.classList.add(item.ok ? 'status-ok' : 'status-err');
       }
-      const text = tile.querySelector('.sensor-status-text');
-      if (text) {
-        text.textContent = meteoStatusText(item);
+      const ageText = tile.querySelector('.meteo-age-text');
+      if (ageText) {
+        ageText.textContent = meteoAgeText(item);
       }
     }
     async function pollMeteoStates() {
@@ -593,7 +604,7 @@ static const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     const reloadKey = 'meteo_reload';
     if (sessionStorage.getItem(reloadKey)) {
       sessionStorage.removeItem(reloadKey);
-      location.replace(location.pathname);
+      location.replace(location.pathname + location.search);
     }
     if (meteoForm) {
       meteoForm.addEventListener('submit', () => {

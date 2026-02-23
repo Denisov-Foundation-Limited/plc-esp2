@@ -111,10 +111,12 @@ public:
         static constexpr size_t kLocLen = 32;
         static constexpr size_t kTypeLen = 32;
         static constexpr size_t kHwLen = 32;
+        static constexpr size_t kAliasLen = 24;
         char backend[kBackendLen] = {};
         char loc[kLocLen] = {};
         char type[kTypeLen] = {};
         char hw[kHwLen] = {};
+        char alias[kAliasLen] = {};
     };
     struct StackPortsCache
     {
@@ -124,6 +126,8 @@ public:
         uint16_t pending_cmd_id = 0;
         uint16_t parts_expected = 0;
         uint16_t parts_received = 0;
+        uint16_t next_offset = 0;
+        uint16_t page_limit = 0;
         bool pending = false;
         bool has_data = false;
         bool last_ok = false;
@@ -140,6 +144,8 @@ public:
             pending_cmd_id = 0;
             parts_expected = 0;
             parts_received = 0;
+            next_offset = 0;
+            page_limit = 0;
             pending = false;
             has_data = false;
             last_ok = false;
@@ -258,6 +264,43 @@ public:
                 items[i] = StackOwItem{};
         }
     };
+    struct StackTempSensorItem
+    {
+        char addr[17] = {};
+        bool used = false;
+    };
+    struct StackTempSensorsCache
+    {
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        uint16_t next_offset = 0;
+        uint16_t page_limit = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        StackTempSensorItem *items = nullptr;
+        size_t capacity = 64;
+        size_t item_count = 0;
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            next_offset = 0;
+            page_limit = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            item_count = 0;
+            if (!items)
+                return;
+            for (size_t i = 0; i < capacity; ++i)
+                items[i] = StackTempSensorItem{};
+        }
+    };
     struct StackSecuritySensorItem
     {
         uint8_t id = 0;
@@ -319,6 +362,7 @@ public:
         bool enabled = false;
         bool armed = false;
         bool alarm = false;
+        uint8_t siren = SecurityController::kInvalidPort;
         StackSecuritySensorItem *items = nullptr;
         size_t capacity = SecurityController::kSensorCount;
         size_t item_count = 0;
@@ -335,6 +379,7 @@ public:
             enabled = false;
             armed = false;
             alarm = false;
+            siren = SecurityController::kInvalidPort;
             item_count = 0;
             if (!items)
                 return;
@@ -349,8 +394,10 @@ public:
         bool ok = false;
         bool has_temp = false;
         bool has_hum = false;
+        bool has_read = false;
         float temp_c = 0.0f;
         float hum = 0.0f;
+        uint32_t age_s = 0;
         static constexpr size_t kNameLen = 48;
         static constexpr size_t kTypeLen = 24;
         static constexpr size_t kAddrLen = 24;
@@ -447,6 +494,8 @@ public:
         uint8_t relay_alarm = SepticController::kInvalidPort;
         bool warning = false;
         bool alarm = false;
+        static constexpr size_t kNameLen = 48;
+        char name[kNameLen] = {};
     };
     struct StackSepticCache
     {
@@ -756,6 +805,7 @@ public:
     StackPortsCache *portsCache(uint32_t node_id) { return findStackPortsCache_(node_id, false); }
     const StackPortsCache *portsCache(uint32_t node_id) const { return findStackPortsCache_(node_id, false); }
     bool requestPorts(uint32_t node_id) { return requestStackPorts_(node_id); }
+    void invalidatePorts(uint32_t node_id) { invalidateStackPortsCache_(node_id); }
 
     StackExtendersCache &extendersLocal() { return _stack_ext_cache[0]; }
     const StackExtendersCache &extendersLocal() const { return _stack_ext_cache[0]; }
@@ -774,6 +824,13 @@ public:
     StackOwCache *owCache(uint32_t node_id) { return findStackOwCache_(node_id, false); }
     const StackOwCache *owCache(uint32_t node_id) const { return findStackOwCache_(node_id, false); }
     bool requestOw(uint32_t node_id, bool run) { return requestStackOw_(node_id, run); }
+
+    StackTempSensorsCache &tempSensorsLocal() { return _stack_temp_sensors_cache[0]; }
+    const StackTempSensorsCache &tempSensorsLocal() const { return _stack_temp_sensors_cache[0]; }
+    StackTempSensorsCache *tempSensorsCache(uint32_t node_id) { return findStackTempSensorsCache_(node_id, false); }
+    const StackTempSensorsCache *tempSensorsCache(uint32_t node_id) const { return findStackTempSensorsCache_(node_id, false); }
+    bool requestTempSensors(uint32_t node_id) { return requestStackTempSensors_(node_id); }
+    void invalidateTempSensors(uint32_t node_id) { invalidateStackTempSensorsCache_(node_id); }
 
     StackSecurityCache &securityLocal() { return _stack_security_cache[0]; }
     const StackSecurityCache &securityLocal() const { return _stack_security_cache[0]; }
@@ -970,6 +1027,14 @@ private:
                 cache.capacity = 0;
             cache.reset();
         }
+        for (auto &cache : _stack_temp_sensors_cache)
+        {
+            cache.items = allocItems_<StackTempSensorItem>(cache.capacity, "temp_sensors",
+                                                           &cache - _stack_temp_sensors_cache, _log, true);
+            if (!cache.items)
+                cache.capacity = 0;
+            cache.reset();
+        }
         for (auto &cache : _stack_security_cache)
         {
             cache.items = allocItems_<StackSecuritySensorItem>(cache.capacity, "security",
@@ -1072,6 +1137,11 @@ private:
             releaseItems_(cache.items, cache.capacity);
             cache.items = nullptr;
         }
+        for (auto &cache : _stack_temp_sensors_cache)
+        {
+            releaseItems_(cache.items, cache.capacity);
+            cache.items = nullptr;
+        }
         for (auto &cache : _stack_security_cache)
         {
             releaseItems_(cache.items, cache.capacity);
@@ -1142,6 +1212,8 @@ private:
             log_fail("i2c", i, _stack_i2c_cache[i].items, _stack_i2c_cache[i].capacity);
         for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
             log_fail("ow", i, _stack_ow_cache[i].items, _stack_ow_cache[i].capacity);
+        for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
+            log_fail("temp_sensors", i, _stack_temp_sensors_cache[i].items, _stack_temp_sensors_cache[i].capacity);
         for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
             log_fail("security", i, _stack_security_cache[i].items, _stack_security_cache[i].capacity);
         for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
@@ -1615,12 +1687,13 @@ private:
         StackWateringCache *watering_cache = findStackWateringCacheByCmd_(cmd_id);
         StackI2cCache *i2c_cache = findStackI2cCacheByCmd_(cmd_id);
         StackOwCache *ow_cache = findStackOwCacheByCmd_(cmd_id);
+        StackTempSensorsCache *temp_sensors_cache = findStackTempSensorsCacheByCmd_(cmd_id);
         bool status_is_plc = false;
         bool status_is_rtc = false;
         StackNodeStatusCache *status_cache = findStackNodeStatusCacheByCmd_(cmd_id, status_is_plc, status_is_rtc);
         if (!sock_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !sec_prearm_cache && !meteo_cache &&
             !thermo_cache && !septic_cache && !tanks_cache && !avr_cache && !leak_cache &&
-            !watering_cache && !i2c_cache && !ow_cache && !status_cache)
+            !watering_cache && !i2c_cache && !ow_cache && !temp_sensors_cache && !status_cache)
         {
             const uint8_t feature = (uint8_t)(doc["feature"] | 0u);
             switch ((StackFeature)feature)
@@ -1755,6 +1828,13 @@ private:
                     ow_cache = c;
                 break;
             }
+            case StackFeature::TempSensors:
+            {
+                StackTempSensorsCache *c = findStackTempSensorsCache_(node_id, false);
+                if (c && c->pending)
+                    temp_sensors_cache = c;
+                break;
+            }
             case StackFeature::Avr:
             {
                 StackAvrCache *c = findStackAvrCache_(node_id, false);
@@ -1797,7 +1877,7 @@ private:
         }
         if (!sock_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !sec_prearm_cache && !meteo_cache &&
             !thermo_cache && !septic_cache && !tanks_cache && !avr_cache && !leak_cache &&
-            !watering_cache && !i2c_cache && !ow_cache && !status_cache)
+            !watering_cache && !i2c_cache && !ow_cache && !temp_sensors_cache && !status_cache)
         {
             if (cmd_id == 0)
                 return;
@@ -1933,91 +2013,111 @@ private:
             }
             else
             {
-                const uint16_t part = data_obj["part"] | 1;
-                const uint16_t parts = data_obj["parts"] | 1;
-                const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
+                const bool has_offset = data_obj["offset"].is<unsigned>() || data_obj["offset"].is<int>();
+                const bool has_limit = data_obj["limit"].is<unsigned>() || data_obj["limit"].is<int>();
                 JsonArrayConst port_items = data_obj["ports"].as<JsonArrayConst>();
                 if (port_items.isNull())
                     port_items = items;
                 if (!port_items.isNull())
                 {
-                    if (ports_cache->parts_received == 0 && part > 1)
-                    {
-                        return;
-                    }
-                    // Start (or restart) multipart aggregation on first received frame for this cmd.
-                    if (ports_cache->parts_received == 0)
-                    {
-                        ports_cache->item_count = 0;
-                        ports_cache->has_data = false;
-                        ports_cache->last_ok = false;
-                        ports_cache->last_error = "";
-                        memset(ports_cache->part_seen, 0, sizeof(ports_cache->part_seen));
-                        memset(ports_cache->present, 0, sizeof(ports_cache->present));
-                    }
-                    ports_cache->parts_expected = parts;
-                    if (part >= 1 && part <= StackPortsCache::kMaxPartsTracked)
-                    {
-                        const size_t idx = (size_t)(part - 1);
-                        if (ports_cache->part_seen[idx] == 0)
-                        {
-                            ports_cache->part_seen[idx] = 1;
-                            ++ports_cache->parts_received;
-                        }
-                    }
-                    for (JsonObjectConst item : port_items)
-                    {
-                        if (!item["id"].is<unsigned>())
-                            continue;
-                        const uint16_t id16 = (uint16_t)item["id"].as<unsigned>();
-                        if (id16 >= PortIO::PORT_COUNT)
-                            continue;
-                        const size_t id = (size_t)id16;
-                        StackPortItem &dst = ports_cache->items[id];
-                        dst.id = (uint8_t)id16;
-                        dst.ctrl = item["ctrl"] | false;
-                        dst.used = item["used"] | false;
-                        dst.is_extender = item["ext"] | false;
-                        dst.pin_type = (uint8_t)(item["ptype"] | 0xFFu);
-                        dst.dev = item["dev"] | -1;
-                        dst.pin = item["pin"] | -1;
-                        copyStr_(dst.backend, sizeof(dst.backend), item["backend"].as<const char *>());
-                        copyStr_(dst.loc, sizeof(dst.loc), item["loc"].as<const char *>());
-                        copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
-                        copyStr_(dst.hw, sizeof(dst.hw), item["hw"].as<const char *>());
-                        ports_cache->present[id] = 1;
-                    }
-                    // Build a compact partial list so web can use available ports immediately.
-                    size_t w_partial = 0;
-                    for (size_t i = 0; i < PortIO::PORT_COUNT; ++i)
-                    {
-                        if (!ports_cache->present[i])
-                            continue;
-                        if (w_partial != i)
-                            ports_cache->items[w_partial] = ports_cache->items[i];
-                        ++w_partial;
-                    }
-                    ports_cache->item_count = w_partial;
-                    ports_cache->has_data = (w_partial > 0);
-                    const bool all_parts_received = (ports_cache->parts_expected > 0 &&
-                                                     ports_cache->parts_received >= ports_cache->parts_expected);
-                    if (done)
+                    if (!(has_offset || has_limit))
                     {
                         ports_cache->pending = false;
-                        ports_cache->last_ok = all_parts_received && (ports_cache->item_count > 0);
-                        if (!all_parts_received)
-                            ports_cache->last_error = "partial ports data";
-                        else
-                            ports_cache->last_error = "";
-                        ports_cache->node_id = node_id;
-                        ports_cache->parts_expected = 0;
-                        ports_cache->parts_received = 0;
-                        memset(ports_cache->part_seen, 0, sizeof(ports_cache->part_seen));
-                        memset(ports_cache->present, 0, sizeof(ports_cache->present));
+                        ports_cache->pending_cmd_id = 0;
+                        ports_cache->last_ok = false;
+                        ports_cache->last_error = "ports page fields missing";
+                        ports_cache->next_offset = 0;
+                        ports_cache->page_limit = 0;
                     }
                     else
                     {
-                        ports_cache->pending = true;
+                        const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : false;
+                        const uint16_t offset = (uint16_t)(data_obj["offset"] | 0u);
+                        const uint16_t limit = (uint16_t)(data_obj["limit"] | (ports_cache->page_limit ? ports_cache->page_limit : 6u));
+                        const uint16_t total = (uint16_t)(data_obj["total"] | 0u);
+                        if (offset == 0)
+                        {
+                            ports_cache->item_count = 0;
+                            ports_cache->has_data = false;
+                            ports_cache->last_ok = false;
+                            ports_cache->last_error = "";
+                            memset(ports_cache->part_seen, 0, sizeof(ports_cache->part_seen));
+                            memset(ports_cache->present, 0, sizeof(ports_cache->present));
+                            ports_cache->parts_received = 0;
+                            ports_cache->parts_expected = 0;
+                        }
+                        if (total > 0 && limit > 0)
+                            ports_cache->parts_expected = (uint16_t)((total + limit - 1u) / limit);
+                        ++ports_cache->parts_received;
+                        for (JsonObjectConst item : port_items)
+                        {
+                            if (!item["id"].is<unsigned>())
+                                continue;
+                            const uint16_t id16 = (uint16_t)item["id"].as<unsigned>();
+                            if (id16 >= PortIO::PORT_COUNT)
+                                continue;
+                            const size_t id = (size_t)id16;
+                            StackPortItem &dst = ports_cache->items[id];
+                            dst.id = (uint8_t)id16;
+                            dst.ctrl = item["ctrl"] | false;
+                            dst.used = item["used"] | false;
+                            dst.is_extender = item["ext"] | false;
+                            dst.pin_type = (uint8_t)(item["ptype"] | 0xFFu);
+                            dst.dev = item["dev"] | -1;
+                            dst.pin = item["pin"] | -1;
+                            copyStr_(dst.backend, sizeof(dst.backend), item["backend"].as<const char *>());
+                            copyStr_(dst.loc, sizeof(dst.loc), item["loc"].as<const char *>());
+                            copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
+                            copyStr_(dst.hw, sizeof(dst.hw), item["hw"].as<const char *>());
+                            copyStr_(dst.alias, sizeof(dst.alias), item["alias"].as<const char *>());
+                            ports_cache->present[id] = 1;
+                        }
+                        size_t present_count = 0;
+                        for (size_t i = 0; i < PortIO::PORT_COUNT; ++i)
+                        {
+                            if (ports_cache->present[i])
+                                ++present_count;
+                        }
+                        ports_cache->item_count = present_count;
+                        ports_cache->has_data = (present_count > 0);
+                        ports_cache->node_id = node_id;
+                        if (done)
+                        {
+                            size_t w = 0;
+                            for (size_t i = 0; i < PortIO::PORT_COUNT; ++i)
+                            {
+                                if (!ports_cache->present[i])
+                                    continue;
+                                if (w != i)
+                                    ports_cache->items[w] = ports_cache->items[i];
+                                ++w;
+                            }
+                            ports_cache->item_count = w;
+                            ports_cache->has_data = (w > 0);
+                            ports_cache->pending = false;
+                            ports_cache->last_ok = (w > 0);
+                            ports_cache->last_error = "";
+                            ports_cache->pending_cmd_id = 0;
+                            ports_cache->next_offset = 0;
+                            ports_cache->page_limit = 0;
+                            ports_cache->parts_expected = 0;
+                            ports_cache->parts_received = 0;
+                            memset(ports_cache->part_seen, 0, sizeof(ports_cache->part_seen));
+                            memset(ports_cache->present, 0, sizeof(ports_cache->present));
+                        }
+                        else
+                        {
+                            const uint16_t next_offset = (uint16_t)(data_obj["next_offset"] | (uint16_t)(offset + port_items.size()));
+                            const uint16_t next_limit = limit ? limit : (ports_cache->page_limit ? ports_cache->page_limit : 6u);
+                            ports_cache->pending = true;
+                            ports_cache->last_ok = false;
+                            ports_cache->last_error = "";
+                            if (!sendStackPortsPage_(*ports_cache, node_id, next_offset, next_limit))
+                            {
+                                ports_cache->pending = false;
+                                ports_cache->last_error = "ports next page send fail";
+                            }
+                        }
                     }
                 }
             }
@@ -2068,13 +2168,15 @@ private:
             }
             else
             {
+                const bool merge_set = (rx_action == "set");
                 const uint16_t part = data_obj["part"] | 1;
                 const uint16_t parts = data_obj["parts"] | 1;
                 const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : (part >= parts);
                 sec_cache->enabled = data_obj["enabled"] | false;
                 sec_cache->armed = data_obj["armed"] | false;
                 sec_cache->alarm = data_obj["alarm"] | false;
-                if (part <= 1)
+                sec_cache->siren = (uint8_t)(data_obj["siren"] | SecurityController::kInvalidPort);
+                if (part <= 1 && !merge_set)
                 {
                     sec_cache->item_count = 0;
                     sec_cache->has_data = false;
@@ -2085,12 +2187,36 @@ private:
                 {
                     for (JsonObjectConst item : items)
                     {
-                        if (sec_cache->item_count >= SecurityController::kSensorCount)
-                            break;
                         if (!item["id"].is<unsigned>())
                             continue;
-                        StackSecuritySensorItem &dst = sec_cache->items[sec_cache->item_count++];
-                        dst.id = (uint8_t)item["id"].as<unsigned>();
+                        const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                        StackSecuritySensorItem *dst_ptr = nullptr;
+                        if (merge_set)
+                        {
+                            for (size_t i = 0; i < sec_cache->item_count; ++i)
+                            {
+                                if (sec_cache->items[i].id == id)
+                                {
+                                    dst_ptr = &sec_cache->items[i];
+                                    break;
+                                }
+                            }
+                            if (!dst_ptr && sec_cache->item_count < SecurityController::kSensorCount)
+                            {
+                                dst_ptr = &sec_cache->items[sec_cache->item_count++];
+                                dst_ptr->id = id;
+                            }
+                        }
+                        else
+                        {
+                            if (sec_cache->item_count >= SecurityController::kSensorCount)
+                                break;
+                            dst_ptr = &sec_cache->items[sec_cache->item_count++];
+                            dst_ptr->id = id;
+                        }
+                        if (!dst_ptr)
+                            continue;
+                        StackSecuritySensorItem &dst = *dst_ptr;
                         dst.enabled = item["enabled"] | false;
                         dst.detect = item["detect"] | false;
                         dst.silent = item["silent"] | false;
@@ -2185,8 +2311,10 @@ private:
                         dst.ok = item["ok"] | false;
                         dst.has_temp = item["has_temp"] | false;
                         dst.has_hum = item["has_hum"] | false;
+                        dst.has_read = item["has_read"] | false;
                         dst.temp_c = item["temp_c"] | 0.0f;
                         dst.hum = item["hum"] | 0.0f;
+                        dst.age_s = item["age_s"] | 0u;
                         copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
                         copyStr_(dst.type, sizeof(dst.type), item["type"].as<const char *>());
                         copyStr_(dst.addr, sizeof(dst.addr), item["addr"].as<const char *>());
@@ -2392,6 +2520,7 @@ private:
                         StackSepticItem &dst = *dst_ptr;
                         dst.enabled = item["enabled"] | false;
                         dst.monitor = item["monitor"] | false;
+                        copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
                         dst.warning_port = (uint8_t)(item["warning_port"] | SepticController::kInvalidPort);
                         dst.alarm_port = (uint8_t)(item["alarm_port"] | SepticController::kInvalidPort);
                         dst.relay_warning = (uint8_t)(item["relay_warning"] | SepticController::kInvalidPort);
@@ -2717,6 +2846,100 @@ private:
                 ow_cache->has_data = true;
                 ow_cache->last_ok = true;
                 ow_cache->node_id = node_id;
+            }
+        }
+
+        if (temp_sensors_cache)
+        {
+            temp_sensors_cache->updated_ms = millis();
+            if (!ok)
+            {
+                temp_sensors_cache->pending = false;
+                temp_sensors_cache->pending_cmd_id = 0;
+                temp_sensors_cache->last_ok = false;
+                temp_sensors_cache->last_error = doc["error"] | "error";
+                temp_sensors_cache->next_offset = 0;
+                temp_sensors_cache->page_limit = 0;
+            }
+            else
+            {
+                const bool has_offset = data_obj["offset"].is<unsigned>() || data_obj["offset"].is<int>();
+                const bool has_limit = data_obj["limit"].is<unsigned>() || data_obj["limit"].is<int>();
+                JsonArrayConst ts_items = data_obj["items"].as<JsonArrayConst>();
+                if (!(has_offset || has_limit))
+                {
+                    temp_sensors_cache->pending = false;
+                    temp_sensors_cache->pending_cmd_id = 0;
+                    temp_sensors_cache->last_ok = false;
+                    temp_sensors_cache->last_error = "temp_sensors page fields missing";
+                    temp_sensors_cache->next_offset = 0;
+                    temp_sensors_cache->page_limit = 0;
+                }
+                else if (!ts_items.isNull())
+                {
+                    const uint16_t offset = (uint16_t)(data_obj["offset"] | 0u);
+                    const uint16_t limit = (uint16_t)(data_obj["limit"] |
+                                                     (temp_sensors_cache->page_limit ? temp_sensors_cache->page_limit : 6u));
+                    const uint16_t total = (uint16_t)(data_obj["total"] | 0u);
+                    const bool done = data_obj["done"].is<bool>() ? data_obj["done"].as<bool>() : false;
+                    if (offset == 0)
+                    {
+                        temp_sensors_cache->item_count = 0;
+                        temp_sensors_cache->has_data = false;
+                        temp_sensors_cache->last_ok = false;
+                        temp_sensors_cache->last_error = "";
+                    }
+                    if ((size_t)offset > temp_sensors_cache->item_count)
+                    {
+                        // Sequential page pull expected. If offset jumps ahead, resync from scratch on next cycle.
+                        temp_sensors_cache->pending = false;
+                        temp_sensors_cache->pending_cmd_id = 0;
+                        temp_sensors_cache->last_ok = false;
+                        temp_sensors_cache->last_error = "temp_sensors offset mismatch";
+                        temp_sensors_cache->next_offset = 0;
+                        temp_sensors_cache->page_limit = 0;
+                    }
+                    else
+                    {
+                        for (JsonObjectConst item : ts_items)
+                        {
+                            if (temp_sensors_cache->item_count >= temp_sensors_cache->capacity)
+                                break;
+                            if (!item["addr"].is<const char *>())
+                                continue;
+                            StackTempSensorItem &dst = temp_sensors_cache->items[temp_sensors_cache->item_count++];
+                            copyStr_(dst.addr, sizeof(dst.addr), item["addr"].as<const char *>());
+                            dst.used = item["used"] | false;
+                        }
+                        temp_sensors_cache->has_data = (temp_sensors_cache->item_count > 0);
+                        temp_sensors_cache->node_id = node_id;
+                        if (done || temp_sensors_cache->item_count >= temp_sensors_cache->capacity ||
+                            (total > 0 && temp_sensors_cache->item_count >= total))
+                        {
+                            temp_sensors_cache->pending = false;
+                            temp_sensors_cache->pending_cmd_id = 0;
+                            temp_sensors_cache->last_ok = true;
+                            temp_sensors_cache->last_error = "";
+                            temp_sensors_cache->next_offset = 0;
+                            temp_sensors_cache->page_limit = 0;
+                        }
+                        else
+                        {
+                            const uint16_t next_offset = (uint16_t)(data_obj["next_offset"] |
+                                                                    (uint16_t)(offset + ts_items.size()));
+                            const uint16_t next_limit = limit ? limit : (temp_sensors_cache->page_limit ? temp_sensors_cache->page_limit : 6u);
+                            temp_sensors_cache->pending = true;
+                            temp_sensors_cache->last_ok = false;
+                            temp_sensors_cache->last_error = "";
+                            if (!sendStackTempSensorsPage_(*temp_sensors_cache, node_id, next_offset, next_limit))
+                            {
+                                temp_sensors_cache->pending = false;
+                                temp_sensors_cache->pending_cmd_id = 0;
+                                temp_sensors_cache->last_error = "temp_sensors next page send fail";
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -3330,6 +3553,7 @@ private:
                 cache->pending_cmd_id = 0;
                 cache->parts_expected = 0;
                 cache->parts_received = 0;
+                cache->next_offset = 0;
                 memset(cache->part_seen, 0, sizeof(cache->part_seen));
                 memset(cache->present, 0, sizeof(cache->present));
             }
@@ -3340,27 +3564,44 @@ private:
         }
         if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
+        cache->parts_expected = 0;
+        cache->parts_received = 0;
+        cache->next_offset = 0;
+        cache->page_limit = 6;
+        // Keep the previous cache visible until the first page of a new request arrives.
+        // The page parser (offset==0) will atomically clear and refill the cache.
+        memset(cache->part_seen, 0, sizeof(cache->part_seen));
+        if (!sendStackPortsPage_(*cache, node_id, 0, cache->page_limit))
+            return false;
+        cache->pending = true;
+        cache->updated_ms = now;
+        return true;
+    }
+
+    bool sendStackPortsPage_(StackPortsCache &cache, uint32_t node_id, uint16_t offset, uint16_t limit)
+    {
+        if (!_stack_master)
+            return false;
         const uint16_t cmd_id = nextStackCmdId_();
         StaticJsonDocument<192> doc;
         doc["cmd_id"] = cmd_id;
         doc["feature"] = (uint8_t)StackFeature::Ports;
         doc["action"] = "get_state";
-        // Keep payload below stack frame limit (1024 bytes) to avoid truncated JSON.
-        doc["params"]["chunk"] = 5;
-        char payload[96] = {};
+        doc["params"]["brief"] = true;
+        doc["params"]["offset"] = offset;
+        doc["params"]["limit"] = limit;
+        char payload[128] = {};
         const size_t len = serializeJson(doc, payload, sizeof(payload));
         if (len == 0)
             return false;
         if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
                                    (const uint8_t *)payload, len))
             return false;
-        cache->pending = true;
-        cache->pending_cmd_id = cmd_id;
-        cache->parts_expected = 0;
-        cache->parts_received = 0;
-        memset(cache->part_seen, 0, sizeof(cache->part_seen));
-        memset(cache->present, 0, sizeof(cache->present));
-        cache->updated_ms = now;
+        cache.pending_cmd_id = cmd_id;
+        cache.pending = true;
+        cache.next_offset = offset;
+        cache.page_limit = limit;
+        cache.updated_ms = millis();
         return true;
     }
 
@@ -3404,6 +3645,26 @@ private:
         cache->pending_cmd_id = cmd_id;
         cache->updated_ms = now;
         return true;
+    }
+
+    void invalidateStackPortsCache_(uint32_t node_id)
+    {
+        StackPortsCache *cache = findStackPortsCache_(node_id, false);
+        if (!cache)
+            return;
+        cache->pending = false;
+        cache->pending_cmd_id = 0;
+        cache->parts_expected = 0;
+        cache->parts_received = 0;
+        cache->next_offset = 0;
+        cache->page_limit = 0;
+        cache->has_data = false;
+        cache->last_ok = false;
+        cache->last_error = "";
+        cache->updated_ms = 0;
+        cache->item_count = 0;
+        memset(cache->part_seen, 0, sizeof(cache->part_seen));
+        memset(cache->present, 0, sizeof(cache->present));
     }
 
     bool requestStackI2c_(uint32_t node_id, bool run)
@@ -3492,6 +3753,90 @@ private:
         cache->pending_cmd_id = cmd_id;
         cache->updated_ms = now;
         return true;
+    }
+
+    bool requestStackTempSensors_(uint32_t node_id)
+    {
+        if (!_stack_master)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackTempSensorsCache *cache = findStackTempSensorsCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+        {
+            if ((uint32_t)(now - cache->updated_ms) > 6000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+                cache->next_offset = 0;
+                cache->page_limit = 0;
+                if (cache->item_count > 0)
+                {
+                    cache->has_data = true;
+                    cache->last_ok = false;
+                    cache->last_error = "temp_sensors timeout partial";
+                }
+            }
+            else
+            {
+                return false;
+            }
+        }
+        if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        cache->next_offset = 0;
+        cache->page_limit = 8;
+        cache->last_error = "";
+        cache->updated_ms = now;
+        if (!sendStackTempSensorsPage_(*cache, node_id, 0, cache->page_limit))
+            return false;
+        cache->pending = true;
+        return true;
+    }
+
+    bool sendStackTempSensorsPage_(StackTempSensorsCache &cache, uint32_t node_id, uint16_t offset, uint16_t limit)
+    {
+        if (!_stack_master)
+            return false;
+        const uint16_t cmd_id = nextStackCmdId_();
+        StaticJsonDocument<192> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::TempSensors;
+        doc["action"] = "list_page";
+        doc["params"]["offset"] = offset;
+        doc["params"]["limit"] = limit;
+        char payload[128] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
+                                   (const uint8_t *)payload, len))
+            return false;
+        cache.pending = true;
+        cache.pending_cmd_id = cmd_id;
+        cache.next_offset = offset;
+        cache.page_limit = limit;
+        cache.updated_ms = millis();
+        return true;
+    }
+
+    void invalidateStackTempSensorsCache_(uint32_t node_id)
+    {
+        StackTempSensorsCache *cache = findStackTempSensorsCache_(node_id, false);
+        if (!cache)
+            return;
+        cache->pending = false;
+        cache->pending_cmd_id = 0;
+        cache->next_offset = 0;
+        cache->page_limit = 0;
+        cache->has_data = false;
+        cache->last_ok = false;
+        cache->last_error = "";
+        cache->updated_ms = 0;
+        cache->item_count = 0;
     }
     bool requestStackPlcStatus_(uint32_t node_id)
     {
@@ -3821,6 +4166,46 @@ private:
         if (cmd_id == 0)
             return nullptr;
         for (auto &c : _stack_ow_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
+    StackTempSensorsCache *findStackTempSensorsCache_(uint32_t node_id, bool create)
+    {
+        if (!_stack_master)
+            return nullptr;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return nullptr;
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _stack_temp_sensors_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _stack_temp_sensors_cache)
+        {
+            if (c.node_id == 0)
+            {
+                c.reset();
+                c.node_id = node_id;
+                return &c;
+            }
+        }
+        return nullptr;
+    }
+
+    const StackTempSensorsCache *findStackTempSensorsCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackCache *>(this)->findStackTempSensorsCache_(node_id, create);
+    }
+
+    StackTempSensorsCache *findStackTempSensorsCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _stack_temp_sensors_cache)
             if (c.pending && c.pending_cmd_id == cmd_id)
                 return &c;
         return nullptr;
@@ -4279,6 +4664,7 @@ private:
     StackExtendersCache _stack_ext_cache[StackMaster::MAX_SESSIONS] = {};
     StackI2cCache _stack_i2c_cache[StackMaster::MAX_SESSIONS] = {};
     StackOwCache _stack_ow_cache[StackMaster::MAX_SESSIONS] = {};
+    StackTempSensorsCache _stack_temp_sensors_cache[StackMaster::MAX_SESSIONS] = {};
     StackSecurityCache _stack_security_cache[StackMaster::MAX_SESSIONS] = {};
     StackSecurityPrearmCache _stack_security_prearm_cache[StackMaster::MAX_SESSIONS] = {};
     StackMeteoCache _stack_meteo_cache[StackMaster::MAX_SESSIONS] = {};

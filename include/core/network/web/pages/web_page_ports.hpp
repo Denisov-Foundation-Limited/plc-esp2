@@ -17,7 +17,7 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Порты</title>
+  <title>%PORTS_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -88,35 +88,35 @@ static const char kWebInterfacePortsHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Порты</h1>
+      <h1>%PORTS_TITLE%</h1>
       <div class="status">%PORTS_STACK_STATUS%</div>
       
       %PORTS_DEVICE_SELECT%
-      <h2>Расширители</h2>
+      <h2>%PORTS_EXTENDERS%</h2>
       <table>
         <thead>
           <tr>
             <th class="right">ID</th>
-            <th class="right">Шина</th>
-            <th>Адрес</th>
-            <th>Тип</th>
+            <th class="right">%PORTS_COL_BUS%</th>
+            <th>%PORTS_COL_ADDR%</th>
+            <th>%PORTS_COL_TYPE%</th>
           </tr>
         </thead>
         <tbody>
           %EXTENDERS%
         </tbody>
       </table>
-      <h2>Порты</h2>
+      <h2>%PORTS_SECTION_PORTS%</h2>
       <table>
         <thead>
           <tr>
             <th class="right">ID</th>
-            <th>Бекенд</th>
-            <th>Лок.</th>
-            <th>Тип</th>
-            <th>Контр.</th>
-            <th class="right">Устр.</th>
-            <th class="right">Пин</th>
+            <th>%PORTS_COL_BACKEND%</th>
+            <th>%PORTS_COL_LOCAL%</th>
+            <th>%PORTS_COL_TYPE2%</th>
+            <th>%PORTS_COL_CTRL%</th>
+            <th class="right">%PORTS_COL_DEV%</th>
+            <th class="right">%PORTS_COL_PIN%</th>
             <th>State</th>
             <th>HW</th>
           </tr>

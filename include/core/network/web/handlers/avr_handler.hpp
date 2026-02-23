@@ -43,16 +43,48 @@ public:
         String page = FPSTR(kWebInterfaceAvrHtml);
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", web.navHtml_());
+        page.replace("%AVR_PAGE_TITLE%", WebUiRu::Avr::kPageTitle);
+        page.replace("%AVR_CHK_ENABLED%", WebUiRu::Avr::kChkEnabled);
+        page.replace("%AVR_CHK_AUTO_MODE%", WebUiRu::Avr::kChkAutoMode);
+        page.replace("%AVR_CHK_PREFER_MAIN%", WebUiRu::Avr::kChkPreferMain);
+        page.replace("%AVR_CHK_AUTO_RETURN_MAIN%", WebUiRu::Avr::kChkAutoReturnMain);
+        page.replace("%AVR_GROUP_MANUAL_SOURCE%", WebUiRu::Avr::kGroupManualSource);
+        page.replace("%AVR_LABEL_SOURCE%", WebUiRu::Avr::kLabelSource);
+        page.replace("%AVR_RADIO_OFF%", WebUiRu::Avr::kRadioOff);
+        page.replace("%AVR_RADIO_MAIN%", WebUiRu::Avr::kRadioMain);
+        page.replace("%AVR_RADIO_RESERVE%", WebUiRu::Avr::kRadioReserve);
+        page.replace("%AVR_GROUP_PORTS%", WebUiRu::Avr::kGroupPorts);
+        page.replace("%AVR_PORT_MAIN_OK%", WebUiRu::Avr::kPortMainOk);
+        page.replace("%AVR_PORT_FEEDBACK_MAIN%", WebUiRu::Avr::kPortFeedbackMain);
+        page.replace("%AVR_PORT_RELAY_MAIN%", WebUiRu::Avr::kPortRelayMain);
+        page.replace("%AVR_PORT_RESERVE_OK%", WebUiRu::Avr::kPortReserveOk);
+        page.replace("%AVR_PORT_FEEDBACK_RESERVE%", WebUiRu::Avr::kPortFeedbackReserve);
+        page.replace("%AVR_PORT_RELAY_RESERVE%", WebUiRu::Avr::kPortRelayReserve);
+        page.replace("%AVR_GROUP_PORT_LOGIC%", WebUiRu::Avr::kGroupPortLogic);
+        page.replace("%AVR_AL_MAIN_OK%", WebUiRu::Avr::kAlMainOk);
+        page.replace("%AVR_AL_RESERVE_OK%", WebUiRu::Avr::kAlReserveOk);
+        page.replace("%AVR_AL_FEEDBACK_MAIN%", WebUiRu::Avr::kAlFeedbackMain);
+        page.replace("%AVR_AL_FEEDBACK_RESERVE%", WebUiRu::Avr::kAlFeedbackReserve);
+        page.replace("%AVR_INV_RELAY_MAIN%", WebUiRu::Avr::kInvRelayMain);
+        page.replace("%AVR_INV_RELAY_RESERVE%", WebUiRu::Avr::kInvRelayReserve);
+        page.replace("%AVR_GROUP_TIMINGS%", WebUiRu::Avr::kGroupTimings);
+        page.replace("%AVR_TIMING_DEBOUNCE%", WebUiRu::Avr::kTimingDebounce);
+        page.replace("%AVR_TIMING_LOSS_DELAY%", WebUiRu::Avr::kTimingLossDelay);
+        page.replace("%AVR_TIMING_RETURN_DELAY%", WebUiRu::Avr::kTimingReturnDelay);
+        page.replace("%AVR_TIMING_BREAK%", WebUiRu::Avr::kTimingBreak);
+        page.replace("%AVR_TIMING_WARMUP%", WebUiRu::Avr::kTimingWarmup);
+        page.replace("%AVR_TIMING_TRANSFER_TIMEOUT%", WebUiRu::Avr::kTimingTransferTimeout);
+        page.replace("%AVR_PORTS_HELP%", WebUiRu::Avr::kPortsHelp);
         page.replace("%AVR_FORM_ACTION%", avrRedirectPath_(node_id, stack_view));
         page.replace("%AVR_FAULT_FORM_ACTION%", avrRedirectPath_(node_id, stack_view));
         page.replace("%AVR_DEVICE_SELECT%", avrDeviceSelectHtml_(web, node_id, stack_view));
         page.replace("%AVR_SAVE_BTN%",
                      web.webSessionIsAdmin_() ? (String("<button type=\"submit\" form=\"avr-form\">") + WebUiRu::kSave + "</button>") : String(""));
-        page.replace("%AVR_FAULT_BTN%", "<button type=\"submit\" form=\"avr-fault-form\" class=\"btn-muted\">Сбросить ошибку</button>");
+        page.replace("%AVR_FAULT_BTN%", String("<button type=\"submit\" form=\"avr-fault-form\" class=\"btn-muted\">") + WebUiRu::Avr::kBtnResetFault + "</button>");
 
         if (!web._controllers)
         {
-            page.replace("%AVR_STATUS%", "Контроллеры недоступны");
+            page.replace("%AVR_STATUS%", WebUiRu::Common::kControllersUnavailable);
             page.replace("%AVR_STATE_TEXT%", buildStateIndicatorsUnknown_());
             fillDefaults_(page);
             web.sendHtml_(request, page, set_cookie);
@@ -63,7 +95,7 @@ public:
         {
             if (!web._stack_cache)
             {
-                page.replace("%AVR_STATUS%", "Стек-кэш недоступен");
+                page.replace("%AVR_STATUS%", WebUiRu::Avr::kStackCacheUnavailable);
                 page.replace("%AVR_STATE_TEXT%", buildStateIndicatorsUnknown_());
                 fillDefaults_(page);
             }
@@ -72,7 +104,7 @@ public:
                 const auto *cache = web.stackCache().avrCache(node_id);
                 if (!cache || !cache->has_data)
                 {
-                    page.replace("%AVR_STATUS%", "Ожидаем данные со слейва");
+                    page.replace("%AVR_STATUS%", WebUiRu::Avr::kWaitingSlave);
                     page.replace("%AVR_STATE_TEXT%", buildStateIndicatorsUnknown_());
                     fillDefaults_(page);
                 }
@@ -173,7 +205,7 @@ public:
         const bool stack_view = isStackAvrView_(web, node_id);
         if (!web._controllers)
         {
-            web.sendText_(request, 500, "text/plain", "Контроллеры недоступны", set_cookie);
+            web.sendText_(request, 500, "text/plain", WebUiRu::Common::kControllersUnavailable, set_cookie);
             return;
         }
         if (!web.webAclCanControlItem_(UsersRegistry::AclController::Avr, 1, node_id))
@@ -189,14 +221,14 @@ public:
             if (stack_view)
             {
                 if (sendStackAvrSet_(web, node_id, nullptr, true))
-                    web._avr_status = "Команда отправлена";
+                    web._avr_status = WebUiRu::Avr::kCmdSent;
                 else
-                    web._avr_status = "Ошибка отправки";
+                    web._avr_status = WebUiRu::Avr::kSendFailed;
             }
             else
             {
                 avr.clearFault();
-                web._avr_status = "Ошибка сброшена";
+                web._avr_status = WebUiRu::Avr::kFaultCleared;
             }
             web.sendRedirect_(request, avrRedirectPath_(node_id, stack_view), set_cookie);
             return;
@@ -238,69 +270,69 @@ public:
         if (!web.parseSocketPort_(web.paramValue_(request, "avr_main_ok"), main_ok))
         {
             ok = false;
-            err = "Некорректный порт main_ok";
+            err = WebUiRu::Avr::kInvalidMainOkPort;
         }
         if (ok && !web.parseSocketPort_(web.paramValue_(request, "avr_reserve_ok"), reserve_ok))
         {
             ok = false;
-            err = "Некорректный порт reserve_ok";
+            err = WebUiRu::Avr::kInvalidReserveOkPort;
         }
         if (ok && !web.parseSocketPort_(web.paramValue_(request, "avr_relay_main"), relay_main))
         {
             ok = false;
-            err = "Некорректный порт relay_main";
+            err = WebUiRu::Avr::kInvalidRelayMainPort;
         }
         if (ok && !web.parseSocketPort_(web.paramValue_(request, "avr_relay_reserve"), relay_reserve))
         {
             ok = false;
-            err = "Некорректный порт relay_reserve";
+            err = WebUiRu::Avr::kInvalidRelayReservePort;
         }
         if (ok && !web.parseSocketPort_(web.paramValue_(request, "avr_feedback_main"), fb_main))
         {
             ok = false;
-            err = "Некорректный порт feedback_main";
+            err = WebUiRu::Avr::kInvalidFeedbackMainPort;
         }
         if (ok && !web.parseSocketPort_(web.paramValue_(request, "avr_feedback_reserve"), fb_reserve))
         {
             ok = false;
-            err = "Некорректный порт feedback_reserve";
+            err = WebUiRu::Avr::kInvalidFeedbackReservePort;
         }
         if (ok && !parseMs_(web, request, "avr_debounce_ms", debounce_ms))
         {
             ok = false;
-            err = "Некорректный debounce_ms";
+            err = WebUiRu::Avr::kInvalidDebounceMs;
         }
         if (ok && !parseMs_(web, request, "avr_loss_delay_ms", loss_delay_ms))
         {
             ok = false;
-            err = "Некорректный loss_delay_ms";
+            err = WebUiRu::Avr::kInvalidLossDelayMs;
         }
         if (ok && !parseMs_(web, request, "avr_return_delay_ms", return_delay_ms))
         {
             ok = false;
-            err = "Некорректный return_delay_ms";
+            err = WebUiRu::Avr::kInvalidReturnDelayMs;
         }
         if (ok && !parseMs_(web, request, "avr_break_ms", break_ms))
         {
             ok = false;
-            err = "Некорректный break_ms";
+            err = WebUiRu::Avr::kInvalidBreakMs;
         }
         if (ok && !parseMs_(web, request, "avr_warmup_ms", warmup_ms))
         {
             ok = false;
-            err = "Некорректный warmup_ms";
+            err = WebUiRu::Avr::kInvalidWarmupMs;
         }
         if (ok && !parseMs_(web, request, "avr_transfer_timeout_ms", transfer_timeout_ms))
         {
             ok = false;
-            err = "Некорректный transfer_timeout_ms";
+            err = WebUiRu::Avr::kInvalidTransferTimeoutMs;
         }
 
         AvrController::Source manual = avr.manualSource();
         if (ok && !parseSource_(web.paramValue_(request, "avr_manual_source"), manual))
         {
             ok = false;
-            err = "Некорректный manual source";
+            err = WebUiRu::Avr::kInvalidManualSource;
         }
 
         if (!ok)
@@ -368,9 +400,9 @@ public:
             obj["transfer_timeout_ms"] = transfer_timeout_ms;
             obj["manual_source"] = manualSourceName_(manual);
             if (sendStackAvrSet_(web, node_id, &obj, false))
-                web._avr_status = "Команда отправлена";
+                web._avr_status = WebUiRu::Avr::kCmdSent;
             else
-                web._avr_status = "Ошибка отправки";
+                web._avr_status = WebUiRu::Avr::kSendFailed;
             web.sendRedirect_(request, avrRedirectPath_(node_id, true), set_cookie);
             return;
         }
@@ -420,17 +452,17 @@ public:
             if (!web._configs_manager)
             {
                 saved = false;
-                web._avr_status = "Менеджер конфигурации недоступен";
+                web._avr_status = WebUiRu::Common::kConfigManagerUnavailable;
             }
             else if (!web._configs_manager->save())
             {
                 saved = false;
-                web._avr_status = "Ошибка сохранения";
+                web._avr_status = WebUiRu::Common::kSaveFailed;
             }
         }
 
         if (saved)
-            web._avr_status = (cfg_changed || manual_changed) ? "Обновлено" : "Без изменений";
+            web._avr_status = (cfg_changed || manual_changed) ? WebUiRu::Common::kUpdated : WebUiRu::Common::kNoChanges;
         web.sendRedirect_(request, avrRedirectPath_(node_id, false), set_cookie);
     }
 
@@ -467,21 +499,21 @@ private:
     static String stackAvrStatusText_(WebInterface &web, uint32_t node_id)
     {
         if (!web._stack_cache)
-            return "Стек-кэш недоступен";
+            return WebUiRu::Avr::kStackCacheUnavailable;
         const auto *cache = web.stackCache().avrCache(node_id);
         if (!cache)
-            return "Нет данных со слейва";
+            return WebUiRu::Common::kNoDataFromSlave;
         if (cache->pending)
-            return "Запрос данных со слейва...";
+            return WebUiRu::Avr::kRequestingSlaveData;
         if (!cache->last_ok && cache->last_error.length())
         {
-            String msg = "Ошибка: ";
+            String msg = WebUiRu::Common::kErrorPrefix;
             msg += cache->last_error;
             return msg;
         }
         if (!cache->has_data)
-            return "Нет данных со слейва";
-        return "OK";
+            return WebUiRu::Common::kNoDataFromSlave;
+        return WebUiRu::Common::kStatusOk;
     }
 
     static String avrDeviceSelectHtml_(WebInterface &web, uint32_t selected_node_id, bool stack_view)
@@ -491,7 +523,9 @@ private:
         String html;
         html.reserve(512);
         html += "<div class=\"row\" style=\"margin-bottom:10px;\">";
-        html += "<label>Устройство</label>";
+        html += "<label>";
+        html += WebUiRu::Common::kDevice;
+        html += "</label>";
         html += "<select id=\"avr-device\" class=\"field\">";
         html += "<option value=\"local\"";
         if (!stack_view)
@@ -636,9 +670,9 @@ private:
         String out;
         out.reserve(256);
         out += "<div class=\"state-indicators\">";
-        out += buildStateIndicatorsItem_("Основная сеть", false, false);
-        out += buildStateIndicatorsItem_("Резервная сеть", false, false);
-        out += buildStateIndicatorsItem_("Ошибка", false, true);
+        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateMain, false, false);
+        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateReserve, false, false);
+        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateFault, false, true);
         out += "</div>";
         return out;
     }
@@ -648,9 +682,9 @@ private:
         String out;
         out.reserve(256);
         out += "<div class=\"state-indicators\">";
-        out += buildStateIndicatorsItem_("Основная сеть", st.main_ok, false);
-        out += buildStateIndicatorsItem_("Резервная сеть", st.reserve_ok, false);
-        out += buildStateIndicatorsItem_("Ошибка", st.fault != AvrController::Fault::None, true);
+        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateMain, st.main_ok, false);
+        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateReserve, st.reserve_ok, false);
+        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateFault, st.fault != AvrController::Fault::None, true);
         out += "</div>";
         return out;
     }
@@ -666,9 +700,9 @@ private:
         String out;
         out.reserve(256);
         out += "<div class=\"state-indicators\">";
-        out += buildStateIndicatorsItem_("Основная сеть", st->main_ok, false);
-        out += buildStateIndicatorsItem_("Резервная сеть", st->reserve_ok, false);
-        out += buildStateIndicatorsItem_("Ошибка", has_fault, true);
+        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateMain, st->main_ok, false);
+        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateReserve, st->reserve_ok, false);
+        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateFault, has_fault, true);
         out += "</div>";
         return out;
     }
@@ -677,13 +711,13 @@ private:
     {
         String out;
         out.reserve(192);
-        out += "активный:";
+        out += WebUiRu::Avr::kActive;
         out += AvrController::sourceName(st.active_source);
-        out += " цель:";
+        out += WebUiRu::Avr::kTarget;
         out += AvrController::sourceName(st.target_source);
-        out += " ошибка:";
+        out += WebUiRu::Avr::kFault;
         out += AvrController::faultName(st.fault);
-        out += " переключение:";
+        out += WebUiRu::Avr::kSwitching;
         out += boolTxt_(st.transfer_in_progress);
         out += " main_ok:";
         out += boolTxt_(st.main_ok);
@@ -702,13 +736,13 @@ private:
             return String("n/a");
         String out;
         out.reserve(192);
-        out += "активный:";
+        out += WebUiRu::Avr::kActive;
         out += st->active_source;
-        out += " цель:";
+        out += WebUiRu::Avr::kTarget;
         out += st->target_source;
-        out += " ошибка:";
+        out += WebUiRu::Avr::kFault;
         out += st->fault;
-        out += " переключение:";
+        out += WebUiRu::Avr::kSwitching;
         out += boolTxt_(st->transfer);
         out += " main_ok:";
         out += boolTxt_(st->main_ok);

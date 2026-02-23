@@ -33,6 +33,18 @@ public:
         String page = FPSTR(kWebInterfaceManageHtml);
         page.reserve(page.length() + 4096);
         page.replace("%NAV%", web.navHtml_());
+        page.replace("%MANAGE_PAGE_TITLE%", WebUiRu::ManagePage::kPageTitle);
+        page.replace("%MANAGE_TITLE%", WebUiRu::ManagePage::kTitle);
+        page.replace("%MANAGE_FW_SECTION%", WebUiRu::ManagePage::kFwSection);
+        page.replace("%MANAGE_FW_HINT%", WebUiRu::ManagePage::kFwHint);
+        page.replace("%MANAGE_UPLOAD_FW%", WebUiRu::ManagePage::kUploadFw);
+        page.replace("%MANAGE_FILES_SECTION%", WebUiRu::ManagePage::kFilesSection);
+        page.replace("%MANAGE_UPLOAD_FILE%", WebUiRu::ManagePage::kUploadFile);
+        page.replace("%MANAGE_STATUS_LINK%", WebUiRu::ManagePage::kStatusLink);
+        page.replace("%MANAGE_FILE_LIST%", WebUiRu::ManagePage::kFileList);
+        page.replace("%MANAGE_COL_NAME%", WebUiRu::ManagePage::kName);
+        page.replace("%MANAGE_COL_SIZE%", WebUiRu::ManagePage::kSize);
+        page.replace("%MANAGE_COL_DELETE%", WebUiRu::ManagePage::kDelete);
         page.replace("%FILES%", web.listFilesHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);

@@ -864,6 +864,7 @@ private:
             static constexpr size_t kDefaultChunk = 5;
             static constexpr size_t kMaxChunk = 8;
             const bool has_ids = params.is<JsonObjectConst>() && params["ids"].is<JsonArrayConst>();
+            const bool brief = params.is<JsonObjectConst>() && (params["brief"] | false);
             const JsonArrayConst ids = has_ids ? params["ids"].as<JsonArrayConst>() : JsonArrayConst();
             size_t chunk = kDefaultChunk;
             if (params.is<JsonObjectConst>() && params["chunk"].is<unsigned>())
@@ -876,126 +877,126 @@ private:
                 chunk = kDefaultChunk;
             if (chunk > kMaxChunk)
                 chunk = kMaxChunk;
-
             size_t total = 0;
             if (has_ids)
             {
                 for (JsonVariantConst v : ids)
                 {
-                    if (v.is<unsigned>())
-                        ++total;
+                    if (!v.is<unsigned>())
+                        continue;
+                    const uint8_t id = (uint8_t)v.as<unsigned>();
+                    if (!portVisibleInPortsList_(id))
+                        continue;
+                    ++total;
                 }
             }
             else
             {
                 for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
                 {
-                    const auto &p = ActiveBoardProfile::PORTS[i];
-                    if (p.caps == Cap::None)
+                    if (!portVisibleInPortsList_(i))
                         continue;
                     ++total;
                 }
             }
 
-            const size_t parts = total ? ((total + chunk - 1) / chunk) : 1;
-            for (size_t part = 0; part < parts; ++part)
+            const size_t offset = (size_t)(params["offset"] | 0u);
+            size_t limit = (size_t)(params["limit"] | (unsigned)chunk);
+            if (limit == 0)
+                limit = chunk;
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            JsonArray arr = doc["ports"].to<JsonArray>();
+            const size_t from = offset;
+            const size_t to = offset + limit;
+            size_t pos = 0;
+            if (has_ids)
             {
-                const size_t from = part * chunk;
-                const size_t to = from + chunk;
-                _tx_doc.clear();
-                JsonDocument &doc = _tx_doc;
-                JsonArray arr = doc["ports"].to<JsonArray>();
-                size_t pos = 0;
-
-                if (has_ids)
+                for (JsonVariantConst v : ids)
                 {
-                    for (JsonVariantConst v : ids)
+                    if (!v.is<unsigned>())
+                        continue;
+                    const uint8_t id = (uint8_t)v.as<unsigned>();
+                    if (!portVisibleInPortsList_(id))
+                        continue;
+                    if (pos >= from && pos < to)
                     {
-                        if (!v.is<unsigned>())
-                            continue;
-                        const uint8_t id = (uint8_t)v.as<unsigned>();
+                        JsonObject o = arr.add<JsonObject>();
+                        fillPortItem_(o, id, _io.read(id), brief);
+                    }
+                    ++pos;
+                    if (pos >= to)
+                        break;
+                }
+            }
+            else
+            {
+                uint8_t relay_ids[IoStack::PORT_COUNT] = {};
+                uint8_t dinput_ids[IoStack::PORT_COUNT] = {};
+                uint8_t other_ids[IoStack::PORT_COUNT] = {};
+                size_t relay_n = 0;
+                size_t dinput_n = 0;
+                size_t other_n = 0;
+                for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
+                {
+                    if (!portVisibleInPortsList_(i))
+                        continue;
+                    const auto &p = ActiveBoardProfile::PORTS[i];
+                    if (p.type == PortIO::PinType::Relay)
+                        relay_ids[relay_n++] = i;
+                    else if (p.type == PortIO::PinType::DInput || p.type == PortIO::PinType::Button)
+                        dinput_ids[dinput_n++] = i;
+                    else
+                        other_ids[other_n++] = i;
+                }
+                size_t ri = 0;
+                size_t di = 0;
+                while ((ri < relay_n || di < dinput_n) && pos < to)
+                {
+                    if (ri < relay_n)
+                    {
+                        const uint8_t id = relay_ids[ri++];
                         if (pos >= from && pos < to)
                         {
                             JsonObject o = arr.add<JsonObject>();
-                            fillPortItem_(o, id, _io.read(id));
+                            fillPortItem_(o, id, _io.read(id), brief);
+                        }
+                        ++pos;
+                        if (pos >= to)
+                            break;
+                    }
+                    if (di < dinput_n)
+                    {
+                        const uint8_t id = dinput_ids[di++];
+                        if (pos >= from && pos < to)
+                        {
+                            JsonObject o = arr.add<JsonObject>();
+                            fillPortItem_(o, id, _io.read(id), brief);
                         }
                         ++pos;
                         if (pos >= to)
                             break;
                     }
                 }
-                else
+                for (size_t oi = 0; oi < other_n && pos < to; ++oi)
                 {
-                    uint8_t relay_ids[IoStack::PORT_COUNT] = {};
-                    uint8_t dinput_ids[IoStack::PORT_COUNT] = {};
-                    uint8_t other_ids[IoStack::PORT_COUNT] = {};
-                    size_t relay_n = 0;
-                    size_t dinput_n = 0;
-                    size_t other_n = 0;
-                    for (uint8_t i = 0; i < IoStack::PORT_COUNT; ++i)
+                    const uint8_t id = other_ids[oi];
+                    if (pos >= from && pos < to)
                     {
-                        const auto &p = ActiveBoardProfile::PORTS[i];
-                        if (p.caps == Cap::None)
-                            continue;
-                        if (p.type == PortIO::PinType::Relay)
-                            relay_ids[relay_n++] = i;
-                        else if (p.type == PortIO::PinType::DInput || p.type == PortIO::PinType::Button)
-                            dinput_ids[dinput_n++] = i;
-                        else
-                            other_ids[other_n++] = i;
+                        JsonObject o = arr.add<JsonObject>();
+                        fillPortItem_(o, id, _io.read(id), brief);
                     }
-                    // Interleave relay/dinput first so first chunks contain both selector types.
-                    size_t ri = 0;
-                    size_t di = 0;
-                    while ((ri < relay_n || di < dinput_n) && pos < to)
-                    {
-                        if (ri < relay_n)
-                        {
-                            const uint8_t id = relay_ids[ri++];
-                            if (pos >= from && pos < to)
-                            {
-                                JsonObject o = arr.add<JsonObject>();
-                                fillPortItem_(o, id, _io.read(id));
-                            }
-                            ++pos;
-                            if (pos >= to)
-                                break;
-                        }
-                        if (di < dinput_n)
-                        {
-                            const uint8_t id = dinput_ids[di++];
-                            if (pos >= from && pos < to)
-                            {
-                                JsonObject o = arr.add<JsonObject>();
-                                fillPortItem_(o, id, _io.read(id));
-                            }
-                            ++pos;
-                            if (pos >= to)
-                                break;
-                        }
-                    }
-                    for (size_t oi = 0; oi < other_n && pos < to; ++oi)
-                    {
-                        const uint8_t id = other_ids[oi];
-                        if (pos >= from && pos < to)
-                        {
-                            JsonObject o = arr.add<JsonObject>();
-                            fillPortItem_(o, id, _io.read(id));
-                        }
-                        ++pos;
-                    }
-                }
-                doc["part"] = (unsigned)(part + 1);
-                doc["parts"] = (unsigned)parts;
-                doc["done"] = (part + 1) >= parts;
-                sendAck_(cmd_id, doc);
-                // Prevent flooding the TCP writer with a long multipart burst; this improves delivery stability.
-                if ((part + 1) < parts)
-                {
-                    delay(1);
-                    yield();
+                    ++pos;
                 }
             }
+            doc["offset"] = (unsigned)offset;
+            doc["limit"] = (unsigned)limit;
+            doc["total"] = (unsigned)total;
+            const size_t next = offset + arr.size();
+            const bool done_page = (next >= total);
+            doc["next_offset"] = (unsigned)next;
+            doc["done"] = done_page;
+            sendAck_(cmd_id, doc);
             return;
         }
         if (action == "set_state")
@@ -1024,12 +1025,79 @@ private:
         sendErr_(cmd_id, "unsupported");
     }
 
-    void handleTempSensors_(uint16_t cmd_id, const String &action, JsonVariantConst)
+    void handleTempSensors_(uint16_t cmd_id, const String &action, JsonVariantConst params)
     {
         static constexpr size_t kMaxSerials = 50;
         char serials[kMaxSerials][17] = {};
         size_t serial_count = 0;
         _ds18b20.listSerials(serials, kMaxSerials, serial_count);
+        if (action == "list_page")
+        {
+            uint16_t offset = 0;
+            uint16_t limit = 8;
+            if (params.is<JsonObjectConst>())
+            {
+                offset = (uint16_t)(params["offset"] | 0u);
+                const uint16_t raw_limit = (uint16_t)(params["limit"] | 8u);
+                if (raw_limit > 0)
+                    limit = raw_limit;
+            }
+            if (limit == 0)
+                limit = 8;
+            if (limit > 16)
+                limit = 16;
+            if (offset > serial_count)
+                offset = (uint16_t)serial_count;
+
+            char used_list[MeteoController::kSensorCount][17] = {};
+            size_t used_count = 0;
+            for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+            {
+                const auto *cfg = _meteo.configByIndex(i);
+                if (!cfg || !cfg->enabled || cfg->type != MeteoController::SensorType::Ds18b20 || !cfg->ds18_addr_set)
+                    continue;
+                char hex[17] = {};
+                MeteoController::formatHexAddr(cfg->ds18_addr, hex);
+                bool exists = false;
+                for (size_t j = 0; j < used_count; ++j)
+                {
+                    if (strcmp(used_list[j], hex) == 0)
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists && used_count < MeteoController::kSensorCount)
+                    strlcpy(used_list[used_count++], hex, sizeof(used_list[0]));
+            }
+
+            const size_t to = min((size_t)serial_count, (size_t)offset + (size_t)limit);
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            JsonArray arr = doc["items"].to<JsonArray>();
+            for (size_t i = offset; i < to; ++i)
+            {
+                JsonObject o = arr.add<JsonObject>();
+                o["addr"] = serials[i];
+                bool used = false;
+                for (size_t j = 0; j < used_count; ++j)
+                {
+                    if (strcmp(used_list[j], serials[i]) == 0)
+                    {
+                        used = true;
+                        break;
+                    }
+                }
+                o["used"] = used;
+            }
+            doc["offset"] = (unsigned)offset;
+            doc["limit"] = (unsigned)limit;
+            doc["total"] = (unsigned)serial_count;
+            doc["next_offset"] = (unsigned)to;
+            doc["done"] = (to >= serial_count);
+            sendAck_(cmd_id, doc);
+            return;
+        }
         if (action == "list")
         {
             _tx_doc.clear();
@@ -1506,6 +1574,7 @@ private:
                 return;
             }
             JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            bool gpio_usage_changed = false;
             for (JsonVariantConst v : items)
             {
                 if (!v.is<JsonObjectConst>())
@@ -1514,20 +1583,38 @@ private:
                 if (!item["id"].is<unsigned>())
                     continue;
                 const uint8_t id = (uint8_t)item["id"].as<unsigned>();
-                if (item["enabled"].is<bool>())
-                    _sockets.setEnabled(id, item["enabled"].as<bool>());
-                else if (item["enabled"].is<int>())
-                    _sockets.setEnabled(id, item["enabled"].as<int>() != 0);
                 if (item["name"].is<const char *>())
                     _sockets.setName(id, String(item["name"].as<const char *>()));
                 if (item["button"].is<unsigned>())
+                {
                     _sockets.setButtonPort(id, (uint8_t)item["button"].as<unsigned>());
+                    gpio_usage_changed = true;
+                }
                 else if (item["button"].is<int>() && item["button"].as<int>() < 0)
+                {
                     _sockets.setButtonPort(id, SocketController::kInvalidPort);
+                    gpio_usage_changed = true;
+                }
                 if (item["relay"].is<unsigned>())
+                {
                     _sockets.setRelayPort(id, (uint8_t)item["relay"].as<unsigned>());
+                    gpio_usage_changed = true;
+                }
                 else if (item["relay"].is<int>() && item["relay"].as<int>() < 0)
+                {
                     _sockets.setRelayPort(id, SocketController::kInvalidPort);
+                    gpio_usage_changed = true;
+                }
+                if (item["enabled"].is<bool>())
+                {
+                    _sockets.setEnabled(id, item["enabled"].as<bool>());
+                    gpio_usage_changed = true;
+                }
+                else if (item["enabled"].is<int>())
+                {
+                    _sockets.setEnabled(id, item["enabled"].as<int>() != 0);
+                    gpio_usage_changed = true;
+                }
                 if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
                 {
                     _sockets.toggleRelayById(id);
@@ -1544,6 +1631,8 @@ private:
                     _sockets.setRelayById(id, on);
                 }
             }
+            if (gpio_usage_changed)
+                _controllers.invalidateGpioUsageCache();
             sendAck_(cmd_id);
             return;
         }
@@ -1587,6 +1676,83 @@ private:
 
     void handleMeteo_(uint16_t cmd_id, const String &action, JsonVariantConst params)
     {
+        if (action == "set")
+        {
+            if (!params.is<JsonObjectConst>() || !params["items"].is<JsonArrayConst>())
+            {
+                sendErr_(cmd_id, "missing items");
+                return;
+            }
+            JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            bool gpio_usage_changed = false;
+            for (JsonVariantConst v : items)
+            {
+                if (!v.is<JsonObjectConst>())
+                    continue;
+                JsonObjectConst item = v.as<JsonObjectConst>();
+                if (!item["id"].is<unsigned>())
+                    continue;
+                const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+
+                if (item["name"].is<const char *>())
+                    _meteo.setName(id, String(item["name"].as<const char *>()));
+
+                if (item["type"].is<const char *>())
+                {
+                    const char *t = item["type"].as<const char *>();
+                    if (t)
+                    {
+                        String ts(t);
+                        ts.toLowerCase();
+                        if (ts == "none")
+                            _meteo.setType(id, MeteoController::SensorType::None);
+                        else if (ts == "dht22")
+                            _meteo.setType(id, MeteoController::SensorType::Dht22);
+                        else if (ts == "ds18b20")
+                            _meteo.setType(id, MeteoController::SensorType::Ds18b20);
+                        gpio_usage_changed = true;
+                    }
+                }
+
+                if (item["pin"].is<unsigned>())
+                {
+                    _meteo.setDht22Pin(id, (uint8_t)item["pin"].as<unsigned>());
+                    gpio_usage_changed = true;
+                }
+                else if (item["pin"].is<int>() && item["pin"].as<int>() < 0)
+                {
+                    _meteo.setDht22Pin(id, MeteoController::kInvalidPin);
+                    gpio_usage_changed = true;
+                }
+
+                if (item["addr"].is<const char *>())
+                {
+                    const char *hex = item["addr"].as<const char *>();
+                    uint8_t addr[MeteoController::kAddrLen] = {};
+                    bool addr_set = false;
+                    if (hex && hex[0])
+                    {
+                        addr_set = MeteoController::parseHexAddr(hex, addr);
+                    }
+                    _meteo.setDs18b20Addr(id, addr, addr_set);
+                }
+
+                if (item["enabled"].is<bool>())
+                {
+                    _meteo.setEnabled(id, item["enabled"].as<bool>());
+                    gpio_usage_changed = true;
+                }
+                else if (item["enabled"].is<int>())
+                {
+                    _meteo.setEnabled(id, item["enabled"].as<int>() != 0);
+                    gpio_usage_changed = true;
+                }
+            }
+            if (gpio_usage_changed)
+                _controllers.invalidateGpioUsageCache();
+            sendAck_(cmd_id);
+            return;
+        }
         if (action != "get")
         {
             sendErr_(cmd_id, "unsupported");
@@ -1631,6 +1797,8 @@ private:
                 if (pos >= from && pos < to)
                 {
                     JsonObject o = arr.add<JsonObject>();
+                    const bool has_read = st->last_read_ms != 0;
+                    const uint32_t age_s = has_read ? (uint32_t)((millis() - st->last_read_ms) / 1000u) : 0u;
                     o["id"] = (unsigned)cfg->id;
                     o["enabled"] = cfg->enabled;
                     if (cfg->name.length())
@@ -1652,6 +1820,8 @@ private:
                     o["has_temp"] = st->has_temp;
                     o["has_hum"] = st->has_humidity;
                     o["ok"] = st->ok;
+                    o["has_read"] = has_read;
+                    o["age_s"] = age_s;
                 }
                 ++pos;
                 if (pos >= to)
@@ -1825,6 +1995,30 @@ private:
                     mark_changed(id);
                     continue;
                 }
+                if (item["heat"].is<unsigned>() || item["heat"].is<int>())
+                {
+                    const uint8_t port = item["heat"].is<unsigned>() ? (uint8_t)item["heat"].as<unsigned>()
+                                                                     : (uint8_t)item["heat"].as<int>();
+                    _thermo.setHeatPort(id, port);
+                    mark_changed(id);
+                    continue;
+                }
+                if (item["cool"].is<unsigned>() || item["cool"].is<int>())
+                {
+                    const uint8_t port = item["cool"].is<unsigned>() ? (uint8_t)item["cool"].as<unsigned>()
+                                                                     : (uint8_t)item["cool"].as<int>();
+                    _thermo.setCoolPort(id, port);
+                    mark_changed(id);
+                    continue;
+                }
+                if (item["button"].is<unsigned>() || item["button"].is<int>())
+                {
+                    const uint8_t port = item["button"].is<unsigned>() ? (uint8_t)item["button"].as<unsigned>()
+                                                                       : (uint8_t)item["button"].as<int>();
+                    _thermo.setButtonPort(id, port);
+                    mark_changed(id);
+                    continue;
+                }
                 if (item["hyst"].is<float>() || item["hyst"].is<double>() || item["hyst"].is<int>())
                 {
                     const float hyst = item["hyst"].is<int>() ? (float)item["hyst"].as<int>()
@@ -1917,6 +2111,8 @@ private:
                 doc["enabled"] = _security.controllerEnabled();
                 doc["armed"] = _security.armed();
                 doc["alarm"] = _security.alarmOn();
+                if (_security.sirenPort() != SecurityController::kInvalidPort)
+                    doc["siren"] = (unsigned)_security.sirenPort();
                 JsonArray arr = doc["items"].to<JsonArray>();
                 size_t pos = 0;
                 for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
@@ -1971,6 +2167,57 @@ private:
             const String beep = obj["beep"] | "";
             if (obj["enabled"].is<bool>())
                 _security.setControllerEnabled(obj["enabled"].as<bool>());
+            if (obj["siren"].is<unsigned>())
+                _security.setSirenPort((uint8_t)obj["siren"].as<unsigned>());
+            else if (obj["siren"].is<int>() && obj["siren"].as<int>() < 0)
+                _security.setSirenPort(SecurityController::kInvalidPort);
+            if (obj["items"].is<JsonArrayConst>())
+            {
+                JsonArrayConst items = obj["items"].as<JsonArrayConst>();
+                bool gpio_usage_changed = false;
+                for (JsonVariantConst v : items)
+                {
+                    if (!v.is<JsonObjectConst>())
+                        continue;
+                    JsonObjectConst item = v.as<JsonObjectConst>();
+                    if (!item["id"].is<unsigned>())
+                        continue;
+                    const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                    if (item["name"].is<const char *>())
+                        _security.setName(id, String(item["name"].as<const char *>()));
+                    if (item["type"].is<const char *>())
+                    {
+                        String t = item["type"].as<const char *>();
+                        t.toLowerCase();
+                        _security.setType(id, (t == "reed") ? SecurityController::SensorType::Reed : SecurityController::SensorType::Pir);
+                    }
+                    if (item["port"].is<unsigned>())
+                    {
+                        _security.setPort(id, (uint8_t)item["port"].as<unsigned>());
+                        gpio_usage_changed = true;
+                    }
+                    else if (item["port"].is<int>() && item["port"].as<int>() < 0)
+                    {
+                        _security.setPort(id, SecurityController::kInvalidPort);
+                        gpio_usage_changed = true;
+                    }
+                    if (item["silent"].is<bool>() || item["silent"].is<int>())
+                    {
+                        const bool silent = item["silent"].is<bool>() ? item["silent"].as<bool>()
+                                                                      : (item["silent"].as<int>() != 0);
+                        _security.setSilent(id, silent);
+                    }
+                    if (item["enabled"].is<bool>() || item["enabled"].is<int>())
+                    {
+                        const bool en = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                                   : (item["enabled"].as<int>() != 0);
+                        _security.setEnabled(id, en);
+                        gpio_usage_changed = true;
+                    }
+                }
+                if (gpio_usage_changed)
+                    _controllers.invalidateGpioUsageCache();
+            }
             if (obj["armed"].is<bool>())
             {
                 const bool on = obj["armed"].as<bool>();
@@ -2005,7 +2252,41 @@ private:
             }
             if (isSlave_())
                 updateRfidLeds_(_security.armed());
-            sendAck_(cmd_id);
+            _tx_doc.clear();
+            JsonDocument &doc = _tx_doc;
+            doc["enabled"] = _security.controllerEnabled();
+            doc["armed"] = _security.armed();
+            doc["alarm"] = _security.alarmOn();
+            if (_security.sirenPort() != SecurityController::kInvalidPort)
+                doc["siren"] = (unsigned)_security.sirenPort();
+            if (obj["items"].is<JsonArrayConst>())
+            {
+                JsonArray arr = doc["items"].to<JsonArray>();
+                for (JsonVariantConst v : obj["items"].as<JsonArrayConst>())
+                {
+                    if (!v.is<JsonObjectConst>() || !v["id"].is<unsigned>())
+                        continue;
+                    const uint8_t id = (uint8_t)v["id"].as<unsigned>();
+                    const auto *cfg = _security.configByIndex((size_t)(id - 1));
+                    const auto *st = _security.stateByIndex((size_t)(id - 1));
+                    if (!cfg || !st)
+                        continue;
+                    JsonObject o = arr.add<JsonObject>();
+                    o["id"] = (unsigned)cfg->id;
+                    o["enabled"] = cfg->enabled;
+                    o["type"] = (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
+                    if (cfg->port != SecurityController::kInvalidPort)
+                        o["port"] = cfg->port;
+                    o["silent"] = cfg->silent;
+                    if (cfg->name.length())
+                        o["name"] = cfg->name;
+                    o["detect"] = st->is_detect;
+                }
+                doc["part"] = 1;
+                doc["parts"] = 1;
+                doc["done"] = true;
+            }
+            sendAck_(cmd_id, doc);
             return;
         }
         if (action == "rfid_result")
@@ -2145,6 +2426,8 @@ private:
                         o["id"] = (unsigned)cfg->id;
                         o["enabled"] = cfg->enabled;
                         o["monitor"] = cfg->monitoring_on;
+                        if (cfg->name.length())
+                            o["name"] = cfg->name;
                         if (cfg->warning_port != SepticController::kInvalidPort)
                             o["warning_port"] = cfg->warning_port;
                         if (cfg->alarm_port != SepticController::kInvalidPort)
@@ -2182,6 +2465,57 @@ private:
                 if (raw > 0 && raw <= 0xFFu)
                     id = (uint8_t)raw;
             }
+            bool cfg_changed = false;
+            bool gpio_usage_changed = false;
+            if (obj["name"].is<const char *>())
+                cfg_changed |= _septic.setName(id, String(obj["name"].as<const char *>()));
+            if (obj["enabled"].is<bool>() || obj["enabled"].is<int>())
+            {
+                const bool en = obj["enabled"].is<bool>() ? obj["enabled"].as<bool>()
+                                                          : (obj["enabled"].as<int>() != 0);
+                cfg_changed |= _septic.setEnabled(id, en);
+                gpio_usage_changed = true;
+            }
+            if (obj["warning_port"].is<unsigned>())
+            {
+                cfg_changed |= _septic.setWarningPort(id, (uint8_t)obj["warning_port"].as<unsigned>());
+                gpio_usage_changed = true;
+            }
+            else if (obj["warning_port"].is<int>() && obj["warning_port"].as<int>() < 0)
+            {
+                cfg_changed |= _septic.setWarningPort(id, SepticController::kInvalidPort);
+                gpio_usage_changed = true;
+            }
+            if (obj["alarm_port"].is<unsigned>())
+            {
+                cfg_changed |= _septic.setAlarmPort(id, (uint8_t)obj["alarm_port"].as<unsigned>());
+                gpio_usage_changed = true;
+            }
+            else if (obj["alarm_port"].is<int>() && obj["alarm_port"].as<int>() < 0)
+            {
+                cfg_changed |= _septic.setAlarmPort(id, SepticController::kInvalidPort);
+                gpio_usage_changed = true;
+            }
+            if (obj["relay_warning"].is<unsigned>())
+            {
+                cfg_changed |= _septic.setWarningRelay(id, (uint8_t)obj["relay_warning"].as<unsigned>());
+                gpio_usage_changed = true;
+            }
+            else if (obj["relay_warning"].is<int>() && obj["relay_warning"].as<int>() < 0)
+            {
+                cfg_changed |= _septic.setWarningRelay(id, SepticController::kInvalidPort);
+                gpio_usage_changed = true;
+            }
+            if (obj["relay_alarm"].is<unsigned>())
+            {
+                cfg_changed |= _septic.setAlarmRelay(id, (uint8_t)obj["relay_alarm"].as<unsigned>());
+                gpio_usage_changed = true;
+            }
+            else if (obj["relay_alarm"].is<int>() && obj["relay_alarm"].as<int>() < 0)
+            {
+                cfg_changed |= _septic.setAlarmRelay(id, SepticController::kInvalidPort);
+                gpio_usage_changed = true;
+            }
             if (obj["monitor"].is<bool>() || obj["monitor"].is<int>())
             {
                 const bool on = obj["monitor"].is<bool>() ? obj["monitor"].as<bool>()
@@ -2191,6 +2525,20 @@ private:
                     sendErr_(cmd_id, "invalid id");
                     return;
                 }
+                cfg_changed = true;
+            }
+            if (gpio_usage_changed)
+                _controllers.invalidateGpioUsageCache();
+            if (cfg_changed && _configs)
+                _configs->save();
+            if (obj["monitor"].is<bool>() || obj["monitor"].is<int>() ||
+                obj["enabled"].is<bool>() || obj["enabled"].is<int>() ||
+                obj["name"].is<const char *>() ||
+                obj["warning_port"].is<unsigned>() || (obj["warning_port"].is<int>() && obj["warning_port"].as<int>() < 0) ||
+                obj["alarm_port"].is<unsigned>() || (obj["alarm_port"].is<int>() && obj["alarm_port"].as<int>() < 0) ||
+                obj["relay_warning"].is<unsigned>() || (obj["relay_warning"].is<int>() && obj["relay_warning"].as<int>() < 0) ||
+                obj["relay_alarm"].is<unsigned>() || (obj["relay_alarm"].is<int>() && obj["relay_alarm"].as<int>() < 0))
+            {
                 _tx_doc.clear();
                 JsonDocument &doc = _tx_doc;
                 JsonArray arr = doc["items"].to<JsonArray>();
@@ -2202,6 +2550,8 @@ private:
                     o["id"] = (unsigned)cfg->id;
                     o["enabled"] = cfg->enabled;
                     o["monitor"] = cfg->monitoring_on;
+                    if (cfg->name.length())
+                        o["name"] = cfg->name;
                     if (cfg->warning_port != SepticController::kInvalidPort)
                         o["warning_port"] = cfg->warning_port;
                     if (cfg->alarm_port != SepticController::kInvalidPort)
@@ -2219,7 +2569,7 @@ private:
                 sendAck_(cmd_id, doc);
                 return;
             }
-            sendErr_(cmd_id, "missing monitor");
+            sendErr_(cmd_id, "missing params");
             return;
         }
         sendErr_(cmd_id, "unsupported");
@@ -2315,6 +2665,7 @@ private:
             JsonArrayConst items = params["items"].as<JsonArrayConst>();
             uint8_t changed_ids[TankController::kTankCount] = {};
             size_t changed_count = 0;
+            bool gpio_usage_changed = false;
             for (JsonVariantConst v : items)
             {
                 if (!v.is<JsonObjectConst>())
@@ -2324,6 +2675,80 @@ private:
                     continue;
                 const uint8_t id = (uint8_t)item["id"].as<unsigned>();
                 bool changed = false;
+                if (item["name"].is<const char *>())
+                {
+                    changed |= _tanks.setName(id, String(item["name"].as<const char *>()));
+                }
+                if (item["low"].is<unsigned>())
+                {
+                    changed |= _tanks.setLevelLow(id, (uint8_t)item["low"].as<unsigned>());
+                    gpio_usage_changed = true;
+                }
+                else if (item["low"].is<int>() && item["low"].as<int>() < 0)
+                {
+                    changed |= _tanks.setLevelLow(id, TankController::kInvalidPort);
+                    gpio_usage_changed = true;
+                }
+                if (item["mid"].is<unsigned>())
+                {
+                    changed |= _tanks.setLevelMid(id, (uint8_t)item["mid"].as<unsigned>());
+                    gpio_usage_changed = true;
+                }
+                else if (item["mid"].is<int>() && item["mid"].as<int>() < 0)
+                {
+                    changed |= _tanks.setLevelMid(id, TankController::kInvalidPort);
+                    gpio_usage_changed = true;
+                }
+                if (item["full"].is<unsigned>())
+                {
+                    changed |= _tanks.setLevelFull(id, (uint8_t)item["full"].as<unsigned>());
+                    gpio_usage_changed = true;
+                }
+                else if (item["full"].is<int>() && item["full"].as<int>() < 0)
+                {
+                    changed |= _tanks.setLevelFull(id, TankController::kInvalidPort);
+                    gpio_usage_changed = true;
+                }
+                if (item["valve"].is<unsigned>())
+                {
+                    changed |= _tanks.setValveRelay(id, (uint8_t)item["valve"].as<unsigned>());
+                    gpio_usage_changed = true;
+                }
+                else if (item["valve"].is<int>() && item["valve"].as<int>() < 0)
+                {
+                    changed |= _tanks.setValveRelay(id, TankController::kInvalidPort);
+                    gpio_usage_changed = true;
+                }
+                if (item["pump"].is<unsigned>())
+                {
+                    changed |= _tanks.setPumpRelay(id, (uint8_t)item["pump"].as<unsigned>());
+                    gpio_usage_changed = true;
+                }
+                else if (item["pump"].is<int>() && item["pump"].as<int>() < 0)
+                {
+                    changed |= _tanks.setPumpRelay(id, TankController::kInvalidPort);
+                    gpio_usage_changed = true;
+                }
+                if (item["alarm"].is<unsigned>())
+                {
+                    changed |= _tanks.setAlarmRelay(id, (uint8_t)item["alarm"].as<unsigned>());
+                    gpio_usage_changed = true;
+                }
+                else if (item["alarm"].is<int>() && item["alarm"].as<int>() < 0)
+                {
+                    changed |= _tanks.setAlarmRelay(id, TankController::kInvalidPort);
+                    gpio_usage_changed = true;
+                }
+                if (item["enabled"].is<bool>())
+                {
+                    changed |= _tanks.setEnabled(id, item["enabled"].as<bool>());
+                    gpio_usage_changed = true;
+                }
+                else if (item["enabled"].is<int>())
+                {
+                    changed |= _tanks.setEnabled(id, item["enabled"].as<int>() != 0);
+                    gpio_usage_changed = true;
+                }
                 if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
                 {
                     const auto *cfg = _tanks.config(id);
@@ -2362,6 +2787,8 @@ private:
                 if (!exists && changed_count < TankController::kTankCount)
                     changed_ids[changed_count++] = id;
             }
+            if (gpio_usage_changed)
+                _controllers.invalidateGpioUsageCache();
             _tx_doc.clear();
             JsonDocument &doc = _tx_doc;
             JsonArray arr = doc["items"].to<JsonArray>();
@@ -2520,6 +2947,24 @@ private:
                 if (_watering.setTankId(id, tank))
                     cfg_changed = true;
             }
+            bool gpio_usage_changed = false;
+            if (obj["port"].is<unsigned>())
+            {
+                const uint8_t port = (uint8_t)obj["port"].as<unsigned>();
+                if (_watering.setPort(id, port))
+                {
+                    cfg_changed = true;
+                    gpio_usage_changed = true;
+                }
+            }
+            else if (obj["port"].is<int>() && obj["port"].as<int>() < 0)
+            {
+                if (_watering.setPort(id, WateringController::kInvalidPort))
+                {
+                    cfg_changed = true;
+                    gpio_usage_changed = true;
+                }
+            }
             if (obj["weekdays_mask"].is<unsigned>())
             {
                 const uint8_t mask = (uint8_t)obj["weekdays_mask"].as<unsigned>();
@@ -2625,6 +3070,8 @@ private:
                 sendAck_(cmd_id);
                 return;
             }
+            if (gpio_usage_changed)
+                _controllers.invalidateGpioUsageCache();
             if (cfg_changed && _configs)
                 _configs->save();
             sendAck_(cmd_id);
@@ -3012,7 +3459,7 @@ private:
         return (uint8_t)(dow + 1);
     }
 
-    void fillPortItem_(JsonObject o, uint8_t id, bool state) const
+    void fillPortItem_(JsonObject o, uint8_t id, bool state, bool brief = false) const
     {
         o["id"] = id;
         o["state"] = state;
@@ -3022,20 +3469,43 @@ private:
         if (p.caps == Cap::None)
             return;
 
-        o["backend"] = (p.backend == PortIO::Backend::Extender) ? "Extender" : "Esp32";
-        o["loc"] = stackUnitName_(toStackUnit_(p.location));
-        o["type"] = portTypeName_(p.type);
         o["ptype"] = (uint8_t)p.type;
         o["ctrl"] = p.allow_control;
         o["used"] = isPortUsed_(id);
+        char alias_buf[24] = {};
+        makePortAlias_(alias_buf, sizeof(alias_buf), id, p);
+        if (alias_buf[0])
+            o["alias"] = alias_buf;
+        if (brief)
+        {
+            if (p.backend == PortIO::Backend::Extender)
+            {
+                o["ext"] = true;
+                o["dev"] = p.u.ext.dev;
+                o["pin"] = p.u.ext.pin;
+            }
+            else
+            {
+                o["ext"] = false;
+                o["dev"] = -1;
+                o["pin"] = p.u.esp.gpio;
+            }
+            return;
+        }
+
+        o["backend"] = (p.backend == PortIO::Backend::Extender) ? "Extender" : "Esp32";
+        o["loc"] = stackUnitName_(toStackUnit_(p.location));
+        o["type"] = portTypeName_(p.type);
         if (p.backend == PortIO::Backend::Extender)
         {
+            o["ext"] = true;
             o["dev"] = p.u.ext.dev;
             o["pin"] = p.u.ext.pin;
             o["hw"] = extDevTypeName_(p.u.ext.dev);
         }
         else
         {
+            o["ext"] = false;
             o["dev"] = -1;
             o["pin"] = p.u.esp.gpio;
             o["hw"] = "CPU";
@@ -3045,6 +3515,102 @@ private:
     bool isPortUsed_(uint8_t port) const
     {
         return _controllers.gpioPortUsed(port);
+    }
+
+    bool portVisibleInPortsList_(uint8_t id) const
+    {
+        if (id >= IoStack::PORT_COUNT)
+            return false;
+        const auto &p = ActiveBoardProfile::PORTS[id];
+        if (p.caps == Cap::None)
+            return false;
+        if (p.backend != PortIO::Backend::Extender)
+            return true;
+        const uint8_t dev = p.u.ext.dev;
+        const auto *devs = _ext.devs();
+        if (!devs || dev >= _ext.devCount())
+            return false;
+        if (devs[dev].type != Extender::Type::MCP23017)
+            return false;
+        return _ext.isPresent(dev);
+    }
+
+    static uint8_t portLocationIndex_(PortIO::Location loc)
+    {
+        switch (loc)
+        {
+        case PortIO::Location::Cpu:
+            return 0;
+        case PortIO::Location::Ext1:
+            return 1;
+        case PortIO::Location::Ext2:
+            return 2;
+        case PortIO::Location::Ext3:
+            return 3;
+        case PortIO::Location::Ext4:
+            return 4;
+        case PortIO::Location::Ext5:
+            return 5;
+        case PortIO::Location::Ext6:
+            return 6;
+        case PortIO::Location::Ext7:
+            return 7;
+        case PortIO::Location::Ext8:
+            return 8;
+        case PortIO::Location::Ext9:
+            return 9;
+        case PortIO::Location::Ext10:
+            return 10;
+        default:
+            return 0;
+        }
+    }
+
+    static const char *portAliasPrefix_(PortIO::PinType type)
+    {
+        switch (type)
+        {
+        case PortIO::PinType::Relay:
+            return "rly";
+        case PortIO::PinType::DInput:
+        case PortIO::PinType::Button:
+            return "in";
+        case PortIO::PinType::Sensor:
+            return "sens";
+        default:
+            return "p";
+        }
+    }
+
+    uint8_t portUiIdForAlias_(uint8_t id, const PortIO::PortDesc &p) const
+    {
+        if (p.ui_id != 0)
+            return p.ui_id;
+        uint8_t n = 0;
+        for (uint8_t i = 0; i <= id && i < IoStack::PORT_COUNT; ++i)
+        {
+            const auto &q = ActiveBoardProfile::PORTS[i];
+            if (q.caps == Cap::None)
+                continue;
+            if (q.type != p.type || q.location != p.location)
+                continue;
+            ++n;
+        }
+        return n;
+    }
+
+    void makePortAlias_(char *out, size_t out_len, uint8_t id, const PortIO::PortDesc &p) const
+    {
+        if (!out || out_len == 0)
+            return;
+        out[0] = '\0';
+        const char *prefix = portAliasPrefix_(p.type);
+        const uint8_t ui_id = portUiIdForAlias_(id, p);
+        const uint8_t loc = portLocationIndex_(p.location);
+        if (p.type == PortIO::PinType::Sensor && loc == 0)
+            snprintf(out, out_len, "%s-%u", prefix, (unsigned)ui_id);
+        else
+            snprintf(out, out_len, "%s-%u/%u", prefix, (unsigned)loc, (unsigned)ui_id);
     }
 
     static const char *portTypeName_(PortIO::PinType t)

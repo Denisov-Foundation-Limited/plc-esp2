@@ -167,6 +167,7 @@ public:
             }
             ++visible_idx;
             const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Tanks, cfg.id, node_id);
+            const bool can_admin = web.webSessionIsAdmin_();
             const char *level = "0%";
             const char *level_class = "level-empty";
             unsigned level_pct = 0;
@@ -221,7 +222,9 @@ public:
             items += "_en\"";
             if (cfg.enabled)
                 items += " checked";
-            items += " disabled><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            if (!(can_admin && can_control))
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
             items += "</div>";
             items += "<input class=\"field name\" type=\"text\" name=\"k";
             items += String((unsigned)cfg.id);
@@ -230,44 +233,65 @@ public:
                 web.appendHtmlEscaped_(items, cfg.name);
             else
                 items += WebUiRu::Tanks::kText3;
-            items += "\" readonly>";
+            items += "\"";
+            if (!(can_admin && can_control))
+                items += " readonly";
+            items += ">";
             items += "<div class=\"form-grid\">";
             items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData;
             if (cfg.low != TankController::kInvalidPort)
                 items += String((unsigned)cfg.low);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_low\" disabled></select></div>";
+            items += "_low\"";
+            if (!(can_admin && can_control))
+                items += " disabled";
+            items += "></select></div>";
             items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData2;
             if (cfg.mid != TankController::kInvalidPort)
                 items += String((unsigned)cfg.mid);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_mid\" disabled></select></div>";
+            items += "_mid\"";
+            if (!(can_admin && can_control))
+                items += " disabled";
+            items += "></select></div>";
             items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData3;
             if (cfg.full != TankController::kInvalidPort)
                 items += String((unsigned)cfg.full);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_full\" disabled></select></div>";
+            items += "_full\"";
+            if (!(can_admin && can_control))
+                items += " disabled";
+            items += "></select></div>";
             items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData4;
             if (cfg.valve != TankController::kInvalidPort)
                 items += String((unsigned)cfg.valve);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_valve\" disabled></select></div>";
+            items += "_valve\"";
+            if (!(can_admin && can_control))
+                items += " disabled";
+            items += "></select></div>";
             items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData5;
             if (cfg.pump != TankController::kInvalidPort)
                 items += String((unsigned)cfg.pump);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_pump\" disabled></select></div>";
+            items += "_pump\"";
+            if (!(can_admin && can_control))
+                items += " disabled";
+            items += "></select></div>";
             items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData6;
             if (cfg.alarm != TankController::kInvalidPort)
                 items += String((unsigned)cfg.alarm);
             items += "\" name=\"k";
             items += String((unsigned)cfg.id);
-            items += "_alarm\" disabled></select></div>";
+            items += "_alarm\"";
+            if (!(can_admin && can_control))
+                items += " disabled";
+            items += "></select></div>";
             items += "</div>";
             if (can_control)
             {

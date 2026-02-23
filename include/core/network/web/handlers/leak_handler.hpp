@@ -60,6 +60,9 @@ public:
         }
         String page = FPSTR(kWebInterfaceLeakHtml);
         page.reserve(page.length() + 8192);
+        page.replace("%LEAK_PAGE_TITLE%", WebUiRu::Leak::kPageTitle);
+        page.replace("%LEAK_BTN_ACK_ALL%", WebUiRu::Leak::kBtnAckAll);
+        page.replace("%LEAK_HELP_PORTS%", WebUiRu::Leak::kHelpPorts);
         String pagination = "";
         if (stack_view && max_pages > 1)
         {
@@ -71,11 +74,11 @@ public:
                 pagination += String((unsigned long)node_id);
                 pagination += "&page=";
                 pagination += String((unsigned)page_idx);
-                pagination += "\">Назад</a>";
+                pagination += String("\">") + WebUiRu::Common::kPagePrev + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Назад</span>";
-            pagination += "<span class=\"page-info\">Страница ";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPagePrev + "</span>";
+            pagination += String("<span class=\"page-info\">") + WebUiRu::Common::kPagePage + " ";
             pagination += String((unsigned)(page_idx + 1));
             pagination += " / ";
             pagination += String((unsigned)max_pages);
@@ -86,10 +89,10 @@ public:
                 pagination += String((unsigned long)node_id);
                 pagination += "&page=";
                 pagination += String((unsigned)(page_idx + 2u));
-                pagination += "\">Вперёд</a>";
+                pagination += String("\">") + WebUiRu::Common::kPageNext + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
         else if (!stack_view && max_pages > 1)
@@ -100,11 +103,11 @@ public:
             {
                 pagination += "<a class=\"page-btn\" href=\"/leak?page=";
                 pagination += String((unsigned)page_idx);
-                pagination += "\">Назад</a>";
+                pagination += String("\">") + WebUiRu::Common::kPagePrev + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Назад</span>";
-            pagination += "<span class=\"page-info\">Страница ";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPagePrev + "</span>";
+            pagination += String("<span class=\"page-info\">") + WebUiRu::Common::kPagePage + " ";
             pagination += String((unsigned)(page_idx + 1));
             pagination += " / ";
             pagination += String((unsigned)max_pages);
@@ -113,10 +116,10 @@ public:
             {
                 pagination += "<a class=\"page-btn\" href=\"/leak?page=";
                 pagination += String((unsigned)(page_idx + 2u));
-                pagination += "\">Вперёд</a>";
+                pagination += String("\">") + WebUiRu::Common::kPageNext + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
         page.replace("%NAV%", web.navHtml_());
@@ -153,7 +156,7 @@ public:
         const bool stack_view = isStackLeakView_(web, node_id);
         if (!web._controllers)
         {
-            web.sendText_(request, 500, "text/plain", "Контроллеры недоступны", set_cookie);
+            web.sendText_(request, 500, "text/plain", WebUiRu::Common::kControllersUnavailable, set_cookie);
             return;
         }
         LeakController &leak = web._controllers->leak();
@@ -162,14 +165,14 @@ public:
             if (stack_view)
             {
                 if (sendStackLeakSet_(web, node_id, nullptr, true))
-                    web._leak_status = "Команда отправлена";
+                    web._leak_status = WebUiRu::Leak::kCmdSent;
                 else
-                    web._leak_status = "Ошибка отправки";
+                    web._leak_status = WebUiRu::Leak::kSendFailed;
             }
             else
             {
                 leak.ackAll();
-                web._leak_status = "Сброс тревог выполнен";
+                web._leak_status = WebUiRu::Leak::kAckDone;
             }
             web.sendRedirect_(request, leakRedirectPath_(node_id, stack_view), set_cookie);
             return;
@@ -227,19 +230,19 @@ public:
             if (!web.parseSocketPort_(web.paramValue_(request, sensor_name.c_str()), sensor))
             {
                 ok = false;
-                err = "Некорректный порт датчика";
+                err = WebUiRu::Leak::kInvalidSensorPort;
                 break;
             }
             if (!web.parseSocketPort_(web.paramValue_(request, valve_name.c_str()), valve))
             {
                 ok = false;
-                err = "Некорректный порт крана";
+                err = WebUiRu::Leak::kInvalidValvePort;
                 break;
             }
             if (!web.parseSocketPort_(web.paramValue_(request, alarm_name.c_str()), alarm))
             {
                 ok = false;
-                err = "Некорректный порт тревоги";
+                err = WebUiRu::Leak::kInvalidAlarmPort;
                 break;
             }
 
@@ -281,9 +284,9 @@ public:
         if (stack_view)
         {
             if (sendStackLeakSet_(web, node_id, &stack_zones, false))
-                web._leak_status = "Команда отправлена";
+                web._leak_status = WebUiRu::Leak::kCmdSent;
             else
-                web._leak_status = "Ошибка отправки";
+                web._leak_status = WebUiRu::Leak::kSendFailed;
             web.sendRedirect_(request, leakRedirectPath_(node_id, true), set_cookie);
             return;
         }
@@ -294,16 +297,16 @@ public:
             if (!web._configs_manager)
             {
                 saved = false;
-                web._leak_status = "Менеджер конфигурации недоступен";
+                web._leak_status = WebUiRu::Common::kConfigManagerUnavailable;
             }
             else if (!web._configs_manager->save())
             {
                 saved = false;
-                web._leak_status = "Ошибка сохранения";
+                web._leak_status = WebUiRu::Leak::kSaveError;
             }
         }
         if (saved)
-            web._leak_status = changed ? "Обновлено" : "Без изменений";
+            web._leak_status = changed ? WebUiRu::Common::kUpdated : WebUiRu::Common::kNoChanges;
         web.sendRedirect_(request, leakRedirectPath_(node_id, false), set_cookie);
     }
 
@@ -331,7 +334,9 @@ private:
         String html;
         html.reserve(512);
         html += "<div class=\"row\" style=\"margin-bottom:10px;\">";
-        html += "<label>Устройство</label>";
+        html += "<label>";
+        html += WebUiRu::Common::kDevice;
+        html += "</label>";
         html += "<select id=\"leak-device\" class=\"field\">";
         html += "<option value=\"local\"";
         if (!stack_view)
@@ -361,20 +366,20 @@ private:
     static String stackLeakStatusText_(WebInterface &web, uint32_t node_id)
     {
         if (!web._stack_cache)
-            return "Стек-кэш недоступен";
+            return WebUiRu::Leak::kStackCacheUnavailable;
         const auto *cache = web.stackCache().leakCache(node_id);
         if (!cache)
-            return "Нет данных со слейва";
+            return WebUiRu::Common::kNoDataFromSlave;
         if (cache->pending)
-            return "Запрос данных со слейва...";
+            return WebUiRu::Leak::kRequestingSlaveData;
         if (!cache->last_ok && cache->last_error.length())
         {
-            String msg = "Ошибка: ";
+            String msg = WebUiRu::Common::kErrorPrefix;
             msg += cache->last_error;
             return msg;
         }
         if (!cache->has_data)
-            return "Нет данных со слейва";
+            return WebUiRu::Common::kNoDataFromSlave;
         return "OK";
     }
 
@@ -504,7 +509,7 @@ private:
     static String buildRows_(WebInterface &web, uint32_t node_id, bool stack_view, size_t offset, size_t limit)
     {
         if (!web._controllers)
-            return "<div class=\"tile tile-empty\">Контроллеры недоступны</div>";
+            return String("<div class=\"tile tile-empty\">") + WebUiRu::Common::kControllersUnavailable + "</div>";
         LeakController &leak = web._controllers->leak();
         String rows;
         rows.reserve(LeakController::kZoneCount * 1200);
@@ -621,33 +626,44 @@ private:
             rows += "\"><div class=\"tile-head\"><div class=\"tile-left\"><svg class=\"leak-icon\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
             rows += "<path fill=\"currentColor\" d=\"M32 8c8 12 18 24 18 34 0 9.9-8.1 18-18 18s-18-8.1-18-18c0-10 10-22 18-34z\"/>";
             rows += "<path d=\"M32 14l14 5v11c0 9.8-5.8 18.4-14 21.8-8.2-3.4-14-12-14-21.8V19l14-5z\" fill=\"none\" stroke=\"#0b1220\" stroke-width=\"3\"/>";
-            rows += "</svg><div class=\"tile-id\">Зона ";
+            rows += "</svg><div class=\"tile-id\">";
+            rows += WebUiRu::Leak::kLabelZonePrefix;
             rows += String((unsigned)id);
-            rows += "</div></div><div class=\"badge-row\"><span class=\"badge\">Вода:";
+            rows += "</div></div><div class=\"badge-row\"><span class=\"badge\">";
+            rows += WebUiRu::Leak::kBadgeWater;
             rows += st_wet ? "1" : "0";
-            rows += "</span><span class=\"badge\">Фиксация:";
+            rows += "</span><span class=\"badge\">";
+            rows += WebUiRu::Leak::kBadgeLatch;
             rows += st_latched ? "1" : "0";
             rows += "</span></div></div><div class=\"tile-grid\">";
 
-            rows += "<div class=\"field-row full\"><label class=\"field-label\">Имя</label><input type=\"text\" maxlength=\"28\" name=\"leak_name_";
+            rows += "<div class=\"field-row full\"><label class=\"field-label\">";
+            rows += WebUiRu::Leak::kLabelName;
+            rows += "</label><input type=\"text\" maxlength=\"28\" name=\"leak_name_";
             rows += String((unsigned)id);
             rows += "\" value=\"";
             web.appendHtmlEscaped_(rows, cfg_name.c_str());
             rows += "\"></div>";
 
-            rows += "<div class=\"field-row\"><label class=\"field-label\">Датчик</label><select class=\"leak-select\" data-type=\"dinput\" data-selected=\"";
+            rows += "<div class=\"field-row\"><label class=\"field-label\">";
+            rows += WebUiRu::Leak::kLabelSensor;
+            rows += "</label><select class=\"leak-select\" data-type=\"dinput\" data-selected=\"";
             rows += portValue_(cfg_sensor);
             rows += "\" name=\"leak_sensor_";
             rows += String((unsigned)id);
             rows += "\"></select></div>";
 
-            rows += "<div class=\"field-row\"><label class=\"field-label\">Кран</label><select class=\"leak-select\" data-type=\"relay\" data-selected=\"";
+            rows += "<div class=\"field-row\"><label class=\"field-label\">";
+            rows += WebUiRu::Leak::kLabelValve;
+            rows += "</label><select class=\"leak-select\" data-type=\"relay\" data-selected=\"";
             rows += portValue_(cfg_valve);
             rows += "\" name=\"leak_valve_";
             rows += String((unsigned)id);
             rows += "\"></select></div>";
 
-            rows += "<div class=\"field-row\"><label class=\"field-label\">Тревога</label><select class=\"leak-select\" data-type=\"relay\" data-selected=\"";
+            rows += "<div class=\"field-row\"><label class=\"field-label\">";
+            rows += WebUiRu::Leak::kLabelAlarm;
+            rows += "</label><select class=\"leak-select\" data-type=\"relay\" data-selected=\"";
             rows += portValue_(cfg_alarm);
             rows += "\" name=\"leak_alarm_";
             rows += String((unsigned)id);
@@ -658,27 +674,33 @@ private:
             rows += String((unsigned)id);
             rows += "\"";
             rows += checked_(cfg_enabled);
-            rows += "> ВКЛ</label>";
+            rows += "> ";
+            rows += WebUiRu::Leak::kToggleOn;
+            rows += "</label>";
 
             rows += "<label><input type=\"checkbox\" name=\"leak_pwr_";
             rows += String((unsigned)id);
             rows += "\"";
             rows += checked_(cfg_power);
-            rows += "> ПИТ</label>";
+            rows += "> ";
+            rows += WebUiRu::Leak::kTogglePower;
+            rows += "</label>";
 
             rows += "<label><input type=\"checkbox\" name=\"leak_al_";
             rows += String((unsigned)id);
             rows += "\"";
             rows += checked_(cfg_active_low);
-            rows += "> Активный ноль</label>";
+            rows += "> ";
+            rows += WebUiRu::Leak::kToggleActiveLow;
+            rows += "</label>";
 
             rows += "</div></div></div>";
             ++rendered;
         }
         if (rows.length() == 0 && stack_view)
-            return "<div class=\"tile tile-empty\">Ожидаем данные со слейва</div>";
+            return String("<div class=\"tile tile-empty\">") + WebUiRu::Leak::kWaitingSlave + "</div>";
         if (rows.length() == 0)
-            return "<div class=\"tile tile-empty\">Нет зон протечки</div>";
+            return String("<div class=\"tile tile-empty\">") + WebUiRu::Leak::kNoLeakZones + "</div>";
         return rows;
     }
 };

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #ifndef WEB_INTERFACE_CLASS_CONTEXT
 class WebInterface;
@@ -215,6 +215,8 @@ public:
             items += "<div class=\"tile";
             if (!enabled)
                 items += " disabled";
+            items += "\" data-sensor-id=\"";
+            items += String((unsigned)cfg.id);
             items += "\"><div class=\"sock-visual\"><span class=\"badge\">#";
             items += String((unsigned)cfg.id);
             items += "</span>";
@@ -355,121 +357,173 @@ public:
     }
     static String listStackSecuritySensorsTiles_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit)
     {
-            const auto *cache = web._stack_cache->securityCache(node_id);
-            if (!cache || !cache->has_data)
-                return WebUiRu::Security::kText9;
-            if (cache->item_count == 0)
-                return WebUiRu::Security::kText8;
-            String items;
-            const size_t page_limit = (limit == 0) ? 1u : limit;
-            size_t reserve = 2048u + page_limit * 420u;
-            if (reserve < 8192u)
-                reserve = 8192u;
-            items.reserve(reserve);
-            const bool can_view_disabled = web.webSessionIsAdmin_();
-            size_t render_count = cache->item_count;
-            if (can_view_disabled)
+        const auto *cache = web._stack_cache->securityCache(node_id);
+        if (!cache || !cache->has_data)
+            return WebUiRu::Security::kText9;
+        if (cache->item_count == 0)
+            return WebUiRu::Security::kText8;
+        String items;
+        const size_t page_limit = (limit == 0) ? 1u : limit;
+        size_t reserve = 2048u + page_limit * 900u;
+        if (reserve < 12288u)
+            reserve = 12288u;
+        items.reserve(reserve);
+        const bool can_view_disabled = web.webSessionIsAdmin_();
+        size_t render_count = cache->item_count;
+        if (can_view_disabled)
+        {
+            size_t last_enabled_idx = SIZE_MAX;
+            for (size_t i = 0; i < cache->item_count; ++i)
             {
-                size_t last_enabled_idx = SIZE_MAX;
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    if (cache->items[i].enabled)
-                        last_enabled_idx = i;
-                }
-                if (last_enabled_idx == SIZE_MAX)
-                    render_count = cache->item_count ? 1u : 0u;
-                else
-                {
-                    const size_t rc = last_enabled_idx + 2u;
-                    render_count = rc > cache->item_count ? cache->item_count : rc;
-                }
+                if (cache->items[i].enabled)
+                    last_enabled_idx = i;
             }
-            size_t rendered = 0;
-            size_t visible_idx = 0;
-            for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
+            if (last_enabled_idx == SIZE_MAX)
+                render_count = cache->item_count ? 1u : 0u;
+            else
             {
-                const auto &cfg = cache->items[i];
-                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Security, cfg.id, node_id))
-                    continue;
-                if (!can_view_disabled && !cfg.enabled)
-                    continue;
-                if (visible_idx < offset)
-                {
-                    ++visible_idx;
-                    continue;
-                }
+                const size_t rc = last_enabled_idx + 2u;
+                render_count = rc > cache->item_count ? cache->item_count : rc;
+            }
+        }
+
+        auto appendTypeOption = [&](const char *value, const char *label, bool selected) {
+            items += "<option value=\"";
+            items += value;
+            items += "\"";
+            if (selected)
+                items += " selected";
+            items += ">";
+            items += label;
+            items += "</option>";
+        };
+
+        size_t rendered = 0;
+        size_t visible_idx = 0;
+        for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
+        {
+            const auto &cfg = cache->items[i];
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Security, cfg.id, node_id))
+                continue;
+            if (!can_view_disabled && !cfg.enabled)
+                continue;
+            if (visible_idx < offset)
+            {
                 ++visible_idx;
-                items += "<div class=\"tile\">";
-                items += "<div class=\"sock-visual\">";
-                items += "<span class=\"badge\">#";
-                items += String((unsigned)cfg.id);
-                items += "</span>";
-                items += "<svg class=\"sock-icon ";
-                if (cfg.detect)
-                    items += "alert";
-                else
-                    items += "off";
-                items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
-                if (strcmp(cfg.type, "reed") == 0)
-                {
-                    items += "<rect x=\"6\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
-                    items += "<rect x=\"44\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
-                    items += "<rect x=\"22\" y=\"30\" width=\"20\" height=\"4\" rx=\"2\" fill=\"currentColor\"/>";
-                }
-                else
-                {
-                    items += "<circle cx=\"32\" cy=\"24\" r=\"6\" fill=\"currentColor\"/>";
-                    items += "<path d=\"M14 48c6-10 12-14 18-14s12 4 18 14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"4\" stroke-linecap=\"round\"/>";
-                    items += "<path d=\"M8 20c6-6 12-10 18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
-                    items += "<path d=\"M56 20c-6-6-12-10-18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
-                }
-                items += "</svg>";
-                items += "</div>";
-                items += "<div>";
-                items += "<div class=\"tile-head\"><strong>";
-                if (cfg.name[0])
-                    web.appendHtmlEscaped_(items, cfg.name);
-                else
-                    items += String(WebUiRu::Security::kNum) + String((unsigned)cfg.id);
-                items += "</strong>";
-                if (cfg.silent)
-                    items += "<span class=\"badge\">silent</span>";
-                items += "</div>";
-                items += "<div class=\"status-line\"><span class=\"status-dot ";
-                if (!cfg.enabled)
-                    items += "status-off";
-                else if (cfg.detect)
-                    items += "status-bad";
-                else
-                    items += "status-on";
-                items += "\"></span><span class=\"status-text\">";
-                if (!cfg.enabled)
-                    items += WebUiRu::Security::kText5;
-                else if (cfg.detect)
-                    items += WebUiRu::Security::kText6;
-                else
-                    items += WebUiRu::Security::kText7;
-                items += "</span></div>";
-                items += "<div class=\"form-grid\">";
-                items += WebUiRu::Security::kText10;
-                if (cfg.type[0])
-                    web.appendHtmlEscaped_(items, cfg.type);
-                else
-                    items += "--";
-                items += "</div></div>";
-                items += WebUiRu::Security::kText11;
-                if (cfg.port != SecurityController::kInvalidPort)
-                    items += String((unsigned)cfg.port);
-                else
-                    items += "--";
-                items += "</div></div>";
-                items += "</div></div></div>";
-                ++rendered;
+                continue;
             }
-            if (items.length() == 0)
-                items = WebUiRu::Security::kText8;
-            return items;
-        
+            ++visible_idx;
+
+            const bool enabled = cfg.enabled;
+            const bool detected = cfg.detect;
+            const bool is_reed = strcmp(cfg.type, "reed") == 0;
+            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Security, cfg.id, node_id);
+            const bool can_edit_cfg = can_control;
+
+            items += "<div class=\"tile";
+            if (!enabled)
+                items += " disabled";
+            items += "\" data-sensor-id=\"";
+            items += String((unsigned)cfg.id);
+            items += "\"><div class=\"sock-visual\"><span class=\"badge\">#";
+            items += String((unsigned)cfg.id);
+            items += "</span>";
+            items += "<svg class=\"sock-icon ";
+            if (!enabled)
+                items += "off";
+            else if (detected)
+                items += "alert";
+            else
+                items += "on";
+            items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+            if (is_reed)
+            {
+                items += "<rect x=\"6\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
+                items += "<rect x=\"44\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
+                items += "<rect x=\"22\" y=\"30\" width=\"20\" height=\"4\" rx=\"2\" fill=\"currentColor\"/>";
+            }
+            else
+            {
+                items += "<circle cx=\"32\" cy=\"24\" r=\"6\" fill=\"currentColor\"/>";
+                items += "<path d=\"M14 48c6-10 12-14 18-14s12 4 18 14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"4\" stroke-linecap=\"round\"/>";
+                items += "<path d=\"M8 20c6-6 12-10 18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
+                items += "<path d=\"M56 20c-6-6-12-10-18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
+            }
+            items += "</svg></div><div>";
+            items += "<div class=\"tile-head\"><strong>";
+            if (cfg.name[0])
+                web.appendHtmlEscaped_(items, cfg.name);
+            else
+                items += String(WebUiRu::Security::kNum) + String((unsigned)cfg.id);
+            items += "</strong><label class=\"switch\"><input type=\"checkbox\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_en\"";
+            if (enabled)
+                items += " checked";
+            if (!can_edit_cfg)
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+
+            items += "<input class=\"field name\" type=\"text\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_name\" value=\"";
+            web.appendHtmlEscaped_(items, cfg.name);
+            items += "\"";
+            if (!can_edit_cfg)
+                items += " readonly";
+            items += ">";
+
+            items += "<div class=\"status-line\"><span class=\"status-dot ";
+            if (!enabled)
+                items += "status-off";
+            else if (detected)
+                items += "status-bad";
+            else
+                items += "status-on";
+            items += "\"></span><span class=\"status-text\">";
+            if (!enabled)
+                items += WebUiRu::Security::kText5;
+            else if (detected)
+                items += WebUiRu::Security::kText6;
+            else
+                items += WebUiRu::Security::kText7;
+            items += "</span></div>";
+
+            items += "<div class=\"form-grid\">";
+            items += WebUiRu::Security::kSelectClassFieldMiniNameSec;
+            items += String((unsigned)cfg.id);
+            items += "_type\"";
+            if (!can_edit_cfg)
+                items += " disabled";
+            items += ">";
+            appendTypeOption("pir", "pir", strcmp(cfg.type, "reed") != 0);
+            appendTypeOption("reed", "reed", strcmp(cfg.type, "reed") == 0);
+            items += "</select></div>";
+
+            items += WebUiRu::Security::kSelectClassFieldMiniSecurityPortData;
+            if (cfg.port != SecurityController::kInvalidPort)
+                items += String((unsigned)cfg.port);
+            items += "\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_port\"";
+            if (!can_edit_cfg)
+                items += " disabled";
+            items += "></select></div>";
+
+            items += WebUiRu::Security::kInputTypeCheckboxNameSec;
+            items += String((unsigned)cfg.id);
+            items += "_silent\"";
+            if (cfg.silent)
+                items += " checked";
+            if (!can_edit_cfg)
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+            items += "</div></div></div>";
+            ++rendered;
+        }
+        if (items.length() == 0)
+            items = WebUiRu::Security::kText8;
+        return items;
     }
     static String securityPortOptionsJson_(const WebInterface &web)
     {
@@ -573,3 +627,4 @@ public:
     }
 
 #endif
+

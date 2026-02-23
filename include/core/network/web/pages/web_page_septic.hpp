@@ -17,7 +17,7 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Септик</title>
+  <title>%SEPTIC_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -288,7 +288,7 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     %NAV%
     <div class="card">
-      <h1>Септик</h1>
+      <h1>%SEPTIC_PAGE_TITLE%</h1>
       <div class="status">%SEPTIC_STATUS%</div>
       %SEPTIC_DEVICE_SELECT%
       %SEPTIC_PAGINATION%
@@ -446,15 +446,15 @@ static const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       }
       let waterClass = 'water-low';
       let waterLevel = '20%';
-      let waterLabel = 'Уровень: 20%';
+      let waterLabel = '%SEPTIC_WATER_LABEL_20%';
       if (st.alarm) {
         waterClass = 'water-alarm';
         waterLevel = '100%';
-        waterLabel = 'Уровень: 100%';
+        waterLabel = '%SEPTIC_WATER_LABEL_100%';
       } else if (st.warning) {
         waterClass = 'water-warn';
         waterLevel = '80%';
-        waterLabel = 'Уровень: 80%';
+        waterLabel = '%SEPTIC_WATER_LABEL_80%';
       }
       const liquid = tile.querySelector('.liquid');
       if (liquid) {

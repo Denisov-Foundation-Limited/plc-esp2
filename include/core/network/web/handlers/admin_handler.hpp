@@ -33,7 +33,15 @@ public:
         String page = FPSTR(kWebInterfaceAdminHtml);
         page.reserve(page.length() + 768);
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%ADMIN_STATUS%", "управление через users ACL");
+        page.replace("%ADMIN_PAGE_TITLE%", WebUiRu::AdminPage::kPageTitle);
+        page.replace("%ADMIN_STATUS_LABEL%", String(WebUiRu::AdminPage::kStatusLabel) + " ");
+        page.replace("%ADMIN_NEW_PASSWORD%", WebUiRu::AdminPage::kNewPassword);
+        page.replace("%ADMIN_NEW_PASSWORD_PLACEHOLDER%", WebUiRu::AdminPage::kNewPasswordPlaceholder);
+        page.replace("%ADMIN_RTC_NOW%", String(WebUiRu::AdminPage::kRtcNow) + " ");
+        page.replace("%ADMIN_DATE%", WebUiRu::AdminPage::kDate);
+        page.replace("%ADMIN_TIME%", WebUiRu::AdminPage::kTime);
+        page.replace("%ADMIN_REBOOT%", WebUiRu::AdminPage::kReboot);
+        page.replace("%ADMIN_STATUS%", WebUiRu::AdminPage::kAdminStatusAcl);
         String rtc_date = web.rtcDateStr_();
         String rtc_time = web.rtcTimeOnlyStr_();
         String rtc_date_val = (rtc_date == "n/a") ? "" : rtc_date;

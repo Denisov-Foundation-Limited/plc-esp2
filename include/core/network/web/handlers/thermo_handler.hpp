@@ -79,6 +79,7 @@ public:
         }
         String page = FPSTR(kWebInterfaceThermoHtml);
         page.reserve(page.length() + 16384);
+        page.replace("%THERMO_PAGE_TITLE%", WebUiRu::Thermo::kPageTitle);
         String pagination = "";
         if (stack_view && max_pages > 1)
         {
@@ -90,11 +91,11 @@ public:
                 pagination += String((unsigned long)node_id);
                 pagination += "&page=";
                 pagination += String((unsigned)page_idx);
-                pagination += "\">Назад</a>";
+                pagination += String("\">") + WebUiRu::Common::kPagePrev + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Назад</span>";
-            pagination += "<span class=\"page-info\">Страница ";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPagePrev + "</span>";
+            pagination += String("<span class=\"page-info\">") + WebUiRu::Common::kPagePage + " ";
             pagination += String((unsigned)(page_idx + 1));
             pagination += " / ";
             pagination += String((unsigned)max_pages);
@@ -105,10 +106,10 @@ public:
                 pagination += String((unsigned long)node_id);
                 pagination += "&page=";
                 pagination += String((unsigned)(page_idx + 2u));
-                pagination += "\">Вперёд</a>";
+                pagination += String("\">") + WebUiRu::Common::kPageNext + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
         else if (!stack_view && max_pages > 1)
@@ -119,11 +120,11 @@ public:
             {
                 pagination += "<a class=\"page-btn\" href=\"/thermo?page=";
                 pagination += String((unsigned)page_idx);
-                pagination += "\">Назад</a>";
+                pagination += String("\">") + WebUiRu::Common::kPagePrev + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Назад</span>";
-            pagination += "<span class=\"page-info\">Страница ";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPagePrev + "</span>";
+            pagination += String("<span class=\"page-info\">") + WebUiRu::Common::kPagePage + " ";
             pagination += String((unsigned)(page_idx + 1));
             pagination += " / ";
             pagination += String((unsigned)max_pages);
@@ -132,10 +133,10 @@ public:
             {
                 pagination += "<a class=\"page-btn\" href=\"/thermo?page=";
                 pagination += String((unsigned)(page_idx + 2u));
-                pagination += "\">Вперёд</a>";
+                pagination += String("\">") + WebUiRu::Common::kPageNext + "</a>";
             }
             else
-                pagination += "<span class=\"page-btn disabled\">Вперёд</span>";
+                pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
         page.replace("%NAV%", web.navHtml_());
@@ -153,6 +154,9 @@ public:
         page.replace("%THERMO_RELAY_USED_JSON%",
                      stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
                                 : web.globalUsedPortsJson_(PortIO::PinType::Relay));
+        page.replace("%THERMO_JS_HEAT%", WebUiRu::Thermo::kText5);
+        page.replace("%THERMO_JS_COOL%", WebUiRu::Thermo::kText6);
+        page.replace("%THERMO_JS_IDLE%", WebUiRu::Thermo::kText7);
         if (stack_view)
         {
             String hidden;
@@ -170,7 +174,7 @@ public:
         {
             page.replace("%THERMO_FORM_HIDDEN%", "");
         }
-        bool can_save = false;
+        bool can_save = web.webSessionIsAdmin_();
         const bool can_view_disabled = web.webSessionIsAdmin_();
         if (stack_view)
         {
@@ -263,10 +267,16 @@ public:
                 const String mode_key = String("t") + String((unsigned)it.id) + "_mode";
                 const String target_key = String("t") + String((unsigned)it.id) + "_target";
                 const String hyst_key = String("t") + String((unsigned)it.id) + "_hyst";
+                const String heat_key = String("t") + String((unsigned)it.id) + "_heat";
+                const String cool_key = String("t") + String((unsigned)it.id) + "_cool";
+                const String button_key = String("t") + String((unsigned)it.id) + "_button";
                 const bool has_any = request->hasParam(power_key, true) ||
                                      request->hasParam(mode_key, true) ||
                                      request->hasParam(target_key, true) ||
-                                     request->hasParam(hyst_key, true);
+                                     request->hasParam(hyst_key, true) ||
+                                     request->hasParam(heat_key, true) ||
+                                     request->hasParam(cool_key, true) ||
+                                     request->hasParam(button_key, true);
                 if (!has_any)
                     continue;
                 if (!web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, it.id, node_id))
@@ -284,6 +294,12 @@ public:
                 float new_target = it.target;
                 bool set_hyst = false;
                 float new_hyst = it.hyst;
+                bool set_heat = false;
+                uint8_t new_heat = it.heat;
+                bool set_cool = false;
+                uint8_t new_cool = it.cool;
+                bool set_button = false;
+                uint8_t new_button = it.button;
 
                 if (request->hasParam(power_key, true))
                 {
@@ -363,6 +379,60 @@ public:
                     }
                 }
 
+                if (request->hasParam(heat_key, true))
+                {
+                    uint8_t port = it.heat;
+                    const String port_str = web.paramValue_(request, heat_key);
+                    if (!web.parseSocketPort_(port_str, port))
+                    {
+                        web._thermo_status = String("Invalid heat port for device ") + String((unsigned)it.id);
+                        web.sendRedirect_(request, back, set_cookie);
+                        return;
+                    }
+                    if (port != it.heat)
+                    {
+                        item_changed = true;
+                        set_heat = true;
+                        new_heat = port;
+                    }
+                }
+
+                if (request->hasParam(cool_key, true))
+                {
+                    uint8_t port = it.cool;
+                    const String port_str = web.paramValue_(request, cool_key);
+                    if (!web.parseSocketPort_(port_str, port))
+                    {
+                        web._thermo_status = String("Invalid cool port for device ") + String((unsigned)it.id);
+                        web.sendRedirect_(request, back, set_cookie);
+                        return;
+                    }
+                    if (port != it.cool)
+                    {
+                        item_changed = true;
+                        set_cool = true;
+                        new_cool = port;
+                    }
+                }
+
+                if (request->hasParam(button_key, true))
+                {
+                    uint8_t port = it.button;
+                    const String port_str = web.paramValue_(request, button_key);
+                    if (!web.parseSocketPort_(port_str, port))
+                    {
+                        web._thermo_status = String("Invalid button port for device ") + String((unsigned)it.id);
+                        web.sendRedirect_(request, back, set_cookie);
+                        return;
+                    }
+                    if (port != it.button)
+                    {
+                        item_changed = true;
+                        set_button = true;
+                        new_button = port;
+                    }
+                }
+
                 if (!item_changed)
                     continue;
 
@@ -432,6 +502,63 @@ public:
                                                              reinterpret_cast<const uint8_t *>(payload), len))
                         sent_any = true;
                 }
+                if (set_heat)
+                {
+                    StaticJsonDocument<192> doc;
+                    doc["cmd_id"] = 0;
+                    doc["feature"] = (uint8_t)StackFeature::Thermo;
+                    doc["action"] = "set";
+                    JsonArray items = doc["params"]["items"].to<JsonArray>();
+                    JsonObject obj = items.add<JsonObject>();
+                    obj["id"] = (unsigned)it.id;
+                    if (new_heat == ThermoController::kInvalidPort)
+                        obj["heat"] = -1;
+                    else
+                        obj["heat"] = (unsigned)new_heat;
+                    char payload[192] = {};
+                    const size_t len = serializeJson(doc, payload, sizeof(payload));
+                    if (len > 0 && web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                             reinterpret_cast<const uint8_t *>(payload), len))
+                        sent_any = true;
+                }
+                if (set_cool)
+                {
+                    StaticJsonDocument<192> doc;
+                    doc["cmd_id"] = 0;
+                    doc["feature"] = (uint8_t)StackFeature::Thermo;
+                    doc["action"] = "set";
+                    JsonArray items = doc["params"]["items"].to<JsonArray>();
+                    JsonObject obj = items.add<JsonObject>();
+                    obj["id"] = (unsigned)it.id;
+                    if (new_cool == ThermoController::kInvalidPort)
+                        obj["cool"] = -1;
+                    else
+                        obj["cool"] = (unsigned)new_cool;
+                    char payload[192] = {};
+                    const size_t len = serializeJson(doc, payload, sizeof(payload));
+                    if (len > 0 && web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                             reinterpret_cast<const uint8_t *>(payload), len))
+                        sent_any = true;
+                }
+                if (set_button)
+                {
+                    StaticJsonDocument<192> doc;
+                    doc["cmd_id"] = 0;
+                    doc["feature"] = (uint8_t)StackFeature::Thermo;
+                    doc["action"] = "set";
+                    JsonArray items = doc["params"]["items"].to<JsonArray>();
+                    JsonObject obj = items.add<JsonObject>();
+                    obj["id"] = (unsigned)it.id;
+                    if (new_button == ThermoController::kInvalidPort)
+                        obj["button"] = -1;
+                    else
+                        obj["button"] = (unsigned)new_button;
+                    char payload[192] = {};
+                    const size_t len = serializeJson(doc, payload, sizeof(payload));
+                    if (len > 0 && web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                             reinterpret_cast<const uint8_t *>(payload), len))
+                        sent_any = true;
+                }
 
                 if (sent_any)
                 {
@@ -457,6 +584,12 @@ public:
                                 dst.target = new_target;
                             if (set_hyst)
                                 dst.hyst = new_hyst;
+                            if (set_heat)
+                                dst.heat = new_heat;
+                            if (set_cool)
+                                dst.cool = new_cool;
+                            if (set_button)
+                                dst.button = new_button;
                             // Update visual state immediately so UI does not lag until next stack poll/ack.
                             bool eff_power = dst.power_on;
                             if (set_power)
@@ -488,7 +621,10 @@ public:
                 }
             }
             if (changed)
+            {
                 web._stack_cache->requestThermo(node_id);
+                web.refreshStackPorts_(node_id);
+            }
             web._thermo_status = changed ? "Updated" : "No changes";
             web.sendRedirect_(request, back, set_cookie);
             return;

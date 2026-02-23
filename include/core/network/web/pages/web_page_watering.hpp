@@ -16,7 +16,7 @@ static const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Полив</title>
+  <title>%WATERING_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -269,7 +269,7 @@ static const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Полив</h1>
+      <h1>%WATERING_PAGE_TITLE%</h1>
       <div class="status">%WATERING_STATUS%</div>
       %WATERING_DEVICE_SELECT%
       %WATERING_PAGINATION%
@@ -382,6 +382,49 @@ static const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
         sessionStorage.setItem(reloadKey, '1');
       });
     }
+    function wateringStateLabel(item) {
+      if (item && item.active) return '%WATERING_JS_STATE_ACTIVE%';
+      if (item && item.paused) return '%WATERING_JS_STATE_PAUSED%';
+      return '%WATERING_JS_STATE_WAIT%';
+    }
+    function applyWateringState(payload) {
+      if (!payload || typeof payload !== 'object') return;
+      const map = new Map();
+      (payload.items || []).forEach((it) => map.set(Number(it.id), it));
+      document.querySelectorAll('.tile[data-rule-id]').forEach((tile) => {
+        const id = Number(tile.dataset.ruleId || 0);
+        if (!map.has(id)) return;
+        const it = map.get(id);
+        tile.dataset.active = it.active ? '1' : '0';
+        tile.classList.toggle('disabled', !it.enabled);
+        const badge = tile.querySelector('.badge');
+        if (badge) {
+          badge.textContent = (it.enabled ? '%WATERING_JS_ON%' : '%WATERING_JS_OFF%') + ' • ' + wateringStateLabel(it);
+        }
+      });
+    }
+    let wateringPollBusy = false;
+    async function pollWateringState() {
+      if (wateringPollBusy) return;
+      wateringPollBusy = true;
+      try {
+        const url = new URL('/watering/state', window.location.origin);
+        const cur = new URL(window.location.href);
+        const unit = cur.searchParams.get('unit');
+        const node = cur.searchParams.get('node');
+        if (unit) url.searchParams.set('unit', unit);
+        if (node) url.searchParams.set('node', node);
+        const res = await fetch(url.toString(), { credentials: 'same-origin' });
+        if (!res.ok) throw new Error('state fetch failed');
+        const payload = await res.json();
+        if (!payload.pending) applyWateringState(payload);
+      } catch (_) {
+      } finally {
+        wateringPollBusy = false;
+      }
+    }
+    setTimeout(pollWateringState, 600);
+    setInterval(pollWateringState, 2000);
     const wateringDevice = document.getElementById('watering-device');
     if (wateringDevice) {
       wateringDevice.addEventListener('change', () => {

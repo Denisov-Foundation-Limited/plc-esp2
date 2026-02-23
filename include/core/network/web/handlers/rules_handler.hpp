@@ -46,8 +46,10 @@ public:
 
         String page = FPSTR(kWebInterfaceRulesHtml);
         page.replace("%NAV%", web.navHtml_());
+        page.replace("%RULES_PAGE_TITLE%", WebUiRu::Rules::kRules);
+        page.replace("%RULES_PAGE_H1%", WebUiRu::Rules::kRules);
         if (!web._rules_status.length())
-            web._rules_status = "Готово";
+            web._rules_status = WebUiRu::Rules::kReady;
         page.replace("%RULES_STATUS%", web._rules_status);
 
         if (!web._rules)
@@ -92,7 +94,7 @@ public:
         const uint8_t action_id = parseUInt8_(web.paramValue_(request, "action_id"));
         if (rule_id == 0)
         {
-            web._rules_status = "Неверный ID правила";
+            web._rules_status = WebUiRu::Rules::kInvalidRuleId;
             web.sendRedirect_(request, "/rules", set_cookie);
             return;
         }
@@ -100,7 +102,7 @@ public:
         RulesController::Rule *r = web._rules->rule(rule_id);
         if (!r)
         {
-            web._rules_status = "Правило не найдено";
+            web._rules_status = WebUiRu::Rules::kRuleNotFound;
             web.sendRedirect_(request, "/rules", set_cookie);
             return;
         }
@@ -118,7 +120,7 @@ public:
             if (action_id == 0)
             {
                 r->enabled = request->hasParam("enabled", true);
-                web._rules_status = saveRules_(web) ? "Сохранено" : "Ошибка сохранения";
+                web._rules_status = saveRules_(web) ? WebUiRu::Common::kSaved : WebUiRu::Common::kSaveFailed;
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
@@ -126,12 +128,12 @@ public:
             RulesController::RuleAction *qa = web._rules->action(rule_id, action_id);
             if (!qa)
             {
-                web._rules_status = "Действие не найдено";
+                web._rules_status = WebUiRu::Rules::kActionNotFound;
                 web.sendRedirect_(request, String("/rules?rule=") + String((unsigned)rule_id), set_cookie);
                 return;
             }
             qa->enabled = request->hasParam("enabled", true);
-            web._rules_status = saveRules_(web) ? "Сохранено" : "Ошибка сохранения";
+            web._rules_status = saveRules_(web) ? WebUiRu::Common::kSaved : WebUiRu::Common::kSaveFailed;
             web.sendRedirect_(request, back, set_cookie);
             return;
         }
@@ -150,7 +152,7 @@ public:
             r->condition_parameter = web.paramValue_(request, "cond_param");
             r->condition_op = web.paramValue_(request, "cond_op");
             r->condition_value = web.paramValue_(request, "cond_value");
-            web._rules_status = saveRules_(web) ? "Сохранено" : "Ошибка сохранения";
+            web._rules_status = saveRules_(web) ? WebUiRu::Common::kSaved : WebUiRu::Common::kSaveFailed;
             web.sendRedirect_(request, String("/rules?rule=") + String((unsigned)rule_id), set_cookie);
             return;
         }
@@ -158,7 +160,7 @@ public:
         RulesController::RuleAction *a = web._rules->action(rule_id, action_id);
         if (!a)
         {
-            web._rules_status = "Действие не найдено";
+            web._rules_status = WebUiRu::Rules::kActionNotFound;
             web.sendRedirect_(request, String("/rules?rule=") + String((unsigned)rule_id), set_cookie);
             return;
         }
@@ -177,7 +179,7 @@ public:
         a->parameter = web.paramValue_(request, "parameter");
         a->value = web.paramValue_(request, "value");
 
-        web._rules_status = saveRules_(web) ? "Сохранено" : "Ошибка сохранения";
+        web._rules_status = saveRules_(web) ? WebUiRu::Common::kSaved : WebUiRu::Common::kSaveFailed;
         String back = String("/rules?rule=") + String((unsigned)rule_id) + "&action=" + String((unsigned)action_id);
         web.sendRedirect_(request, back, set_cookie);
     }
@@ -1020,7 +1022,7 @@ private:
             if (cfg->name.length())
                 WebInterface::appendHtmlEscaped_(out, cfg->name.c_str());
             else
-                out += String("Розетка #") + String((unsigned)cfg->id);
+                out += String(WebUiRu::Rules::kSocketPrefix) + String((unsigned)cfg->id);
             out += "</option>";
         }
         if (!any)
@@ -1079,7 +1081,7 @@ private:
             if (cfg->name.length())
                 WebInterface::appendHtmlEscaped_(out, cfg->name.c_str());
             else
-                out += String("Свет #") + String((unsigned)cfg->id);
+                out += String(WebUiRu::Rules::kLightPrefix) + String((unsigned)cfg->id);
             out += "</option>";
         }
         if (!any)
@@ -1126,7 +1128,9 @@ private:
     {
         String out;
         out.reserve(8192);
-        out += "<div class=\"crumbs\">Выберите правило</div><div class=\"grid\">";
+        out += "<div class=\"crumbs\">";
+        out += WebUiRu::Rules::kSelectRule;
+        out += "</div><div class=\"grid\">";
         size_t render_count = RulesController::kRuleCount;
         if (render_count > 0)
         {
@@ -1168,7 +1172,9 @@ private:
             if (r->enabled)
                 out += " checked";
             out += " onchange=\"this.form.submit()\"><span class=\"track\"><span class=\"knob\"></span></span></label>";
-            out += "</form></div><span class=\"meta\">Правило</span></div>";
+            out += "</form></div><span class=\"meta\">";
+            out += WebUiRu::Rules::kRule;
+            out += "</span></div>";
         }
         out += "</div>";
         return out;
@@ -1178,12 +1184,14 @@ private:
     {
         const auto *r = web._rules->rule(rule_id);
         if (!r)
-            return "<p>Правило не найдено</p><p><a href=\"/rules\">Назад</a></p>";
+            return String("<p>") + WebUiRu::Rules::kRuleNotFound + "</p><p><a href=\"/rules\">" + WebUiRu::Rules::kBack + "</a></p>";
         const uint32_t cond_node_id = preview_cond_node ? preview_cond_node : r->condition_node_id;
         const String cond_controller = preview_cond_controller.length() ? preview_cond_controller : r->condition_controller;
         String out;
         out.reserve(12288);
-        out += "<div class=\"crumbs\"><a href=\"/rules\">Правила</a> / ";
+        out += "<div class=\"crumbs\"><a href=\"/rules\">";
+        out += WebUiRu::Rules::kRules;
+        out += "</a> / ";
         out += String((unsigned)r->id);
         out += ". ";
         WebInterface::appendHtmlEscaped_(out, r->name.c_str());
@@ -1194,7 +1202,9 @@ private:
         out += String((unsigned)r->id);
         out += "\">";
         out += "<div class=\"row\">";
-        out += "<div><label>Название</label><input type=\"text\" name=\"name\" value=\"";
+        out += "<div><label>";
+        out += WebUiRu::Rules::kLabelName;
+        out += "</label><input type=\"text\" name=\"name\" value=\"";
         WebInterface::appendHtmlEscaped_(out, r->name.c_str());
         out += "\"></div>";
         out += "<div><label>Enabled</label><label class=\"switch\"><input type=\"checkbox\" name=\"enabled\"";
@@ -1203,28 +1213,42 @@ private:
         out += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
         out += "</div>";
         out += "<div class=\"row\">";
-        out += "<div><label>Условие активно</label><label class=\"switch\"><input type=\"checkbox\" name=\"cond_enabled\"";
+        out += "<div><label>";
+        out += WebUiRu::Rules::kLabelConditionEnabled;
+        out += "</label><label class=\"switch\"><input type=\"checkbox\" name=\"cond_enabled\"";
         if (r->condition_enabled)
             out += " checked";
         out += " id=\"rule-cond-enabled\"><span class=\"track\"><span class=\"knob\"></span></span></label></div></div>";
         out += "<div id=\"rule-cond-block\">";
-        out += "<div class=\"row\"><div><label>Юнит</label><select name=\"cond_node_id\" id=\"rule-cond-node\">";
+        out += "<div class=\"row\"><div><label>";
+        out += WebUiRu::Rules::kLabelUnit;
+        out += "</label><select name=\"cond_node_id\" id=\"rule-cond-node\">";
         appendNodeSelectOptions_(web, out, cond_node_id);
-        out += "</select></div><div><label>Контроллер</label><select name=\"cond_controller\" id=\"rule-cond-controller\">";
+        out += "</select></div><div><label>";
+        out += WebUiRu::Rules::kLabelController;
+        out += "</label><select name=\"cond_controller\" id=\"rule-cond-controller\">";
         appendConditionControllerSelectOptions_(web, out, cond_node_id, cond_controller);
         out += "</select></div></div>";
         out += "<div class=\"row\">";
-        out += "<div><label>Элемент</label><select name=\"cond_item_id\" id=\"rule-cond-item\">";
+        out += "<div><label>";
+        out += WebUiRu::Rules::kLabelItem;
+        out += "</label><select name=\"cond_item_id\" id=\"rule-cond-item\">";
         appendConditionItemOptions_(web, out, cond_node_id, cond_controller, r->condition_item_id);
         out += "</select></div>";
-        out += "<div><label>Параметр</label><select name=\"cond_param\" id=\"rule-cond-param\">";
+        out += "<div><label>";
+        out += WebUiRu::Rules::kLabelParameter;
+        out += "</label><select name=\"cond_param\" id=\"rule-cond-param\">";
         appendConditionParamOptions_(out, cond_controller, r->condition_parameter);
         out += "</select></div></div>";
         out += "<div class=\"row\">";
-        out += "<div><label>Оператор</label><select name=\"cond_op\" id=\"rule-cond-op\">";
+        out += "<div><label>";
+        out += WebUiRu::Rules::kLabelOperator;
+        out += "</label><select name=\"cond_op\" id=\"rule-cond-op\">";
         appendConditionOperatorOptions_(out, r->condition_op);
         out += "</select></div>";
-        out += "<div><label>Значение</label><select name=\"cond_value\" id=\"rule-cond-value\">";
+        out += "<div><label>";
+        out += WebUiRu::Rules::kLabelValue;
+        out += "</label><select name=\"cond_value\" id=\"rule-cond-value\">";
         appendConditionValueOptions_(out, cond_controller, r->condition_parameter, r->condition_value);
         out += "</select></div></div>";
         out += "</div>";
@@ -1257,7 +1281,7 @@ private:
                 out += "{id:";
                 out += String((unsigned)cfg->id);
                 out += ",name:";
-                appendJsStringLiteral_(out, cfg->name.length() ? cfg->name : (String("Розетка #") + String((unsigned)cfg->id)));
+                appendJsStringLiteral_(out, cfg->name.length() ? cfg->name : (String(WebUiRu::Rules::kSocketPrefix) + String((unsigned)cfg->id)));
                 out += "}";
                 first = false;
             }
@@ -1277,7 +1301,7 @@ private:
                 out += "{id:";
                 out += String((unsigned)cfg->id);
                 out += ",name:";
-                appendJsStringLiteral_(out, cfg->name.length() ? cfg->name : (String("Свет #") + String((unsigned)cfg->id)));
+                appendJsStringLiteral_(out, cfg->name.length() ? cfg->name : (String(WebUiRu::Rules::kLightPrefix) + String((unsigned)cfg->id)));
                 out += "}";
                 first = false;
             }
@@ -1297,7 +1321,7 @@ private:
                 out += "{id:";
                 out += String((unsigned)cfg->id);
                 out += ",name:";
-                appendJsStringLiteral_(out, cfg->name.length() ? cfg->name : (String("Датчик #") + String((unsigned)cfg->id)));
+                appendJsStringLiteral_(out, cfg->name.length() ? cfg->name : (String(WebUiRu::Rules::kSensorPrefix) + String((unsigned)cfg->id)));
                 out += "}";
                 first = false;
             }
@@ -1317,7 +1341,7 @@ private:
                 out += "{id:";
                 out += String((unsigned)cfg->id);
                 out += ",name:";
-                appendJsStringLiteral_(out, cfg->name.length() ? cfg->name : (String("Сенсор #") + String((unsigned)cfg->id)));
+                appendJsStringLiteral_(out, cfg->name.length() ? cfg->name : (String(WebUiRu::Rules::kMeteoSensorPrefix) + String((unsigned)cfg->id)));
                 out += "}";
                 first = false;
             }
@@ -1337,7 +1361,7 @@ private:
                 out += "{id:";
                 out += String((unsigned)cfg->id);
                 out += ",name:";
-                appendJsStringLiteral_(out, cfg->name.length() ? cfg->name : (String("Бак #") + String((unsigned)cfg->id)));
+                appendJsStringLiteral_(out, cfg->name.length() ? cfg->name : (String(WebUiRu::Rules::kTankPrefix) + String((unsigned)cfg->id)));
                 out += "}";
                 first = false;
             }
@@ -1357,7 +1381,7 @@ private:
                 out += "{id:";
                 out += String((unsigned)cfg->id);
                 out += ",name:";
-                appendJsStringLiteral_(out, cfg->name.length() ? cfg->name : (String("Септик #") + String((unsigned)cfg->id)));
+                appendJsStringLiteral_(out, cfg->name.length() ? cfg->name : (String(WebUiRu::Rules::kSepticPrefix) + String((unsigned)cfg->id)));
                 out += "}";
                 first = false;
             }
@@ -1436,7 +1460,8 @@ private:
             out += String((unsigned)r->id);
             out += "&action=";
             out += String((unsigned)a.id);
-            out += "\"><strong>Действие ";
+            out += "\"><strong>";
+            out += WebUiRu::Rules::kAction;
             out += String((unsigned)a.id);
             out += "</strong></a>";
             out += "<form method=\"POST\" action=\"/rules\" class=\"inline-toggle\">";
@@ -1449,9 +1474,10 @@ private:
             out += "\"><label class=\"switch\"><input type=\"checkbox\" name=\"enabled\"";
             if (a.enabled)
                 out += " checked";
-            out += " onchange=\"this.form.submit()\"><span class=\"track\"><span class=\"knob\"></span></span></label></form></div><span class=\"meta\">тип: ";
+            out += " onchange=\"this.form.submit()\"><span class=\"track\"><span class=\"knob\"></span></span></label></form></div><span class=\"meta\">";
+            out += WebUiRu::Rules::kActionType;
             if (a.kind == RulesController::ActionKind::Pause)
-                out += "пауза";
+                out += WebUiRu::Rules::kPause;
             else if (a.kind == RulesController::ActionKind::Telegram)
                 out += "telegram";
             else
@@ -1467,17 +1493,20 @@ private:
         const auto *r = web._rules->rule(rule_id);
         const auto *a = web._rules->action(rule_id, action_id);
         if (!r || !a)
-            return "<p>Неверный rule/action ID</p><p><a href=\"/rules\">Назад</a></p>";
+            return String("<p>") + WebUiRu::Rules::kInvalidRuleActionId + "</p><p><a href=\"/rules\">" + WebUiRu::Rules::kBack + "</a></p>";
         const uint32_t action_node_id = preview_action_node ? preview_action_node : a->node_id;
         String out;
         out.reserve(8192);
-        out += "<div class=\"crumbs\"><a href=\"/rules\">Правила</a> / <a href=\"/rules?rule=";
+        out += "<div class=\"crumbs\"><a href=\"/rules\">";
+        out += WebUiRu::Rules::kRules;
+        out += "</a> / <a href=\"/rules?rule=";
         out += String((unsigned)r->id);
         out += "\">";
         out += String((unsigned)r->id);
         out += ". ";
         WebInterface::appendHtmlEscaped_(out, r->name.c_str());
-        out += "</a> / действие ";
+        out += "</a> / ";
+        out += WebUiRu::Rules::kActionLower;
         out += String((unsigned)a->id);
         out += "</div>";
 
@@ -1493,7 +1522,9 @@ private:
             out += " checked";
         out += "><span class=\"track\"><span class=\"knob\"></span></span></label></div></div>";
 
-        out += "<div class=\"row\"><div><label>Тип</label><select name=\"kind\">";
+        out += "<div class=\"row\"><div><label>";
+        out += WebUiRu::Rules::kLabelType;
+        out += "</label><select name=\"kind\">";
         out += "<option value=\"controller\"";
         if (a->kind == RulesController::ActionKind::Controller)
             out += " selected";
@@ -1506,29 +1537,45 @@ private:
         if (a->kind == RulesController::ActionKind::Telegram)
             out += " selected";
         out += ">telegram</option></select></div>";
-        out += "<div><label>Задержка, мс</label><input type=\"number\" name=\"delay_ms\" min=\"0\" value=\"";
+        out += "<div><label>";
+        out += WebUiRu::Rules::kLabelDelayMs;
+        out += "</label><input type=\"number\" name=\"delay_ms\" min=\"0\" value=\"";
         out += String((unsigned long)a->delay_ms);
         out += "\"></div></div>";
 
-        out += "<div class=\"row\"><div><label>Юнит</label><select name=\"node_id\" id=\"rule-node\">";
+        out += "<div class=\"row\"><div><label>";
+        out += WebUiRu::Rules::kLabelUnit;
+        out += "</label><select name=\"node_id\" id=\"rule-node\">";
         appendNodeSelectOptions_(web, out, action_node_id);
         out += "</select></div><div><label>Controller</label><select name=\"controller\" id=\"rule-controller\">";
         appendControllerSelectOptions_(web, out, action_node_id, a->controller);
         out += "</select></div>";
-        out += "<div><label>Параметр</label><select name=\"parameter\" id=\"rule-parameter\">";
+        out += "<div><label>";
+        out += WebUiRu::Rules::kLabelParameter;
+        out += "</label><select name=\"parameter\" id=\"rule-parameter\">";
         appendParameterSelectOptions_(out, a->controller, a->parameter);
         out += "</select></div></div>";
 
-        out += "<div class=\"row\" id=\"rule-value-manual-row\"><div><label>Значение</label><input type=\"text\" id=\"rule-value-manual\" name=\"value\" value=\"";
+        out += "<div class=\"row\" id=\"rule-value-manual-row\"><div><label>";
+        out += WebUiRu::Rules::kLabelValue;
+        out += "</label><input type=\"text\" id=\"rule-value-manual\" name=\"value\" value=\"";
         WebInterface::appendHtmlEscaped_(out, a->value.c_str());
         out += "\"></div></div>";
 
-        out += "<div class=\"row\" id=\"rule-value-sockets-row\" style=\"display:none\"><div><label>Розетка</label><select id=\"rule-socket-id\">";
+        out += "<div class=\"row\" id=\"rule-value-sockets-row\" style=\"display:none\"><div><label>";
+        out += WebUiRu::Users::kItemSocket;
+        out += "</label><select id=\"rule-socket-id\">";
         appendSocketValueOptions_(web, out, action_node_id);
-        out += "</select></div><div id=\"rule-socket-state-wrap\"><label>Состояние</label><select id=\"rule-socket-state\"><option value=\"on\">on</option><option value=\"off\">off</option></select></div></div>";
-        out += "<div class=\"row\" id=\"rule-value-lights-row\" style=\"display:none\"><div><label>Свет</label><select id=\"rule-light-id\">";
+        out += "</select></div><div id=\"rule-socket-state-wrap\"><label>";
+        out += WebUiRu::Rules::kLabelState;
+        out += "</label><select id=\"rule-socket-state\"><option value=\"on\">on</option><option value=\"off\">off</option></select></div></div>";
+        out += "<div class=\"row\" id=\"rule-value-lights-row\" style=\"display:none\"><div><label>";
+        out += WebUiRu::Users::kItemLight;
+        out += "</label><select id=\"rule-light-id\">";
         appendLightValueOptions_(web, out, action_node_id);
-        out += "</select></div><div id=\"rule-light-state-wrap\"><label>Состояние</label><select id=\"rule-light-state\"><option value=\"on\">on</option><option value=\"off\">off</option></select></div></div>";
+        out += "</select></div><div id=\"rule-light-state-wrap\"><label>";
+        out += WebUiRu::Rules::kLabelState;
+        out += "</label><select id=\"rule-light-state\"><option value=\"on\">on</option><option value=\"off\">off</option></select></div></div>";
 
         out += "<button type=\"submit\">";
         out += WebUiRu::kSaveAction;

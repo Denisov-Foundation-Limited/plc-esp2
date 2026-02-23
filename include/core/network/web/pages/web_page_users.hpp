@@ -17,7 +17,7 @@ static const char kWebInterfaceUsersHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>РџРѕР»СЊР·РѕРІР°С‚РµР»Рё</title>
+  <title>%USERS_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -162,7 +162,7 @@ static const char kWebInterfaceUsersHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>РџРѕР»СЊР·РѕРІР°С‚РµР»Рё</h1>
+      <h1>%USERS_PAGE_H1%</h1>
       <p class="status">%USERS_STATUS%</p>
       %USERS_READONLY_NOTE%
       <form method="POST" action="/users">
@@ -178,6 +178,7 @@ static const char kWebInterfaceUsersHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 
 

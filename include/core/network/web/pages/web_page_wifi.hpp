@@ -17,7 +17,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Сеть</title>
+  <title>%WIFI_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -81,10 +81,10 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Сеть</h1>
+      <h1>%WIFI_PAGE_TITLE%</h1>
       <table id="wifi-table" class="status-table">
         <tbody>
-          <tr><td>Режим</td><td><strong>%WIFI_MODE%</strong></td></tr>
+          <tr><td>%WIFI_LABEL_MODE%</td><td><strong>%WIFI_MODE%</strong></td></tr>
           <tr><td>SSID</td><td><strong>%WIFI_CUR_SSID%</strong></td></tr>
           <tr><td>IP</td><td><strong>%WIFI_IP%</strong></td></tr>
           %WIFI_STA_ROW%
@@ -93,7 +93,7 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
       <form method="POST" action="/wifi" id="wifi-form">
         <div class="grid">
           <div>
-            <label>Режим</label>
+            <label>%WIFI_LABEL_MODE%</label>
             <select name="mode">
               <option value="sta" %WIFI_STA_SEL%>STA</option>
               <option value="ap" %WIFI_AP_SEL%>AP</option>
@@ -104,38 +104,38 @@ static const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
             <input type="text" name="ssid" value="%WIFI_SSID%" placeholder="SSID STA">
           </div>
           <div>
-            <label>Пароль</label>
-            <input type="password" name="password" placeholder="Введите пароль для STA">
+            <label>%WIFI_LABEL_PASSWORD%</label>
+            <input type="password" name="password" placeholder="%WIFI_STA_PASSWORD_PLACEHOLDER%">
           </div>
           <div id="ap-ssid-field">
             <label>AP SSID</label>
             <input type="text" name="ap_ssid" value="%WIFI_AP_SSID%" placeholder="SSID AP">
           </div>
           <div id="ap-pass-field">
-            <label>Пароль AP</label>
-            <input type="password" name="ap_password" placeholder="Введите пароль для AP">
+            <label>%WIFI_LABEL_AP_PASSWORD%</label>
+            <input type="password" name="ap_password" placeholder="%WIFI_AP_PASSWORD_PLACEHOLDER%">
           </div>
         </div>
         <div class="section">
-          <h2>GSM</h2>
+          <h2>%WIFI_GSM_TITLE%</h2>
           <div class="row" style="margin-bottom:10px;">
-            <label style="margin-right:8px;">Включен</label>
+            <label style="margin-right:8px;">%WIFI_LABEL_ENABLED%</label>
             <input id="gsm-enabled" type="checkbox" name="gsm_enabled" %GSM_ENABLED_CHECKED%>
             <span class="status">%GSM_ENABLED_LABEL%</span>
           </div>
           <table id="gsm-table" class="status-table">
             <tbody>
-              <tr><td>Состояние</td><td><strong>%GSM_STARTED_LABEL%</strong></td></tr>
+              <tr><td>%WIFI_GSM_STATE%</td><td><strong>%GSM_STARTED_LABEL%</strong></td></tr>
               <tr><td>IMEI</td><td><strong>%GSM_IMEI%</strong></td></tr>
               <tr><td>IMSI</td><td><strong>%GSM_IMSI%</strong></td></tr>
-              <tr><td>Оператор</td><td><strong>%GSM_OPERATOR%</strong></td></tr>
-              <tr><td>Сигнал</td><td><strong>%GSM_SIGNAL%</strong></td></tr>
-              <tr><td>Регистрация</td><td><strong>%GSM_REG_STATUS%</strong></td></tr>
-              <tr><td>Ошибка</td><td><strong>%GSM_LAST_ERROR%</strong></td></tr>
-              <tr><td>Последний URC</td><td><strong>%GSM_LAST_URC%</strong></td></tr>
-              <tr><td>Последний SMS</td><td><strong>%GSM_LAST_SMS%</strong></td></tr>
-              <tr><td>Последний звонок</td><td><strong>%GSM_LAST_CALL%</strong></td></tr>
-              <tr><td>Последний USSD</td><td><strong>%GSM_LAST_USSD%</strong></td></tr>
+              <tr><td>%WIFI_GSM_OPERATOR%</td><td><strong>%GSM_OPERATOR%</strong></td></tr>
+              <tr><td>%WIFI_GSM_SIGNAL%</td><td><strong>%GSM_SIGNAL%</strong></td></tr>
+              <tr><td>%WIFI_GSM_REG%</td><td><strong>%GSM_REG_STATUS%</strong></td></tr>
+              <tr><td>%WIFI_GSM_ERROR%</td><td><strong>%GSM_LAST_ERROR%</strong></td></tr>
+              <tr><td>%WIFI_GSM_LAST_URC%</td><td><strong>%GSM_LAST_URC%</strong></td></tr>
+              <tr><td>%WIFI_GSM_LAST_SMS%</td><td><strong>%GSM_LAST_SMS%</strong></td></tr>
+              <tr><td>%WIFI_GSM_LAST_CALL%</td><td><strong>%GSM_LAST_CALL%</strong></td></tr>
+              <tr><td>%WIFI_GSM_LAST_USSD%</td><td><strong>%GSM_LAST_USSD%</strong></td></tr>
               <tr><td>HTTP status</td><td><strong>%GSM_HTTP_STATUS%</strong></td></tr>
               <tr><td>HTTP len</td><td><strong>%GSM_HTTP_LEN%</strong></td></tr>
             </tbody>

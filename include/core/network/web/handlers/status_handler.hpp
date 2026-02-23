@@ -31,8 +31,10 @@ public:
         String page = FPSTR(kWebInterfaceStatusHtml);
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", web.navHtml_());
+        page.replace("%STATUS_PAGE_TITLE%", WebUiRu::StatusPage::kPageTitle);
+        page.replace("%STATUS_TITLE%", WebUiRu::StatusPage::kTitle);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        page.replace("%STATUS%", web._last_status.length() ? web._last_status : "No data");
+        page.replace("%STATUS%", web._last_status.length() ? web._last_status : WebUiRu::StatusPage::kNoData);
         web.sendHtml_(request, page, set_cookie);
     }
 };

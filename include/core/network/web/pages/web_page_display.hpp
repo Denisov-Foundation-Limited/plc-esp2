@@ -17,7 +17,7 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Р”РёСЃРїР»РµР№</title>
+  <title>%DISPLAY_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -110,7 +110,7 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Р”РёСЃРїР»РµР№ (LCD1602)</h1>
+      <h1>%DISPLAY_TITLE%</h1>
       <div class="status">%DISPLAY_STATUS%</div>
       <pre id="display-preview" style="background:#0b1220;border:1px solid #1f2937;border-radius:10px;padding:10px;color:#e5e7eb;white-space:pre;font-family:Consolas,""Courier New"",monospace;margin:0 0 12px;">
                 </pre>
@@ -127,30 +127,30 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
   <script>
     const sourceOptions = [
       { v: 'none', l: '-' },
-      { v: 'time', l: 'Р’СЂРµРјСЏ' },
-      { v: 'socket', l: 'Р РѕР·РµС‚РєР°' },
-      { v: 'light', l: 'РЎРІРµС‚' },
-      { v: 'meteo', l: 'РњРµС‚РµРѕ' },
-      { v: 'thermo', l: 'РўРµСЂРјРѕ' },
-      { v: 'tank', l: 'Р‘Р°Рє' },
-      { v: 'septic', l: 'РЎРµРїС‚РёРє' },
-      { v: 'security', l: 'РћС…СЂР°РЅР°' },
-      { v: 'avr', l: 'РђР’Р ' },
-      { v: 'leak', l: 'РџСЂРѕС‚РµС‡РєРё' },
-      { v: 'text', l: 'РўРµРєСЃС‚' }
+      { v: 'time', l: '%DISPLAY_SRC_TIME%' },
+      { v: 'socket', l: '%DISPLAY_SRC_SOCKET%' },
+      { v: 'light', l: '%DISPLAY_SRC_LIGHT%' },
+      { v: 'meteo', l: '%DISPLAY_SRC_METEO%' },
+      { v: 'thermo', l: '%DISPLAY_SRC_THERMO%' },
+      { v: 'tank', l: '%DISPLAY_SRC_TANK%' },
+      { v: 'septic', l: '%DISPLAY_SRC_SEPTIC%' },
+      { v: 'security', l: '%DISPLAY_SRC_SECURITY%' },
+      { v: 'avr', l: '%DISPLAY_SRC_AVR%' },
+      { v: 'leak', l: '%DISPLAY_SRC_LEAK%' },
+      { v: 'text', l: '%DISPLAY_SRC_TEXT%' }
     ];
     const fieldOptions = {
       time: [{ v: 'hm', l: 'HH:' }, { v: 'min', l: 'MM' }],
-      socket: [{ v: 'state', l: 'РЎРѕСЃС‚РѕСЏРЅРёРµ' }],
-      light: [{ v: 'state', l: 'РЎРѕСЃС‚РѕСЏРЅРёРµ' }],
-      meteo: [{ v: 'temp', l: 'РўРµРјРї' }, { v: 'hum', l: 'Р’Р»Р°Р¶РЅ' }],
-      thermo: [{ v: 'state', l: 'РЎС‚Р°С‚СѓСЃ' }],
-      tank: [{ v: 'level', l: 'РЈСЂРѕРІРµРЅСЊ' }],
-      septic: [{ v: 'level', l: 'РЈСЂРѕРІРµРЅСЊ' }],
+      socket: [{ v: 'state', l: '%DISPLAY_FIELD_STATE%' }],
+      light: [{ v: 'state', l: '%DISPLAY_FIELD_STATE%' }],
+      meteo: [{ v: 'temp', l: '%DISPLAY_FIELD_TEMP%' }, { v: 'hum', l: '%DISPLAY_FIELD_HUM%' }],
+      thermo: [{ v: 'state', l: '%DISPLAY_FIELD_STATUS%' }],
+      tank: [{ v: 'level', l: '%DISPLAY_FIELD_LEVEL%' }],
+      septic: [{ v: 'level', l: '%DISPLAY_FIELD_LEVEL%' }],
       security: [{ v: 'armed', l: 'ARM/DIS' }],
-      avr: [{ v: 'avr_source', l: 'РСЃС‚РѕС‡РЅРёРє' }, { v: 'avr_main_ok', l: 'РћСЃРЅРѕРІРЅР°СЏ СЃРµС‚СЊ' }, { v: 'avr_reserve_ok', l: 'Р РµР·РµСЂРІРЅР°СЏ СЃРµС‚СЊ' }],
-      leak: [{ v: 'leak_state', l: 'РЎРѕСЃС‚РѕСЏРЅРёРµ' }],
-      text: [{ v: 'text', l: 'РўРµРєСЃС‚' }]
+      avr: [{ v: 'avr_source', l: '%DISPLAY_FIELD_SOURCE%' }, { v: 'avr_main_ok', l: '%DISPLAY_FIELD_MAIN_POWER%' }, { v: 'avr_reserve_ok', l: '%DISPLAY_FIELD_RESERVE_POWER%' }],
+      leak: [{ v: 'leak_state', l: '%DISPLAY_FIELD_STATE%' }],
+      text: [{ v: 'text', l: '%DISPLAY_FIELD_TEXT%' }]
     };
     const deviceOptions = %DISPLAY_DEVICE_JSON%;
     const socketOptions = %DISPLAY_SOCKET_JSON%;
@@ -296,6 +296,7 @@ static const char kWebInterfaceDisplayHtml[] PROGMEM = R"HTML(
 </body>
 </html>
 )HTML";
+
 
 
 

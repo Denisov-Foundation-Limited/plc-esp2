@@ -17,7 +17,7 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Баки</title>
+  <title>%TANK_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -282,7 +282,7 @@ static const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     %NAV%
     <div class="card">
-      <h1>Баки</h1>
+      <h1>%TANK_PAGE_TITLE%</h1>
       %TANK_DEVICE_SELECT%
       %TANK_PAGINATION%
       <form method="POST" action="/tanks" id="tanks-form">

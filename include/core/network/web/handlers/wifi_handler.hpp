@@ -33,6 +33,23 @@ public:
         String page = FPSTR(kWebInterfaceWifiHtml);
         page.reserve(page.length() + 1536);
         page.replace("%NAV%", web.navHtml_());
+        page.replace("%WIFI_PAGE_TITLE%", WebUiRu::WifiPage::kPageTitle);
+        page.replace("%WIFI_LABEL_MODE%", WebUiRu::WifiPage::kMode);
+        page.replace("%WIFI_LABEL_PASSWORD%", WebUiRu::WifiPage::kPassword);
+        page.replace("%WIFI_STA_PASSWORD_PLACEHOLDER%", WebUiRu::WifiPage::kStaPasswordPlaceholder);
+        page.replace("%WIFI_LABEL_AP_PASSWORD%", WebUiRu::WifiPage::kApPassword);
+        page.replace("%WIFI_AP_PASSWORD_PLACEHOLDER%", WebUiRu::WifiPage::kApPasswordPlaceholder);
+        page.replace("%WIFI_LABEL_ENABLED%", WebUiRu::WifiPage::kEnabled);
+        page.replace("%WIFI_GSM_TITLE%", WebUiRu::WifiPage::kGsmTitle);
+        page.replace("%WIFI_GSM_STATE%", WebUiRu::WifiPage::kState);
+        page.replace("%WIFI_GSM_OPERATOR%", WebUiRu::WifiPage::kOperator);
+        page.replace("%WIFI_GSM_SIGNAL%", WebUiRu::WifiPage::kSignal);
+        page.replace("%WIFI_GSM_REG%", WebUiRu::WifiPage::kRegistration);
+        page.replace("%WIFI_GSM_ERROR%", WebUiRu::WifiPage::kError);
+        page.replace("%WIFI_GSM_LAST_URC%", WebUiRu::WifiPage::kLastUrc);
+        page.replace("%WIFI_GSM_LAST_SMS%", WebUiRu::WifiPage::kLastSms);
+        page.replace("%WIFI_GSM_LAST_CALL%", WebUiRu::WifiPage::kLastCall);
+        page.replace("%WIFI_GSM_LAST_USSD%", WebUiRu::WifiPage::kLastUssd);
         page.replace("%WIFI_MODE%", web._wifi.ap() ? "AP" : "STA");
         page.replace("%WIFI_CUR_SSID%", web._wifi.ap() ? web._wifi.apSsid() : web._wifi.ssid());
         page.replace("%WIFI_IP%", web.wifiIp_());
@@ -42,7 +59,9 @@ public:
         }
         else
         {
-            String row = "<tr><td>STA</td><td><strong>";
+            String row = "<tr><td>";
+            row += WebUiRu::WifiPage::kStaStatusRowLabel;
+            row += "</td><td><strong>";
             row += web.wifiStaStatus_();
             row += "</strong></td></tr>";
             page.replace("%WIFI_STA_ROW%", row);
@@ -57,8 +76,8 @@ public:
         if (!web._gsm)
         {
             page.replace("%GSM_ENABLED_CHECKED%", "");
-            page.replace("%GSM_ENABLED_LABEL%", "недоступно");
-            page.replace("%GSM_STARTED_LABEL%", "недоступно");
+            page.replace("%GSM_ENABLED_LABEL%", WebUiRu::WifiPage::kUnavailable);
+            page.replace("%GSM_STARTED_LABEL%", WebUiRu::WifiPage::kUnavailable);
             page.replace("%GSM_IMEI%", "n/a");
             page.replace("%GSM_IMSI%", "n/a");
             page.replace("%GSM_OPERATOR%", "n/a");
@@ -77,8 +96,10 @@ public:
             const bool available = ActiveBoardProfile::GSM.enabled;
             const bool enabled = available && web._gsm->enabled();
             page.replace("%GSM_ENABLED_CHECKED%", enabled ? "checked" : "");
-            page.replace("%GSM_ENABLED_LABEL%", available ? (enabled ? "включен" : "выключен") : "недоступен");
-            page.replace("%GSM_STARTED_LABEL%", web._gsm->started() ? "инициализирован" : "не инициализирован");
+            page.replace("%GSM_ENABLED_LABEL%", available ? (enabled ? WebUiRu::WifiPage::kOn : WebUiRu::WifiPage::kOff)
+                                                          : WebUiRu::WifiPage::kUnavailable);
+            page.replace("%GSM_STARTED_LABEL%", web._gsm->started() ? WebUiRu::WifiPage::kStarted
+                                                                    : WebUiRu::WifiPage::kNotStarted);
             page.replace("%GSM_IMEI%", web.safeHtmlValue_(web._gsm->imei(), "n/a"));
             page.replace("%GSM_IMSI%", web.safeHtmlValue_(web._gsm->imsi(), "n/a"));
             page.replace("%GSM_OPERATOR%", web.safeHtmlValue_(web._gsm->operatorName(), "n/a"));

@@ -509,7 +509,7 @@ private:
             items += "</strong></td></tr>";
         }
         if (items.length() == 0)
-            items = "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Extenders РѕС‚СЃСѓС‚СЃС‚РІСѓСЋС‚</strong></td></tr>";
+            items = String("<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>") + WebUiRu::WebCore::kExtendersAbsent + "</strong></td></tr>";
         return items;
     }
 
@@ -602,7 +602,7 @@ private:
             items += "</strong></td></tr>";
         }
         if (items.length() == 0)
-            items = "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>Extenders РѕС‚СЃСѓС‚СЃС‚РІСѓСЋС‚</strong></td></tr>";
+            items = String("<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>") + WebUiRu::WebCore::kExtendersAbsent + "</strong></td></tr>";
         return items;
     }
 
@@ -996,20 +996,23 @@ private:
 
     void notifyRingPress_(bool stack_view, uint32_t node_id)
     {
-        String msg = F("Р—РІРѕРЅРѕРє: РІРµР±-РєРЅРѕРїРєР°");
+        String msg = WebUiRu::WebCore::kRingWebButton;
         if (stack_view)
         {
-            msg += F(" (СЃС‚РµРє");
+            msg += " (";
+            msg += WebUiRu::WebCore::kStackShort;
             if (node_id)
             {
                 msg += F(" ");
                 msg += stackNodeIdHex_(node_id);
             }
-            msg += F(")");
+            msg += ")";
         }
         else
         {
-            msg += F(" (Р»РѕРєР°Р»СЊРЅРѕ)");
+            msg += " (";
+            msg += WebUiRu::WebCore::kLocalShort;
+            msg += ")";
         }
         if (_log)
             _log->info(F("RING"), F("%s"), msg.c_str());
@@ -1082,7 +1085,7 @@ private:
         String out = "<span class=\"status-dot ";
         out += on ? "status-on" : "status-off";
         out += "\" title=\"";
-        out += on ? "РІРєР»СЋС‡РµРЅ" : "РІС‹РєР»СЋС‡РµРЅ";
+        out += on ? WebUiRu::WebCore::kEnabled : WebUiRu::WebCore::kDisabled;
         out += "\"></span>";
         return out;
     }
@@ -1092,7 +1095,7 @@ private:
         String out = "<span class=\"status-dot ";
         out += on ? "status-on" : "status-off";
         out += "\" title=\"";
-        out += on ? "РІРєР»СЋС‡РµРЅ" : "РІС‹РєР»СЋС‡РµРЅ";
+        out += on ? WebUiRu::WebCore::kEnabled : WebUiRu::WebCore::kDisabled;
         out += "\"></span>";
         return out;
     }
@@ -2029,7 +2032,7 @@ private:
     String gsmStatusLabel_() const
     {
         if (!_gsm)
-            return "РЅРµРґРѕСЃС‚СѓРїРЅРѕ";
+            return WebUiRu::WebCore::kUnavailable;
         if (!_gsm->started())
             return "off";
         const String &err = _gsm->lastError();

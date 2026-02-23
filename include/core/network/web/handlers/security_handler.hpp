@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -22,8 +22,79 @@ public:
     {
         server.on("/security/arm", HTTP_POST,
                   [&web](AsyncWebServerRequest *request) { handleSecurityArm(web, request); });
+        server.on("/security/state", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleSecurityState(web, request); });
         server.on("/security", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleSecuritySave(web, request); });
         server.on("/security", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleSecurity(web, request); });
+    }
+
+    static void handleSecurityState(WebInterface &web, AsyncWebServerRequest *request)
+    {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Security, node_id))
+            return;
+        StaticJsonDocument<4096> doc;
+        JsonArray items = doc["items"].to<JsonArray>();
+        const bool stack_view = web.isStackSecurityView_(node_id);
+        if (stack_view)
+        {
+            auto *cache = web._stack_cache ? web._stack_cache->securityCache(node_id) : nullptr;
+            if (!cache || !cache->has_data)
+            {
+                if (web._stack_cache)
+                    web._stack_cache->requestSecurity(node_id);
+                doc["pending"] = true;
+            }
+            else
+            {
+                const bool stale = (cache->pending || (uint32_t)(millis() - cache->updated_ms) > 1500u);
+                if (stale && web._stack_cache)
+                    web._stack_cache->requestSecurity(node_id);
+                doc["enabled"] = cache->enabled;
+                doc["armed"] = cache->armed;
+                doc["alarm"] = cache->alarm;
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (!web.webAclCanViewItem_(UsersRegistry::AclController::Security, it.id, node_id))
+                        continue;
+                    JsonObject o = items.add<JsonObject>();
+                    o["id"] = it.id;
+                    o["enabled"] = it.enabled;
+                    o["detect"] = it.detect;
+                }
+            }
+        }
+        else
+        {
+            if (!web._controllers)
+            {
+                web.sendText_(request, 500, "text/plain", WebUiRu::Common::kControllersUnavailable, set_cookie);
+                return;
+            }
+            SecurityController &sec = web._controllers->security();
+            doc["enabled"] = sec.controllerEnabled();
+            doc["armed"] = sec.armed();
+            doc["alarm"] = sec.alarmOn();
+            for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+            {
+                const auto *cfg = sec.configByIndex(i);
+                const auto *st = sec.stateByIndex(i);
+                if (!cfg || !st)
+                    continue;
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Security, cfg->id))
+                    continue;
+                JsonObject o = items.add<JsonObject>();
+                o["id"] = cfg->id;
+                o["enabled"] = cfg->enabled;
+                o["detect"] = st->is_detect;
+            }
+        }
+        String body;
+        serializeJson(doc, body);
+        web.sendText_(request, 200, "application/json", body, set_cookie);
     }
 
     static void handleSecurity(WebInterface &web, AsyncWebServerRequest *request)
@@ -38,7 +109,10 @@ public:
         const uint8_t page_size = 8u;
         const bool stack_view = web.isStackSecurityView_(node_id);
         if (stack_view)
+        {
             web.requestStackSecurity_(node_id);
+            web.requestStackPorts_(node_id);
+        }
         const String page_str = web.paramValueAny_(request, "page");
         uint8_t page_idx = 0;
         if (page_str.length())
@@ -69,16 +143,30 @@ public:
         page.reserve(page.length() + 16384);
         page.replace("%NAV%", web.navHtml_());
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        page.replace("%SECURITY_PAGE_TITLE%", WebUiRu::Security::kPageTitle);
+        page.replace("%SECURITY_LABEL_STATUS%", WebUiRu::Security::kLabelStatus);
+        page.replace("%SECURITY_LABEL_ALARM%", WebUiRu::Security::kLabelAlarm);
+        page.replace("%SECURITY_BTN_ARM%", WebUiRu::Security::kBtnArm);
+        page.replace("%SECURITY_BTN_DISARM%", WebUiRu::Security::kBtnDisarm);
+        page.replace("%SECURITY_LABEL_SIREN_PORT%", WebUiRu::Security::kLabelSirenPort);
+        page.replace("%SECURITY_PAGE_PREV%", WebUiRu::Common::kPagePrev);
+        page.replace("%SECURITY_PAGE_PAGE%", WebUiRu::Common::kPagePage);
+        page.replace("%SECURITY_PAGE_NEXT%", WebUiRu::Common::kPageNext);
+        page.replace("%SECURITY_JS_ON1%", WebUiRu::WebCore::kOnShort);
+        page.replace("%SECURITY_JS_ARMED%", WebUiRu::WebCore::kArmedPhrase);
+        page.replace("%SECURITY_JS_ON2%", WebUiRu::WebCore::kEnablePrefix);
+        page.replace("%SECURITY_JS_UNAVAILABLE%", WebUiRu::WebCore::kUnavailable);
+        page.replace("%SECURITY_JS_OFF%", WebUiRu::WebCore::kOffShort);
         if (!web._controllers)
         {
             page.replace("%SECURITY_ENABLED_CHECKED%", "");
-            page.replace("%SECURITY_ENABLED_LABEL%", "недоступно");
-            page.replace("%SECURITY_ARMED_LABEL%", "недоступно");
+            page.replace("%SECURITY_ENABLED_LABEL%", WebUiRu::ControllersPage::kUnavailable);
+            page.replace("%SECURITY_ARMED_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%SECURITY_ARMED_CHECKED%", "");
-            page.replace("%SECURITY_ALARM_LABEL%", "недоступно");
+            page.replace("%SECURITY_ALARM_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%SECURITY_GSM_LABEL%", web.gsmStatusLabel_());
             page.replace("%SECURITY_SIREN%", "");
-            page.replace("%SECURITY_SENSORS%", "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>");
+            page.replace("%SECURITY_SENSORS%", WebUiRu::Security::kText4);
             page.replace("%SECURITY_SENSORS_PAGE%", "1");
             page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)(max_pages ? max_pages : 1)));
             page.replace("%SECURITY_SENSOR_JSON%", "[]");
@@ -86,7 +174,7 @@ public:
             page.replace("%SECURITY_SIREN_JSON%", "[]");
             page.replace("%SECURITY_SIREN_USED_JSON%", "[]");
             page.replace("%SECURITY_STATUS%", web._security_status);
-            page.replace("%SECURITY_SENSORS_TITLE%", "Датчики");
+            page.replace("%SECURITY_SENSORS_TITLE%", WebUiRu::Security::kText);
             page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", "");
             page.replace("%SECURITY_SAVE_BTN%", "");
             page.replace("%SECURITY_DEVICE_SELECT%", "");
@@ -95,14 +183,22 @@ public:
         }
 
         SecurityController &sec = web._controllers->security();
-        page.replace("%SECURITY_ENABLED_CHECKED%", sec.controllerEnabled() ? "checked" : "");
-        page.replace("%SECURITY_ENABLED_LABEL%", sec.controllerEnabled() ? "включено" : "выключено");
-        page.replace("%SECURITY_ARMED_LABEL%", sec.armed() ? "под охраной" : "снято");
-        page.replace("%SECURITY_ARMED_CHECKED%", sec.armed() ? "checked" : "");
-        page.replace("%SECURITY_ALARM_LABEL%", sec.alarmOn() ? "on" : "off");
+        const auto *stack_cache = (stack_view && web._stack_cache) ? web._stack_cache->securityCache(node_id) : nullptr;
+        const bool sec_enabled = stack_view ? (stack_cache && stack_cache->has_data && stack_cache->enabled) : sec.controllerEnabled();
+        const bool sec_armed = stack_view ? (stack_cache && stack_cache->has_data && stack_cache->armed) : sec.armed();
+        const bool sec_alarm = stack_view ? (stack_cache && stack_cache->has_data && stack_cache->alarm) : sec.alarmOn();
+        const uint8_t sec_siren = stack_view
+                                      ? ((stack_cache && stack_cache->has_data) ? stack_cache->siren : SecurityController::kInvalidPort)
+                                      : sec.sirenPort();
+        page.replace("%SECURITY_ENABLED_CHECKED%", sec_enabled ? "checked" : "");
+            page.replace("%SECURITY_ENABLED_LABEL%", sec_enabled ? WebUiRu::ControllersPage::kEnabledNeut
+                                                                 : WebUiRu::ControllersPage::kDisabledNeut);
+            page.replace("%SECURITY_ARMED_LABEL%", sec_armed ? WebUiRu::Security::kArmedOn : WebUiRu::Security::kArmedOff);
+        page.replace("%SECURITY_ARMED_CHECKED%", sec_armed ? "checked" : "");
+        page.replace("%SECURITY_ALARM_LABEL%", sec_alarm ? "on" : "off");
         page.replace("%SECURITY_GSM_LABEL%", web.gsmStatusLabel_());
-        if (sec.sirenPort() != SecurityController::kInvalidPort)
-            page.replace("%SECURITY_SIREN%", String((unsigned)sec.sirenPort()));
+        if (sec_siren != SecurityController::kInvalidPort)
+            page.replace("%SECURITY_SIREN%", String((unsigned)sec_siren));
         else
             page.replace("%SECURITY_SIREN%", "");
         page.replace("%SECURITY_SENSORS%",
@@ -110,15 +206,19 @@ public:
                                 : web.listSecuritySensorsTiles_(start, end));
         page.replace("%SECURITY_SENSORS_PAGE%", String((unsigned)(page_idx + 1)));
         page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)max_pages));
-        page.replace("%SECURITY_SENSOR_JSON%", web.securityPortOptionsJson_());
-        page.replace("%SECURITY_SENSOR_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::DInput));
-        page.replace("%SECURITY_SIREN_JSON%", web.socketPortOptionsJson_(PortIO::PinType::Relay));
-        page.replace("%SECURITY_SIREN_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
+        page.replace("%SECURITY_SENSOR_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
+                                                          : web.securityPortOptionsJson_());
+        page.replace("%SECURITY_SENSOR_USED_JSON%", stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput)
+                                                               : web.globalUsedPortsJson_(PortIO::PinType::DInput));
+        page.replace("%SECURITY_SIREN_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay)
+                                                         : web.socketPortOptionsJson_(PortIO::PinType::Relay));
+        page.replace("%SECURITY_SIREN_USED_JSON%", stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
+                                                              : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%SECURITY_STATUS%", stack_view ? web.stackSecurityStatusText_(node_id) : web._security_status);
-        page.replace("%SECURITY_SENSORS_TITLE%", stack_view ? web.stackSecurityTitle_(node_id) : String("Датчики"));
+        page.replace("%SECURITY_SENSORS_TITLE%", stack_view ? web.stackSecurityTitle_(node_id) : String(WebUiRu::Security::kText));
         page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", (max_pages > 1) ? "" : "style=\"display:none\"");
         page.replace("%SECURITY_SAVE_BTN%",
-                     (stack_view || !web.webSessionIsAdmin_()) ? String("") : (String("<button class=\"primary\" name=\"action\" value=\"save\">") + WebUiRu::kSave + "</button>"));
+                     (!web.webSessionIsAdmin_()) ? String("") : (String("<button class=\"primary\" name=\"action\" value=\"save\">") + WebUiRu::kSave + "</button>"));
         page.replace("%SECURITY_DEVICE_SELECT%", web.securityDeviceSelectHtml_(node_id, stack_view));
         web.sendHtml_(request, page, set_cookie);
     }
@@ -135,8 +235,225 @@ public:
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackSecurityView_(node_id))
         {
-            web._security_status = "Доступно только на локальном устройстве";
-            web.sendRedirect_(request, "/security", set_cookie);
+            String back = String("/security?unit=stack&node=") + String((unsigned long)node_id);
+            const String page_str = web.paramValueAny_(request, "page");
+            if (page_str.length())
+            {
+                const int pv = page_str.toInt();
+                if (pv > 0)
+                {
+                    back += "&page=";
+                    back += String((unsigned)pv);
+                }
+            }
+            if (!web._stack_master || !web._stack_cache)
+            {
+                web._security_status = "Stack unavailable";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            auto *cache = web._stack_cache->securityCache(node_id);
+            if (!cache || !cache->has_data || !cache->items)
+            {
+                web.requestStackSecurity_(node_id);
+                web._security_status = "No data";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            const String action = web.paramValue_(request, "action");
+            if (action == "arm" || action == "disarm" || action == "clear")
+            {
+                StaticJsonDocument<192> doc;
+                doc["cmd_id"] = 0;
+                doc["feature"] = (uint8_t)StackFeature::Security;
+                doc["action"] = "set";
+                JsonObject p = doc["params"].to<JsonObject>();
+                if (action == "arm")
+                    p["armed"] = true;
+                else if (action == "disarm")
+                    p["armed"] = false;
+                else if (action == "clear")
+                    p["clear"] = true;
+                char payload[192] = {};
+                const size_t len = serializeJson(doc, payload, sizeof(payload));
+                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                           reinterpret_cast<const uint8_t *>(payload), len))
+                {
+                    web._security_status = "Send failed";
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+                web._stack_cache->requestSecurity(node_id);
+                web._security_status = "Updated";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            const bool enabled = request->hasParam("security_enabled", true);
+            String siren_str = web.paramValue_(request, "security_siren");
+            siren_str.trim();
+            int siren_port_i = -1;
+            bool has_siren = false;
+            if (siren_str.length() > 0)
+            {
+                if (siren_str == "none" || siren_str == "-" || siren_str == "")
+                {
+                    has_siren = true;
+                    siren_port_i = -1;
+                }
+                else
+                {
+                    const int v = siren_str.toInt();
+                    if (v < 0 || v > 255)
+                    {
+                        web._security_status = "Invalid siren port";
+                        web.sendRedirect_(request, back, set_cookie);
+                        return;
+                    }
+                    has_siren = true;
+                    siren_port_i = v;
+                }
+            }
+            bool changed = false;
+            auto *cache_mut = web._stack_cache->securityCache(node_id);
+            for (size_t i = 0; i < cache->item_count; ++i)
+            {
+                const auto &it = cache->items[i];
+                const String idx = String((unsigned)it.id);
+                const String prefix = String("sec") + idx + "_";
+                const String en_key = prefix + "en";
+                const String name_key = prefix + "name";
+                const String type_key = prefix + "type";
+                const String port_key = prefix + "port";
+                const String silent_key = prefix + "silent";
+                const bool has_any = request->hasParam(en_key, true) ||
+                                     request->hasParam(name_key, true) ||
+                                     request->hasParam(type_key, true) ||
+                                     request->hasParam(port_key, true) ||
+                                     request->hasParam(silent_key, true);
+                if (!has_any)
+                    continue;
+                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Security, it.id, node_id))
+                {
+                    web._security_status = String("ACL deny item: ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+
+                const bool item_enabled = request->hasParam(en_key, true);
+                const bool item_silent = request->hasParam(silent_key, true);
+                String name = web.paramValue_(request, name_key);
+                name.trim();
+                SecurityController::SensorType type = SecurityController::SensorType::Pir;
+                if (!web.parseSecurityType_(web.paramValue_(request, type_key), type))
+                {
+                    web._security_status = String("Invalid type for sensor ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+                uint8_t port = SecurityController::kInvalidPort;
+                if (!web.parseSocketPort_(web.paramValue_(request, port_key), port))
+                {
+                    web._security_status = String("Invalid port for sensor ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+
+                const String new_type = (type == SecurityController::SensorType::Reed) ? "reed" : "pir";
+                bool item_changed = false;
+                StaticJsonDocument<384> doc;
+                doc["cmd_id"] = 0;
+                doc["feature"] = (uint8_t)StackFeature::Security;
+                doc["action"] = "set";
+                JsonObject p = doc["params"].to<JsonObject>();
+                if ((i == 0) && cache_mut)
+                {
+                    if (cache_mut->enabled != enabled)
+                    {
+                        p["enabled"] = enabled;
+                        item_changed = true;
+                    }
+                    if (has_siren && ((cache_mut->siren == SecurityController::kInvalidPort ? -1 : (int)cache_mut->siren) != siren_port_i))
+                    {
+                        p["siren"] = siren_port_i;
+                        item_changed = true;
+                    }
+                }
+                JsonArray arr = p["items"].to<JsonArray>();
+                JsonObject o = arr.add<JsonObject>();
+                o["id"] = (unsigned)it.id;
+                if (it.enabled != item_enabled)
+                {
+                    o["enabled"] = item_enabled;
+                    item_changed = true;
+                }
+                if (String(it.name) != name)
+                {
+                    o["name"] = name;
+                    item_changed = true;
+                }
+                if (String(it.type) != new_type)
+                {
+                    o["type"] = new_type;
+                    item_changed = true;
+                }
+                if (it.port != port)
+                {
+                    o["port"] = (port == SecurityController::kInvalidPort) ? -1 : (int)port;
+                    item_changed = true;
+                }
+                if (it.silent != item_silent)
+                {
+                    o["silent"] = item_silent;
+                    item_changed = true;
+                }
+                if (!item_changed)
+                    continue;
+
+                char payload[384] = {};
+                const size_t len = serializeJson(doc, payload, sizeof(payload));
+                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                           reinterpret_cast<const uint8_t *>(payload), len))
+                {
+                    web._security_status = String("Send failed sensor: ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+                changed = true;
+                if (cache_mut && cache_mut->items)
+                {
+                    if (p["enabled"].is<bool>())
+                        cache_mut->enabled = enabled;
+                    if (p["siren"].is<int>())
+                        cache_mut->siren = (siren_port_i < 0) ? SecurityController::kInvalidPort : (uint8_t)siren_port_i;
+                    for (size_t k = 0; k < cache_mut->item_count; ++k)
+                    {
+                        auto &dst = cache_mut->items[k];
+                        if (dst.id != it.id)
+                            continue;
+                        dst.enabled = item_enabled;
+                        dst.silent = item_silent;
+                        dst.port = port;
+                        strncpy(dst.type, new_type.c_str(), sizeof(dst.type) - 1);
+                        dst.type[sizeof(dst.type) - 1] = '\0';
+                        strncpy(dst.name, name.c_str(), sizeof(dst.name) - 1);
+                        dst.name[sizeof(dst.name) - 1] = '\0';
+                        cache_mut->updated_ms = millis();
+                        cache_mut->has_data = true;
+                        break;
+                    }
+                }
+            }
+            if (changed)
+            {
+                web._stack_cache->requestSecurity(node_id);
+                web.refreshStackPorts_(node_id);
+                web._security_status = "Updated";
+            }
+            else
+            {
+                web._security_status = "Saved";
+            }
+            web.sendRedirect_(request, back, set_cookie);
             return;
         }
         if (!web._controllers)
@@ -361,3 +678,4 @@ public:
         }
     }
 };
+

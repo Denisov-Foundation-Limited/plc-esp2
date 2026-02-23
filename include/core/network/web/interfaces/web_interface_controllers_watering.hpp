@@ -176,7 +176,9 @@ public:
             const char *state_label = cfg.active ? WebUiRu::Watering::kText3
                                                  : (cfg.paused ? WebUiRu::Watering::kText4 : WebUiRu::Watering::kText5);
 
-            items += "<div class=\"tile\" data-active=\"";
+            items += "<div class=\"tile\" data-rule-id=\"";
+            items += String((unsigned)cfg.id);
+            items += "\" data-active=\"";
             items += cfg.active ? "1\">" : "0\">";
             items += WebUiRu::Watering::kText6;
             items += String((unsigned)cfg.id);
@@ -218,6 +220,13 @@ public:
                 if (cfg.status)
                     items += " checked";
                 items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+
+                items += WebUiRu::Watering::kSelectClassFieldMiniWateringSelectData;
+                if (cfg.port != WateringController::kInvalidPort)
+                    items += String((unsigned)cfg.port);
+                items += "\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_port\"></select></div>";
 
                 items += WebUiRu::Watering::kText28;
                 for (size_t wi = 0; wi < 7; ++wi)
@@ -336,7 +345,9 @@ public:
         {
             const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Watering, cfg.id);
             const char *state_label = st.active ? WebUiRu::Watering::kText3 : (st.paused ? WebUiRu::Watering::kText4 : WebUiRu::Watering::kText5);
-            items += "<div class=\"tile\" data-active=\"";
+            items += "<div class=\"tile\" data-rule-id=\"";
+            items += String((unsigned)cfg.id);
+            items += "\" data-active=\"";
             items += st.active ? "1\">" : "0\">";
             items += WebUiRu::Watering::kText6;
             items += String((unsigned)cfg.id);

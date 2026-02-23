@@ -17,7 +17,7 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Контроллеры</title>
+  <title>%CTRL_PAGE_TITLE%</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -134,172 +134,172 @@ static const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
   <div class="wrap">
     <div class="card">
       %NAV%
-      <h1>Контроллеры</h1>
+      <h1>%CTRL_PAGE_TITLE%</h1>
       %CONTROLLERS_EMPTY_HINT%
       <div class="grid">
         <div class="tile" style="%ACL_HIDE_SOCKETS%">
           <form method="POST" action="/controllers" id="sockets-form">
             <input type="hidden" name="ctrl" value="sockets">
             <div class="tile-head">
-              <a href="/sockets">Розетки</a>
+              <a href="/sockets">%CTRL_SOCKETS_TITLE%</a>
               <label class="switch">
                 <input type="checkbox" id="sockets-enabled" name="sockets_enabled" %SOCKETS_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
-          <span>Настройка реле и кнопок</span>
-          <span class="status">Розетки: <strong>%SOCKETS_ENABLED_LABEL%</strong></span>
+          <span>%CTRL_SOCKETS_DESC%</span>
+          <span class="status">%CTRL_SOCKETS_STATUS_LABEL% <strong>%SOCKETS_ENABLED_LABEL%</strong></span>
           <span class="status">%SOCKETS_STATUS%</span>
         </div>
         <div class="tile" style="%ACL_HIDE_LIGHTS%">
           <form method="POST" action="/controllers" id="lights-form">
             <input type="hidden" name="ctrl" value="lights">
             <div class="tile-head">
-              <a href="/lights">Свет</a>
+              <a href="/lights">%CTRL_LIGHTS_TITLE%</a>
               <label class="switch">
                 <input type="checkbox" id="lights-enabled" name="lights_enabled" %LIGHTS_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
-          <span>Настройка освещения</span>
-          <span class="status">Свет: <strong>%LIGHTS_ENABLED_LABEL%</strong></span>
+          <span>%CTRL_LIGHTS_DESC%</span>
+          <span class="status">%CTRL_LIGHTS_STATUS_LABEL% <strong>%LIGHTS_ENABLED_LABEL%</strong></span>
           <span class="status">%LIGHTS_STATUS%</span>
         </div>
         <div class="tile" style="%ACL_HIDE_METEO%">
           <form method="POST" action="/controllers" id="meteo-form">
             <input type="hidden" name="ctrl" value="meteo">
             <div class="tile-head">
-              <a href="/meteo">Метео</a>
+              <a href="/meteo">%CTRL_METEO_TITLE%</a>
               <label class="switch">
                 <input type="checkbox" id="meteo-enabled" name="meteo_enabled" %METEO_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
-          <span>Температура и влажность</span>
-          <span class="status">Метео: <strong>%METEO_ENABLED_LABEL%</strong></span>
+          <span>%CTRL_METEO_DESC%</span>
+          <span class="status">%CTRL_METEO_STATUS_LABEL% <strong>%METEO_ENABLED_LABEL%</strong></span>
           <span class="status">%METEO_STATUS%</span>
         </div>
         <div class="tile" style="%ACL_HIDE_THERMO%">
           <form method="POST" action="/controllers" id="thermo-form">
             <input type="hidden" name="ctrl" value="thermo">
             <div class="tile-head">
-              <a href="/thermo">Термо</a>
+              <a href="/thermo">%CTRL_THERMO_TITLE%</a>
               <label class="switch">
                 <input type="checkbox" id="thermo-enabled" name="thermo_enabled" %THERMO_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
-          <span>Климат: нагрев/охлаждение/авто</span>
-          <span class="status">Термо: <strong>%THERMO_ENABLED_LABEL%</strong></span>
+          <span>%CTRL_THERMO_DESC%</span>
+          <span class="status">%CTRL_THERMO_STATUS_LABEL% <strong>%THERMO_ENABLED_LABEL%</strong></span>
           <span class="status">%THERMO_STATUS%</span>
         </div>
         <div class="tile" style="%ACL_HIDE_TANKS%">
           <form method="POST" action="/controllers" id="tanks-form">
             <input type="hidden" name="ctrl" value="tanks">
             <div class="tile-head">
-              <a href="/tanks">Баки</a>
+              <a href="/tanks">%CTRL_TANKS_TITLE%</a>
               <label class="switch">
                 <input type="checkbox" id="tanks-enabled" name="tanks_enabled" %TANKS_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
-          <span>Уровень воды и автоматика</span>
-          <span class="status">Баки: <strong>%TANKS_ENABLED_LABEL%</strong></span>
+          <span>%CTRL_TANKS_DESC%</span>
+          <span class="status">%CTRL_TANKS_STATUS_LABEL% <strong>%TANKS_ENABLED_LABEL%</strong></span>
           <span class="status">%TANKS_STATUS%</span>
         </div>
         <div class="tile" style="%ACL_HIDE_WATERING%">
           <form method="POST" action="/controllers" id="watering-form">
             <input type="hidden" name="ctrl" value="watering">
             <div class="tile-head">
-              <a href="/watering">Полив</a>
+              <a href="/watering">%CTRL_WATERING_TITLE%</a>
               <label class="switch">
                 <input type="checkbox" id="watering-enabled" name="watering_enabled" %WATERING_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
-          <span>Правила и расписание полива</span>
-          <span class="status">Полив: <strong>%WATERING_ENABLED_LABEL%</strong></span>
+          <span>%CTRL_WATERING_DESC%</span>
+          <span class="status">%CTRL_WATERING_STATUS_LABEL% <strong>%WATERING_ENABLED_LABEL%</strong></span>
           <span class="status">%WATERING_STATUS%</span>
         </div>
 <div class="tile" style="%ACL_HIDE_SEPTIC%">
           <form method="POST" action="/controllers" id="septic-form">
             <input type="hidden" name="ctrl" value="septic">
             <div class="tile-head">
-              <a href="/septic">Септик</a>
+              <a href="/septic">%CTRL_SEPTIC_TITLE%</a>
               <label class="switch">
                 <input type="checkbox" id="septic-enabled" name="septic_enabled" %SEPTIC_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
-          <span>Уровень и индикация</span>
-          <span class="status">Септик: <strong>%SEPTIC_ENABLED_LABEL%</strong></span>
+          <span>%CTRL_SEPTIC_DESC%</span>
+          <span class="status">%CTRL_SEPTIC_STATUS_LABEL% <strong>%SEPTIC_ENABLED_LABEL%</strong></span>
           <span class="status">%SEPTIC_STATUS%</span>
         </div>
         <div class="tile" style="%ACL_HIDE_RING%">
           <form method="POST" action="/controllers" id="ring-form">
             <input type="hidden" name="ctrl" value="ring">
             <div class="tile-head">
-              <a href="/ring">Звонок</a>
+              <a href="/ring">%CTRL_RING_TITLE%</a>
               <label class="switch">
                 <input type="checkbox" id="ring-enabled" name="ring_enabled" %RING_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
-          <span>Кнопка и импульс реле</span>
-          <span class="status">Звонок: <strong>%RING_ENABLED_LABEL%</strong></span>
+          <span>%CTRL_RING_DESC%</span>
+          <span class="status">%CTRL_RING_STATUS_LABEL% <strong>%RING_ENABLED_LABEL%</strong></span>
           <span class="status">%RING_STATUS%</span>
         </div>
         <div class="tile" style="%ACL_HIDE_SECURITY%">
           <form method="POST" action="/controllers" id="security-form">
             <input type="hidden" name="ctrl" value="security">
             <div class="tile-head">
-              <a href="/security">Охрана</a>
+              <a href="/security">%CTRL_SECURITY_TITLE%</a>
               <label class="switch">
                 <input type="checkbox" id="security-enabled" name="security_enabled" %SECURITY_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
-          <span>Датчики и тревога</span>
-          <span class="status">Охрана: <strong>%SECURITY_ENABLED_LABEL%</strong></span>
+          <span>%CTRL_SECURITY_DESC%</span>
+          <span class="status">%CTRL_SECURITY_STATUS_LABEL% <strong>%SECURITY_ENABLED_LABEL%</strong></span>
           <span class="status">%SECURITY_STATUS%</span>
         </div>
         <div class="tile" style="%ACL_HIDE_AVR%">
           <form method="POST" action="/controllers" id="avr-form">
             <input type="hidden" name="ctrl" value="avr">
             <div class="tile-head">
-              <a href="/avr">АВР</a>
+              <a href="/avr">%CTRL_AVR_TITLE%</a>
               <label class="switch">
                 <input type="checkbox" id="avr-enabled" name="avr_enabled" %AVR_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
-          <span>Автоматический ввод резерва</span>
-          <span class="status">АВР: <strong>%AVR_ENABLED_LABEL%</strong></span>
+          <span>%CTRL_AVR_DESC%</span>
+          <span class="status">%CTRL_AVR_STATUS_LABEL% <strong>%AVR_ENABLED_LABEL%</strong></span>
           <span class="status">%AVR_STATUS%</span>
         </div>
         <div class="tile" style="%ACL_HIDE_LEAK%">
           <form method="POST" action="/controllers" id="leak-form">
             <input type="hidden" name="ctrl" value="leak">
             <div class="tile-head">
-              <a href="/leak">Протечки</a>
+              <a href="/leak">%CTRL_LEAK_TITLE%</a>
               <label class="switch">
                 <input type="checkbox" id="leak-enabled" name="leak_enabled" %LEAK_ENABLED_CHECKED% %CONTROLLERS_SWITCH_DISABLED%>
                 <span class="track"><span class="knob"></span></span>
               </label>
             </div>
           </form>
-          <span>Защита от протечек</span>
-          <span class="status">Протечки: <strong>%LEAK_ENABLED_LABEL%</strong></span>
+          <span>%CTRL_LEAK_DESC%</span>
+          <span class="status">%CTRL_LEAK_STATUS_LABEL% <strong>%LEAK_ENABLED_LABEL%</strong></span>
           <span class="status">%LEAK_STATUS%</span>
         </div>
       </div>

@@ -306,6 +306,8 @@ private:
             const auto *cfg = _sockets.configByIndex(i);
             if (!cfg)
                 continue;
+            if (!cfg->enabled)
+                continue;
             markPortUsed_(_gpio_usage_cache.used, cfg->button_port);
             markPortUsed_(_gpio_usage_cache.used, cfg->relay_port);
         }
@@ -313,6 +315,8 @@ private:
         {
             const auto *cfg = _sockets.lightConfigByIndex(i);
             if (!cfg)
+                continue;
+            if (!cfg->enabled)
                 continue;
             markPortUsed_(_gpio_usage_cache.used, cfg->button_port);
             markPortUsed_(_gpio_usage_cache.used, cfg->relay_port);

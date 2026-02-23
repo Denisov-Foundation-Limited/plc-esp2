@@ -44,6 +44,11 @@ public:
         page.replace("%TGBOT_PROXY_HOST%", web._tgbot ? web._tgbot->proxyHost() : String(""));
         page.replace("%TGBOT_PROXY_PORT%", web._tgbot ? String((unsigned)web._tgbot->proxyPort()) : String("0"));
         page.replace("%TGBOT_PROXY_PATH%", web._tgbot ? web._tgbot->proxyPath() : String(""));
+        page.replace("%TGBOT_CLIENT_LABEL%", WebUiRu::TelegramPage::kClient);
+        page.replace("%TGBOT_ACCESS_TITLE%", WebUiRu::TelegramPage::kAccess);
+        page.replace("%TGBOT_LAST_CHAT_ID_LABEL%", WebUiRu::TelegramPage::kLastChatId);
+        page.replace("%TGBOT_USE_PROXY_LABEL%", WebUiRu::TelegramPage::kUseProxy);
+        page.replace("%TGBOT_UNKNOWN_TEXT%", WebUiRu::TelegramPage::kUnknown);
         page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         page.replace("%TGBOT_STATUS%", web._tgbot_status);
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
@@ -124,11 +129,11 @@ public:
             save_ok = web.saveWifiConfig_();
 
         if (!changed)
-            web._tgbot_status = "No changes";
+            web._tgbot_status = WebUiRu::Common::kNoChangesAlt;
         else if (!save_ok)
-            web._tgbot_status = "Save failed";
+            web._tgbot_status = WebUiRu::Common::kSaveFailed;
         else
-            web._tgbot_status = "Saved";
+            web._tgbot_status = WebUiRu::Common::kSaved;
 
         web.sendRedirect_(request, "/telegram", set_cookie);
     }

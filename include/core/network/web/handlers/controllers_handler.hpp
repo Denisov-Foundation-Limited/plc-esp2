@@ -42,6 +42,40 @@ public:
         String page = FPSTR(kWebInterfaceControllersHtml);
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", web.navHtml_());
+        page.replace("%CTRL_PAGE_TITLE%", WebUiRu::ControllersPage::kPageTitle);
+        page.replace("%CTRL_SOCKETS_TITLE%", WebUiRu::ControllersPage::kSocketsTitle);
+        page.replace("%CTRL_SOCKETS_DESC%", WebUiRu::ControllersPage::kSocketsDesc);
+        page.replace("%CTRL_SOCKETS_STATUS_LABEL%", String(WebUiRu::ControllersPage::kSocketsStatusLabel) + " ");
+        page.replace("%CTRL_LIGHTS_TITLE%", WebUiRu::ControllersPage::kLightsTitle);
+        page.replace("%CTRL_LIGHTS_DESC%", WebUiRu::ControllersPage::kLightsDesc);
+        page.replace("%CTRL_LIGHTS_STATUS_LABEL%", String(WebUiRu::ControllersPage::kLightsStatusLabel) + " ");
+        page.replace("%CTRL_METEO_TITLE%", WebUiRu::ControllersPage::kMeteoTitle);
+        page.replace("%CTRL_METEO_DESC%", WebUiRu::ControllersPage::kMeteoDesc);
+        page.replace("%CTRL_METEO_STATUS_LABEL%", String(WebUiRu::ControllersPage::kMeteoStatusLabel) + " ");
+        page.replace("%CTRL_THERMO_TITLE%", WebUiRu::ControllersPage::kThermoTitle);
+        page.replace("%CTRL_THERMO_DESC%", WebUiRu::ControllersPage::kThermoDesc);
+        page.replace("%CTRL_THERMO_STATUS_LABEL%", String(WebUiRu::ControllersPage::kThermoStatusLabel) + " ");
+        page.replace("%CTRL_TANKS_TITLE%", WebUiRu::ControllersPage::kTanksTitle);
+        page.replace("%CTRL_TANKS_DESC%", WebUiRu::ControllersPage::kTanksDesc);
+        page.replace("%CTRL_TANKS_STATUS_LABEL%", String(WebUiRu::ControllersPage::kTanksStatusLabel) + " ");
+        page.replace("%CTRL_WATERING_TITLE%", WebUiRu::ControllersPage::kWateringTitle);
+        page.replace("%CTRL_WATERING_DESC%", WebUiRu::ControllersPage::kWateringDesc);
+        page.replace("%CTRL_WATERING_STATUS_LABEL%", String(WebUiRu::ControllersPage::kWateringStatusLabel) + " ");
+        page.replace("%CTRL_SEPTIC_TITLE%", WebUiRu::ControllersPage::kSepticTitle);
+        page.replace("%CTRL_SEPTIC_DESC%", WebUiRu::ControllersPage::kSepticDesc);
+        page.replace("%CTRL_SEPTIC_STATUS_LABEL%", String(WebUiRu::ControllersPage::kSepticStatusLabel) + " ");
+        page.replace("%CTRL_RING_TITLE%", WebUiRu::ControllersPage::kRingTitle);
+        page.replace("%CTRL_RING_DESC%", WebUiRu::ControllersPage::kRingDesc);
+        page.replace("%CTRL_RING_STATUS_LABEL%", String(WebUiRu::ControllersPage::kRingStatusLabel) + " ");
+        page.replace("%CTRL_SECURITY_TITLE%", WebUiRu::ControllersPage::kSecurityTitle);
+        page.replace("%CTRL_SECURITY_DESC%", WebUiRu::ControllersPage::kSecurityDesc);
+        page.replace("%CTRL_SECURITY_STATUS_LABEL%", String(WebUiRu::ControllersPage::kSecurityStatusLabel) + " ");
+        page.replace("%CTRL_AVR_TITLE%", WebUiRu::ControllersPage::kAvrTitle);
+        page.replace("%CTRL_AVR_DESC%", WebUiRu::ControllersPage::kAvrDesc);
+        page.replace("%CTRL_AVR_STATUS_LABEL%", String(WebUiRu::ControllersPage::kAvrStatusLabel) + " ");
+        page.replace("%CTRL_LEAK_TITLE%", WebUiRu::ControllersPage::kLeakTitle);
+        page.replace("%CTRL_LEAK_DESC%", WebUiRu::ControllersPage::kLeakDesc);
+        page.replace("%CTRL_LEAK_STATUS_LABEL%", String(WebUiRu::ControllersPage::kLeakStatusLabel) + " ");
         const bool allow_sockets = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Sockets);
         const bool allow_lights = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Lights);
         const bool allow_meteo = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Meteo);
@@ -86,7 +120,7 @@ public:
                                  show_watering || show_septic || show_ring || show_security || show_avr || show_leak;
         page.replace("%CONTROLLERS_EMPTY_HINT%",
                      (!can_edit && !any_visible)
-                         ? "<p class=\"status\">Нет доступных контроллеров по ACL.</p>"
+                         ? (String("<p class=\"status\">") + WebUiRu::ControllersPage::kNoAclControllers + "</p>")
                          : "");
         page.replace("%ACL_HIDE_SOCKETS%", show_sockets ? "" : "display:none;");
         page.replace("%ACL_HIDE_LIGHTS%", show_lights ? "" : "display:none;");
@@ -103,62 +137,62 @@ public:
         {
             const bool enabled = has_config && web._controllers->sockets().controllerEnabled();
             page.replace("%SOCKETS_ENABLED_CHECKED%", enabled ? "checked" : "");
-            page.replace("%SOCKETS_ENABLED_LABEL%", enabled ? "включены" : "выключены");
+            page.replace("%SOCKETS_ENABLED_LABEL%", enabled ? WebUiRu::ControllersPage::kEnabledPlural : WebUiRu::ControllersPage::kDisabledPlural);
             const bool lights_enabled = has_config && web._controllers->sockets().lightsEnabled();
             page.replace("%LIGHTS_ENABLED_CHECKED%", lights_enabled ? "checked" : "");
-            page.replace("%LIGHTS_ENABLED_LABEL%", lights_enabled ? "включены" : "выключены");
+            page.replace("%LIGHTS_ENABLED_LABEL%", lights_enabled ? WebUiRu::ControllersPage::kEnabledPlural : WebUiRu::ControllersPage::kDisabledPlural);
             const bool meteo_enabled = has_config && web._controllers->meteo().controllerEnabled();
             page.replace("%METEO_ENABLED_CHECKED%", meteo_enabled ? "checked" : "");
-            page.replace("%METEO_ENABLED_LABEL%", meteo_enabled ? "включено" : "выключено");
+            page.replace("%METEO_ENABLED_LABEL%", meteo_enabled ? WebUiRu::ControllersPage::kEnabledNeut : WebUiRu::ControllersPage::kDisabledNeut);
             const bool thermo_enabled = has_config && web._controllers->thermo().controllerEnabled();
             page.replace("%THERMO_ENABLED_CHECKED%", thermo_enabled ? "checked" : "");
-            page.replace("%THERMO_ENABLED_LABEL%", thermo_enabled ? "включено" : "выключено");
+            page.replace("%THERMO_ENABLED_LABEL%", thermo_enabled ? WebUiRu::ControllersPage::kEnabledNeut : WebUiRu::ControllersPage::kDisabledNeut);
             const bool tanks_enabled = has_config && web._controllers->tanks().controllerEnabled();
             page.replace("%TANKS_ENABLED_CHECKED%", tanks_enabled ? "checked" : "");
-            page.replace("%TANKS_ENABLED_LABEL%", tanks_enabled ? "включены" : "выключены");
+            page.replace("%TANKS_ENABLED_LABEL%", tanks_enabled ? WebUiRu::ControllersPage::kEnabledPlural : WebUiRu::ControllersPage::kDisabledPlural);
             const bool septic_enabled = has_config && web._controllers->septic().controllerEnabled();
             page.replace("%SEPTIC_ENABLED_CHECKED%", septic_enabled ? "checked" : "");
-            page.replace("%SEPTIC_ENABLED_LABEL%", septic_enabled ? "включены" : "выключены");
+            page.replace("%SEPTIC_ENABLED_LABEL%", septic_enabled ? WebUiRu::ControllersPage::kEnabledPlural : WebUiRu::ControllersPage::kDisabledPlural);
             const bool ring_enabled = has_config && web._controllers->ring().controllerEnabled();
             page.replace("%RING_ENABLED_CHECKED%", ring_enabled ? "checked" : "");
-            page.replace("%RING_ENABLED_LABEL%", ring_enabled ? "включен" : "выключен");
+            page.replace("%RING_ENABLED_LABEL%", ring_enabled ? WebUiRu::ControllersPage::kEnabledMasc : WebUiRu::ControllersPage::kDisabledMasc);
             const bool security_enabled = has_config && web._controllers->security().controllerEnabled();
             page.replace("%SECURITY_ENABLED_CHECKED%", security_enabled ? "checked" : "");
             const bool watering_enabled = has_config && web._controllers->watering().controllerEnabled();
             page.replace("%WATERING_ENABLED_CHECKED%", watering_enabled ? "checked" : "");
             const bool avr_enabled = has_config && web._controllers->avr().controllerEnabled();
             page.replace("%AVR_ENABLED_CHECKED%", avr_enabled ? "checked" : "");
-            page.replace("%AVR_ENABLED_LABEL%", avr_enabled ? "включен" : "выключен");
+            page.replace("%AVR_ENABLED_LABEL%", avr_enabled ? WebUiRu::ControllersPage::kEnabledMasc : WebUiRu::ControllersPage::kDisabledMasc);
             const bool leak_enabled = has_config && web._controllers->leak().controllerEnabled();
             page.replace("%LEAK_ENABLED_CHECKED%", leak_enabled ? "checked" : "");
-            page.replace("%LEAK_ENABLED_LABEL%", leak_enabled ? "включены" : "выключены");
-            page.replace("%SECURITY_ENABLED_LABEL%", security_enabled ? "включена" : "выключена");
-            page.replace("%WATERING_ENABLED_LABEL%", watering_enabled ? "включен" : "выключен");
+            page.replace("%LEAK_ENABLED_LABEL%", leak_enabled ? WebUiRu::ControllersPage::kEnabledPlural : WebUiRu::ControllersPage::kDisabledPlural);
+            page.replace("%SECURITY_ENABLED_LABEL%", security_enabled ? WebUiRu::ControllersPage::kEnabledFem : WebUiRu::ControllersPage::kDisabledFem);
+            page.replace("%WATERING_ENABLED_LABEL%", watering_enabled ? WebUiRu::ControllersPage::kEnabledMasc : WebUiRu::ControllersPage::kDisabledMasc);
         }
         else
         {
             page.replace("%SOCKETS_ENABLED_CHECKED%", "");
-            page.replace("%SOCKETS_ENABLED_LABEL%", "недоступно");
+            page.replace("%SOCKETS_ENABLED_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%LIGHTS_ENABLED_CHECKED%", "");
-            page.replace("%LIGHTS_ENABLED_LABEL%", "недоступно");
+            page.replace("%LIGHTS_ENABLED_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%METEO_ENABLED_CHECKED%", "");
-            page.replace("%METEO_ENABLED_LABEL%", "недоступно");
+            page.replace("%METEO_ENABLED_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%THERMO_ENABLED_CHECKED%", "");
-            page.replace("%THERMO_ENABLED_LABEL%", "недоступно");
+            page.replace("%THERMO_ENABLED_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%TANKS_ENABLED_CHECKED%", "");
-            page.replace("%TANKS_ENABLED_LABEL%", "недоступно");
+            page.replace("%TANKS_ENABLED_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%SEPTIC_ENABLED_CHECKED%", "");
-            page.replace("%SEPTIC_ENABLED_LABEL%", "недоступно");
+            page.replace("%SEPTIC_ENABLED_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%RING_ENABLED_CHECKED%", "");
             page.replace("%RING_ENABLED_LABEL%", "");
             page.replace("%SECURITY_ENABLED_CHECKED%", "");
-            page.replace("%SECURITY_ENABLED_LABEL%", "недоступно");
+            page.replace("%SECURITY_ENABLED_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%WATERING_ENABLED_CHECKED%", "");
             page.replace("%AVR_ENABLED_CHECKED%", "");
-            page.replace("%AVR_ENABLED_LABEL%", "недоступно");
+            page.replace("%AVR_ENABLED_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%LEAK_ENABLED_CHECKED%", "");
-            page.replace("%LEAK_ENABLED_LABEL%", "недоступно");
-            page.replace("%WATERING_ENABLED_LABEL%", "недоступно");
+            page.replace("%LEAK_ENABLED_LABEL%", WebUiRu::ControllersPage::kUnavailable);
+            page.replace("%WATERING_ENABLED_LABEL%", WebUiRu::ControllersPage::kUnavailable);
         }
         page.replace("%SOCKETS_STATUS%", web._sockets_status);
         page.replace("%LIGHTS_STATUS%", web._lights_status);
@@ -186,13 +220,13 @@ public:
             return;
         if (!hasStartupConfig_())
         {
-            web._controllers_status = "Недоступно до сохранения startup-config";
+            web._controllers_status = WebUiRu::ControllersPage::kUnavailableUntilStartup;
             web.sendRedirect_(request, "/controllers", set_cookie);
             return;
         }
         if (!web._controllers)
         {
-            web._controllers_status = "Контроллеры недоступны";
+            web._controllers_status = WebUiRu::Common::kControllersUnavailable;
             web.sendRedirect_(request, "/controllers", set_cookie);
             return;
         }
@@ -369,16 +403,16 @@ public:
             if (!web._configs_manager)
             {
                 ok = false;
-                web._controllers_status = "Менеджер конфигурации недоступен";
+                web._controllers_status = WebUiRu::Common::kConfigManagerUnavailable;
             }
             else if (!web._configs_manager->save())
             {
                 ok = false;
-                web._controllers_status = "Ошибка сохранения";
+                web._controllers_status = WebUiRu::Common::kSaveFailed;
             }
         }
         if (ok)
-            web._controllers_status = changed ? "Обновлено" : "Без изменений";
+            web._controllers_status = changed ? WebUiRu::Common::kUpdated : WebUiRu::Common::kNoChanges;
         web._sockets_status = web._controllers_status;
         web._lights_status = web._controllers_status;
         web._meteo_status = web._controllers_status;

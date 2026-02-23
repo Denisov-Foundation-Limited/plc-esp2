@@ -862,6 +862,12 @@ private:
         case 10:
             stack_cache.requestLeak(node_id);
             break;
+        case 11:
+            stack_cache.requestPorts(node_id);
+            break;
+        case 12:
+            stack_cache.requestTempSensors(node_id);
+            break;
         default:
             break;
         }
@@ -3404,7 +3410,7 @@ private:
             }
         }
 
-        if (!state->sync_complete_logged && state->logged_mask == kInvAll)
+        if (!state->sync_complete_logged && (state->logged_mask & kInvAll) == kInvAll)
         {
             const String unit = stackNodeLabel_(node_id);
             core.logs.info(F("STACK"), F("Sync slave unit complete: %s"), unit.c_str());
@@ -3478,7 +3484,7 @@ private:
     static constexpr uint16_t kInvAvr = 1u << 9;
     static constexpr uint16_t kInvAll =
         kInvSockets | kInvLights | kInvMeteo | kInvThermo | kInvTanks |
-        kInvSeptic | kInvSecurity | kInvWatering | kInvLeak | kInvAvr;
+        kInvSeptic | kInvSecurity | kInvWatering | kInvLeak;
 
     void broadcastSecurityAlarm_(bool alarm_on)
     {
@@ -3594,7 +3600,7 @@ private:
     }
 
     static constexpr uint32_t kStackPollMs = 2000;
-    static constexpr uint8_t kStackPollFeatureCount = 11;
+    static constexpr uint8_t kStackPollFeatureCount = 13;
 
     bool _pending_detect = false;
     uint8_t _pending_sensor_id = 0;
