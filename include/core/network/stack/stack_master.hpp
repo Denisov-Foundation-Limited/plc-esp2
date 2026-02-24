@@ -368,11 +368,29 @@ private:
                 Session *s = findByNode_(hello.node_id);
                 if (s && s != session)
                 {
-                    // Node reconnected: release old session to avoid binding to a stale client.
+                    const bool same_ip = (session && s->ip.length() && session->ip.length() && s->ip == session->ip);
+                    const bool same_name = (s->name.length() && hello.name.length() && s->name == hello.name);
                     if (_log)
-                        _log->info(F("STACK"), F("Unit reconnected: %s unit_id: 0x%08lX"),
-                                   hello.name.length() ? hello.name.c_str() : "-",
-                                   (unsigned long)hello.node_id);
+                    {
+                        if (same_ip || same_name)
+                        {
+                            _log->info(F("STACK"), F("Unit reconnected: %s unit_id: 0x%08lX"),
+                                       hello.name.length() ? hello.name.c_str() : "-",
+                                       (unsigned long)hello.node_id);
+                        }
+                        else
+                        {
+                            _log->warn(F("STACK"),
+                                       F("Duplicate unit_id conflict: 0x%08lX old: %s ip: %s new: %s ip: %s"),
+                                       (unsigned long)hello.node_id,
+                                       s->name.length() ? s->name.c_str() : "-",
+                                       s->ip.length() ? s->ip.c_str() : "n/a",
+                                       hello.name.length() ? hello.name.c_str() : "-",
+                                       (session && session->ip.length()) ? session->ip.c_str() : "n/a");
+                        }
+                    }
+                    if (s->client && s->client->connected())
+                        s->client->close(true);
                     freeSession_(s);
                     s = nullptr;
                 }

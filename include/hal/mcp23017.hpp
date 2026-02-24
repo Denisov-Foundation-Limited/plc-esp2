@@ -1,4 +1,4 @@
-/**********************************************************************/
+﻿/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -11,8 +11,6 @@
 
 #pragma once
 
-#include <Arduino.h>
-#include <Wire.h>
 #include <stdint.h>
 
 class TwoWire;
@@ -37,301 +35,36 @@ public:
 
     Mcp23017() = default;
 
-    bool begin(TwoWire &wire, uint8_t addr = 0x20)
-    {
-        _wire = &wire;
-        _addr = addr;
-        _err = Error::Ok;
-        _cache_valid = false;
+    bool begin(TwoWire &wire, uint8_t addr = 0x20);
 
-        if (!cacheFromDevice_())
-            return false;
+    Error lastError() const;
+    bool ready() const;
 
-        return true;
-    }
-
-    Error lastError() const { return _err; }
-    bool ready() const { return _wire != nullptr; }
-
-    bool pinMode(uint8_t pin, uint8_t mode)
-    {
-        if (pin > 15)
-        {
-            _err = Error::InvalidPin;
-            return false;
-        }
-        const Port port = (pin >= 8) ? Port::B : Port::A;
-        const uint8_t bit = (uint8_t)(pin % 8);
-        const uint8_t mask = (uint8_t)(1u << bit);
-
-        bool is_output = (mode == OUTPUT || mode == OUTPUT_OPEN_DRAIN);
-        if (is_output)
-        {
-            _iodir[(uint8_t)port] &= (uint8_t)~mask;
-            _gppu[(uint8_t)port] &= (uint8_t)~mask;
-            _dirty_dir = true;
-            _dirty_pull = true;
-            return true;
-        }
-
-        _iodir[(uint8_t)port] |= mask;
-        if (mode == INPUT_PULLUP)
-            _gppu[(uint8_t)port] |= mask;
-        else
-            _gppu[(uint8_t)port] &= (uint8_t)~mask;
-        _dirty_dir = true;
-        _dirty_pull = true;
-        return true;
-    }
-
-    bool writePin(uint8_t pin, bool level)
-    {
-        if (pin > 15)
-        {
-            _err = Error::InvalidPin;
-            return false;
-        }
-        const Port port = (pin >= 8) ? Port::B : Port::A;
-        const uint8_t bit = (uint8_t)(pin % 8);
-        const uint8_t mask = (uint8_t)(1u << bit);
-        if (level)
-            _olat[(uint8_t)port] |= mask;
-        else
-            _olat[(uint8_t)port] &= (uint8_t)~mask;
-        _dirty_olat = true;
-        return true;
-    }
-
-    bool readPin(uint8_t pin, bool &out) const
-    {
-        if (pin > 15)
-            return false;
-        const Port port = (pin >= 8) ? Port::B : Port::A;
-        uint8_t v = 0;
-        if (!readGpio(port, v))
-            return false;
-        out = (v & (uint8_t)(1u << (pin % 8))) != 0;
-        return true;
-    }
-
-    bool setDirection(Port port, uint8_t dir_mask)
-    {
-        if (port != Port::A && port != Port::B)
-        {
-            _err = Error::InvalidPort;
-            return false;
-        }
-        _iodir[(uint8_t)port] = dir_mask;
-        _dirty_dir = true;
-        return true;
-    }
-
-    bool setPullup(Port port, uint8_t pull_mask)
-    {
-        if (port != Port::A && port != Port::B)
-        {
-            _err = Error::InvalidPort;
-            return false;
-        }
-        _gppu[(uint8_t)port] = pull_mask;
-        _dirty_pull = true;
-        return true;
-    }
-
-    bool setPolarity(Port port, uint8_t pol_mask)
-    {
-        if (port != Port::A && port != Port::B)
-        {
-            _err = Error::InvalidPort;
-            return false;
-        }
-        _ipol[(uint8_t)port] = pol_mask;
-        return setPortReg_(REG_IPOLA, port, pol_mask);
-    }
-
-    bool setInterruptEnable(Port port, uint8_t mask)
-    {
-        if (port != Port::A && port != Port::B)
-        {
-            _err = Error::InvalidPort;
-            return false;
-        }
-        _gpinten[(uint8_t)port] = mask;
-        return setPortReg_(REG_GPINTENA, port, mask);
-    }
-
-    bool setInterruptDefault(Port port, uint8_t mask)
-    {
-        if (port != Port::A && port != Port::B)
-        {
-            _err = Error::InvalidPort;
-            return false;
-        }
-        _defval[(uint8_t)port] = mask;
-        return setPortReg_(REG_DEFVALA, port, mask);
-    }
-
-    bool setInterruptControl(Port port, uint8_t mask)
-    {
-        if (port != Port::A && port != Port::B)
-        {
-            _err = Error::InvalidPort;
-            return false;
-        }
-        _intcon[(uint8_t)port] = mask;
-        return setPortReg_(REG_INTCONA, port, mask);
-    }
-
-    bool writePort(Port port, uint8_t value)
-    {
-        if (port != Port::A && port != Port::B)
-        {
-            _err = Error::InvalidPort;
-            return false;
-        }
-        _olat[(uint8_t)port] = value;
-        _dirty_olat = true;
-        return true;
-    }
-
-    bool readPort(Port port, uint8_t &out) const
-    {
-        return readGpio(port, out);
-    }
-
-    bool readGpio(Port port, uint8_t &out) const
-    {
-        return getPortReg_(REG_GPIOA, port, out);
-    }
-
-    bool readOlat(Port port, uint8_t &out) const
-    {
-        return getPortReg_(REG_OLATA, port, out);
-    }
-
-    bool writeOlat(Port port, uint8_t value)
-    {
-        if (port != Port::A && port != Port::B)
-        {
-            _err = Error::InvalidPort;
-            return false;
-        }
-        _olat[(uint8_t)port] = value;
-        _dirty_olat = true;
-        return true;
-    }
-
-    bool readInterruptFlags(Port port, uint8_t &out) const
-    {
-        return getPortReg_(REG_INTFA, port, out);
-    }
-
-    bool readInterruptCapture(Port port, uint8_t &out) const
-    {
-        return getPortReg_(REG_INTCAPA, port, out);
-    }
-
-    bool setBanked(bool banked)
-    {
-        const bool was_banked = isBanked_();
-        updateBit_(_iocon, 7, banked);
-        return writeIocon_(_iocon, was_banked);
-    }
-
-    bool setSequential(bool enable)
-    {
-        updateBit_(_iocon, 5, !enable);
-        return writeIocon_(_iocon, isBanked_());
-    }
-
-    bool setMirror(bool enable)
-    {
-        updateBit_(_iocon, 6, enable);
-        return writeIocon_(_iocon, isBanked_());
-    }
-
-    bool setOpenDrain(bool enable)
-    {
-        updateBit_(_iocon, 2, enable);
-        return writeIocon_(_iocon, isBanked_());
-    }
-
-    bool setInterruptPolarity(bool active_high)
-    {
-        updateBit_(_iocon, 1, active_high);
-        return writeIocon_(_iocon, isBanked_());
-    }
-
-    bool setHardwareAddressing(bool enable)
-    {
-        updateBit_(_iocon, 3, enable);
-        return writeIocon_(_iocon, isBanked_());
-    }
-
-    bool flush()
-    {
-        bool ok = true;
-        if (_dirty_dir)
-        {
-            ok = setPortReg_(REG_IODIRA, Port::A, _iodir[0]) && setPortReg_(REG_IODIRA, Port::B, _iodir[1]);
-            _dirty_dir = false;
-        }
-        if (_dirty_pull)
-        {
-            ok = setPortReg_(REG_GPPUA, Port::A, _gppu[0]) && setPortReg_(REG_GPPUA, Port::B, _gppu[1]) && ok;
-            _dirty_pull = false;
-        }
-        if (_dirty_olat)
-        {
-            ok = setPortReg_(REG_OLATA, Port::A, _olat[0]) && setPortReg_(REG_OLATA, Port::B, _olat[1]) && ok;
-            _dirty_olat = false;
-        }
-        return ok;
-    }
-
-    bool writeReg(uint8_t reg, uint8_t value)
-    {
-        if (!_wire)
-        {
-            _err = Error::NoBus;
-            return false;
-        }
-        _wire->beginTransmission(_addr);
-        _wire->write(reg);
-        _wire->write(value);
-        if (_wire->endTransmission() != 0)
-        {
-            _err = Error::I2c;
-            return false;
-        }
-        _err = Error::Ok;
-        return true;
-    }
-
-    bool readReg(uint8_t reg, uint8_t &out) const
-    {
-        if (!_wire)
-        {
-            _err = Error::NoBus;
-            return false;
-        }
-        _wire->beginTransmission(_addr);
-        _wire->write(reg);
-        if (_wire->endTransmission(false) != 0)
-        {
-            _err = Error::I2c;
-            return false;
-        }
-        const uint8_t got = _wire->requestFrom(_addr, (uint8_t)1);
-        if (got != 1)
-        {
-            _err = Error::I2c;
-            return false;
-        }
-        out = _wire->read();
-        _err = Error::Ok;
-        return true;
-    }
+    bool pinMode(uint8_t pin, uint8_t mode);
+    bool writePin(uint8_t pin, bool level);
+    bool readPin(uint8_t pin, bool &out) const;
+    bool setDirection(Port port, uint8_t dir_mask);
+    bool setPullup(Port port, uint8_t pull_mask);
+    bool setPolarity(Port port, uint8_t pol_mask);
+    bool setInterruptEnable(Port port, uint8_t mask);
+    bool setInterruptDefault(Port port, uint8_t mask);
+    bool setInterruptControl(Port port, uint8_t mask);
+    bool writePort(Port port, uint8_t value);
+    bool readPort(Port port, uint8_t &out) const;
+    bool readGpio(Port port, uint8_t &out) const;
+    bool readOlat(Port port, uint8_t &out) const;
+    bool writeOlat(Port port, uint8_t value);
+    bool readInterruptFlags(Port port, uint8_t &out) const;
+    bool readInterruptCapture(Port port, uint8_t &out) const;
+    bool setBanked(bool banked);
+    bool setSequential(bool enable);
+    bool setMirror(bool enable);
+    bool setOpenDrain(bool enable);
+    bool setInterruptPolarity(bool active_high);
+    bool setHardwareAddressing(bool enable);
+    bool flush();
+    bool writeReg(uint8_t reg, uint8_t value);
+    bool readReg(uint8_t reg, uint8_t &out) const;
 
 private:
     static constexpr uint8_t REG_IODIRA = 0x00;
@@ -374,173 +107,12 @@ private:
     uint8_t _iocon = 0x00;
     bool _cache_valid = false;
 
-    bool cacheFromDevice_()
-    {
-        if (!_wire)
-        {
-            _err = Error::NoBus;
-            return false;
-        }
-
-        uint8_t v = 0;
-        if (!readReg(REG_IODIRA, v))
-            return false;
-        _iodir[0] = v;
-        if (!readReg(REG_IODIRB, v))
-            return false;
-        _iodir[1] = v;
-
-        if (!readReg(REG_IPOLA, v))
-            return false;
-        _ipol[0] = v;
-        if (!readReg(REG_IPOLB, v))
-            return false;
-        _ipol[1] = v;
-
-        if (!readReg(REG_GPINTENA, v))
-            return false;
-        _gpinten[0] = v;
-        if (!readReg(REG_GPINTENB, v))
-            return false;
-        _gpinten[1] = v;
-
-        if (!readReg(REG_DEFVALA, v))
-            return false;
-        _defval[0] = v;
-        if (!readReg(REG_DEFVALB, v))
-            return false;
-        _defval[1] = v;
-
-        if (!readReg(REG_INTCONA, v))
-            return false;
-        _intcon[0] = v;
-        if (!readReg(REG_INTCONB, v))
-            return false;
-        _intcon[1] = v;
-
-        if (!readReg(REG_IOCON, v))
-            return false;
-        _iocon = v;
-
-        if (!readReg(REG_GPPUA, v))
-            return false;
-        _gppu[0] = v;
-        if (!readReg(REG_GPPUB, v))
-            return false;
-        _gppu[1] = v;
-
-        if (!readReg(REG_OLATA, v))
-            return false;
-        _olat[0] = v;
-        if (!readReg(REG_OLATB, v))
-            return false;
-        _olat[1] = v;
-
-        _cache_valid = true;
-        return true;
-    }
-
-    bool updateBit_(uint8_t &reg, uint8_t bit, bool value)
-    {
-        const uint8_t mask = (uint8_t)(1u << bit);
-        if (value)
-            reg |= mask;
-        else
-            reg &= (uint8_t)~mask;
-        return true;
-    }
-
-    bool setPortReg_(uint8_t base_reg, Port port, uint8_t value)
-    {
-        uint8_t reg = 0;
-        if (!regForPort_(base_reg, port, reg))
-            return false;
-        return writeReg(reg, value);
-    }
-
-    bool getPortReg_(uint8_t base_reg, Port port, uint8_t &out) const
-    {
-        uint8_t reg = 0;
-        if (!regForPort_(base_reg, port, reg))
-            return false;
-        return readReg(reg, out);
-    }
-
-    bool regForPort_(uint8_t base_reg, Port port, uint8_t &out) const
-    {
-        if (port != Port::A && port != Port::B)
-            return false;
-
-        if (!isBanked_())
-        {
-            out = (uint8_t)(base_reg + (port == Port::B ? 1 : 0));
-            return true;
-        }
-
-        switch (base_reg)
-        {
-        case REG_IODIRA:
-            out = (port == Port::A) ? 0x00 : 0x10;
-            return true;
-        case REG_IPOLA:
-            out = (port == Port::A) ? 0x01 : 0x11;
-            return true;
-        case REG_GPINTENA:
-            out = (port == Port::A) ? 0x02 : 0x12;
-            return true;
-        case REG_DEFVALA:
-            out = (port == Port::A) ? 0x03 : 0x13;
-            return true;
-        case REG_INTCONA:
-            out = (port == Port::A) ? 0x04 : 0x14;
-            return true;
-        case REG_IOCON:
-            out = (port == Port::A) ? 0x05 : 0x15;
-            return true;
-        case REG_GPPUA:
-            out = (port == Port::A) ? 0x06 : 0x16;
-            return true;
-        case REG_INTFA:
-            out = (port == Port::A) ? 0x07 : 0x17;
-            return true;
-        case REG_INTCAPA:
-            out = (port == Port::A) ? 0x08 : 0x18;
-            return true;
-        case REG_GPIOA:
-            out = (port == Port::A) ? 0x09 : 0x19;
-            return true;
-        case REG_OLATA:
-            out = (port == Port::A) ? 0x0A : 0x1A;
-            return true;
-        default:
-            out = (uint8_t)(base_reg + (port == Port::B ? 1 : 0));
-            return true;
-        }
-    }
-
-    bool ioconAddr_(Port port, bool banked_addr, uint8_t &out) const
-    {
-        if (port != Port::A && port != Port::B)
-            return false;
-        if (!banked_addr)
-        {
-            out = (uint8_t)(REG_IOCON + (port == Port::B ? 1 : 0));
-            return true;
-        }
-        out = (port == Port::A) ? 0x05 : 0x15;
-        return true;
-    }
-
-    bool writeIocon_(uint8_t value, bool banked_addr)
-    {
-        uint8_t reg_a = 0;
-        uint8_t reg_b = 0;
-        if (!ioconAddr_(Port::A, banked_addr, reg_a))
-            return false;
-        if (!ioconAddr_(Port::B, banked_addr, reg_b))
-            return false;
-        return writeReg(reg_a, value) && writeReg(reg_b, value);
-    }
-
-    bool isBanked_() const { return (_iocon & 0x80u) != 0; }
+    bool cacheFromDevice_();
+    bool updateBit_(uint8_t &reg, uint8_t bit, bool value);
+    bool setPortReg_(uint8_t base_reg, Port port, uint8_t value);
+    bool getPortReg_(uint8_t base_reg, Port port, uint8_t &out) const;
+    bool regForPort_(uint8_t base_reg, Port port, uint8_t &out) const;
+    bool ioconAddr_(Port port, bool banked_addr, uint8_t &out) const;
+    bool writeIocon_(uint8_t value, bool banked_addr);
+    bool isBanked_() const;
 };

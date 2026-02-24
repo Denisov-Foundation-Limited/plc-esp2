@@ -663,6 +663,9 @@ inline constexpr const char kGenerate[] = "Сгенерировать";
 inline constexpr const char kSlaveLinkDisconnected[] = "Связь со слейвом: нет";
 inline constexpr const char kSlaveLinkConnected[] = "Связь со слейвом: есть";
 inline constexpr const char kSlaveLinkWaitingHello[] = "Связь со слейвом: есть, ожидание hello";
+inline constexpr const char kMasterLinkDisconnected[] = "Связь с мастером: нет";
+inline constexpr const char kMasterLinkConnected[] = "Связь с мастером: есть";
+inline constexpr const char kMasterLinkWaitingHello[] = "Связь с мастером: есть, ожидание hello";
 inline constexpr const char kCurrentControllerPrefix[] = "Текущий контроллер";
 } // namespace StackPage
 

@@ -56,20 +56,35 @@ public:
         page.replace("%STACK_LABEL_API_KEY%", WebUiRu::StackPage::kApiKey);
         page.replace("%STACK_API_KEY_PLACEHOLDER%", WebUiRu::StackPage::kApiKeyPlaceholder);
         page.replace("%STACK_BTN_GEN_KEY%", WebUiRu::StackPage::kGenerate);
-        page.replace("%STACK_SLAVE_LINK_DISCONNECTED%", WebUiRu::StackPage::kSlaveLinkDisconnected);
+        auto linkDisconnectedText = [role]() -> const char * {
+            return role == ConfigsManagerIface::StackRole::Slave
+                       ? WebUiRu::StackPage::kMasterLinkDisconnected
+                       : WebUiRu::StackPage::kSlaveLinkDisconnected;
+        };
+        auto linkConnectedText = [role]() -> const char * {
+            return role == ConfigsManagerIface::StackRole::Slave
+                       ? WebUiRu::StackPage::kMasterLinkConnected
+                       : WebUiRu::StackPage::kSlaveLinkConnected;
+        };
+        auto linkWaitingHelloText = [role]() -> const char * {
+            return role == ConfigsManagerIface::StackRole::Slave
+                       ? WebUiRu::StackPage::kMasterLinkWaitingHello
+                       : WebUiRu::StackPage::kSlaveLinkWaitingHello;
+        };
+        page.replace("%STACK_SLAVE_LINK_DISCONNECTED%", linkDisconnectedText());
         String slave_link_class = "bad";
-        String slave_link_text = WebUiRu::StackPage::kSlaveLinkDisconnected;
+        String slave_link_text = linkDisconnectedText();
         if (role == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
         {
             if (web._stack_slave->linkReadyAfterHello())
             {
                 slave_link_class = "ok";
-                slave_link_text = WebUiRu::StackPage::kSlaveLinkConnected;
+                slave_link_text = linkConnectedText();
             }
             else if (web._stack_slave->nodeConnected())
             {
                 slave_link_class = "bad";
-                slave_link_text = WebUiRu::StackPage::kSlaveLinkWaitingHello;
+                slave_link_text = linkWaitingHelloText();
             }
         }
         page.replace("%STACK_SLAVE_LINK_CLASS%", slave_link_class);
@@ -104,18 +119,34 @@ public:
             return;
         if (!web.requireWebAdmin_(request, &set_cookie))
             return;
+        const auto role = web.stackRole_();
+        auto linkDisconnectedText = [role]() -> const char * {
+            return role == ConfigsManagerIface::StackRole::Slave
+                       ? WebUiRu::StackPage::kMasterLinkDisconnected
+                       : WebUiRu::StackPage::kSlaveLinkDisconnected;
+        };
+        auto linkConnectedText = [role]() -> const char * {
+            return role == ConfigsManagerIface::StackRole::Slave
+                       ? WebUiRu::StackPage::kMasterLinkConnected
+                       : WebUiRu::StackPage::kSlaveLinkConnected;
+        };
+        auto linkWaitingHelloText = [role]() -> const char * {
+            return role == ConfigsManagerIface::StackRole::Slave
+                       ? WebUiRu::StackPage::kMasterLinkWaitingHello
+                       : WebUiRu::StackPage::kSlaveLinkWaitingHello;
+        };
         String cls = "bad";
-        String text = WebUiRu::StackPage::kSlaveLinkDisconnected;
-        if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
+        String text = linkDisconnectedText();
+        if (role == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
         {
             if (web._stack_slave->linkReadyAfterHello())
             {
                 cls = "ok";
-                text = WebUiRu::StackPage::kSlaveLinkConnected;
+                text = linkConnectedText();
             }
             else if (web._stack_slave->nodeConnected())
             {
-                text = WebUiRu::StackPage::kSlaveLinkWaitingHello;
+                text = linkWaitingHelloText();
             }
         }
         String json;

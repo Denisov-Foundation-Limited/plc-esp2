@@ -1,0 +1,111 @@
+/**********************************************************************/
+/*                                                                    */
+/* Programmable Logic Controller for ESP microcontrollers             */
+/*                                                                    */
+/* Copyright (C) 2026 Denisov Foundation Limited                      */
+/* License: GPLv3                                                     */
+/* Written by Sergey Denisov aka LittleBuster                         */
+/* Email: DenisovFoundationLtd@gmail.com                              */
+/*                                                                    */
+/**********************************************************************/
+
+#include "utils/configs.hpp"
+
+#include <LittleFS.h>
+
+using ConfigsError = Configs::Error;
+
+bool Configs::begin(bool format_on_fail){
+    if (LittleFS.begin(format_on_fail, FsConfig::kBasePath, FsConfig::kMaxOpenFiles,
+                       FsConfig::kPartitionLabel))
+    {
+        _err = Error::Ok;
+        return true;
+    }
+    _err = Error::FsMount;
+    return false;
+}
+
+bool Configs::load(JsonDocument &doc){
+    File f = LittleFS.open(kPath, "r");
+    if (!f)
+    {
+        _err = Error::OpenRead;
+        return false;
+    }
+    DeserializationError err = deserializeJson(doc, f);
+    f.close();
+    if (err)
+    {
+        _err = Error::JsonParse;
+        return false;
+    }
+    _err = Error::Ok;
+    return true;
+}
+
+bool Configs::save(const JsonDocument &doc){
+    File f = LittleFS.open(kPath, "w");
+    if (!f)
+    {
+        _err = Error::OpenWrite;
+        return false;
+    }
+    if (serializeJsonPretty(doc, f) == 0)
+    {
+        f.close();
+        _err = Error::JsonSerialize;
+        return false;
+    }
+    f.close();
+    _err = Error::Ok;
+    return true;
+}
+
+bool Configs::load(String &out){
+    File f = LittleFS.open(kPath, "r");
+    if (!f)
+    {
+        _err = Error::OpenRead;
+        return false;
+    }
+    out = f.readString();
+    f.close();
+    _err = Error::Ok;
+    return true;
+}
+
+bool Configs::save(const String &json){
+    File f = LittleFS.open(kPath, "w");
+    if (!f)
+    {
+        _err = Error::OpenWrite;
+        return false;
+    }
+    size_t written = f.print(json);
+    f.close();
+    if (written == 0)
+    {
+        _err = Error::JsonSerialize;
+        return false;
+    }
+    _err = Error::Ok;
+    return true;
+}
+
+ConfigsError Configs::lastError() const{ return _err; }
+
+bool Configs::erase(){
+    if (!LittleFS.exists(kPath))
+    {
+        _err = Error::Ok;
+        return true;
+    }
+    if (!LittleFS.remove(kPath))
+    {
+        _err = Error::OpenWrite;
+        return false;
+    }
+    _err = Error::Ok;
+    return true;
+}

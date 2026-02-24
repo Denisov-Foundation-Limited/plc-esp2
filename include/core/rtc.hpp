@@ -13,9 +13,9 @@
 
 #include <stdint.h>
 
-#include "boards/board_profile.hpp"
-#include "hal/bus/i2c.hpp"
 #include "hal/ds3231mz.hpp"
+
+class I2CManager;
 
 class RTC
 {
@@ -28,80 +28,16 @@ public:
         I2c
     };
 
-    RTC(I2CManager &i2c, Ds3231Mz &rtc) : _i2c(i2c), _rtc(rtc) {}
+    RTC(I2CManager &i2c, Ds3231Mz &rtc);
 
-    bool begin()
-    {
-        const uint8_t bus_num = ActiveBoardProfile::RTC.bus_num;
-        const uint8_t addr = ActiveBoardProfile::RTC.addr;
-        if (!busExists_(bus_num))
-        {
-            _err = Error::InvalidConfig;
-            return false;
-        }
-
-        TwoWire *wire = _i2c.wirePtr(bus_num);
-        if (!wire)
-        {
-            _err = Error::NoBus;
-            return false;
-        }
-
-        if (!_rtc.begin(*wire, addr))
-        {
-            _err = Error::I2c;
-            return false;
-        }
-
-        _err = Error::Ok;
-        return true;
-    }
-
-    bool setTime(const Ds3231Mz::DateTime &dt)
-    {
-        if (!_rtc.set(dt))
-        {
-            _err = Error::I2c;
-            return false;
-        }
-        _err = Error::Ok;
-        return true;
-    }
-
-    bool Time(Ds3231Mz::DateTime &out)
-    {
-        if (!_rtc.read(out))
-        {
-            _err = Error::I2c;
-            return false;
-        }
-        _err = Error::Ok;
-        return true;
-    }
-
-    bool readTemp(float &out_c)
-    {
-        if (!_rtc.readTempC(out_c))
-        {
-            _err = Error::I2c;
-            return false;
-        }
-        _err = Error::Ok;
-        return true;
-    }
-
-    Error lastError() const { return _err; }
+    bool begin();
+    bool setTime(const Ds3231Mz::DateTime &dt);
+    bool Time(Ds3231Mz::DateTime &out);
+    bool readTemp(float &out_c);
+    Error lastError() const;
 
 private:
-    static constexpr bool busExists_(uint8_t bus_num)
-    {
-        for (uint8_t i = 0; i < ActiveBoardProfile::I2C_COUNT; ++i)
-        {
-            if (ActiveBoardProfile::I2CS[i].bus_num == bus_num)
-                return true;
-        }
-        return false;
-    }
+    static constexpr bool busExists_(uint8_t bus_num);
 
     Ds3231Mz &_rtc;
     I2CManager &_i2c;

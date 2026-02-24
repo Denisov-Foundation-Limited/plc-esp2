@@ -22,10 +22,10 @@ class Gpio {
 public:
   enum Port : uint8_t { LED = 0, BTN = 1, POT = 2, RELAY = 3 };
 
-  explicit Gpio(IoStack& io) : _io(io) {}
+  explicit Gpio(IoStack& io);
 
-  bool begin() { return _io.begin(); }
-  void loop() { _io.loop(); }
+  bool begin();
+  void loop();
 
   template<uint8_t P>
   inline void write(bool v) {
@@ -75,54 +75,11 @@ public:
   }
 
   // ---- runtime loop layer ----
-  inline Cap capsDyn(uint8_t port) const {
-    if (port >= PortIO::PORT_COUNT) return Cap::None;
-    return ActiveBoardProfile::PORTS[port].caps;
-  }
-
-  inline bool writeDyn(uint8_t port, bool v) {
-    if (port >= PortIO::PORT_COUNT) return false;
-    const Cap caps = ActiveBoardProfile::PORTS[port].caps;
-    if (!has(caps, Cap::Output) || has(caps, Cap::InputOnly)) return false;
-    _io.write(port, v);
-    return true;
-  }
-
-  inline bool readDyn(uint8_t port, bool& out) const {
-    if (port >= PortIO::PORT_COUNT) return false;
-    const Cap caps = ActiveBoardProfile::PORTS[port].caps;
-    if (!has(caps, Cap::Input)) return false;
-    out = _io.read(port);
-    return true;
-  }
-
-  inline bool pinModeDyn(uint8_t port, PortIO::PortMode mode) {
-    if (port >= PortIO::PORT_COUNT) return false;
-    const Cap caps = ActiveBoardProfile::PORTS[port].caps;
-    if (caps == Cap::None) return false;
-
-    switch (mode) {
-      case PortIO::PortMode::Input:
-        if (!has(caps, Cap::Input)) return false;
-        break;
-      case PortIO::PortMode::InputPullUp:
-        if (!has(caps, Cap::Input) || !has(caps, Cap::PullUp)) return false;
-        break;
-      case PortIO::PortMode::InputPullDown:
-        if (!has(caps, Cap::Input) || !has(caps, Cap::PullDown)) return false;
-        break;
-      case PortIO::PortMode::Output:
-      case PortIO::PortMode::OutputOpenDrain:
-        if (!has(caps, Cap::Output) || has(caps, Cap::InputOnly)) return false;
-        break;
-    }
-    _io.pinMode(port, mode);
-    return true;
-  }
-
-  inline bool lastStateDyn(uint8_t port, bool& out) const {
-    return _io.lastState(port, out);
-  }
+  Cap capsDyn(uint8_t port) const;
+  bool writeDyn(uint8_t port, bool v);
+  bool readDyn(uint8_t port, bool& out) const;
+  bool pinModeDyn(uint8_t port, PortIO::PortMode mode);
+  bool lastStateDyn(uint8_t port, bool& out) const;
 
 private:
   IoStack& _io;

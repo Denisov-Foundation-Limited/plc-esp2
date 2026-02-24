@@ -12,15 +12,15 @@
 #pragma once
 
 #include <Arduino.h>
-#include <ArduinoJson.h>
-#include <Client.h>
-#include <WiFiClientSecure.h>
 #include <array>
 #include <vector>
 #include <FS.h>
 
 #include <FastBot2Client.h>
-#include "utils/logger.hpp"
+
+class Client;
+class WiFiClientSecure;
+class Logger;
 
 class TelegramClient
 {
@@ -50,300 +50,80 @@ public:
     using UpdatesHandler = void (*)(void *ctx, const std::vector<Update> &updates);
 
     TelegramClient() = default;
-    explicit TelegramClient(Logger &log) : _log(&log) {}
+    explicit TelegramClient(Logger &log);
 
-    void setClient(Client &client, ClientKind kind, bool secure, WiFiClientSecure *secure_client = nullptr)
-    {
-        _client_kind = kind;
-        _secure_client = secure ? secure_client : nullptr;
-        initFastBot_(client);
-    }
+    void setClient(Client &client, ClientKind kind, bool secure, WiFiClientSecure *secure_client = nullptr);
 
-    void setClientSecure(WiFiClientSecure &client)
-    {
-        setClient(client, ClientKind::WifiSecure, true, &client);
-    }
+    void setClientSecure(WiFiClientSecure &client);
 
-    void setUpdateHandler(UpdatesHandler handler, void *ctx)
-    {
-        _updates_handler = handler;
-        _updates_ctx = ctx;
-    }
+    void setUpdateHandler(UpdatesHandler handler, void *ctx);
 
-    FastBot2Client *fastBot() { return _fb; }
-    const FastBot2Client *fastBot() const { return _fb; }
+    FastBot2Client *fastBot();
+    const FastBot2Client *fastBot() const;
 
-    ClientKind clientKind() const { return _client_kind; }
-    const char *clientKindName() const
-    {
-        switch (_client_kind)
-        {
-        case ClientKind::WifiSecure:
-            return "wifi_secure";
-        case ClientKind::TinyGsm:
-            return "tinygsm";
-        case ClientKind::Generic:
-            return "generic";
-        default:
-            return "none";
-        }
-    }
+    ClientKind clientKind() const;
+    const char *clientKindName() const;
 
-    void setToken(const String &token)
-    {
-        _token = token;
-        if (_fb)
-            _fb->setToken(token);
-    }
-    const String &token() const { return _token; }
+    void setToken(const String &token);
+    const String &token() const;
 
-    void setChatId(int64_t chat_id) { _chat_id = chat_id; }
-    int64_t chatId() const { return _chat_id; }
+    void setChatId(int64_t chat_id);
+    int64_t chatId() const;
 
-    void setInsecure(bool insecure)
-    {
-        _insecure = insecure;
-        if (_secure_client && _insecure)
-            _secure_client->setInsecure();
-    }
-    bool insecure() const { return _insecure; }
+    void setInsecure(bool insecure);
+    bool insecure() const;
 
-    void setProxy(const String &host, uint16_t port, const String &path_prefix = "")
-    {
-        _proxy_host = host;
-        _proxy_port = port;
-        _proxy_path_prefix = path_prefix;
-        _use_proxy = _proxy_host.length() > 0;
-        if (_fb && _use_proxy)
-            _fb->setProxy(_proxy_host.c_str(), _proxy_port);
-    }
+    void setProxy(const String &host, uint16_t port, const String &path_prefix = "");
 
-    void clearProxy()
-    {
-        _proxy_host = "";
-        _proxy_port = 0;
-        _proxy_path_prefix = "";
-        _use_proxy = false;
-        if (_fb)
-            _fb->clearProxy();
-    }
+    void clearProxy();
 
-    bool useProxy() const { return _use_proxy; }
-    const String &proxyHost() const { return _proxy_host; }
-    uint16_t proxyPort() const { return _proxy_port; }
-    const String &proxyPath() const { return _proxy_path_prefix; }
+    bool useProxy() const;
+    const String &proxyHost() const;
+    uint16_t proxyPort() const;
+    const String &proxyPath() const;
 
-    const String &lastError() const { return _last_error; }
-    bool isPolling() const { return _fb ? _fb->isPolling() : false; }
-    bool hasPollUpdates() const { return _poll_has_updates; }
-    bool takePollUpdates(std::vector<Update> &out)
-    {
-        if (!_poll_has_updates)
-            return false;
-        out.clear();
-        out.reserve(_poll_count);
-        for (size_t i = 0; i < _poll_count; ++i)
-            out.push_back(_poll_updates[(_poll_head + i) % kMaxPollUpdates]);
-        _poll_count = 0;
-        _poll_head = 0;
-        _poll_has_updates = false;
-        return true;
-    }
+    const String &lastError() const;
+    bool isPolling() const;
+    bool hasPollUpdates() const;
+    bool takePollUpdates(std::vector<Update> &out);
 
-    void enableAutoPoll(bool on, uint16_t timeout_s = 20)
-    {
-        _auto_poll = on;
-        _auto_poll_timeout_s = timeout_s;
-        if (_fb)
-            applyPollConfig_();
-    }
-    void setAutoPollIntervalMs(uint32_t interval_ms)
-    {
-        _auto_poll_interval_ms = interval_ms;
-        if (_fb)
-            applyPollConfig_();
-    }
-    bool autoPollEnabled() const { return _auto_poll; }
-    uint16_t autoPollTimeoutSec() const { return _auto_poll_timeout_s; }
+    void enableAutoPoll(bool on, uint16_t timeout_s = 20);
+    void setAutoPollIntervalMs(uint32_t interval_ms);
+    bool autoPollEnabled() const;
+    uint16_t autoPollTimeoutSec() const;
 
-    uint32_t lastUpdateId() const { return _last_update_id; }
-    int64_t lastIncomingChatId() const { return _last_incoming_chat_id; }
+    uint32_t lastUpdateId() const;
+    int64_t lastIncomingChatId() const;
 
-    void task()
-    {
-        if (!_auto_poll || !_fb)
-            return;
-        _task_updates_tmp.clear();
-        _fb->tick();
-        if (_fb->canReboot() && !_reboot_logged)
-        {
-            _reboot_logged = true;
-            if (_log)
-                _log->info(F("TGBOT"), F("FastBot2 OTA reboot requested"));
-        }
-        if (_task_updates_tmp.empty())
-            return;
-        if (_updates_handler)
-            _updates_handler(_updates_ctx, _task_updates_tmp);
-        _task_updates_tmp.clear();
-    }
+    void task();
 
-    bool sendMessage(const String &text)
-    {
-        if (_chat_id == 0)
-        {
-            _last_error = F("chat_id not set");
-            return false;
-        }
-        DynamicJsonDocument doc(text.length() + 128);
-        doc["chat_id"] = _chat_id;
-        doc["text"] = text;
-        String payload;
-        payload.reserve(text.length() + 64);
-        if (serializeJson(doc, payload) == 0)
-        {
-            _last_error = F("payload too large");
-            return false;
-        }
-        return sendCommand_(F("sendMessage"), payload);
-    }
+    bool sendMessage(const String &text);
 
-    bool sendMessageRaw(const String &payload)
-    {
-        return sendCommand_(F("sendMessage"), payload);
-    }
+    bool sendMessageRaw(const String &payload);
 
 #if !defined(FB_NO_FILE) && (defined(ESP8266) || defined(ESP32))
     bool sendDocumentFromBuffer(const uint8_t *data, size_t length,
                                 const String &filename = String("snapshot.jpg"),
                                 const String &caption = String(),
-                                int64_t chat_id = 0)
-    {
-        if (!_fb)
-        {
-            _last_error = F("bot not set");
-            logError_(String("Request failed: ") + _last_error);
-            return false;
-        }
-        if (!data || length == 0)
-        {
-            _last_error = F("empty buffer");
-            return false;
-        }
-        const int64_t target_chat = chat_id ? chat_id : _chat_id;
-        if (target_chat == 0)
-        {
-            _last_error = F("chat_id not set");
-            return false;
-        }
-        fb::File msg(filename, fb::File::Type::document, data, length, false);
-        msg.multipart.setBlockSize(kUploadBlockSize);
-        msg.chatID = fb::ID((long long)target_chat);
-        msg.caption = caption;
-        return sendFile_(msg);
-    }
+                                int64_t chat_id = 0);
 
     bool sendPhotoFromBuffer(const uint8_t *data, size_t length,
                              const String &filename = String("snapshot.jpg"),
                              const String &caption = String(),
-                             int64_t chat_id = 0)
-    {
-        if (!_fb)
-        {
-            _last_error = F("bot not set");
-            logError_(String("Request failed: ") + _last_error);
-            return false;
-        }
-        if (!data || length == 0)
-        {
-            _last_error = F("empty buffer");
-            return false;
-        }
-        const int64_t target_chat = chat_id ? chat_id : _chat_id;
-        if (target_chat == 0)
-        {
-            _last_error = F("chat_id not set");
-            return false;
-        }
-        fb::File msg(filename, fb::File::Type::photo, data, length, false);
-        msg.multipart.setBlockSize(kUploadBlockSize);
-        msg.chatID = fb::ID((long long)target_chat);
-        msg.caption = caption;
-        return sendFile_(msg);
-    }
+                             int64_t chat_id = 0);
 
     bool sendDocumentFromFile(File &file,
                               const String &filename = String("snapshot.jpg"),
                               const String &caption = String(),
-                              int64_t chat_id = 0)
-    {
-        if (!_fb)
-        {
-            _last_error = F("bot not set");
-            logError_(String("Request failed: ") + _last_error);
-            return false;
-        }
-        if (!file || file.size() == 0)
-        {
-            _last_error = F("empty file");
-            return false;
-        }
-        const int64_t target_chat = chat_id ? chat_id : _chat_id;
-        if (target_chat == 0)
-        {
-            _last_error = F("chat_id not set");
-            return false;
-        }
-        fb::File msg(filename, fb::File::Type::document, file);
-        msg.multipart.setBlockSize(kUploadBlockSize);
-        msg.chatID = fb::ID((long long)target_chat);
-        msg.caption = caption;
-        return sendFile_(msg);
-    }
+                              int64_t chat_id = 0);
 
     bool sendPhotoFromFile(File &file,
                            const String &filename = String("snapshot.jpg"),
                            const String &caption = String(),
-                           int64_t chat_id = 0)
-    {
-        if (!_fb)
-        {
-            _last_error = F("bot not set");
-            logError_(String("Request failed: ") + _last_error);
-            return false;
-        }
-        if (!file || file.size() == 0)
-        {
-            _last_error = F("empty file");
-            return false;
-        }
-        const int64_t target_chat = chat_id ? chat_id : _chat_id;
-        if (target_chat == 0)
-        {
-            _last_error = F("chat_id not set");
-            return false;
-        }
-        fb::File msg(filename, fb::File::Type::photo, file);
-        msg.multipart.setBlockSize(kUploadBlockSize);
-        msg.chatID = fb::ID((long long)target_chat);
-        msg.caption = caption;
-        return sendFile_(msg);
-    }
+                           int64_t chat_id = 0);
 #endif
 
-    bool startLongPoll(uint16_t timeout_s, uint32_t offset = 0, uint16_t limit = 0)
-    {
-        if (!_fb)
-        {
-            _last_error = F("bot not set");
-            return false;
-        }
-        (void)timeout_s;
-        (void)offset;
-        (void)limit;
-        _fb->getUpdates(false, true);
-        return true;
-    }
+    bool startLongPoll(uint16_t timeout_s, uint32_t offset = 0, uint16_t limit = 0);
 
 private:
     ClientKind _client_kind = ClientKind::None;
@@ -377,147 +157,18 @@ private:
     String _last_log_msg;
     bool _reboot_logged = false;
 
-    void initFastBot_(Client &client)
-    {
-        if (_fb_client == &client && _fb)
-            return;
-        if (_fb)
-        {
-            _fb->~FastBot2Client();
-            _fb = nullptr;
-        }
-        _fb_client = &client;
-        if (_secure_client && _insecure)
-            _secure_client->setInsecure();
-        _fb = new (_fb_storage) FastBot2Client(client, _token);
-        _fb->onUpdate([this](fb::Update &u)
-                      { onFastBotUpdate_(u); });
-        _fb->attachError([this](Text err)
-                         {
-                             String msg;
-                             err.toString(msg);
-                             _last_error = msg;
-                             logError_(String("Poll error: ") + msg);
-                         });
-        if (_use_proxy && _proxy_host.length())
-            _fb->setProxy(_proxy_host.c_str(), _proxy_port);
-        _fb->begin();
-        applyPollConfig_();
-    }
+    void initFastBot_(Client &client);
 
-    void applyPollConfig_()
-    {
-        if (!_fb)
-            return;
-        const uint16_t prd = (uint16_t)min<uint32_t>(_auto_poll_interval_ms, 60000u);
-        _fb->setPollMode(fb::Poll::Long, prd);
-        const uint32_t timeout_ms = _auto_poll_timeout_s ? (_auto_poll_timeout_s * 1000u) : 2000u;
-        _fb->setTimeout((uint16_t)min<uint32_t>(timeout_ms, 60000u));
-        _fb->setOnline(_auto_poll);
-    }
+    void applyPollConfig_();
 
-    void onFastBotUpdate_(fb::Update &upd)
-    {
-        if (!upd.isMessage())
-            return;
-        fb::MessageRead msg = upd.message();
-        Update out;
-        out.update_id = upd.id();
-        String chat_id_str;
-        msg.chat().id().toString(chat_id_str);
-        out.chat_id = (int64_t)strtoll(chat_id_str.c_str(), nullptr, 10);
-        msg.from().username().toString(out.from);
-        msg.text().toString(out.text);
-        if (msg.hasDocument())
-        {
-            fb::DocumentRead doc = msg.document();
-            doc.id().toString(out.document_file_id);
-            doc.name().toString(out.document_file_name);
-            doc.type().toString(out.document_mime);
-            String size_str;
-            doc.size().toString(size_str);
-            out.document_size = (uint32_t)strtoul(size_str.c_str(), nullptr, 10);
-        }
-        if (out.update_id > _last_update_id)
-            _last_update_id = out.update_id;
-        if (out.chat_id != 0)
-            _last_incoming_chat_id = out.chat_id;
-        _task_updates_tmp.push_back(out);
-        if (!_updates_handler)
-        {
-            if (_poll_count < kMaxPollUpdates)
-            {
-                const size_t idx = (_poll_head + _poll_count) % kMaxPollUpdates;
-                _poll_updates[idx] = out;
-                ++_poll_count;
-            }
-            else
-            {
-                _poll_updates[_poll_head] = out;
-                _poll_head = (_poll_head + 1) % kMaxPollUpdates;
-            }
-            _poll_has_updates = true;
-        }
-    }
+    void onFastBotUpdate_(fb::Update &upd);
 
-    void logError_(const String &msg)
-    {
-        if (!_log || !_log->ready())
-            return;
-        const uint32_t now = millis();
-        if (msg == _last_log_msg && _log_next_ms != 0 && (int32_t)(now - _log_next_ms) < 0)
-            return;
-        _last_log_msg = msg;
-        _log_next_ms = now + 5000;
-        _log->error(F("TGBOT"), F("%s"), msg.c_str());
-    }
+    void logError_(const String &msg);
 
-    bool sendCommand_(const __FlashStringHelper *cmd, const String &payload)
-    {
-        if (!_fb)
-        {
-            _last_error = F("bot not set");
-            logError_(String("Request failed: ") + _last_error);
-            return false;
-        }
-        // Keep synchronous API calls short to avoid blocking the main control loop.
-        const uint16_t prev_timeout_ms = (uint16_t)min<uint32_t>(_auto_poll_timeout_s ? (_auto_poll_timeout_s * 1000u) : 2000u, 60000u);
-        _fb->setTimeout(kSendTimeoutMs);
-        fb::Result res = _fb->sendCommand(cmd, payload, true);
-        _fb->setTimeout(prev_timeout_ms);
-        if (res.isError())
-        {
-            String err;
-            res.getError().toString(err);
-            if (!err.length())
-                err = "unknown error";
-            _last_error = err;
-            logError_(String("API error: ") + _last_error);
-            return false;
-        }
-        return !res.isEmpty();
-    }
+    bool sendCommand_(const __FlashStringHelper *cmd, const String &payload);
 
 #if !defined(FB_NO_FILE) && (defined(ESP8266) || defined(ESP32))
-    bool sendFile_(const fb::File &msg)
-    {
-        // File uploads may take significantly longer than simple JSON commands.
-        const uint16_t prev_timeout_ms = (uint16_t)min<uint32_t>(_auto_poll_timeout_s ? (_auto_poll_timeout_s * 1000u) : 2000u, 60000u);
-        _fb->setTimeout(kSendFileTimeoutMs);
-        fb::Result res = _fb->sendFile(msg, true);
-        _fb->setTimeout(prev_timeout_ms);
-        if (res.isError())
-        {
-            String err;
-            res.getError().toString(err);
-            if (!err.length())
-                err = "unknown error";
-            _last_error = err;
-            logError_(String("API error: ") + _last_error);
-            return false;
-        }
-        return !res.isEmpty();
-    }
+    bool sendFile_(const fb::File &msg);
 #endif
 
     static constexpr uint16_t kSendTimeoutMs = 1500;

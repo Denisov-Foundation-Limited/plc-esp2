@@ -11,7 +11,6 @@
 
 #pragma once
 
-#include <Arduino.h>
 #include <stdint.h>
 
 class DHT22
@@ -25,110 +24,21 @@ public:
     };
 
     DHT22() = default;
-    explicit DHT22(uint8_t pin)
-        : _pin(pin)
-    {
-    }
+    explicit DHT22(uint8_t pin);
 
-    void begin()
-    {
-        if (_pin == 0xFF)
-            return;
-        pinMode(_pin, INPUT_PULLUP);
-    }
-
-    void begin(uint8_t pin)
-    {
-        _pin = pin;
-        begin();
-    }
-
-    bool read(float &out_temp_c, float &out_humidity)
-    {
-        uint8_t data[5] = {};
-        if (!readRaw_(data))
-            return false;
-
-        const uint16_t raw_h = (uint16_t)((data[0] << 8) | data[1]);
-        const uint16_t raw_t = (uint16_t)(((data[2] & 0x7F) << 8) | data[3]);
-
-        out_humidity = raw_h * 0.1f;
-        out_temp_c = raw_t * 0.1f;
-        if (data[2] & 0x80)
-            out_temp_c = -out_temp_c;
-
-        _err = Error::Ok;
-        return true;
-    }
-
-    bool readTempC(float &out_temp_c)
-    {
-        float h = 0.0f;
-        return read(out_temp_c, h);
-    }
-
-    bool readHumidity(float &out_humidity)
-    {
-        float t = 0.0f;
-        return read(t, out_humidity);
-    }
-
-    Error lastError() const { return _err; }
+    void begin();
+    void begin(uint8_t pin);
+    bool read(float &out_temp_c, float &out_humidity);
+    bool readTempC(float &out_temp_c);
+    bool readHumidity(float &out_humidity);
+    Error lastError() const;
 
 private:
     static constexpr uint32_t kTimeoutUs = 100;
 
-    uint32_t expectPulse_(bool level)
-    {
-        uint32_t start = micros();
-        while (digitalRead(_pin) == (level ? HIGH : LOW))
-        {
-            if ((micros() - start) > kTimeoutUs)
-                return 0;
-        }
-        return micros() - start;
-    }
-
-    bool readRaw_(uint8_t data[5])
-    {
-        _err = Error::Ok;
-
-        pinMode(_pin, OUTPUT);
-        digitalWrite(_pin, LOW);
-        delay(2);
-        digitalWrite(_pin, HIGH);
-        delayMicroseconds(40);
-        pinMode(_pin, INPUT_PULLUP);
-
-        if (!expectPulse_(LOW))
-            return fail_(Error::Timeout);
-        if (!expectPulse_(HIGH))
-            return fail_(Error::Timeout);
-
-        for (uint8_t i = 0; i < 40; ++i)
-        {
-            const uint32_t low = expectPulse_(LOW);
-            const uint32_t high = expectPulse_(HIGH);
-            if (!low || !high)
-                return fail_(Error::Timeout);
-
-            data[i / 8] <<= 1;
-            if (high > low)
-                data[i / 8] |= 1;
-        }
-
-        const uint8_t sum = (uint8_t)(data[0] + data[1] + data[2] + data[3]);
-        if (sum != data[4])
-            return fail_(Error::Checksum);
-
-        return true;
-    }
-
-    bool fail_(Error e)
-    {
-        _err = e;
-        return false;
-    }
+    uint32_t expectPulse_(bool level);
+    bool readRaw_(uint8_t data[5]);
+    bool fail_(Error e);
 
     uint8_t _pin;
     Error _err = Error::Ok;
