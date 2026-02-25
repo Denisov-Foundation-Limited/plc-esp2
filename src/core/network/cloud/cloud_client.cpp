@@ -95,6 +95,15 @@ void CloudClient::loop()
 {
     if (!_enabled)
         return;
+    if (_cfg.host.length() == 0 || _cfg.port == 0)
+        return;
+    if (!_wifi.isConnected())
+    {
+        if (isConnected())
+            _ws.disconnect();
+        handlePendingTimeouts_();
+        return;
+    }
     _ws.loop();
     maintainConnectionHealth_();
     handlePendingTimeouts_();

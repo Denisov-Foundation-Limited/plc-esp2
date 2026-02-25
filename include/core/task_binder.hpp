@@ -15,6 +15,7 @@
 #include "core/network/wifi_manager.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
 #include "core/display.hpp"
+#include "core/stack/stack_runtime.hpp"
 #include "hal/gpio/extender.hpp"
 #include "controllers/controllers.hpp"
 #include "utils/meteo_history.hpp"
@@ -78,6 +79,15 @@ public:
     }
 
     typename TaskManager<N>::Handle getFtestTask() const { return _ftest_task; }
+
+    void bindStack(StackRuntime &stack)
+    {
+        bindStackPost_(stack);
+        bindStackFlush_(stack);
+        if (_tm.used() == _tm.capacity())
+            _logs.warn(F("TASK"), F("TaskManager is full: %u/%u"),
+                       (unsigned)_tm.used(), (unsigned)_tm.capacity());
+    }
 
 private:
     typename TaskManager<N>::Handle bindControllersStorage_()
@@ -187,7 +197,7 @@ private:
     typename TaskManager<N>::Handle bindExtender()
     {
         typename TaskManager<N>::Options opt;
-        opt.interval_ms = _ext.rescanIntervalMs();
+        opt.interval_ms = 50;
         opt.priority = TaskManager<N>::Priority::Low;
         _ext_task = addChecked_<&Extender::task>(_ext, opt, "extender");
         return _ext_task;
@@ -213,6 +223,9 @@ private:
     typename TaskManager<N>::Handle _ftest_task{};
     typename TaskManager<N>::Handle _ext_task{};
     typename TaskManager<N>::Handle _display_task{};
+    typename TaskManager<N>::Handle _stack_pre_task{};
+    typename TaskManager<N>::Handle _stack_post_task{};
+    typename TaskManager<N>::Handle _stack_flush_task{};
 
     void tgbotTask_()
     {
@@ -235,6 +248,33 @@ private:
         opt.interval_ms = 100;
         opt.priority = TaskManager<N>::Priority::Normal;
         return addChecked_<&PlcControl::task>(_plc, opt, "plc");
+    }
+
+    typename TaskManager<N>::Handle bindStackPre_(StackRuntime &stack)
+    {
+        typename TaskManager<N>::Options opt;
+        opt.interval_ms = 1;
+        opt.priority = TaskManager<N>::Priority::Highest;
+        _stack_pre_task = addChecked_<&StackRuntime::taskPre>(stack, opt, "stack_pre");
+        return _stack_pre_task;
+    }
+
+    typename TaskManager<N>::Handle bindStackPost_(StackRuntime &stack)
+    {
+        typename TaskManager<N>::Options opt;
+        opt.interval_ms = 1;
+        opt.priority = TaskManager<N>::Priority::High;
+        _stack_post_task = addChecked_<&StackRuntime::taskPost>(stack, opt, "stack_post");
+        return _stack_post_task;
+    }
+
+    typename TaskManager<N>::Handle bindStackFlush_(StackRuntime &stack)
+    {
+        typename TaskManager<N>::Options opt;
+        opt.interval_ms = 1;
+        opt.priority = TaskManager<N>::Priority::Lowest;
+        _stack_flush_task = addChecked_<&StackRuntime::taskFlush>(stack, opt, "stack_flush");
+        return _stack_flush_task;
     }
 
     template <auto Method, typename T>

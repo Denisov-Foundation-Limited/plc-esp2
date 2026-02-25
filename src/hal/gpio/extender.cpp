@@ -94,12 +94,41 @@ void Extender::setPresent_(uint8_t dev, bool present) const
 bool Extender::begin()
 {
     rescan();
+    _scan_active = false;
+    _scan_index = 0;
+    _next_scan_ms = millis() + _rescan_interval_ms;
     return true;
 }
 
 void Extender::task()
 {
-    rescan();
+    if (!_i2c || _dev_count == 0)
+        return;
+
+    const uint32_t now = millis();
+    if ((int32_t)(now - _next_scan_ms) < 0)
+        return;
+
+    if (!_scan_active)
+    {
+        _scan_active = true;
+        _scan_index = 0;
+    }
+
+    scanDevice_(_scan_index);
+    ++_scan_index;
+
+    if (_scan_index >= _dev_count)
+    {
+        _scan_active = false;
+        _scan_index = 0;
+        _next_scan_ms = now + _rescan_interval_ms;
+    }
+    else
+    {
+        // Continue pass quickly, but spread probes over scheduler ticks.
+        _next_scan_ms = now + 1;
+    }
 }
 
 void Extender::rescan()
@@ -108,21 +137,26 @@ void Extender::rescan()
         return;
 
     for (uint8_t i = 0; i < _dev_count; ++i)
+        scanDevice_(i);
+}
+
+void Extender::scanDevice_(uint8_t i)
+{
+    if (i >= _dev_count)
+        return;
+    if (!isConfigured(i))
     {
-        if (!isConfigured(i))
-        {
-            setPresent_(i, false);
-            continue;
-        }
-        const uint8_t bus = _devs[i].bus_num;
-        const uint8_t addr = _devs[i].i2c_addr;
-        if (bus >= 3 || addr == 0 || addr >= 127)
-        {
-            setPresent_(i, false);
-            continue;
-        }
-        setPresent_(i, _i2c->probeAddress(bus, addr));
+        setPresent_(i, false);
+        return;
     }
+    const uint8_t bus = _devs[i].bus_num;
+    const uint8_t addr = _devs[i].i2c_addr;
+    if (bus >= 3 || addr == 0 || addr >= 127)
+    {
+        setPresent_(i, false);
+        return;
+    }
+    setPresent_(i, _i2c->probeAddress(bus, addr));
 }
 
 bool Extender::isPresent(uint8_t dev) const
