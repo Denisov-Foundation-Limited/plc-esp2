@@ -37,5 +37,5 @@ class TelegramAllowedUsersProvider
 public:
     virtual TelegramAllowedUsersView allowedUsers() const = 0;
 protected:
-    ~TelegramAllowedUsersProvider() = default;
+    ~TelegramAllowedUsersProvider();
 };
