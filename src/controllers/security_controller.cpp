@@ -15,6 +15,30 @@
 
 #include "boards/board_profile.hpp"
 
+namespace
+{
+bool phonesMatch_(const String &lhs, const String &rhs)
+{
+    const String a = UsersRegistry::normalizePhone(lhs);
+    const String b = UsersRegistry::normalizePhone(rhs);
+    if (a.length() == 0 || b.length() == 0)
+        return false;
+    if (a == b)
+        return true;
+    if (a.length() < 10 || b.length() < 10)
+        return false;
+    return a.substring(a.length() - 10) == b.substring(b.length() - 10);
+}
+
+String formatOutgoingPhone_(const String &raw)
+{
+    const String norm = UsersRegistry::normalizePhone(raw);
+    if (norm.length() == 0)
+        return "";
+    return String("+") + norm;
+}
+}
+
 SecurityController::SecurityController(Gpio &gpio, OneWireManager &ow, Logger &logs,
  TelegramBot &bot, TelegramAllowedUsersProvider &users)
  : _gpio(gpio), _ow(ow), _logs(logs), _tgbot(bot), _tgusers(users){
@@ -1456,7 +1480,10 @@ void SecurityController::handleGsm_(){
     _gsm->driver().hangup();
     String user;
     if (!matchPhone_(number, user))
+    {
+        _logs.warn(F("SECURITY"), F("GSM call ignored, unknown number: %s"), number.c_str());
         return;
+    }
     if (_armed)
     {
         disarm_(false, "gsm", user);
@@ -1907,8 +1934,7 @@ void SecurityController::processTgNotifyQueue_(){
 bool SecurityController::isAllowedPhone_(const String &number) const{
     if (!_users)
         return false;
-    const String norm = UsersRegistry::normalizePhone(number);
-    if (norm.length() == 0)
+    if (UsersRegistry::normalizePhone(number).length() == 0)
         return false;
     for (size_t i = 0; i < _users->size(); ++i)
     {
@@ -1917,7 +1943,7 @@ bool SecurityController::isAllowedPhone_(const String &number) const{
             continue;
         if (u.gsm_phone.length() == 0)
             continue;
-        if (u.gsm_phone == norm)
+        if (phonesMatch_(u.gsm_phone, number))
             return true;
     }
     return false;
@@ -1926,8 +1952,7 @@ bool SecurityController::isAllowedPhone_(const String &number) const{
 bool SecurityController::matchPhone_(const String &number, String &user) const{
     if (!_users)
         return false;
-    const String norm = UsersRegistry::normalizePhone(number);
-    if (norm.length() == 0)
+    if (UsersRegistry::normalizePhone(number).length() == 0)
         return false;
     for (size_t i = 0; i < _users->size(); ++i)
     {
@@ -1936,7 +1961,7 @@ bool SecurityController::matchPhone_(const String &number, String &user) const{
             continue;
         if (u.gsm_phone.length() == 0)
             continue;
-        if (u.gsm_phone == norm)
+        if (phonesMatch_(u.gsm_phone, number))
         {
             user = u.username;
             return true;
@@ -1956,6 +1981,8 @@ void SecurityController::sendSmsNotify_(const SecurityController::SensorConfig &
         msg += cfg.name;
         msg += F(")");
     }
+    size_t sms_targets = 0;
+    size_t call_targets = 0;
     for (size_t i = 0; i < _users->size(); ++i)
     {
         const auto &u = _users->user(i);
@@ -1963,7 +1990,13 @@ void SecurityController::sendSmsNotify_(const SecurityController::SensorConfig &
             continue;
         if (u.gsm_phone.length() == 0)
             continue;
-        _gsm->sendSms(u.gsm_phone, msg);
+        const String phone = formatOutgoingPhone_(u.gsm_phone);
+        if (phone.length() == 0)
+            continue;
+        ++sms_targets;
+        if (!_gsm->sendSms(phone, msg))
+            _logs.warn(F("SECURITY"), F("GSM sms enqueue failed: user: %s phone: %s"),
+                       u.username.c_str(), phone.c_str());
     }
     for (size_t i = 0; i < _users->size(); ++i)
     {
@@ -1972,8 +2005,21 @@ void SecurityController::sendSmsNotify_(const SecurityController::SensorConfig &
             continue;
         if (u.gsm_phone.length() == 0)
             continue;
-        _gsm->driver().dial(u.gsm_phone);
+        const String phone = formatOutgoingPhone_(u.gsm_phone);
+        if (phone.length() == 0)
+            continue;
+        ++call_targets;
+        if (!_gsm->driver().dial(phone))
+            _logs.warn(F("SECURITY"), F("GSM call enqueue failed: user: %s phone: %s"),
+                       u.username.c_str(), phone.c_str());
+        else
+            _logs.info(F("SECURITY"), F("GSM call queued: user: %s phone: %s"),
+                       u.username.c_str(), phone.c_str());
     }
+    if (sms_targets == 0)
+        _logs.warn(F("SECURITY"), F("No GSM SMS targets for alarm"));
+    if (call_targets == 0)
+        _logs.warn(F("SECURITY"), F("No GSM call targets for alarm"));
 }
 
 void SecurityController::sendSmsNotify_(uint8_t sensor_id, const String &name){
@@ -1987,6 +2033,8 @@ void SecurityController::sendSmsNotify_(uint8_t sensor_id, const String &name){
         msg += name;
         msg += F(")");
     }
+    size_t sms_targets = 0;
+    size_t call_targets = 0;
     for (size_t i = 0; i < _users->size(); ++i)
     {
         const auto &u = _users->user(i);
@@ -1994,7 +2042,13 @@ void SecurityController::sendSmsNotify_(uint8_t sensor_id, const String &name){
             continue;
         if (u.gsm_phone.length() == 0)
             continue;
-        _gsm->sendSms(u.gsm_phone, msg);
+        const String phone = formatOutgoingPhone_(u.gsm_phone);
+        if (phone.length() == 0)
+            continue;
+        ++sms_targets;
+        if (!_gsm->sendSms(phone, msg))
+            _logs.warn(F("SECURITY"), F("GSM sms enqueue failed: user: %s phone: %s"),
+                       u.username.c_str(), phone.c_str());
     }
     for (size_t i = 0; i < _users->size(); ++i)
     {
@@ -2003,8 +2057,21 @@ void SecurityController::sendSmsNotify_(uint8_t sensor_id, const String &name){
             continue;
         if (u.gsm_phone.length() == 0)
             continue;
-        _gsm->driver().dial(u.gsm_phone);
+        const String phone = formatOutgoingPhone_(u.gsm_phone);
+        if (phone.length() == 0)
+            continue;
+        ++call_targets;
+        if (!_gsm->driver().dial(phone))
+            _logs.warn(F("SECURITY"), F("GSM call enqueue failed: user: %s phone: %s"),
+                       u.username.c_str(), phone.c_str());
+        else
+            _logs.info(F("SECURITY"), F("GSM call queued: user: %s phone: %s"),
+                       u.username.c_str(), phone.c_str());
     }
+    if (sms_targets == 0)
+        _logs.warn(F("SECURITY"), F("No GSM SMS targets for alarm"));
+    if (call_targets == 0)
+        _logs.warn(F("SECURITY"), F("No GSM call targets for alarm"));
 }
 
 bool SecurityController::matchKey_(const uint8_t addr[8], String &user) const{

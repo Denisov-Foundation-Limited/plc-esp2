@@ -12,6 +12,8 @@
 #pragma once
 
 #include "core/task_manager.hpp"
+#include "core/network/gsm_modem.hpp"
+#include "core/network/cloud/cloud_client.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
 #include "core/display.hpp"
@@ -44,6 +46,8 @@ public:
     void bindAll()
     {
         bindWiFiManager();
+        bindGsm_();
+        bindCloud_();
         bindTgbot();
         bindExtender();
         bindControllersStorage_();
@@ -79,6 +83,10 @@ public:
     }
 
     typename TaskManager<N>::Handle getFtestTask() const { return _ftest_task; }
+
+    void setGsmModem(GsmModem &gsm) { _gsm = &gsm; }
+
+    void setCloudClient(CloudClient &cloud) { _cloud = &cloud; }
 
     void bindStack(StackRuntime &stack)
     {
@@ -211,6 +219,28 @@ private:
         return addChecked_<&MeteoHistory::task>(_meteo_history, opt, "meteo_history");
     }
 
+    typename TaskManager<N>::Handle bindGsm_()
+    {
+        if (!_gsm)
+            return {};
+        typename TaskManager<N>::Options opt;
+        opt.interval_ms = 50;
+        opt.priority = TaskManager<N>::Priority::High;
+        _gsm_task = addChecked_<&GsmModem::loop>(*_gsm, opt, "gsm_modem");
+        return _gsm_task;
+    }
+
+    typename TaskManager<N>::Handle bindCloud_()
+    {
+        if (!_cloud)
+            return {};
+        typename TaskManager<N>::Options opt;
+        opt.interval_ms = 200;
+        opt.priority = TaskManager<N>::Priority::Normal;
+        _cloud_task = addChecked_<&CloudClient::loop>(*_cloud, opt, "cloud_client");
+        return _cloud_task;
+    }
+
     TaskManager<N> &_tm;
     WifiManager &_wifi;
     TelegramBot &_tgbot;
@@ -220,7 +250,11 @@ private:
     Display &_display;
     PlcControl &_plc;
     Logger &_logs;
+    GsmModem *_gsm = nullptr;
+    CloudClient *_cloud = nullptr;
     typename TaskManager<N>::Handle _ftest_task{};
+    typename TaskManager<N>::Handle _gsm_task{};
+    typename TaskManager<N>::Handle _cloud_task{};
     typename TaskManager<N>::Handle _ext_task{};
     typename TaskManager<N>::Handle _display_task{};
     typename TaskManager<N>::Handle _stack_pre_task{};

@@ -15,6 +15,59 @@
 #include "hal/sim800l.hpp"
 #include "utils/logger.hpp"
 
+namespace
+{
+bool isRegisteredRegState(uint8_t state)
+{
+    return state == 1 || state == 5;
+}
+
+bool hasMeaningfulSignal(const String &value)
+{
+    String v = value;
+    v.trim();
+    if (!v.length())
+        return false;
+    if (v == "0,0")
+        return false;
+    return true;
+}
+
+bool parseCsq(const String &line, int &out_rssi, int &out_ber)
+{
+    int pos = line.indexOf(':');
+    String tail = (pos >= 0) ? line.substring(pos + 1) : line;
+    tail.trim();
+    const int comma = tail.indexOf(',');
+    if (comma < 0)
+        return false;
+    const String rssi_s = tail.substring(0, comma);
+    const String ber_s = tail.substring(comma + 1);
+    out_rssi = rssi_s.toInt();
+    out_ber = ber_s.toInt();
+    return out_rssi >= 0 && out_rssi <= 99 && out_ber >= 0;
+}
+
+bool csqToDbm(int rssi, int &out_dbm)
+{
+    if (rssi < 0 || rssi > 31 || rssi == 99)
+        return false;
+    out_dbm = -113 + (2 * rssi);
+    return true;
+}
+
+const char *signalQualityLabel(int rssi)
+{
+    if (rssi >= 20)
+        return "best";
+    if (rssi >= 14)
+        return "medium";
+    if (rssi >= 10)
+        return "weak";
+    return "very weak";
+}
+}
+
 GsmModem::GsmModem(UartManager &uart, Sim800l &modem, Logger &log)
     : _uart(uart), _modem(modem), _log(log)
 {
@@ -34,7 +87,7 @@ bool GsmModem::begin(uint8_t uart_index, uint32_t config)
     _modem.begin(*ser);
     bindCallbacks_();
     if (_log.ready())
-        _log.info(F("GSM"), F("UART ready (idx=%u)"), uart_index);
+        _log.info(F("GSM"), F("UART ready: idx: %u"), uart_index);
     initSequence_();
     _started = true;
     return true;
@@ -46,6 +99,8 @@ void GsmModem::loop()
     _modem.tick();
     checkInitWatchdog_();
     checkInitRetry_();
+    pollNetworkState_();
+    ensureCallerId_();
 }
 Sim800l &GsmModem::driver()
 { return _modem; }
@@ -146,6 +201,10 @@ void GsmModem::onCmdDone_(void *ctx, bool ok, const String &response, const Stri
 void GsmModem::initSequence_()
 {
     _init_retry_pending = false;
+    _next_reg_poll_ms = millis() + kRegPollMs;
+    _next_info_poll_ms = millis() + kInfoPollMs;
+    _caller_id_enabled = false;
+    _next_caller_id_retry_ms = millis() + kCallerIdRetryMs;
     if (_init_attempt < kInitMaxAttempts)
         ++_init_attempt;
     _init_logged = false;
@@ -187,6 +246,13 @@ void GsmModem::initSequence_()
 }
 void GsmModem::logCmd_(const __FlashStringHelper *name, bool ok, const String &response)
 {
+    const String n = name ? String(name) : String();
+    if (n == "CLIP=1")
+    {
+        _caller_id_enabled = ok;
+        if (!ok)
+            _next_caller_id_retry_ms = millis() + kCallerIdRetryMs;
+    }
     if (_init_pending && name)
     {
         if (ok)
@@ -215,6 +281,11 @@ void GsmModem::logCmd_(const __FlashStringHelper *name, bool ok, const String &r
 void GsmModem::handleUrc_(const String &line)
 {
     _last_urc = line;
+    uint8_t reg_state = 0xFF;
+    if (parseRegState_(line, reg_state))
+        updateRegState_(reg_state);
+    if (line.startsWith("+CLIP:") || line.startsWith("RING"))
+        return;
     if (_log.ready())
         _log.info(F("GSM"), F("URC: %s"), line.c_str());
 }
@@ -227,6 +298,7 @@ void GsmModem::handleSms_(uint16_t index)
 void GsmModem::handleCall_(const String &number)
 {
     _last_call = number;
+    _caller_id_enabled = true;
     if (_call_count < kCallQueue)
     {
         _call_queue[_call_tail] = number;
@@ -255,7 +327,7 @@ void GsmModem::handleHttpAction_(int status, int len)
     _last_http_status = status;
     _last_http_len = len;
     if (_log.ready())
-        _log.info(F("GSM"), F("HTTP action status=%d len=%d"), status, len);
+        _log.info(F("GSM"), F("HTTP action: status: %d len: %d"), status, len);
 }
 void GsmModem::enqueueOrLog_(bool ok, const __FlashStringHelper *name)
 {
@@ -268,15 +340,29 @@ void GsmModem::enqueueOrLog_(bool ok, const __FlashStringHelper *name)
 }
 void GsmModem::handleCmdDone_(bool ok, const String &response, const String &cmd)
 {
+    const bool is_dial_cmd = cmd.startsWith("ATD");
     if (ok)
     {
+        _timeout_streak = 0;
         if (_last_error.length())
             _last_error = "";
         return;
     }
     if (response.length() != 0)
+    {
+        _timeout_streak = 0;
+        if (is_dial_cmd && _log.ready())
+        {
+            String line = firstDataLine_(response);
+            if (!line.length())
+                line = response;
+            _log.warn(F("GSM"), F("Dial command failed: %s"), line.c_str());
+        }
         return;
+    }
     _last_error = "Modem not responding";
+    if (_timeout_streak < 0xFF)
+        ++_timeout_streak;
     if (!_log.ready())
         return;
     const String label = cmdTimeoutLabel_(cmd);
@@ -286,6 +372,15 @@ void GsmModem::handleCmdDone_(bool ok, const String &response, const String &cmd
         _log.error(F("GSM"), F("Command timeout: %s"), cmd.c_str());
     else
         _log.error(F("GSM"), F("Command timeout"));
+    if (is_dial_cmd)
+        _log.error(F("GSM"), F("Dial command timeout"));
+    if (_timeout_streak == 3)
+        _log.error(F("GSM"), F("Modem link unstable: 3 timeouts in a row"));
+    if (cmd == "AT+CLIP=1")
+    {
+        _caller_id_enabled = false;
+        _next_caller_id_retry_ms = millis() + kCallerIdRetryMs;
+    }
 }
 void GsmModem::checkInitWatchdog_()
 {
@@ -329,6 +424,57 @@ void GsmModem::checkInitRetry_()
         return;
     initSequence_();
 }
+void GsmModem::pollNetworkState_()
+{
+    if (_init_pending)
+        return;
+    const uint32_t now = millis();
+    if ((int32_t)(now - _next_reg_poll_ms) >= 0)
+    {
+        _reg_poll_ctx.self = this;
+        _reg_poll_ctx.name = F("CREG?");
+        if (_modem.requestRegStatus(&GsmModem::onCmdLog_, &_reg_poll_ctx))
+            _next_reg_poll_ms = now + kRegPollMs;
+        else
+            _next_reg_poll_ms = now + 2000;
+    }
+    if (!isRegisteredRegState(_reg_state))
+        return;
+    if ((int32_t)(now - _next_info_poll_ms) < 0)
+        return;
+    _operator_poll_ctx.self = this;
+    _operator_poll_ctx.name = F("COPS?");
+    _signal_poll_ctx.self = this;
+    _signal_poll_ctx.name = F("CSQ");
+    bool sent = false;
+    if (_modem.requestOperator(&GsmModem::onCmdLog_, &_operator_poll_ctx))
+        sent = true;
+    if (_modem.requestSignal(&GsmModem::onCmdLog_, &_signal_poll_ctx))
+        sent = true;
+    _next_info_poll_ms = now + (sent ? kInfoPollMs : 2000);
+}
+void GsmModem::ensureCallerId_()
+{
+    if (_init_pending)
+        return;
+    if (_caller_id_enabled)
+        return;
+    const uint32_t now = millis();
+    if ((int32_t)(now - _next_caller_id_retry_ms) < 0)
+        return;
+    _caller_id_ctx.self = this;
+    _caller_id_ctx.name = F("CLIP=1");
+    if (_modem.setCallerId(true, &GsmModem::onCmdLog_, &_caller_id_ctx))
+    {
+        _next_caller_id_retry_ms = now + kCallerIdRetryMs;
+        if (_log.ready())
+            _log.info(F("GSM"), F("Retry caller ID enable"));
+    }
+    else
+    {
+        _next_caller_id_retry_ms = now + 1000;
+    }
+}
 String GsmModem::firstDataLine_(const String &response)
 {
     int pos = 0;
@@ -355,6 +501,117 @@ String GsmModem::parseQuoted_(const String &line)
         return "";
     return line.substring(start + 1, end);
 }
+bool GsmModem::parseRegState_(const String &line, uint8_t &out_state)
+{
+    if (line.indexOf("CREG") < 0)
+        return false;
+    const int colon = line.indexOf(':');
+    if (colon < 0)
+        return false;
+    String tail = line.substring(colon + 1);
+    tail.trim();
+    if (!tail.length())
+        return false;
+    const int comma = tail.indexOf(',');
+    String token = tail;
+    if (comma >= 0)
+    {
+        token = tail.substring(comma + 1);
+        const int next_comma = token.indexOf(',');
+        if (next_comma >= 0)
+            token = token.substring(0, next_comma);
+    }
+    token.trim();
+    if (!token.length())
+        return false;
+    int end = 0;
+    while (end < token.length())
+    {
+        const char c = token.charAt(end);
+        if (c < '0' || c > '9')
+            break;
+        ++end;
+    }
+    if (end == 0)
+        return false;
+    const long parsed = token.substring(0, end).toInt();
+    if (parsed < 0 || parsed > 255)
+        return false;
+    out_state = (uint8_t)parsed;
+    return true;
+}
+const char *GsmModem::regStateName_(uint8_t state)
+{
+    switch (state)
+    {
+    case 0:
+        return "not registered";
+    case 1:
+        return "registered (home)";
+    case 2:
+        return "searching";
+    case 3:
+        return "registration denied";
+    case 4:
+        return "unknown";
+    case 5:
+        return "registered (roaming)";
+    default:
+        return "invalid";
+    }
+}
+void GsmModem::updateRegState_(uint8_t state)
+{
+    if (_reg_state == state)
+        return;
+    const uint8_t prev = _reg_state;
+    _reg_state = state;
+    if (!_log.ready())
+        return;
+    const bool was_registered = isRegisteredRegState(prev);
+    const bool is_registered = isRegisteredRegState(state);
+    if (is_registered && !was_registered)
+    {
+        _log.info(F("GSM"), F("Network registered: %s"), regStateName_(state));
+        _next_info_poll_ms = millis();
+        logOperatorIfChanged_();
+        logSignalIfChanged_();
+        return;
+    }
+    if (!is_registered && was_registered)
+    {
+        _log.warn(F("GSM"), F("Network registration lost: %s"), regStateName_(state));
+        return;
+    }
+    if (state == 3)
+    {
+        _log.error(F("GSM"), F("Network registration denied"));
+        return;
+    }
+    _log.info(F("GSM"), F("Network registration state: %s"), regStateName_(state));
+}
+void GsmModem::logOperatorIfChanged_()
+{
+    if (!_log.ready() || !isRegisteredRegState(_reg_state))
+        return;
+    if (_operator_name.length() == 0)
+        return;
+    if (_last_logged_operator == _operator_name)
+        return;
+    _last_logged_operator = _operator_name;
+    _log.info(F("GSM"), F("Operator: %s"), _operator_name.c_str());
+}
+void GsmModem::logSignalIfChanged_()
+{
+    if (!_log.ready() || !isRegisteredRegState(_reg_state))
+        return;
+    if (_signal_quality.length() == 0 || !hasMeaningfulSignal(_signal_quality))
+        return;
+    if (_last_logged_signal == _signal_quality)
+        return;
+    _last_logged_signal = _signal_quality;
+    _log.info(F("GSM"), F("Signal: %s"), _signal_quality.c_str());
+}
 void GsmModem::parseInitResponse_(const __FlashStringHelper *name, const String &response)
 {
     const String n = String(name);
@@ -372,15 +629,24 @@ void GsmModem::parseInitResponse_(const __FlashStringHelper *name, const String 
     if (n == "COPS?")
     {
         _operator_name = parseQuoted_(line);
-        if (_operator_name.length() == 0)
-            _operator_name = line;
+        logOperatorIfChanged_();
         return;
     }
     if (n == "CSQ")
     {
-        int pos = line.indexOf(':');
-        _signal_quality = (pos >= 0) ? line.substring(pos + 1) : line;
-        _signal_quality.trim();
+        int rssi = -1;
+        int ber = -1;
+        int dbm = 0;
+        if (!parseCsq(line, rssi, ber) || rssi == 99 || (rssi == 0 && ber == 0) || !csqToDbm(rssi, dbm))
+        {
+            _signal_quality = "";
+            return;
+        }
+        _signal_quality = String(dbm);
+        _signal_quality += " dBm (";
+        _signal_quality += signalQualityLabel(rssi);
+        _signal_quality += ")";
+        logSignalIfChanged_();
         return;
     }
     if (n == "CREG?")
@@ -388,6 +654,9 @@ void GsmModem::parseInitResponse_(const __FlashStringHelper *name, const String 
         int pos = line.indexOf(':');
         _reg_status = (pos >= 0) ? line.substring(pos + 1) : line;
         _reg_status.trim();
+        uint8_t reg_state = 0xFF;
+        if (parseRegState_(line, reg_state))
+            updateRegState_(reg_state);
         return;
     }
 }
@@ -459,12 +728,17 @@ void GsmModem::logInitSummary_()
     _log.info(F("GSM"), F("Modem connected"));
     if (_imei.length())
         _log.info(F("GSM"), F("IMEI: %s"), _imei.c_str());
-    if (_signal_quality.length())
-        _log.info(F("GSM"), F("Signal: %s"), _signal_quality.c_str());
     if (_reg_status.length())
         _log.info(F("GSM"), F("Registration: %s"), _reg_status.c_str());
-    if (_operator_name.length())
-        _log.info(F("GSM"), F("Operator: %s"), _operator_name.c_str());
+    if (isRegisteredRegState(_reg_state))
+    {
+        logOperatorIfChanged_();
+        logSignalIfChanged_();
+    }
+    else if (_reg_status.length())
+    {
+        _log.info(F("GSM"), F("Operator/signal pending registration"));
+    }
     if (_imsi.length())
         _log.info(F("GSM"), F("IMSI: %s"), _imsi.c_str());
 }

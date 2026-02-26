@@ -99,13 +99,16 @@ private:
     String _imsi;
     String _operator_name;
     String _signal_quality;
+    String _last_logged_operator;
+    String _last_logged_signal;
     String _reg_status;
+    uint8_t _reg_state = 0xFF;
     int _last_http_status = -1;
     int _last_http_len = -1;
     bool _enabled = false;
     bool _started = false;
     static constexpr size_t kInitCmdCount = 10;
-    static constexpr uint32_t kInitTimeoutMs = 12000;
+    static constexpr uint32_t kInitTimeoutMs = 35000;
     static constexpr uint32_t kInitRetryDelayMs = 3000;
     static constexpr uint8_t kInitMaxAttempts = 3;
     CmdLogCtx _init_ctx[kInitCmdCount]{};
@@ -118,11 +121,23 @@ private:
     bool _init_retry_pending = false;
     uint32_t _init_retry_at_ms = 0;
     bool _init_logged = false;
+    uint32_t _next_reg_poll_ms = 0;
+    uint32_t _next_info_poll_ms = 0;
+    bool _caller_id_enabled = false;
+    uint32_t _next_caller_id_retry_ms = 0;
+    CmdLogCtx _caller_id_ctx{};
+    CmdLogCtx _reg_poll_ctx{};
+    CmdLogCtx _operator_poll_ctx{};
+    CmdLogCtx _signal_poll_ctx{};
+    static constexpr uint32_t kCallerIdRetryMs = 5000;
+    static constexpr uint32_t kRegPollMs = 10000;
+    static constexpr uint32_t kInfoPollMs = 30000;
     static constexpr uint8_t kCallQueue = 4;
     String _call_queue[kCallQueue];
     uint8_t _call_head = 0;
     uint8_t _call_tail = 0;
     uint8_t _call_count = 0;
+    uint8_t _timeout_streak = 0;
 
     void enqueueOrLog_(bool ok, const __FlashStringHelper *name);
 
@@ -133,10 +148,20 @@ private:
     void scheduleInitRetry_();
 
     void checkInitRetry_();
+    void pollNetworkState_();
+    void ensureCallerId_();
 
     static String firstDataLine_(const String &response);
 
     static String parseQuoted_(const String &line);
+
+    static bool parseRegState_(const String &line, uint8_t &out_state);
+
+    static const char *regStateName_(uint8_t state);
+
+    void updateRegState_(uint8_t state);
+    void logOperatorIfChanged_();
+    void logSignalIfChanged_();
 
     void parseInitResponse_(const __FlashStringHelper *name, const String &response);
 

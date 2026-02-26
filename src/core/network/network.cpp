@@ -137,10 +137,8 @@ Network::Error Network::lastError() const
 { return _last_error; }
 void Network::loop()
 {
-    _gsm.loop();
     _stack_node.loop();
     updateStackFallback_();
-    _cloud.loop();
 }
 void Network::setCloudConfig(const CloudClient::Config &cfg)
 {

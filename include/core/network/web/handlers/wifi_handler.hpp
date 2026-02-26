@@ -103,7 +103,7 @@ public:
             page.replace("%GSM_IMEI%", web.safeHtmlValue_(web._gsm->imei(), "n/a"));
             page.replace("%GSM_IMSI%", web.safeHtmlValue_(web._gsm->imsi(), "n/a"));
             page.replace("%GSM_OPERATOR%", web.safeHtmlValue_(web._gsm->operatorName(), "n/a"));
-            page.replace("%GSM_SIGNAL%", web.safeHtmlValue_(web._gsm->signalQuality(), "n/a"));
+            page.replace("%GSM_SIGNAL%", web.safeHtmlValue_(formatSignalForWeb_(web._gsm->signalQuality()), "n/a"));
             page.replace("%GSM_REG_STATUS%", web.safeHtmlValue_(web._gsm->regStatus(), "n/a"));
             page.replace("%GSM_LAST_ERROR%", web.safeHtmlValue_(web._gsm->lastError(), "n/a"));
             page.replace("%GSM_LAST_URC%", web.safeHtmlValue_(web._gsm->lastUrc(), "n/a"));
@@ -117,5 +117,42 @@ public:
                          (web._gsm->lastHttpLen() >= 0) ? String(web._gsm->lastHttpLen()) : String("n/a"));
         }
         web.sendHtml_(request, page, set_cookie);
+    }
+
+private:
+    static const char *signalLabel_(int rssi)
+    {
+        if (rssi >= 20)
+            return "best";
+        if (rssi >= 14)
+            return "medium";
+        if (rssi >= 10)
+            return "weak";
+        return "very weak";
+    }
+
+    static String formatSignalForWeb_(const String &signal)
+    {
+        String v = signal;
+        v.trim();
+        if (!v.length())
+            return "";
+        if (v.indexOf("dBm") >= 0)
+            return v;
+        const int comma = v.indexOf(',');
+        if (comma < 0)
+            return v;
+        const int rssi = v.substring(0, comma).toInt();
+        const int ber = v.substring(comma + 1).toInt();
+        if (rssi < 0 || rssi > 31 || rssi == 99 || (rssi == 0 && ber == 0))
+            return "";
+        const int dbm = -113 + (2 * rssi);
+        String out;
+        out.reserve(32);
+        out += String(dbm);
+        out += " dBm (";
+        out += signalLabel_(rssi);
+        out += ")";
+        return out;
     }
 };

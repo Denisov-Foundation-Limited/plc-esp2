@@ -134,6 +134,8 @@ App::App()
     net.fw_upgrade.setRules(control.rules);
 
     net.network.setStackConfig(cfg.configs_manager);
+    control.task_binder.setGsmModem(comms.gsm);
+    control.task_binder.setCloudClient(net.network.cloudClient());
 
     control.controllers.security().setRfidI2c(&hw.i2c);
     control.controllers.security().setUsersRegistry(control.users);
@@ -384,7 +386,6 @@ void App::loop()
     stack.taskPre();
     control.plc_scan.tick();
     ui.console.loop();
-    comms.gsm.loop();
     net.network.loop();
     stack.setTaskPhase(StackRuntime::TaskPhase::PostNetwork);
     core.tm.loop();

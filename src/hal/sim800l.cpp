@@ -59,16 +59,16 @@ void Sim800l::setHttpActionHandler(HttpActionCallback cb, void *ctx) { _http_cb 
 
 const String &Sim800l::lastResponse() const { return _last_response; }
 
-bool Sim800l::sync(CommandCallback cb, void *ctx) { return enqueueCommand("AT", "OK", 1000, cb, ctx); }
-bool Sim800l::setEcho(bool on, CommandCallback cb, void *ctx) { return enqueueCommand(on ? "ATE1" : "ATE0", "OK", 1000, cb, ctx); }
-bool Sim800l::setSmsTextMode(CommandCallback cb, void *ctx) { return enqueueCommand("AT+CMGF=1", "OK", 1000, cb, ctx); }
-bool Sim800l::setCallerId(bool on, CommandCallback cb, void *ctx) { return enqueueCommand(on ? "AT+CLIP=1" : "AT+CLIP=0", "OK", 1000, cb, ctx); }
-bool Sim800l::requestImei(CommandCallback cb, void *ctx) { return enqueueCommand("AT+GSN", "OK", 1000, cb, ctx); }
-bool Sim800l::requestImsi(CommandCallback cb, void *ctx) { return enqueueCommand("AT+CIMI", "OK", 1000, cb, ctx); }
-bool Sim800l::requestOperator(CommandCallback cb, void *ctx) { return enqueueCommand("AT+COPS?", "OK", 1000, cb, ctx); }
-bool Sim800l::requestSignal(CommandCallback cb, void *ctx) { return enqueueCommand("AT+CSQ", "OK", 1000, cb, ctx); }
-bool Sim800l::requestRegStatus(CommandCallback cb, void *ctx) { return enqueueCommand("AT+CREG?", "OK", 1000, cb, ctx); }
-bool Sim800l::enableRegUrc(CommandCallback cb, void *ctx) { return enqueueCommand("AT+CREG=1", "OK", 1000, cb, ctx); }
+bool Sim800l::sync(CommandCallback cb, void *ctx) { return enqueueCommand("AT", "OK", 2500, cb, ctx); }
+bool Sim800l::setEcho(bool on, CommandCallback cb, void *ctx) { return enqueueCommand(on ? "ATE1" : "ATE0", "OK", 2500, cb, ctx); }
+bool Sim800l::setSmsTextMode(CommandCallback cb, void *ctx) { return enqueueCommand("AT+CMGF=1", "OK", 2500, cb, ctx); }
+bool Sim800l::setCallerId(bool on, CommandCallback cb, void *ctx) { return enqueueCommand(on ? "AT+CLIP=1" : "AT+CLIP=0", "OK", 2500, cb, ctx); }
+bool Sim800l::requestImei(CommandCallback cb, void *ctx) { return enqueueCommand("AT+GSN", "OK", 3000, cb, ctx); }
+bool Sim800l::requestImsi(CommandCallback cb, void *ctx) { return enqueueCommand("AT+CIMI", "OK", 3000, cb, ctx); }
+bool Sim800l::requestOperator(CommandCallback cb, void *ctx) { return enqueueCommand("AT+COPS?", "OK", 7000, cb, ctx); }
+bool Sim800l::requestSignal(CommandCallback cb, void *ctx) { return enqueueCommand("AT+CSQ", "OK", 3000, cb, ctx); }
+bool Sim800l::requestRegStatus(CommandCallback cb, void *ctx) { return enqueueCommand("AT+CREG?", "OK", 3000, cb, ctx); }
+bool Sim800l::enableRegUrc(CommandCallback cb, void *ctx) { return enqueueCommand("AT+CREG=1", "OK", 3000, cb, ctx); }
 
 bool Sim800l::sendUssd(const String &code, CommandCallback cb, void *ctx)
 {
