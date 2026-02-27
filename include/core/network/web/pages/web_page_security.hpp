@@ -620,9 +620,9 @@ static const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
         if (dot) setStatusDot(dot, enabled && !detect, enabled && detect);
         const text = tile.querySelector('.status-line .status-text');
         if (text) {
-          if (!enabled) text.textContent = '��������';
-          else if (detect) text.textContent = '��������';
-          else text.textContent = '�����';
+          if (!enabled) text.textContent = '%SECURITY_JS_DISABLED_TXT%';
+          else if (detect) text.textContent = '%SECURITY_JS_DETECT_TXT%';
+          else text.textContent = '%SECURITY_JS_OK_TXT%';
         }
       });
     }

@@ -1,44 +1,158 @@
 ﻿# plc-esp2
-Programmable Logic Controller for ESP microcontrollers
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg1.png" width=300 />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg2.png" width=300 />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg3.png" width=300 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web1.png" width=600 />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web2.png" width=600 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web3.png" width=600 />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web4.png" width=600 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web5.png" width=600 />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web6.png" width=600 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web7.png" width=600 />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web8.png" width=600 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web9.png" width=700 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web10.png" width=700 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web11.png" width=700 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web12.png" width=700 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web13.png" width=700 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web14.png" width=700 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web15.png" width=700 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/board2.png" width=700 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/ext.png" width=700 />
-<br>
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/fan.png" width=700 />
-<br>
 
+Программируемый логический контроллер для микроконтроллеров ESP (семейство ESP32).
+
+`plc-esp2` — прошивка для автоматизации с локальным и распределённым управлением:
+- локальное управление (`CLI`, `Web UI`, `LCD`),
+- распределённая работа по Stack (`master/slave`),
+- интеграции (`Telegram`, `Cloud`, `GSM`),
+- набор прикладных контроллеров (розетки, метео, термо, баки, септик, охрана, полив, звонок, АВР, протечки).
+
+## Карта документации
+
+- Подробно про стек, протокол, кэши и синхронизацию: [STACK.md](./STACK.md)
+- Окружение сборки: `platformio.ini`, `build.ps1`
+- Профили плат и аппаратные маппинги: `include/boards/*`
+
+## System Overview
+
+```mermaid
+flowchart TD
+  UI[Пользовательские интерфейсы\nWeb UI / CLI / LCD / Telegram]
+  APP[Ядро приложения\nApp / TaskManager / Configs / Rules]
+  NET[Сеть\nWi-Fi / GSM / Cloud / Stack]
+  CTRL[Контроллеры\nSockets/Lights/Meteo/Thermo/Tanks/Septic/Security/Watering/AVR/Leak/Ring]
+
+  UI --> APP
+  APP --> NET
+  APP --> CTRL
+  NET --> CTRL
 ```
+
+## Архитектура runtime
+
+```mermaid
+flowchart TD
+  START[App::begin] --> INIT[HAL + RTC + EEPROM + Network + Controllers]
+  INIT --> BIND[TaskBinder::bindAll + bindStack]
+  BIND --> LOOP[App::loop]
+
+  LOOP --> PRE[Stack taskPre]
+  PRE --> CONSOLE[CLI console loop]
+  CONSOLE --> NETLOOP[Network loop]
+  NETLOOP --> TMLOOP[TaskManager loop]
+  TMLOOP --> POST[Stack taskPost/taskFlush]
+  POST --> LOOP
+```
+
+## Основные возможности
+
+- Контроллеры автоматизации:
+  - `Sockets`, `Lights`, `Meteo`, `Thermo`, `Tanks`, `Septic`, `Security`, `Ring`, `Watering`, `AVR`, `Leak`
+- Распределённая работа Stack:
+  - роли `master/slave`, fallback-режим, синхронизация кэшей по фичам
+- GSM-подсистема:
+  - входящие вызовы, SMS/дозвон уведомления, статус регистрации/оператора/сигнала
+- Web UI:
+  - ACL, локальный и stack-режимы страниц, быстрые действия и формы настройки
+- CLI:
+  - иерархические контексты конфигурации, диагностика, управление контроллерами и стеком
+
+## Структура проекта
+
+- `src/app.cpp` — оркестрация приложения, init, главный цикл
+- `include/core/task_binder.hpp` — регистрация задач и интервалы выполнения
+- `src/core/network/*` — сетевой слой (`Wi-Fi`, `GSM`, `Cloud`, `Stack`)
+- `src/controllers/*` — логика контроллеров
+- `include/core/network/web/*`, `src/core/network/web/*` — страницы/обработчики/роуты Web
+- `include/boards/*` — профили плат, порты, шины, аппаратные ограничения
+- `include/utils/*`, `src/utils/*` — конфиги, реестры, вспомогательные утилиты
+
+## Режимы Stack
+
+Устройство может работать как:
+- `master` — агрегирует данные slave-узлов в `StackCache`, отдаёт их в Web/Display/Telegram;
+- `slave` — исполняет команды master и возвращает `Ack/Err`;
+- `fallback` — (опционально) переключение роли при потере связи с master.
+
+Детали протокола и диаграммы обмена см. в [STACK.md](./STACK.md).
+
+## CLI (кратко)
+
+Подсказка: `help`, `?`, `help <topic>`.
+
+### Enable (`plc#`)
+
+- Диагностика:
+  - `show board`, `show plc`, `show wifi`, `show time`, `show i2c`, `show ow`, `show ports`, `show config`
+- Состояние контроллеров:
+  - `show sockets|meteo|thermo|tanks|watering|septic|security`
+  - `show <controller> <id>`
+- Управление:
+  - `socket on|off|toggle <id>`
+  - `security status|arm|disarm`
+  - `stack nodes`
+  - `stack send <id> <get|set> <json>`
+  - `stack socket <unit> <on|off|toggle> <id>`
+  - `stack thermo <unit> <on|off|toggle> <id>`
+  - `stack security <unit> <arm|disarm|status|clear>`
+- Система:
+  - `write`, `erase`, `wifi restart`, `reload`, `reset`, `ext scan`, `show ext`
+- Обновление:
+  - `copy tftp://<ip>/firmware.bin firmware`
+  - `copy http://<ip>/firmware.bin firmware`
+
+### Config (`plc(config)#`)
+
+- Глобально:
+  - `password <pass>` / `admin password <pass>`
+  - `stack role <master|slave>`
+  - `stack master <host>`
+- Контексты:
+  - `wifi`, `tgbot`, `cloud`, `time`
+  - `socket`, `meteo`, `thermo`, `tank`, `watering`, `septic`, `security`
+
+### Примеры контекстов
+
+- `plc(config-wifi)#`: `ssid`, `password`, `ap on|off`, `ap_ssid`, `ap_password`, `restart`, `show`
+- `plc(config-cloud)#`: `enable`, `host`, `port`, `path`, `ssl`, `reconnect`, `event`, `api_key`, `show`
+- `plc(config-security)#`: `show`, `enable/disable <id>`, `type <id> <pir|reed>`, `port <id>`, `name <id>`, `silent <id>`, `siren <port|none>`, `keys ...`
+
+## Скриншоты
+
+Telegram:
+
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg1.png" width="300" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg2.png" width="300" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg3.png" width="300" />
+
+Web:
+
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web1.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web2.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web3.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web4.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web5.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web6.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web7.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web8.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web9.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web10.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web11.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web12.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web13.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web14.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web15.png" width="700" />
+
+Аппаратная часть:
+
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/board2.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/ext.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/fan.png" width="700" />
+
+## Пример логов запуска
+
+```text
 [1329][INFO][TANK] controller: enabled
 [1373][INFO][APP] Configs loaded: /startup-config.json (2492 bytes)
 [1374][INFO][WIFI] Mode: STA (SSID=Denisov_VPN)
@@ -61,279 +175,8 @@ Programmable Logic Controller for ESP microcontrollers
 [2000-01-02][23:06:37][INFO][CTRL] Thermo init
 [2000-01-02][23:06:37][INFO][CTRL] Tanks init
 [2000-01-02][23:06:37][INFO][APP] Application init [OK]
-[2000-01-02][23:06:37][INFO][WIFI] STA DISCONNECTED
-[2000-01-02][23:06:42][INFO][WIFI] STA CONNECTED
-[2000-01-02][23:06:42][INFO][WIFI] STA IP 192.168.1.101
-[2000-01-02][23:06:43][INFO][THERMO] id: 1 mode: auto temp: 26.88 heat: on cool: off
-
-login: admin
-password:
-plc#
 ```
 
-## CLI Commands
+## Лицензия
 
-Подсказка: используйте `help` или `?` для списка команд, `help <topic>` для справки по теме.
-
-### Enable (`plc#`)
-
-- `show plc` - состояние вентилятора и температура платы
-- `show board` - имя профиля платы
-- `show wifi` - конфигурация Wi-Fi
-- `show time` - дата/время RTC
-- `show i2c` - список I2C устройств
-- `show ow` - список OneWire устройств
-- `show stack` - настройки stack роли
-- `show telegram` - настройки Telegram
-- `show cloud` - настройки облака
-- `show config` - содержимое конфигурационного файла
-- `show port <id>` - детали порта
-- `show ports` - список портов
-- `show sockets` - список розеток
-- `show socket <id>` - детали розетки
-- `show meteo` - список датчиков meteo
-- `show meteo <id>` - детали датчика
-- `show thermo` - список термоустройств
-- `show thermo <id>` - детали устройства
-- `show tanks` - список баков
-- `show tank <id>` - детали бака
-- `show watering` - список правил полива
-- `show watering <id>` - детали правила
-- `show septic` - список септика
-- `show septic <id>` - детали септика
-- `show security` - список датчиков охраны
-- `show security <id>` - детали датчика
-- `socket toggle <id>` - переключить реле розетки
-- `socket on <id>` - включить реле
-- `socket off <id>` - выключить реле
-- `security status` - статус охраны
-- `security arm` - постановка под охрану
-- `security disarm` - снятие с охраны
-- `ftest` - функциональный тест
-- `copy tftp://<ip>/firmware.bin firmware` - обновление прошивки
-- `copy http://<ip>/firmware.bin firmware` - обновление прошивки
-- `stack nodes` - список узлов стека
-- `stack send <id> <get|set> <json>` - отправить команду в стек
-- `stack socket <unit> <on|off|toggle> <id>` - управление розетками стека
-- `stack thermo <unit> <on|off|toggle> <id>` - управление термо в стеке
-- `stack septic <unit> <status|get>` - статус/список септика в стеке
-- `stack septic <unit> monitor <id> <on|off>` - мониторинг септика в стеке
-- `stack security <unit> <arm|disarm|status|clear>` - управление охраной в стеке
-- `wifi restart` - перезапуск Wi-Fi
-- `reload` - перезапуск контроллера
-- `reset` - перезапуск контроллера
-- `write` - сохранить конфигурацию
-- `erase` - удалить конфигурацию
-- `ext scan` - пересканировать расширители
-- `show ext` - список расширителей
-- `configure terminal` - вход в режим config
-- `conf t` - вход в режим config
-- `disable` - завершить сессию
-- `logout` - завершить сессию
-- `exit` - завершить сессию
-- `help` / `?` - список команд
-- `help <topic>` - справка (show, wifi, user, system, tgbot, cloud, socket, meteo, thermo, tank, watering, septic, security)
-
-### Config (`plc(config)#`)
-
-- `password <pass>` - установить пароль администратора
-- `admin password <pass>` - установить пароль администратора
-- `stack role <master|slave>` - роль устройства в стеке
-- `stack master <host>` - адрес мастера стека
-- `wifi` - вход в контекст Wi-Fi
-- `tgbot` - вход в контекст Telegram
-- `cloud` - вход в контекст Cloud
-- `time` - вход в контекст времени
-- `socket` - вход в контекст розеток
-- `meteo` - вход в контекст meteo
-- `thermo` - вход в контекст термо
-- `tank` - вход в контекст баков
-- `watering` - вход в контекст полива
-- `septic` - вход в контекст септика
-- `security` - вход в контекст охраны
-- `exit` - выход в enable
-- `end` - выход в enable
-- `help` / `?` - список команд
-- `help <topic>` - справка по теме
-
-### Wi-Fi (`plc(config-wifi)#`)
-
-- `ssid <value>` - установить STA SSID
-- `password <value>` - установить STA пароль
-- `ap on|off` - включить/выключить AP
-- `ap_ssid <value>` - установить AP SSID
-- `ap_password <value>` - установить AP пароль
-- `restart` - перезапуск Wi-Fi
-- `show` - показать настройки Wi-Fi
-- `exit` - выход в config
-- `end` - выход в enable
-- `help` / `?` - список команд
-- `help <topic>` - справка по теме
-
-### Telegram (`plc(config-tgbot)#`)
-
-- `token <value>` - токен бота
-- `chat <id>` - chat id
-- `insecure on|off` - проверка TLS
-- `allow list` - список разрешенных пользователей
-- `allow add <username> [chat_id] [admin] [notify] [off]` - добавить пользователя
-- `allow del <username>` - удалить пользователя
-- `allow clear` - очистить список
-- `send <text>` - отправить сообщение
-- `poll` - опрос команд
-- `show` - показать настройки
-- `exit` - выход в config
-- `end` - выход в enable
-- `help` / `?` - список команд
-- `help <topic>` - справка по теме
-
-### Cloud (`plc(config-cloud)#`)
-
-- `enable on|off` - включить/выключить облако
-- `host <value>` - host
-- `port <num>` - порт
-- `path <value>` - путь
-- `ssl on|off` - SSL
-- `reconnect <ms>` - интервал переподключения
-- `event <ms>` - интервал авто-ивентов
-- `api_key <value|clear>` - api_key
-- `show` - показать настройки
-- `exit` - выход в config
-- `end` - выход в enable
-- `help` / `?` - список команд
-- `help <topic>` - справка по теме
-
-### Time (`plc(config-time)#`)
-
-- `date <YYYY-MM-DD>` - установить дату
-- `time <HH:MM:SS>` - установить время
-- `set <YYYY-MM-DD> <HH:MM:SS>` - установить дату и время
-- `show` - показать время RTC
-- `exit` - выход в config
-- `end` - выход в enable
-- `help` / `?` - список команд
-- `help <topic>` - справка по теме
-
-### Socket (`plc(config-socket)#`)
-
-- `show` - список розеток
-- `show <id>` - детали розетки
-- `enable <id>` - включить розетку
-- `disable <id>` - выключить розетку
-- `name <id> <value>` - имя розетки
-- `button <id> <port|none>` - порт кнопки
-- `relay <id> <port|none>` - порт реле
-- `exit` - выход в config
-- `end` - выход в enable
-- `help` / `?` - список команд
-- `help <topic>` - справка по теме
-
-### Meteo (`plc(config-meteo)#`)
-
-- `show` - список датчиков
-- `show <id>` - детали датчика
-- `name <id> <text>` - имя датчика
-- `enable <id>` - включить датчик
-- `disable <id>` - выключить датчик
-- `type <id> <none|ds18b20|dht22>` - тип датчика
-- `addr <id> <hex|none>` - адрес DS18B20
-- `pin <id> <pin|none>` - пин DHT22
-- `exit` - выход в config
-- `end` - выход в enable
-- `help` / `?` - список команд
-- `help <topic>` - справка по теме
-
-### Thermo (`plc(config-thermo)#`)
-
-- `show` - список устройств
-- `show <id>` - детали устройства
-- `name <id> <text>` - имя устройства
-- `enable <id>` - включить устройство
-- `disable <id>` - выключить устройство
-- `mode <id> <off|heat|cool|auto>` - режим
-- `sensor <id> <sensor|none>` - датчик meteo
-- `target <id> <temp>` - целевая температура
-- `hyst <id> <temp>` - гистерезис
-- `heat <id> <port|none>` - порт нагрева
-- `cool <id> <port|none>` - порт охлаждения
-- `button <id> <port|none>` - порт кнопки
-- `exit` - выход в config
-- `end` - выход в enable
-- `help` / `?` - список команд
-- `help <topic>` - справка по теме
-
-### Tank (`plc(config-tank)#`)
-
-- `show` - список баков
-- `show <id>` - детали бака
-- `name <id> <text>` - имя бака
-- `enable <id>` - включить бак
-- `disable <id>` - выключить бак
-- `power <id> <0|1>` - питание
-- `low <id> <port|none>` - нижний уровень
-- `mid <id> <port|none>` - средний уровень
-- `full <id> <port|none>` - полный уровень
-- `valve <id> <port|none>` - реле клапана
-- `pump <id> <port|none>` - реле насоса
-- `alarm <id> <port|none>` - реле аварии
-- `exit` - выход в config
-- `end` - выход в enable
-- `help` / `?` - список команд
-- `help <topic>` - справка по теме
-
-### Watering (`plc(config-watering)#`)
-
-- `show` - список правил
-- `show <id>` - детали правила
-- `name <id> <text>` - имя правила
-- `enable <id>` - включить правило
-- `disable <id>` - выключить правило
-- `status <id> <on|off>` - мониторинг времени
-- `port <id> <port|none>` - GPIO порт
-- `tank <id> <tank_id|none>` - привязать бак
-- `date <id> <YYYY-MM-DD>` - дата старта
-- `time <id> <HH:MM>` - время старта
-- `duration <id> <sec>` - длительность (сек)
-- `resume <id> <on|off>` - продолжать после наполнения
-- `resume_level <id> <low|mid|full>` - продолжать при уровне >= выбранного
-- `exit` - выход в config
-- `end` - выход в enable
-- `help` / `?` - список команд
-- `help <topic>` - справка по теме
-
-### Septic (`plc(config-septic)#`)
-
-- `show` - список септиков
-- `show <id>` - детали
-- `name <id> <text>` - имя
-- `enable <id>` - включить
-- `disable <id>` - выключить
-- `warning <id> <port|none>` - вход предупреждения
-- `alarm <id> <port|none>` - вход тревоги
-- `relay_warn <id> <port|none>` - реле предупреждения
-- `relay_alarm <id> <port|none>` - реле тревоги
-- `monitor <id> <on|off>` - мониторинг
-- `exit` - выход в config
-- `end` - выход в enable
-- `help` / `?` - список команд
-- `help <topic>` - справка по теме
-
-### Security (`plc(config-security)#`)
-
-- `show` - список датчиков
-- `show <id>` - детали датчика
-- `enable <id>` - включить датчик
-- `disable <id>` - выключить датчик
-- `type <id> <pir|reed>` - тип датчика
-- `port <id> <port|none>` - порт датчика
-- `name <id> <text>` - имя датчика
-- `silent <id> <on|off>` - тихий режим
-- `siren <port|none>` - порт сирены
-- `keys list` - список ключей iButton
-- `key add <hex16>` - добавить ключ iButton
-- `key del <hex16>` - удалить ключ iButton
-- `key clear` - очистить список ключей
-- `exit` - выход в config
-- `end` - выход в enable
-- `help` / `?` - список команд
-- `help <topic>` - справка по теме
+GPLv3. См. [LICENSE](./LICENSE).

@@ -157,6 +157,9 @@ public:
         page.replace("%SECURITY_JS_ON2%", WebUiRu::WebCore::kEnablePrefix);
         page.replace("%SECURITY_JS_UNAVAILABLE%", WebUiRu::WebCore::kUnavailable);
         page.replace("%SECURITY_JS_OFF%", WebUiRu::WebCore::kOffShort);
+        page.replace("%SECURITY_JS_DISABLED_TXT%", WebUiRu::Security::kText5);
+        page.replace("%SECURITY_JS_DETECT_TXT%", WebUiRu::Security::kText6);
+        page.replace("%SECURITY_JS_OK_TXT%", WebUiRu::Security::kText13);
         if (!web._controllers)
         {
             page.replace("%SECURITY_ENABLED_CHECKED%", "");
