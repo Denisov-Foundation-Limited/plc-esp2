@@ -235,8 +235,8 @@ private:
         if (!_cloud)
             return {};
         typename TaskManager<N>::Options opt;
-        opt.interval_ms = 200;
-        opt.priority = TaskManager<N>::Priority::Normal;
+        opt.interval_ms = 50;
+        opt.priority = TaskManager<N>::Priority::High;
         _cloud_task = addChecked_<&CloudClient::loop>(*_cloud, opt, "cloud_client");
         return _cloud_task;
     }
