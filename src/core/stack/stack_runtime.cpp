@@ -40,7 +40,7 @@ namespace
 static constexpr uint16_t kStackBootstrapCoreFeatureMask =
     (uint16_t)((1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4) |
                (1u << 5) | (1u << 6) | (1u << 7) | (1u << 8) | (1u << 9) |
-               (1u << 10));
+               (1u << 10) | (1u << 13) | (1u << 14));
 }
 
 StackRuntime::StackRuntime(CoreContext &core, HardwareContext &hw, CommsContext &comms,
@@ -212,19 +212,21 @@ void StackRuntime::updateStackMasterMode_(){
 bool StackRuntime::requestStackPollFeature_(uint32_t node_id, uint8_t feature){
     switch (feature)
     {
-    case 0:  return _stack_cache.requestSockets(node_id);
-    case 1:  return _stack_cache.requestLights(node_id);
-    case 2:  return _stack_cache.requestSecurity(node_id);
-    case 3:  return _stack_cache.requestSecurityPrearm(node_id);
-    case 4:  return _stack_cache.requestThermo(node_id);
-    case 5:  return _stack_cache.requestSeptic(node_id);
-    case 6:  return _stack_cache.requestTanks(node_id);
-    case 7:  return _stack_cache.requestMeteo(node_id);
-    case 8:  return _stack_cache.requestWatering(node_id);
-    case 9:  return _stack_cache.requestAvr(node_id);
-    case 10: return _stack_cache.requestLeak(node_id);
-    case 11: return _stack_cache.requestPorts(node_id);
-    case 12: return _stack_cache.requestTempSensors(node_id);
+    case 0:  return _stack_cache.requestPlcStatus(node_id);
+    case 1:  return _stack_cache.requestRtcStatus(node_id);
+    case 2:  return _stack_cache.requestSockets(node_id);
+    case 3:  return _stack_cache.requestLights(node_id);
+    case 4:  return _stack_cache.requestSecurity(node_id);
+    case 5:  return _stack_cache.requestSecurityPrearm(node_id);
+    case 6:  return _stack_cache.requestThermo(node_id);
+    case 7:  return _stack_cache.requestSeptic(node_id);
+    case 8:  return _stack_cache.requestTanks(node_id);
+    case 9:  return _stack_cache.requestMeteo(node_id);
+    case 10: return _stack_cache.requestWatering(node_id);
+    case 11: return _stack_cache.requestAvr(node_id);
+    case 12: return _stack_cache.requestLeak(node_id);
+    case 13: return _stack_cache.requestPorts(node_id);
+    case 14: return _stack_cache.requestTempSensors(node_id);
     default: return false;
     }
 }

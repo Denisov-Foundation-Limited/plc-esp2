@@ -248,7 +248,7 @@ private:
     static constexpr uint32_t kStackBootstrapPollMs = 250;
     static constexpr uint32_t kStackBootstrapTimeoutMs = 25000;
     static constexpr uint8_t kStackBootstrapPasses = 2;
-    static constexpr uint8_t kStackPollFeatureCount = 13;
+    static constexpr uint8_t kStackPollFeatureCount = 15;
 
     CoreContext &core;
     HardwareContext &hw;

@@ -1633,7 +1633,25 @@ private:
             }
             if (gpio_usage_changed)
                 _controllers.invalidateGpioUsageCache();
-            sendAck_(cmd_id);
+            DynamicJsonDocument doc(1024);
+            JsonArray out_items = doc["items"].to<JsonArray>();
+            for (JsonVariantConst v : items)
+            {
+                if (!v.is<JsonObjectConst>())
+                    continue;
+                JsonObjectConst item = v.as<JsonObjectConst>();
+                if (!item["id"].is<unsigned>())
+                    continue;
+                const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                JsonObject o = out_items.add<JsonObject>();
+                o["id"] = (unsigned)id;
+                if (const auto *cfg = _sockets.config(id))
+                    o["enabled"] = cfg->enabled;
+                bool relay_on = false;
+                if (_sockets.relayStateById(id, relay_on))
+                    o["state"] = relay_on;
+            }
+            sendAck_(cmd_id, doc);
             return;
         }
         if (action == "set_lights")
@@ -1668,7 +1686,25 @@ private:
                     _sockets.setLightRelayById(id, on);
                 }
             }
-            sendAck_(cmd_id);
+            DynamicJsonDocument doc(1024);
+            JsonArray out_items = doc["items"].to<JsonArray>();
+            for (JsonVariantConst v : items)
+            {
+                if (!v.is<JsonObjectConst>())
+                    continue;
+                JsonObjectConst item = v.as<JsonObjectConst>();
+                if (!item["id"].is<unsigned>())
+                    continue;
+                const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                JsonObject o = out_items.add<JsonObject>();
+                o["id"] = (unsigned)id;
+                if (const auto *cfg = _sockets.lightConfig(id))
+                    o["enabled"] = cfg->enabled;
+                bool relay_on = false;
+                if (_sockets.lightRelayStateById(id, relay_on))
+                    o["state"] = relay_on;
+            }
+            sendAck_(cmd_id, doc);
             return;
         }
         sendErr_(cmd_id, "unsupported");

@@ -183,6 +183,8 @@ void StackRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
         self->comms.wifi.task();
         self->core.logs.info(F("STACK"), F("Unit online: %s id: 0x%08lX ip: %s fw: %u"),
                              label.c_str(), (unsigned long)node_id, ip_c, (unsigned)fw_ver);
+        self->_stack_cache.requestPlcStatus(node_id);
+        self->_stack_cache.requestRtcStatus(node_id);
         self->sendSecurityStateToNode_(node_id, self->control.controllers.security().armed(), true);
         self->enqueueStackBootstrapSync_(node_id);
     }

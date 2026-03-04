@@ -27,6 +27,7 @@ class WifiManager;
 class RTC;
 class GsmModem;
 class StackMaster;
+class StackCache;
 class ConfigsManagerIface;
 
 class CloudClient
@@ -45,6 +46,7 @@ public:
 
     void setGsm(GsmModem *gsm);
     void setStackMaster(StackMaster *master);
+    void setStackCache(StackCache *cache);
     void setConfigsManager(ConfigsManagerIface *cfg);
 
     void setEnabled(bool enabled);
@@ -122,6 +124,7 @@ private:
     RTC &_rtc;
     GsmModem *_gsm = nullptr;
     StackMaster *_stack_master = nullptr;
+    StackCache *_stack_cache = nullptr;
     ConfigsManagerIface *_configs = nullptr;
 
     Config _cfg;
@@ -239,6 +242,8 @@ private:
     void fillLeak_(JsonArray out);
 
     void fillStackInfo_(JsonObject out);
+    bool fillStackCachedSystem_(JsonObject out, uint32_t node_id);
+    bool fillStackCachedControllers_(JsonObject out, uint32_t node_id);
 
     void maybeSendPeriodicEvent_();
 

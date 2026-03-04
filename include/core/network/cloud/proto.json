@@ -20,6 +20,9 @@
       { "name": "ts", "type": "u64", "required": false, "note": "epoch ms" },
       { "name": "unit", "type": "string", "required": false, "note": "local or stack" },
       { "name": "node_id", "type": "u32", "required": false, "note": "stack node id if unit=stack" },
+      { "name": "part", "type": "u16", "required": false, "note": "multipart part index (1-based)" },
+      { "name": "parts", "type": "u16", "required": false, "note": "multipart total parts" },
+      { "name": "done", "type": "bool", "required": false, "note": "multipart completion flag" },
       { "name": "auth", "type": "object", "required": false, "note": "auth block (api_key), only for hello" },
       { "name": "session_id", "type": "string", "required": false, "note": "session token after hello" },
       { "name": "payload", "type": "object", "required": false }
@@ -103,7 +106,10 @@
     "get_result": {
       "ok": "bool",
       "data": "object",
-      "error": "string"
+      "error": "string",
+      "part": "u16",
+      "parts": "u16",
+      "done": "bool"
     },
     "event_payload": {
       "kind": "string",

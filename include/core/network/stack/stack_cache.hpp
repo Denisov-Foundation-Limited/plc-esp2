@@ -74,6 +74,7 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
+        uint32_t pending_since_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -86,6 +87,7 @@ public:
         {
             node_id = 0;
             updated_ms = 0;
+            pending_since_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -1707,6 +1709,18 @@ private:
                     if (c && c->pending)
                         light_cache = c;
                 }
+                else if (action == "set_lights")
+                {
+                    StackLightsCache *c = findStackLightsCache_(node_id, false);
+                    if (c)
+                        light_cache = c;
+                }
+                else if (action == "set")
+                {
+                    StackSocketsCache *c = findStackSocketsCache_(node_id, false);
+                    if (c)
+                        sock_cache = c;
+                }
                 else
                 {
                     StackSocketsCache *c = findStackSocketsCache_(node_id, false);
@@ -1889,13 +1903,53 @@ private:
 
         if (sock_cache)
         {
-            sock_cache->updated_ms = millis();
+            const uint32_t sock_now = millis();
+            const bool sock_set_update = (rx_action == "set");
+            sock_cache->updated_ms = sock_now;
             if (!ok)
             {
                 sock_cache->pending = false;
+                sock_cache->pending_cmd_id = 0;
                 sock_cache->last_ok = false;
                 sock_cache->last_error = "";
                 sock_cache->last_error = doc["error"] | "error";
+            }
+            else if (sock_set_update)
+            {
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                        StackSocketItem *dst = findStackSocketItem_(*sock_cache, id);
+                        if (!dst)
+                        {
+                            if (sock_cache->item_count >= sock_cache->capacity)
+                                continue;
+                            dst = &sock_cache->items[sock_cache->item_count++];
+                            *dst = StackSocketItem{};
+                            dst->id = id;
+                        }
+                        if (item["enabled"].is<bool>() || item["enabled"].is<unsigned>() || item["enabled"].is<int>())
+                            dst->enabled = item["enabled"].as<bool>();
+                        if (item["state"].is<bool>() || item["state"].is<unsigned>() || item["state"].is<int>())
+                            dst->state = item["state"].as<bool>();
+                        if (item["button"].is<unsigned>())
+                            dst->button_port = (uint8_t)item["button"].as<unsigned>();
+                        if (item["relay"].is<unsigned>())
+                            dst->relay_port = (uint8_t)item["relay"].as<unsigned>();
+                        if (item["name"].is<const char *>())
+                            copyStr_(dst->name, sizeof(dst->name), item["name"].as<const char *>());
+                    }
+                }
+                sock_cache->pending = false;
+                sock_cache->pending_cmd_id = 0;
+                sock_cache->has_data = sock_cache->item_count > 0;
+                sock_cache->last_ok = true;
+                sock_cache->last_error = "";
+                sock_cache->node_id = node_id;
             }
             else
             {
@@ -1931,6 +1985,7 @@ private:
                 if (done)
                 {
                     sock_cache->pending = false;
+                    sock_cache->pending_cmd_id = 0;
                     sock_cache->has_data = true;
                     sock_cache->last_ok = true;
                     sock_cache->node_id = node_id;
@@ -1944,13 +1999,55 @@ private:
 
         if (light_cache)
         {
-            light_cache->updated_ms = millis();
+            const uint32_t light_now = millis();
+            const bool light_set_update = (rx_action == "set_lights");
+            light_cache->updated_ms = light_now;
             if (!ok)
             {
                 light_cache->pending = false;
+                light_cache->pending_cmd_id = 0;
+                light_cache->pending_since_ms = 0;
                 light_cache->last_ok = false;
                 light_cache->last_error = "";
                 light_cache->last_error = doc["error"] | "error";
+            }
+            else if (light_set_update)
+            {
+                if (!items.isNull())
+                {
+                    for (JsonObjectConst item : items)
+                    {
+                        if (!item["id"].is<unsigned>())
+                            continue;
+                        const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                        StackLightItem *dst = findStackLightItem_(*light_cache, id);
+                        if (!dst)
+                        {
+                            if (light_cache->item_count >= light_cache->capacity)
+                                continue;
+                            dst = &light_cache->items[light_cache->item_count++];
+                            *dst = StackLightItem{};
+                            dst->id = id;
+                        }
+                        if (item["enabled"].is<bool>() || item["enabled"].is<unsigned>() || item["enabled"].is<int>())
+                            dst->enabled = item["enabled"].as<bool>();
+                        if (item["state"].is<bool>() || item["state"].is<unsigned>() || item["state"].is<int>())
+                            dst->state = item["state"].as<bool>();
+                        if (item["button"].is<unsigned>())
+                            dst->button_port = (uint8_t)item["button"].as<unsigned>();
+                        if (item["relay"].is<unsigned>())
+                            dst->relay_port = (uint8_t)item["relay"].as<unsigned>();
+                        if (item["name"].is<const char *>())
+                            copyStr_(dst->name, sizeof(dst->name), item["name"].as<const char *>());
+                    }
+                }
+                light_cache->pending = false;
+                light_cache->pending_cmd_id = 0;
+                light_cache->pending_since_ms = 0;
+                light_cache->has_data = light_cache->item_count > 0;
+                light_cache->last_ok = true;
+                light_cache->last_error = "";
+                light_cache->node_id = node_id;
             }
             else
             {
@@ -1986,6 +2083,8 @@ private:
                 if (done)
                 {
                     light_cache->pending = false;
+                    light_cache->pending_cmd_id = 0;
+                    light_cache->pending_since_ms = 0;
                     light_cache->has_data = true;
                     light_cache->last_ok = true;
                     light_cache->node_id = node_id;
@@ -1993,6 +2092,7 @@ private:
                 else
                 {
                     light_cache->pending = true;
+                    light_cache->pending_since_ms = light_now;
                 }
             }
         }
@@ -3055,10 +3155,11 @@ private:
         const uint32_t now = millis();
         if (cache->pending)
         {
-            if ((uint32_t)(now - cache->updated_ms) > 12000u)
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 4000u)
             {
                 cache->pending = false;
                 cache->pending_cmd_id = 0;
+                cache->pending_since_ms = 0;
             }
             else
             {
@@ -3082,6 +3183,7 @@ private:
             return false;
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
+        cache->pending_since_ms = now;
         cache->updated_ms = now;
         return true;
     }
