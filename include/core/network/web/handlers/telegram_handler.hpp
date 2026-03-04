@@ -35,7 +35,6 @@ public:
         page.reserve(page.length() + 4096);
         page.replace("%NAV%", web.navHtml_());
         page.replace("%TGBOT_TOKEN%", web._tgbot ? web._tgbot->token() : String(""));
-        page.replace("%TGBOT_CHAT_ID%", web._tgbot ? String((long long)web._tgbot->chatId()) : String("0"));
         page.replace("%TGBOT_LAST_CHAT_ID%",
                      web._tgbot ? String((long long)web._tgbot->lastIncomingChatId()) : String("0"));
         page.replace("%TGBOT_INSECURE_CHECKED%", web._tgbot && web._tgbot->insecure() ? "checked" : "");
@@ -72,20 +71,6 @@ public:
             {
                 web._tgbot->setToken(token);
                 changed = true;
-            }
-        }
-        if (web._tgbot && request->hasParam("chat_id", true))
-        {
-            String chat = request->getParam("chat_id", true)->value();
-            chat.trim();
-            if (chat.length() > 0)
-            {
-                int64_t chat_id = (int64_t)strtoll(chat.c_str(), nullptr, 10);
-                if (chat_id != web._tgbot->chatId())
-                {
-                    web._tgbot->setChatId(chat_id);
-                    changed = true;
-                }
             }
         }
         if (web._tgbot)

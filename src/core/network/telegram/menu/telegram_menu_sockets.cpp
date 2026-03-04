@@ -180,7 +180,7 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
                         continue;
                     any = true;
                     out += "\n  ";
-                    out += st->relay_on ? F("💡 ") : F("⚪ ");
+                    out += st->relay_on ? F("🟡 ") : F("⚪ ");
                     out += String((unsigned)cfg->id);
                     out += ": ";
                     if (cfg->name.length())
@@ -253,7 +253,7 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
                         continue;
                     any = true;
                     out += "\n  ";
-                    out += it.state ? F("💡 ") : F("⚪ ");
+                    out += it.state ? F("🟡 ") : F("⚪ ");
                     out += String((unsigned)it.id);
                     out += ": ";
                     if (it.name[0])

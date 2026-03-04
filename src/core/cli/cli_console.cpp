@@ -985,7 +985,7 @@ void CliConsole::handleTab_()
         "help system",
         "help security"}};
 
-    static const std::array<const char *, 34> kConfigTgbotCmds = {{
+    static const std::array<const char *, 36> kConfigTgbotCmds = {{
         "token <value>",
         "chat <id>",
         "insecure on",
@@ -1000,6 +1000,8 @@ void CliConsole::handleTab_()
         "user is_admin <id> off",
         "user tg_notify <id> on",
         "user tg_notify <id> off",
+        "user tg_quick <id> on",
+        "user tg_quick <id> off",
         "user webpass <id> <password>",
         "user webpass <id> clear",
         "user acl <id> all",

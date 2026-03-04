@@ -206,6 +206,8 @@ bool UsersRegistry::applyFromJson(JsonArrayConst arr){
             u.tg_admin = obj["is_admin"].as<bool>();
         if (obj["tg_notify"].is<bool>())
             u.tg_notify = obj["tg_notify"].as<bool>();
+        if (obj["tg_quick_actions"].is<bool>())
+            u.tg_quick_actions = obj["tg_quick_actions"].as<bool>();
         if (obj["gsm_phone"].is<const char *>())
             u.gsm_phone = normalizePhone(obj["gsm_phone"].as<const char *>());
         if (obj["gsm_call"].is<bool>())
@@ -247,6 +249,7 @@ void UsersRegistry::serializeToJson(JsonArray out) const{
             obj["tg_chat_id"] = (long long)u.tg_chat_id;
         obj["is_admin"] = u.tg_admin;
         obj["tg_notify"] = u.tg_notify;
+        obj["tg_quick_actions"] = u.tg_quick_actions;
         if (u.gsm_phone.length())
             obj["gsm_phone"] = u.gsm_phone;
         obj["gsm_call"] = u.gsm_call;

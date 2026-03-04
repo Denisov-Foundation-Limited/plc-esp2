@@ -95,6 +95,7 @@ void TelegramMenu::setAllowedUsers(const std::vector<TelegramMenu::AllowedUser> 
         dst.tg_chat_id = 0;
         dst.tg_admin = false;
         dst.tg_notify = false;
+        dst.tg_quick_actions = true;
     }
     size_t next_slot = 0;
     for (size_t i = 0; i < users.size(); ++i)
@@ -114,6 +115,7 @@ void TelegramMenu::setAllowedUsers(const std::vector<TelegramMenu::AllowedUser> 
         dst.tg_chat_id = u.chat_id;
         dst.tg_admin = u.is_admin;
         dst.tg_notify = u.is_notify;
+        dst.tg_quick_actions = true;
     }
 }
 TelegramMenu::AllowResult TelegramMenu::addAllowedUser(const String &user)
@@ -144,6 +146,7 @@ TelegramMenu::AllowResult TelegramMenu::addAllowedUser(const TelegramMenu::Allow
         dst.tg_chat_id = u.chat_id;
         dst.tg_admin = u.is_admin;
         dst.tg_notify = u.is_notify;
+        dst.tg_quick_actions = true;
         return AllowResult::Ok;
     }
     return AllowResult::Full;
@@ -164,6 +167,7 @@ bool TelegramMenu::removeAllowedUser(const String &user)
             dst.tg_chat_id = 0;
             dst.tg_admin = false;
             dst.tg_notify = false;
+            dst.tg_quick_actions = true;
             return true;
         }
     }
@@ -180,6 +184,7 @@ void TelegramMenu::clearAllowedUsers()
         dst.tg_chat_id = 0;
         dst.tg_admin = false;
         dst.tg_notify = false;
+        dst.tg_quick_actions = true;
     }
 }
 TelegramAllowedUsersView TelegramMenu::allowedUsers() const
@@ -1159,6 +1164,15 @@ bool TelegramMenu::aclControllerAllowedForChat_(int64_t chat_id, UsersRegistry::
         return false;
     return u->controllerAllowed(unit, ctrl);
 }
+bool TelegramMenu::quickActionsAllowedForChat_(int64_t chat_id) const
+{
+    if (isAdminChat_(chat_id))
+        return true;
+    const UsersRegistry::User *u = aclUserForChat_(chat_id);
+    if (!u)
+        return true;
+    return u->tg_quick_actions;
+}
 String TelegramMenu::adminPrefix_(int64_t chat_id) const
 {
     String prefix = F("Устройство: ");
@@ -1317,15 +1331,26 @@ String TelegramMenu::buildKeyboardMarkup_(const std::vector<String> &labels)
     out += F("],\"resize_keyboard\":true,\"one_time_keyboard\":false}");
     return out;
 }
-String TelegramMenu::buildRootKeyboardMarkup_(const std::vector<DeviceEntry> &devices)
+String TelegramMenu::buildRootKeyboardMarkup_(const std::vector<DeviceEntry> &devices, bool show_quick_actions)
 {
-    String out = F("{\"keyboard\":[[\"Я дома\",\"Собираюсь\",\"Ушёл\"]");
+    String out = F("{\"keyboard\":[");
     out.reserve(devices.size() * 32 + 128);
+    bool has_rows = false;
+    if (show_quick_actions)
+    {
+        out += F("[\"Я дома\",\"Собираюсь\",\"Ушел\"]");
+        has_rows = true;
+    }
     const size_t cols = 2;
     for (size_t i = 0; i < devices.size(); ++i)
     {
         if (i % cols == 0)
-            out += F(",[");
+        {
+            if (has_rows)
+                out += F(",");
+            out += F("[");
+            has_rows = true;
+        }
         out += F("\"");
         out += escapeJson_(devices[i].label);
         out += F("\"");
@@ -1360,7 +1385,7 @@ String TelegramMenu::menuMarkup_(void *ctx, int64_t chat_id, const TelegramBot::
     {
         std::vector<DeviceEntry> devices;
         self->buildDeviceList_(devices);
-        return buildRootKeyboardMarkup_(devices);
+        return buildRootKeyboardMarkup_(devices, self->quickActionsAllowedForChat_(chat_id));
     }
     if (strcmp(menu.id, "sockets") == 0)
     {
@@ -2472,6 +2497,11 @@ bool TelegramMenu::handleRootDeviceSelection_(const TelegramClient::Update &u)
         return false;
     if (u.text == F("Я дома"))
     {
+        if (!quickActionsAllowedForChat_(u.chat_id))
+        {
+            _bot->sendText(u.chat_id, F("Быстрые действия недоступны"));
+            return true;
+        }
         const bool ok = runQuickRule_(u.chat_id, 1);
         if (!ok)
             _bot->sendText(u.chat_id, F("Правило Я дома отключено или недоступно"));
@@ -2479,13 +2509,23 @@ bool TelegramMenu::handleRootDeviceSelection_(const TelegramClient::Update &u)
     }
     if (u.text == F("Собираюсь"))
     {
+        if (!quickActionsAllowedForChat_(u.chat_id))
+        {
+            _bot->sendText(u.chat_id, F("Быстрые действия недоступны"));
+            return true;
+        }
         const bool ok = runQuickRule_(u.chat_id, 2);
         if (!ok)
             _bot->sendText(u.chat_id, F("Правило Собираюсь отключено или недоступно"));
         return true;
     }
-    if (u.text == F("Ушёл"))
+    if (u.text == F("Ушёл") || u.text == F("Ушел"))
     {
+        if (!quickActionsAllowedForChat_(u.chat_id))
+        {
+            _bot->sendText(u.chat_id, F("Быстрые действия недоступны"));
+            return true;
+        }
         const bool ok = runQuickRule_(u.chat_id, 3);
         if (!ok)
             _bot->sendText(u.chat_id, F("Правило Ушёл отключено или недоступно"));

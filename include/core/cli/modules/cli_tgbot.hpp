@@ -47,6 +47,7 @@ public:
         _c._io->println(F("    user tg_chat <id> <chat_id|0> - set telegram chat id"));
         _c._io->println(F("    user is_admin <id> <on|off> - set admin flag"));
         _c._io->println(F("    user tg_notify <id> <on|off> - set telegram notify flag"));
+        _c._io->println(F("    user tg_quick <id> <on|off> - set telegram quick actions flag"));
         _c._io->println(F("    user webpass <id> <password|clear> - set/clear web password"));
         _c._io->println(F("    user acl <id> <all|none> - grant all/clear ACL"));
         _c._io->println(F("    allow list              - show allowed users"));
@@ -74,6 +75,7 @@ public:
         _c._io->println(F("  user tg_chat <id> <chat_id|0> - set telegram chat id"));
         _c._io->println(F("  user is_admin <id> <on|off> - set admin flag"));
         _c._io->println(F("  user tg_notify <id> <on|off> - set telegram notify flag"));
+        _c._io->println(F("  user tg_quick <id> <on|off> - set telegram quick actions flag"));
         _c._io->println(F("  user webpass <id> <password|clear> - set/clear web password"));
         _c._io->println(F("  user acl <id> <all|none> - grant all/clear ACL"));
         _c._io->println(F("  allow list              - show allowed users"));
@@ -102,8 +104,8 @@ public:
         }
         if (lower == "user list" || lower == "user show")
         {
-            _c._io->println(F("ID  En  Username         TG User          TG Chat        Admin Notify WebPass"));
-            _c._io->println(F("--  --  ---------------  ---------------  -------------  ----- ------ -------"));
+            _c._io->println(F("ID  En  Username         TG User          TG Chat        Admin Notify Quick WebPass"));
+            _c._io->println(F("--  --  ---------------  ---------------  -------------  ----- ------ ----- -------"));
             for (size_t i = 0; i < _c._users.size(); ++i)
             {
                 const auto &u = _c._users.user(i);
@@ -122,6 +124,8 @@ public:
                 _c._io->print(u.tg_admin ? F("yes") : F("no "));
                 _c._io->print(F("   "));
                 _c._io->print(u.tg_notify ? F("yes") : F("no "));
+                _c._io->print(F("   "));
+                _c._io->print(u.tg_quick_actions ? F("yes") : F("no "));
                 _c._io->print(F("   "));
                 _c._io->println(u.hasWebPassword() ? F("yes") : F("no"));
             }
@@ -246,6 +250,28 @@ public:
                 return true;
             }
             _c._users.user((size_t)(id - 1)).tg_notify = b;
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("user tg_quick "))
+        {
+            uint8_t id = 0;
+            String value;
+            if (!parseUserIdAndTail_(cmd.substring(14), id, value))
+            {
+                _c._io->println(F("Usage: user tg_quick <id> <on|off>"));
+                _c.printPrompt_();
+                return true;
+            }
+            bool b = false;
+            if (!parseBoolToken_(value, b))
+            {
+                _c._io->println(F("Invalid flag, use on|off"));
+                _c.printPrompt_();
+                return true;
+            }
+            _c._users.user((size_t)(id - 1)).tg_quick_actions = b;
             _c._io->println(F("OK"));
             _c.printPrompt_();
             return true;

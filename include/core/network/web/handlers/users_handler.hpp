@@ -10,6 +10,7 @@
 /**********************************************************************/
 
 #pragma once
+#include <stdlib.h>
 
 class WebInterface;
 class AsyncWebServer;
@@ -78,6 +79,8 @@ public:
             const String k_enabled = String("u") + p + "_enabled";
             const String k_is_admin = String("u") + p + "_is_admin";
             const String k_tg_notify = String("u") + p + "_tg_notify";
+            const String k_tg_quick_actions = String("u") + p + "_tg_quick_actions";
+            const String k_tg_chat_id = String("u") + p + "_tg_chat_id";
             const String k_username = String("u") + p + "_username";
             const String k_tg_username = String("u") + p + "_tg_username";
             const String k_web_password = String("u") + p + "_web_password";
@@ -89,12 +92,14 @@ public:
             u.enabled = request->hasParam(k_enabled, true);
             u.tg_admin = request->hasParam(k_is_admin, true);
             u.tg_notify = request->hasParam(k_tg_notify, true);
+            u.tg_quick_actions = request->hasParam(k_tg_quick_actions, true);
             u.username = web.paramValue_(request, k_username);
             String web_pass = web.paramValue_(request, k_web_password);
             web_pass.trim();
             if (web_pass.length() > 0)
                 u.setWebPassword(web_pass);
             u.tg_username = UsersRegistry::normalizeTgUsername(web.paramValue_(request, k_tg_username));
+            u.tg_chat_id = parseChatId_(web.paramValue_(request, k_tg_chat_id));
             u.gsm_phone = UsersRegistry::normalizePhone(web.paramValue_(request, k_gsm_phone));
             u.gsm_sms = request->hasParam(k_gsm_sms, true);
             u.gsm_call = request->hasParam(k_gsm_call, true);
@@ -282,6 +287,30 @@ public:
     }
 
 private:
+    static int64_t parseChatId_(const String &value)
+    {
+        String s = value;
+        s.trim();
+        if (s.length() == 0)
+            return 0;
+        bool has_digit = false;
+        for (size_t i = 0; i < s.length(); ++i)
+        {
+            const char c = s[i];
+            if (c >= '0' && c <= '9')
+            {
+                has_digit = true;
+                continue;
+            }
+            if (i == 0 && (c == '+' || c == '-'))
+                continue;
+            return 0;
+        }
+        if (!has_digit)
+            return 0;
+        return (int64_t)strtoll(s.c_str(), nullptr, 10);
+    }
+
     static String usersCards_(WebInterface &web, bool read_only)
     {
         if (!web._users)
@@ -357,7 +386,8 @@ private:
             out += WebUiRu::Users::kLabelPassword;
             out += "</label><input class=\"field\" type=\"password\" name=\"u";
             out += p;
-            out += "_web_password\" value=\"\" placeholder=\"";
+            out += "_web_password\" value=\"\" placeholder=\"********\"";
+            out += "\" title=\"";
             out += WebUiRu::Users::kPasswordPlaceholder;
             out += "\" autocomplete=\"new-password\"";
             out += disabled;
@@ -370,6 +400,17 @@ private:
             out += "_tg_username\" value=\"";
             WebInterface::appendHtmlEscaped_(out, u.tg_username.c_str());
             out += "\"";
+            out += disabled;
+            out += "></div>";
+
+            out += "<div class=\"form-row full\"><label>";
+            out += WebUiRu::Users::kLabelTelegramChatId;
+            out += "</label><input class=\"field\" name=\"u";
+            out += p;
+            out += "_tg_chat_id\" value=\"";
+            if (u.tg_chat_id != 0)
+                out += String((long long)u.tg_chat_id);
+            out += "\" placeholder=\"123456789\"";
             out += disabled;
             out += "></div>";
 
@@ -389,6 +430,16 @@ private:
             out += p;
             out += "_tg_notify\"";
             if (u.tg_notify)
+                out += " checked";
+            out += disabled;
+            out += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+
+            out += "<div class=\"form-row\"><label>";
+            out += WebUiRu::Users::kLabelTelegramQuickActions;
+            out += "</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
+            out += p;
+            out += "_tg_quick_actions\"";
+            if (u.tg_quick_actions)
                 out += " checked";
             out += disabled;
             out += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";

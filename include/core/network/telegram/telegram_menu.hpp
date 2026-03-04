@@ -498,6 +498,7 @@ private:
     uint8_t aclUnitForChat_(int64_t chat_id) const;
 
     bool aclControllerAllowedForChat_(int64_t chat_id, UsersRegistry::AclController ctrl) const;
+    bool quickActionsAllowedForChat_(int64_t chat_id) const;
 
     void buildSocketLabels_(std::vector<String> &out) const;
     void buildSocketLabels_(std::vector<String> &out, bool lights_only) const;
@@ -565,7 +566,7 @@ private:
 
     static String buildKeyboardMarkup_(const std::vector<String> &labels);
 
-    static String buildRootKeyboardMarkup_(const std::vector<DeviceEntry> &devices);
+    static String buildRootKeyboardMarkup_(const std::vector<DeviceEntry> &devices, bool show_quick_actions);
 
     static String menuPrefix_(void *ctx, int64_t chat_id, const TelegramBot::Menu &menu);
 

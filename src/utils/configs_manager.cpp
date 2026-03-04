@@ -199,7 +199,6 @@ bool ConfigsManager::save(){
 
     JsonObject t = _doc["telegram"].to<JsonObject>();
     t["token"] = _telegram.token();
-    t["chat_id"] = (long long)_telegram.chatId();
     t["insecure"] = _telegram.insecure();
     t["client"] = _telegram.clientKindName();
     t["use_proxy"] = _telegram.useProxy();
@@ -430,8 +429,6 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
         JsonObjectConst t = doc["telegram"].as<JsonObjectConst>();
         if (t["token"].is<const char *>())
             _telegram.setToken(t["token"].as<const char *>());
-        if (t["chat_id"].is<long long>())
-            _telegram.setChatId((int64_t)t["chat_id"].as<long long>());
         if (t["insecure"].is<bool>())
             _telegram.setInsecure(t["insecure"].as<bool>());
 
@@ -484,48 +481,6 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
                 _network.setTelegramProxy(host, port, path);
             else
                 _network.disableTelegramProxy();
-        }
-
-        if (!doc["users"].is<JsonArrayConst>() && t["allowed_users"].is<JsonArrayConst>())
-        {
-            _users.clear();
-            size_t slot = 0;
-            JsonArrayConst arr = t["allowed_users"].as<JsonArrayConst>();
-            for (JsonVariantConst v : arr)
-            {
-                if (slot >= _users.size())
-                    break;
-                UsersRegistry::User &dst = _users.user(slot);
-                if (v.is<const char *>())
-                {
-                    dst.enabled = true;
-                    dst.tg_username = UsersRegistry::normalizeTgUsername(v.as<const char *>());
-                    dst.tg_admin = true;
-                    ++slot;
-                    continue;
-                }
-                if (!v.is<JsonObjectConst>())
-                    continue;
-                JsonObjectConst obj = v.as<JsonObjectConst>();
-                if (obj["id"].is<unsigned>())
-                {
-                    const unsigned raw = obj["id"].as<unsigned>();
-                    if (raw >= 1 && raw <= _users.size())
-                        slot = (size_t)(raw - 1);
-                }
-                UsersRegistry::User &u = _users.user(slot);
-                if (obj["enabled"].is<bool>())
-                    u.enabled = obj["enabled"].as<bool>();
-                if (obj["username"].is<const char *>())
-                    u.tg_username = UsersRegistry::normalizeTgUsername(obj["username"].as<const char *>());
-                if (obj["chat_id"].is<long long>())
-                    u.tg_chat_id = (int64_t)obj["chat_id"].as<long long>();
-                if (obj["is_admin"].is<bool>())
-                    u.tg_admin = obj["is_admin"].as<bool>();
-                if (obj["is_notify"].is<bool>())
-                    u.tg_notify = obj["is_notify"].as<bool>();
-                ++slot;
-            }
         }
     }
 

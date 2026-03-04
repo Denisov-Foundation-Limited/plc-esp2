@@ -94,13 +94,6 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
               <label>Token</label>
               <input type="text" name="token" value="%TGBOT_TOKEN%" placeholder="Bot token">
             </div>
-            <div>
-              <label>Chat ID</label>
-              <input type="text" name="chat_id" list="chat-id-list" value="%TGBOT_CHAT_ID%" placeholder="123456789">
-              <datalist id="chat-id-list">
-                <option value="%TGBOT_LAST_CHAT_ID%"></option>
-              </datalist>
-            </div>
             <div class="checkbox" style="margin-top:22px;">
               <input type="checkbox" id="insecure" name="insecure" %TGBOT_INSECURE_CHECKED%>
               <label for="insecure">Insecure TLS</label>
@@ -155,13 +148,8 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
     if (lastChatIdEl) {
       const lastChatId = (lastChatIdEl.textContent || '').trim();
       const hasLast = lastChatId && lastChatId !== '0';
-      if (!hasLast) {
+      if (!hasLast)
         lastChatIdEl.textContent = '%TGBOT_UNKNOWN_TEXT%';
-        const list = document.getElementById('chat-id-list');
-        if (list) {
-          list.innerHTML = '';
-        }
-      }
     }
     const telegramForm = document.getElementById('telegram-form');
     const reloadKey = 'telegram_reload';
