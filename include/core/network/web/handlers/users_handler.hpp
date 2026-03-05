@@ -96,7 +96,8 @@ public:
             u.username = web.paramValue_(request, k_username);
             String web_pass = web.paramValue_(request, k_web_password);
             web_pass.trim();
-            if (web_pass.length() > 0)
+            const bool masked_unchanged = u.hasWebPassword() && web_pass == "********";
+            if (web_pass.length() > 0 && !masked_unchanged)
                 u.setWebPassword(web_pass);
             u.tg_username = UsersRegistry::normalizeTgUsername(web.paramValue_(request, k_tg_username));
             u.tg_chat_id = parseChatId_(web.paramValue_(request, k_tg_chat_id));
@@ -386,8 +387,11 @@ private:
             out += WebUiRu::Users::kLabelPassword;
             out += "</label><input class=\"field\" type=\"password\" name=\"u";
             out += p;
-            out += "_web_password\" value=\"\" placeholder=\"********\"";
-            out += "\" title=\"";
+            out += "_web_password\" value=\"";
+            if (u.hasWebPassword())
+                out += "********";
+            out += "\" placeholder=\"web_password\"";
+            out += " title=\"";
             out += WebUiRu::Users::kPasswordPlaceholder;
             out += "\" autocomplete=\"new-password\"";
             out += disabled;

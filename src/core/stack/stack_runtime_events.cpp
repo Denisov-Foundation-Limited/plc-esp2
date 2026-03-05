@@ -1,4 +1,4 @@
-﻿/**********************************************************************/
+/**********************************************************************/
 /*                                                                    */
 /* Programmable Logic Controller for ESP microcontrollers             */
 /*                                                                    */
@@ -419,28 +419,28 @@ void StackRuntime::notifyRingHold_(){
     const RingController::Source src = control.controllers.ring().lastSource();
     if (src == RingController::Source::Button)
     {
-        const String tg_msg = F("Р вЂ”Р Р†Р С•Р Р…Р С•Р С” Р Р†Р С”Р В»РЎР‹РЎвЂЎР ВµР Р… Р С—Р С• Р С”Р Р…Р С•Р С—Р С”Р Вµ");
+        const String tg_msg = F("Звонок включен по кнопке");
         core.logs.info(F("RING"), F("Ring enabled by button"));
         sendTelegramNotify_(tg_msg);
         return;
     }
     if (src == RingController::Source::Web)
     {
-        const String tg_msg = F("Р вЂ”Р Р†Р С•Р Р…Р С•Р С” Р Р†Р С”Р В»РЎР‹РЎвЂЎР ВµР Р… Р С‘Р В· Р Р†Р ВµР В±-Р С‘Р Р…РЎвЂљР ВµРЎР‚РЎвЂћР ВµР в„–РЎРѓР В°");
+        const String tg_msg = F("Звонок включен из веб-интерфейса");
         core.logs.info(F("RING"), F("Ring enabled from web"));
         sendTelegramNotify_(tg_msg);
         return;
     }
     if (src == RingController::Source::Cli)
     {
-        const String tg_msg = F("Р вЂ”Р Р†Р С•Р Р…Р С•Р С” Р Р†Р С”Р В»РЎР‹РЎвЂЎР ВµР Р… Р С‘Р В· CLI");
+        const String tg_msg = F("Звонок включен из CLI");
         core.logs.info(F("RING"), F("Ring enabled from CLI"));
         sendTelegramNotify_(tg_msg);
         return;
     }
     if (src == RingController::Source::Stack)
     {
-        const String tg_msg = F("Р вЂ”Р Р†Р С•Р Р…Р С•Р С” Р Р†Р С”Р В»РЎР‹РЎвЂЎР ВµР Р… Р С‘Р В· РЎРѓРЎвЂљР ВµР С”Р В°");
+        const String tg_msg = F("Звонок включен из стека");
         core.logs.info(F("RING"), F("Ring enabled from stack"));
         sendTelegramNotify_(tg_msg);
         return;

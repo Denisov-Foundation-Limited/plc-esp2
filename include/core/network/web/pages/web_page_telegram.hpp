@@ -92,7 +92,7 @@ static const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
           <div class="grid">
             <div>
               <label>Token</label>
-              <input type="text" name="token" value="%TGBOT_TOKEN%" placeholder="Bot token">
+              <input type="password" name="token" value="%TGBOT_TOKEN%" placeholder="bot_token">
             </div>
             <div class="checkbox" style="margin-top:22px;">
               <input type="checkbox" id="insecure" name="insecure" %TGBOT_INSECURE_CHECKED%>

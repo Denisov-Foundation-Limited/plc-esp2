@@ -34,7 +34,9 @@ public:
         String page = FPSTR(kWebInterfaceTelegramHtml);
         page.reserve(page.length() + 4096);
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%TGBOT_TOKEN%", web._tgbot ? web._tgbot->token() : String(""));
+        const String token_mask = "********";
+        const String token_value = (web._tgbot && web._tgbot->token().length()) ? token_mask : String("");
+        page.replace("%TGBOT_TOKEN%", token_value);
         page.replace("%TGBOT_LAST_CHAT_ID%",
                      web._tgbot ? String((long long)web._tgbot->lastIncomingChatId()) : String("0"));
         page.replace("%TGBOT_INSECURE_CHECKED%", web._tgbot && web._tgbot->insecure() ? "checked" : "");
@@ -67,7 +69,8 @@ public:
         {
             String token = request->getParam("token", true)->value();
             token.trim();
-            if (token != web._tgbot->token())
+            const bool masked_unchanged = web._tgbot->token().length() && token == "********";
+            if (!masked_unchanged && token != web._tgbot->token())
             {
                 web._tgbot->setToken(token);
                 changed = true;
