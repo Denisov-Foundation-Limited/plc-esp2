@@ -59,6 +59,7 @@ public:
     struct RemoteMeteoItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool ok = false;
         bool has_temp = false;
@@ -108,6 +109,7 @@ public:
     struct RemoteSocketItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool state = false;
         static constexpr size_t kNameLen = 48;
@@ -146,6 +148,7 @@ public:
     struct RemoteLightItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool state = false;
         static constexpr size_t kNameLen = 48;
@@ -184,6 +187,7 @@ public:
     struct RemoteSepticItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool warning = false;
         bool alarm = false;
@@ -221,6 +225,7 @@ public:
     struct RemoteThermoItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool power_on = false;
         bool heat_on = false;
@@ -261,6 +266,7 @@ public:
     struct RemoteTankItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool levels_ok = false;
         bool level_low = false;
@@ -300,6 +306,7 @@ public:
     struct RemoteSecurityItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool detect = false;
         bool silent = false;
@@ -822,6 +829,9 @@ private:
             break;
         case StackFeature::Leak:
             handleLeak_(cmd_id, action, params);
+            break;
+        case StackFeature::Groups:
+            handleGroups_(cmd_id, action, params);
             break;
         case StackFeature::Ring:
             handleRing_(cmd_id, action, params);
@@ -1440,6 +1450,93 @@ private:
         sendAck_(cmd_id, doc);
     }
 
+    void appendLocalGroups_(JsonDocument &doc)
+    {
+        if (!_configs)
+            return;
+        JsonArray groups = doc["groups"].to<JsonArray>();
+        for (size_t i = 0; i < _configs->groupCount(); ++i)
+        {
+            ConfigsManagerIface::GroupConfig g;
+            if (!_configs->groupByIndex(i, g) || g.id == 0 || g.name.length() == 0)
+                continue;
+            JsonObject o = groups.add<JsonObject>();
+            o["id"] = (unsigned)g.id;
+            o["sort"] = (unsigned)g.sort;
+            o["name"] = g.name;
+        }
+    }
+
+    void handleGroups_(uint16_t cmd_id, const String &action, JsonVariantConst params)
+    {
+        if (!_configs)
+        {
+            sendErr_(cmd_id, "cfg");
+            return;
+        }
+        if (action == "get")
+        {
+            _tx_doc.clear();
+            appendLocalGroups_(_tx_doc);
+            sendAck_(cmd_id, _tx_doc);
+            return;
+        }
+        if (action != "set")
+        {
+            sendErr_(cmd_id, "unsupported");
+            return;
+        }
+
+        JsonArrayConst groups = params["groups"].as<JsonArrayConst>();
+        if (groups.isNull())
+        {
+            sendErr_(cmd_id, "bad params");
+            return;
+        }
+
+        bool keep_ids[256] = {};
+        for (JsonObjectConst g : groups)
+        {
+            String name = g["name"] | "";
+            name.trim();
+            if (!name.length())
+                continue;
+            uint8_t id = (uint8_t)(g["id"] | 0u);
+            if (id == 0)
+                id = _configs->allocateGroupId();
+            if (id == 0 || !_configs->setGroup(id, name, (uint16_t)(g["sort"] | 0u)))
+            {
+                sendErr_(cmd_id, "set failed");
+                return;
+            }
+            keep_ids[id] = true;
+        }
+
+        ConfigsManagerIface::GroupConfig existing[16] = {};
+        size_t existing_count = 0;
+        for (size_t i = 0; i < _configs->groupCount() && existing_count < 16; ++i)
+        {
+            ConfigsManagerIface::GroupConfig g;
+            if (!_configs->groupByIndex(i, g) || g.id == 0)
+                continue;
+            existing[existing_count++] = g;
+        }
+        for (size_t i = 0; i < existing_count; ++i)
+        {
+            const uint8_t id = existing[i].id;
+            if (id != 0 && !keep_ids[id])
+                _configs->removeGroup(id);
+        }
+        if (!_configs->save())
+        {
+            sendErr_(cmd_id, "save failed");
+            return;
+        }
+        _tx_doc.clear();
+        appendLocalGroups_(_tx_doc);
+        sendAck_(cmd_id, _tx_doc);
+    }
+
     void handleSockets_(uint16_t cmd_id, const String &action, JsonVariantConst params)
     {
         if (action == "get")
@@ -1472,6 +1569,7 @@ private:
                 const size_t to = from + chunk;
                 _tx_doc.clear();
                 JsonDocument &doc = _tx_doc;
+                appendLocalGroups_(doc);
                 JsonArray arr = doc["items"].to<JsonArray>();
                 size_t pos = 0;
                 for (size_t i = 0; i < SocketController::kSocketCount; ++i)
@@ -1484,6 +1582,7 @@ private:
                     {
                         JsonObject o = arr.add<JsonObject>();
                         o["id"] = (unsigned)cfg->id;
+                        o["group_id"] = (unsigned)cfg->group_id;
                         o["enabled"] = cfg->enabled;
                         if (cfg->name.length())
                             o["name"] = cfg->name;
@@ -1534,6 +1633,7 @@ private:
                 const size_t to = from + chunk;
                 _tx_doc.clear();
                 JsonDocument &doc = _tx_doc;
+                appendLocalGroups_(doc);
                 JsonArray arr = doc["items"].to<JsonArray>();
                 size_t pos = 0;
                 for (size_t i = 0; i < SocketController::kLightCount; ++i)
@@ -1546,6 +1646,7 @@ private:
                     {
                         JsonObject o = arr.add<JsonObject>();
                         o["id"] = (unsigned)cfg->id;
+                        o["group_id"] = (unsigned)cfg->group_id;
                         o["enabled"] = cfg->enabled;
                         if (cfg->name.length())
                             o["name"] = cfg->name;
@@ -1585,6 +1686,8 @@ private:
                 const uint8_t id = (uint8_t)item["id"].as<unsigned>();
                 if (item["name"].is<const char *>())
                     _sockets.setName(id, String(item["name"].as<const char *>()));
+                if (item["group_id"].is<unsigned>() || item["group_id"].is<int>())
+                    _sockets.setGroupId(id, (uint8_t)(item["group_id"] | 0u));
                 if (item["button"].is<unsigned>())
                 {
                     _sockets.setButtonPort(id, (uint8_t)item["button"].as<unsigned>());
@@ -1646,7 +1749,10 @@ private:
                 JsonObject o = out_items.add<JsonObject>();
                 o["id"] = (unsigned)id;
                 if (const auto *cfg = _sockets.config(id))
+                {
                     o["enabled"] = cfg->enabled;
+                    o["group_id"] = (unsigned)cfg->group_id;
+                }
                 bool relay_on = false;
                 if (_sockets.relayStateById(id, relay_on))
                     o["state"] = relay_on;
@@ -1675,6 +1781,8 @@ private:
                     _sockets.toggleLightRelayById(id);
                     continue;
                 }
+                if (item["group_id"].is<unsigned>() || item["group_id"].is<int>())
+                    _sockets.setLightGroupId(id, (uint8_t)(item["group_id"] | 0u));
                 if (item["state"].is<bool>())
                 {
                     const bool on = item["state"].as<bool>();
@@ -1699,7 +1807,10 @@ private:
                 JsonObject o = out_items.add<JsonObject>();
                 o["id"] = (unsigned)id;
                 if (const auto *cfg = _sockets.lightConfig(id))
+                {
                     o["enabled"] = cfg->enabled;
+                    o["group_id"] = (unsigned)cfg->group_id;
+                }
                 bool relay_on = false;
                 if (_sockets.lightRelayStateById(id, relay_on))
                     o["state"] = relay_on;
@@ -1732,6 +1843,8 @@ private:
 
                 if (item["name"].is<const char *>())
                     _meteo.setName(id, String(item["name"].as<const char *>()));
+                if (item["group_id"].is<unsigned>() || item["group_id"].is<int>())
+                    _meteo.setGroupId(id, (uint8_t)(item["group_id"] | 0u));
 
                 if (item["type"].is<const char *>())
                 {
@@ -1822,6 +1935,7 @@ private:
             const size_t to = from + chunk;
             _tx_doc.clear();
             JsonDocument &doc = _tx_doc;
+            appendLocalGroups_(doc);
             JsonArray arr = doc["items"].to<JsonArray>();
             size_t pos = 0;
             for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
@@ -1836,6 +1950,7 @@ private:
                     const bool has_read = st->last_read_ms != 0;
                     const uint32_t age_s = has_read ? (uint32_t)((millis() - st->last_read_ms) / 1000u) : 0u;
                     o["id"] = (unsigned)cfg->id;
+                    o["group_id"] = (unsigned)cfg->group_id;
                     o["enabled"] = cfg->enabled;
                     if (cfg->name.length())
                         o["name"] = cfg->name;
@@ -1902,6 +2017,7 @@ private:
                 const size_t to = from + chunk;
                 _tx_doc.clear();
                 JsonDocument &doc = _tx_doc;
+                appendLocalGroups_(doc);
                 JsonArray arr = doc["items"].to<JsonArray>();
                 size_t pos = 0;
                 for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
@@ -1914,6 +2030,7 @@ private:
                     {
                         JsonObject o = arr.add<JsonObject>();
                         o["id"] = (unsigned)cfg->id;
+                        o["group_id"] = (unsigned)cfg->group_id;
                         o["enabled"] = cfg->enabled;
                         if (cfg->name.length())
                             o["name"] = cfg->name;
@@ -1971,6 +2088,11 @@ private:
                 if (!item["id"].is<unsigned>())
                     continue;
                 const uint8_t id = (uint8_t)item["id"].as<unsigned>();
+                if (item["group_id"].is<unsigned>() || item["group_id"].is<int>())
+                {
+                    _thermo.setGroupId(id, (uint8_t)(item["group_id"] | 0u));
+                    mark_changed(id);
+                }
                 if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
                 {
                     _thermo.togglePower(id, "stack");
@@ -2075,6 +2197,7 @@ private:
                     continue;
                 JsonObject o = out_items.add<JsonObject>();
                 o["id"] = (unsigned)id;
+                o["group_id"] = (unsigned)cfg->group_id;
                 o["enabled"] = cfg->enabled;
                 if (cfg->name.length())
                     o["name"] = cfg->name;
@@ -2147,6 +2270,7 @@ private:
                 doc["enabled"] = _security.controllerEnabled();
                 doc["armed"] = _security.armed();
                 doc["alarm"] = _security.alarmOn();
+                appendLocalGroups_(doc);
                 if (_security.sirenPort() != SecurityController::kInvalidPort)
                     doc["siren"] = (unsigned)_security.sirenPort();
                 JsonArray arr = doc["items"].to<JsonArray>();
@@ -2161,6 +2285,7 @@ private:
                     {
                         JsonObject o = arr.add<JsonObject>();
                         o["id"] = (unsigned)cfg->id;
+                        o["group_id"] = (unsigned)cfg->group_id;
                         o["enabled"] = cfg->enabled;
                         o["type"] = (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
                         if (cfg->port != SecurityController::kInvalidPort)
@@ -2221,6 +2346,8 @@ private:
                     const uint8_t id = (uint8_t)item["id"].as<unsigned>();
                     if (item["name"].is<const char *>())
                         _security.setName(id, String(item["name"].as<const char *>()));
+                    if (item["group_id"].is<unsigned>() || item["group_id"].is<int>())
+                        _security.setGroupId(id, (uint8_t)(item["group_id"] | 0u));
                     if (item["type"].is<const char *>())
                     {
                         String t = item["type"].as<const char *>();
@@ -2309,6 +2436,7 @@ private:
                         continue;
                     JsonObject o = arr.add<JsonObject>();
                     o["id"] = (unsigned)cfg->id;
+                    o["group_id"] = (unsigned)cfg->group_id;
                     o["enabled"] = cfg->enabled;
                     o["type"] = (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
                     if (cfg->port != SecurityController::kInvalidPort)
@@ -2448,6 +2576,7 @@ private:
                 const size_t to = from + chunk;
                 _tx_doc.clear();
                 JsonDocument &doc = _tx_doc;
+                appendLocalGroups_(doc);
                 JsonArray arr = doc["items"].to<JsonArray>();
                 size_t pos = 0;
                 for (size_t i = 0; i < SepticController::kSepticCount; ++i)
@@ -2460,6 +2589,7 @@ private:
                     {
                         JsonObject o = arr.add<JsonObject>();
                         o["id"] = (unsigned)cfg->id;
+                        o["group_id"] = (unsigned)cfg->group_id;
                         o["enabled"] = cfg->enabled;
                         o["monitor"] = cfg->monitoring_on;
                         if (cfg->name.length())
@@ -2505,6 +2635,8 @@ private:
             bool gpio_usage_changed = false;
             if (obj["name"].is<const char *>())
                 cfg_changed |= _septic.setName(id, String(obj["name"].as<const char *>()));
+            if (obj["group_id"].is<unsigned>() || obj["group_id"].is<int>())
+                cfg_changed |= _septic.setGroupId(id, (uint8_t)(obj["group_id"] | 0u));
             if (obj["enabled"].is<bool>() || obj["enabled"].is<int>())
             {
                 const bool en = obj["enabled"].is<bool>() ? obj["enabled"].as<bool>()
@@ -2584,6 +2716,7 @@ private:
                 {
                     JsonObject o = arr.add<JsonObject>();
                     o["id"] = (unsigned)cfg->id;
+                    o["group_id"] = (unsigned)cfg->group_id;
                     o["enabled"] = cfg->enabled;
                     o["monitor"] = cfg->monitoring_on;
                     if (cfg->name.length())
@@ -2643,6 +2776,7 @@ private:
                 const size_t to = from + chunk;
                 _tx_doc.clear();
                 JsonDocument &doc = _tx_doc;
+                appendLocalGroups_(doc);
                 JsonArray arr = doc["items"].to<JsonArray>();
                 size_t pos = 0;
                 for (size_t i = 0; i < TankController::kTankCount; ++i)
@@ -2655,6 +2789,7 @@ private:
                     {
                         JsonObject o = arr.add<JsonObject>();
                         o["id"] = (unsigned)cfg->id;
+                        o["group_id"] = (unsigned)cfg->group_id;
                         o["enabled"] = cfg->enabled;
                         o["power_on"] = cfg->power_on;
                         if (cfg->name.length())
@@ -2715,6 +2850,8 @@ private:
                 {
                     changed |= _tanks.setName(id, String(item["name"].as<const char *>()));
                 }
+                if (item["group_id"].is<unsigned>() || item["group_id"].is<int>())
+                    changed |= _tanks.setGroupId(id, (uint8_t)(item["group_id"] | 0u));
                 if (item["low"].is<unsigned>())
                 {
                     changed |= _tanks.setLevelLow(id, (uint8_t)item["low"].as<unsigned>());
@@ -2837,6 +2974,7 @@ private:
                     continue;
                 JsonObject o = arr.add<JsonObject>();
                 o["id"] = (unsigned)cfg->id;
+                o["group_id"] = (unsigned)cfg->group_id;
                 o["enabled"] = cfg->enabled;
                 o["power_on"] = cfg->power_on;
                 if (cfg->name.length())

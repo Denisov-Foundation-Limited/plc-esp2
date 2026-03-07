@@ -182,6 +182,7 @@
       }
     },
     "controllers_info": {
+      "groups": "group_info[]",
       "sockets": "socket_state[]",
       "lights": "light_state[]",
       "meteo": "meteo_state[]",
@@ -194,8 +195,14 @@
       "avr": "avr_state",
       "leak": "leak_state[]"
     },
+    "group_info": {
+      "id": "u8",
+      "name": "string",
+      "sort": "u16"
+    },
     "socket_state": {
       "id": "u8",
+      "group_id": "u8",
       "name": "string",
       "enabled": "bool",
       "button": "u8",
@@ -204,6 +211,7 @@
     },
     "light_state": {
       "id": "u8",
+      "group_id": "u8",
       "name": "string",
       "enabled": "bool",
       "button": "u8",
@@ -212,6 +220,7 @@
     },
     "meteo_state": {
       "id": "u8",
+      "group_id": "u8",
       "enabled": "bool",
       "name": "string",
       "type": "string",
@@ -225,6 +234,7 @@
     },
     "thermo_state": {
       "id": "u8",
+      "group_id": "u8",
       "name": "string",
       "enabled": "bool",
       "power_on": "bool",
@@ -240,6 +250,7 @@
     },
     "tank_state": {
       "id": "u8",
+      "group_id": "u8",
       "name": "string",
       "enabled": "bool",
       "power_on": "bool",
@@ -259,6 +270,7 @@
     },
     "septic_state": {
       "id": "u8",
+      "group_id": "u8",
       "name": "string",
       "enabled": "bool",
       "monitor": "bool",
@@ -301,6 +313,7 @@
     },
     "security_detect": {
       "id": "u8",
+      "group_id": "u8",
       "enabled": "bool",
       "name": "string",
       "type": "reed|pir",

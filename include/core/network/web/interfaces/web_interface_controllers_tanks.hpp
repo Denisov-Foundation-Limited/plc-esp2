@@ -190,9 +190,14 @@ public:
                 level_pct = 33;
             }
     
-            items += "<div class=\"tile";
+            const bool has_groups = web.hasGroups_(node_id);
+            items += "<div class=\"tile js-group-item";
             if (!cfg.enabled)
                 items += " disabled";
+            items += "\" data-group-id=\"";
+            items += String((unsigned)cfg.group_id);
+            items += "\"";
+            items += web.groupVisibilityStyleAttr_(cfg.group_id, node_id);
             items += "\">";
             items += "<div>";
             items += "<div class=\"tank-visual\">";
@@ -220,9 +225,20 @@ public:
             items += "_en\"";
             if (cfg.enabled)
                 items += " checked";
-            if (!(can_admin && can_control))
-                items += " disabled";
+                if (!(can_admin && can_control))
+                    items += " disabled";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "</div>";
+            items += "<div class=\"status-row\">";
+            items += "<span class=\"tank-status-dot ";
+            items += (cfg.pump_on ? "tank-status-on" : "tank-status-off");
+            items += WebUiRu::Tanks::kText11;
+            items += "<span class=\"tank-status-dot ";
+            items += (cfg.valve_on ? "tank-status-on" : "tank-status-off");
+            items += WebUiRu::Tanks::kText12;
+            items += "<span class=\"tank-status-dot ";
+            items += (cfg.alarm_on ? "tank-status-bad" : "tank-status-off");
+            items += WebUiRu::Tanks::kText14;
             items += "</div>";
             items += "<input class=\"field name\" type=\"text\" name=\"k";
             items += String((unsigned)cfg.id);
@@ -235,6 +251,14 @@ public:
             if (!(can_admin && can_control))
                 items += " readonly";
             items += ">";
+            items += String("<div class=\"form-row full\" style=\"margin-top:8px;margin-bottom:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field\" name=\"k";
+            items += String((unsigned)cfg.id);
+            items += "_group\"";
+            if (!(can_admin && can_control) || !has_groups)
+                items += " disabled";
+            items += ">";
+            items += web.groupOptionsHtml_(cfg.group_id, true, true, node_id);
+            items += "</select></div>";
             items += "<div class=\"form-grid\">";
             items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData;
             if (cfg.low != TankController::kInvalidPort)
@@ -306,16 +330,6 @@ public:
                 items += cfg.power_on ? "on" : "off";
                 items += "\"></div>";
             }
-            items += "<div class=\"status-row\">";
-            items += "<span class=\"tank-status-dot ";
-            items += (cfg.pump_on ? "tank-status-on" : "tank-status-off");
-            items += WebUiRu::Tanks::kText11;
-            items += "<span class=\"tank-status-dot ";
-            items += (cfg.valve_on ? "tank-status-on" : "tank-status-off");
-            items += WebUiRu::Tanks::kText12;
-            items += "<span class=\"tank-status-dot ";
-            items += (cfg.alarm_on ? "tank-status-bad" : "tank-status-off");
-            items += WebUiRu::Tanks::kText14;
             items += "</div></div>";
             ++rendered;
         }
@@ -387,10 +401,8 @@ public:
             items += "<div>";
             items += "<div class=\"tile-head\">";
             items += "<strong>";
-            if (cfg.name[0])
-                web.appendHtmlEscaped_(items, cfg.name);
-            else
-                items += WebUiRu::Tanks::kText3;
+            items += WebUiRu::Tanks::kTitlePrefix;
+            items += String((unsigned)cfg.id);
             items += "</strong>";
             if (can_control)
             {
@@ -404,6 +416,17 @@ public:
                 items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
             }
             items += "</div>";
+            items += "<div class=\"status-row\">";
+            items += "<span class=\"tank-status-dot ";
+            items += (st.pump_on ? "tank-status-on" : "tank-status-off");
+            items += WebUiRu::Tanks::kText11;
+            items += "<span class=\"tank-status-dot ";
+            items += (st.valve_on ? "tank-status-on" : "tank-status-off");
+            items += WebUiRu::Tanks::kText12;
+            items += "<span class=\"tank-status-dot ";
+            items += (st.alarm_on ? "tank-status-bad" : "tank-status-off");
+            items += WebUiRu::Tanks::kText14;
+            items += "</div>";
             if (can_control)
             {
                 items += String("<div class=\"form-row\"><label>") + WebUiRu::Tanks::kLabelName + "</label><input class=\"field name\" type=\"text\" name=\"k";
@@ -414,7 +437,7 @@ public:
                 if (!can_admin)
                     items += " readonly";
                 items += "></div>";
-                items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"k";
+                items += String("<div class=\"form-row full\" style=\"margin-top:8px;margin-bottom:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field\" name=\"k";
                 items += String((unsigned)cfg.id);
                 items += "_group\"";
                 if (!can_admin || !has_groups)
@@ -489,17 +512,7 @@ public:
                 items += cfg.power_on ? "on" : "off";
                 items += "\"></div>";
             }
-            items += "<div class=\"status-row\">";
-            items += "<span class=\"tank-status-dot ";
-            items += (st.pump_on ? "tank-status-on" : "tank-status-off");
-            items += WebUiRu::Tanks::kText11;
-            items += "<span class=\"tank-status-dot ";
-            items += (st.valve_on ? "tank-status-on" : "tank-status-off");
-            items += WebUiRu::Tanks::kText12;
-            items += "<span class=\"tank-status-dot ";
-            items += (st.alarm_on ? "tank-status-bad" : "tank-status-off");
-            items += WebUiRu::Tanks::kText14;
-            items += "</div></div>";
+            items += "</div>";
             items += "</div></div></div>";
         };
     

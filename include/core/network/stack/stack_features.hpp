@@ -37,5 +37,6 @@ enum class StackFeature : uint8_t
     Ring = 0x14,
     Watering = 0x15,
     Avr = 0x16,
-    Leak = 0x17
+    Leak = 0x17,
+    Groups = 0x18
 };

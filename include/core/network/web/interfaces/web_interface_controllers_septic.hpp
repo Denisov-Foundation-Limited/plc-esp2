@@ -182,9 +182,14 @@ public:
                     water_level = "80%";
                     water_label = WebUiRu::Septic::kText80;
                 }
-                items += "<div class=\"tile";
+                const bool has_groups = web.hasGroups_(node_id);
+                items += "<div class=\"tile js-group-item";
                 if (!cfg.enabled)
                     items += " disabled";
+                items += "\" data-group-id=\"";
+                items += String((unsigned)cfg.group_id);
+                items += "\"";
+                items += web.groupVisibilityStyleAttr_(cfg.group_id, node_id);
                 items += "\"><div class=\"septic-visual\"><div class=\"liquid ";
                 items += water_class;
                 items += "\" style=\"height:";
@@ -214,6 +219,14 @@ public:
                     if (cfg.name[0])
                         web.appendHtmlEscaped_(items, cfg.name);
                     items += "\">";
+                    items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"sep";
+                    items += String((unsigned)cfg.id);
+                    items += "_group\"";
+                    if (!has_groups)
+                        items += " disabled";
+                    items += ">";
+                    items += web.groupOptionsHtml_(cfg.group_id, true, true, node_id);
+                    items += "</select></div>";
                     items += WebUiRu::Septic::kSelectClassFieldMiniSepticSelectData;
                     if (cfg.warning_port != SepticController::kInvalidPort)
                         items += String((unsigned)cfg.warning_port);
@@ -348,7 +361,7 @@ public:
                     items += " checked";
                 items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
             }
-            items += "</div>";
+            items += "</div></div>";
             if (can_control)
             {
                 items += String("<div class=\"form-row\"><label>") + WebUiRu::Septic::kLabelName + "</label><input class=\"field name\" type=\"text\" name=\"sep";

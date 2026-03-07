@@ -35,7 +35,7 @@ public:
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Thermo, node_id))
             return;
         const bool stack_view = web.isStackThermoView_(node_id);
-        const bool groups_local = (!stack_view && web.hasGroups_());
+        const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
         const uint8_t page_size = 8u;
         const String page_str = web.paramValueAny_(request, "page");
         uint8_t page_idx = 0;
@@ -51,12 +51,20 @@ public:
             web.requestStackThermo_(node_id);
             web.requestStackMeteo_(node_id);
             web.requestStackPorts_(node_id);
-            const size_t visible = web.stackThermoVisibleCount_(node_id);
-            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
-            if (page_idx >= max_pages)
-                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            if (!groups_available)
+            {
+                const size_t visible = web.stackThermoVisibleCount_(node_id);
+                max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+                if (page_idx >= max_pages)
+                    page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            }
+            else
+            {
+                page_idx = 0;
+                max_pages = 1;
+            }
         }
-        else if (!groups_local)
+        else if (!groups_available)
         {
             const size_t visible = web.thermoLocalRenderCount_();
             max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
@@ -118,7 +126,7 @@ public:
                 pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
-        else if (!stack_view && !groups_local && max_pages > 1)
+        else if (!stack_view && !groups_available && max_pages > 1)
         {
             pagination.reserve(256);
             pagination += "<div class=\"pagination\">";
@@ -146,9 +154,9 @@ public:
             pagination += "</div>";
         }
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%THERMO_ROWS%", stack_view ? web.listStackThermoHtml_(node_id, (size_t)page_idx * page_size, page_size)
-                                                 : web.listThermoHtml_(groups_local ? 0u : (size_t)page_idx * page_size,
-                                                                       groups_local ? SIZE_MAX : page_size));
+        page.replace("%THERMO_ROWS%", stack_view ? web.listStackThermoHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size)
+                                                 : web.listThermoHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                       groups_available ? SIZE_MAX : page_size));
         page.replace("%THERMO_PAGINATION%", pagination);
         page.replace("%THERMO_STATUS%", stack_view ? web.stackThermoStatusText_(node_id) : web._thermo_status);
         page.replace("%THERMO_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
@@ -224,7 +232,7 @@ public:
         }
         page.replace("%THERMO_DEVICE_SELECT%",
                      web.composeTopFiltersHtml_(web.thermoDeviceSelectHtml_(node_id, stack_view),
-                                                (!stack_view) ? web.groupFilterHtml_("thermo-group-filter") : String("")));
+                                                groups_available ? web.groupFilterHtml_("thermo-group-filter", stack_view ? node_id : 0u) : String("")));
         page.replace("%THERMO_SAVE_BTN%",
                      can_save ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>")
                               : (String("<button type=\"submit\" disabled>") + WebUiRu::kSave + "</button>"));
@@ -272,6 +280,7 @@ public:
             for (size_t i = 0; i < cache->item_count; ++i)
             {
                 const auto &it = cache->items[i];
+                const String group_key = String("t") + String((unsigned)it.id) + "_group";
                 const String power_key = String("t") + String((unsigned)it.id) + "_power";
                 const String mode_key = String("t") + String((unsigned)it.id) + "_mode";
                 const String target_key = String("t") + String((unsigned)it.id) + "_target";
@@ -280,6 +289,7 @@ public:
                 const String cool_key = String("t") + String((unsigned)it.id) + "_cool";
                 const String button_key = String("t") + String((unsigned)it.id) + "_button";
                 const bool has_any = request->hasParam(power_key, true) ||
+                                     request->hasParam(group_key, true) ||
                                      request->hasParam(mode_key, true) ||
                                      request->hasParam(target_key, true) ||
                                      request->hasParam(hyst_key, true) ||
@@ -309,6 +319,19 @@ public:
                 uint8_t new_cool = it.cool;
                 bool set_button = false;
                 uint8_t new_button = it.button;
+                bool set_group = false;
+                uint8_t new_group_id = it.group_id;
+
+                if (request->hasParam(group_key, true))
+                {
+                    const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
+                    if (group_id != it.group_id)
+                    {
+                        item_changed = true;
+                        set_group = true;
+                        new_group_id = group_id;
+                    }
+                }
 
                 if (request->hasParam(power_key, true))
                 {
@@ -463,6 +486,22 @@ public:
                                                              reinterpret_cast<const uint8_t *>(payload), len))
                         sent_any = true;
                 }
+                if (set_group)
+                {
+                    StaticJsonDocument<192> doc;
+                    doc["cmd_id"] = 0;
+                    doc["feature"] = (uint8_t)StackFeature::Thermo;
+                    doc["action"] = "set";
+                    JsonArray items = doc["params"]["items"].to<JsonArray>();
+                    JsonObject obj = items.add<JsonObject>();
+                    obj["id"] = (unsigned)it.id;
+                    obj["group_id"] = new_group_id;
+                    char payload[192] = {};
+                    const size_t len = serializeJson(doc, payload, sizeof(payload));
+                    if (len > 0 && web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                                             reinterpret_cast<const uint8_t *>(payload), len))
+                        sent_any = true;
+                }
                 if (set_target)
                 {
                     StaticJsonDocument<192> doc;
@@ -581,6 +620,8 @@ public:
                                 continue;
                             if (set_power)
                                 dst.power_on = new_power_on;
+                            if (set_group)
+                                dst.group_id = new_group_id;
                             if (set_mode)
                             {
                                 const char *mode_name = ThermoController::modeName(new_mode);

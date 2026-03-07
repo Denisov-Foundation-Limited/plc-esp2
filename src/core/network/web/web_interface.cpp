@@ -846,13 +846,31 @@ bool WebInterface::stackPortTypeMatch_(const StackCache::StackPortItem &it, Port
     return _controllers_ops.navHtml_();
 }
 
-    bool WebInterface::hasGroups_() const
+    bool WebInterface::hasGroups_(uint32_t node_id) const
 {
+    if (node_id != 0)
+    {
+        const auto *cache = _stack_cache ? _stack_cache->groupsCache(node_id) : nullptr;
+        return cache && cache->has_data && cache->items && cache->item_count > 0;
+    }
     return _configs_manager && _configs_manager->groupCount() > 0;
 }
 
-    uint8_t WebInterface::firstGroupId_() const
+    uint8_t WebInterface::firstGroupId_(uint32_t node_id) const
 {
+    if (node_id != 0)
+    {
+        const auto *cache = _stack_cache ? _stack_cache->groupsCache(node_id) : nullptr;
+        if (!cache || !cache->has_data || !cache->items)
+            return 0;
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const auto &g = cache->items[i];
+            if (g.id != 0 && g.name[0] != '\0')
+                return g.id;
+        }
+        return 0;
+    }
     if (!_configs_manager)
         return 0;
     for (size_t i = 0; i < _configs_manager->groupCount(); ++i)
@@ -864,20 +882,20 @@ bool WebInterface::stackPortTypeMatch_(const StackCache::StackPortItem &it, Port
     return 0;
 }
 
-    String WebInterface::groupVisibilityStyleAttr_(uint8_t group_id) const
+    String WebInterface::groupVisibilityStyleAttr_(uint8_t group_id, uint32_t node_id) const
 {
-    if (!hasGroups_())
+    if (!hasGroups_(node_id))
         return "";
-    const uint8_t selected_group_id = firstGroupId_();
+    const uint8_t selected_group_id = firstGroupId_(node_id);
     if (selected_group_id == 0 || group_id == selected_group_id)
         return "";
     return " style=\"display:none\"";
 }
 
-    String WebInterface::groupOptionsHtml_(uint8_t selected_group_id, bool include_none, bool disabled_if_empty) const
+    String WebInterface::groupOptionsHtml_(uint8_t selected_group_id, bool include_none, bool disabled_if_empty, uint32_t node_id) const
 {
     String html;
-    const bool has_groups = hasGroups_();
+    const bool has_groups = hasGroups_(node_id);
     if (include_none)
     {
         html += "<option value=\"0\"";
@@ -886,6 +904,29 @@ bool WebInterface::stackPortTypeMatch_(const StackCache::StackPortItem &it, Port
         html += ">";
         html += has_groups ? WebUiRu::GroupsPage::kNoGroup : WebUiRu::GroupsPage::kNoGroups;
         html += "</option>";
+    }
+    if (node_id != 0)
+    {
+        const auto *cache = _stack_cache ? _stack_cache->groupsCache(node_id) : nullptr;
+        if (!cache || !cache->has_data || !cache->items)
+            return html;
+        for (size_t i = 0; i < cache->item_count; ++i)
+        {
+            const auto &g = cache->items[i];
+            if (g.id == 0 || g.name[0] == '\0')
+                continue;
+            html += "<option value=\"";
+            html += String((unsigned)g.id);
+            html += "\"";
+            if (selected_group_id == g.id)
+                html += " selected";
+            html += ">";
+            appendHtmlEscaped_(html, g.name);
+            html += "</option>";
+        }
+        if (!has_groups && disabled_if_empty && !include_none)
+            html += String("<option value=\"0\" selected>") + WebUiRu::GroupsPage::kNoGroups + "</option>";
+        return html;
     }
     if (!_configs_manager)
         return html;
@@ -908,11 +949,11 @@ bool WebInterface::stackPortTypeMatch_(const StackCache::StackPortItem &it, Port
     return html;
 }
 
-String WebInterface::groupFilterHtml_(const char *select_id) const
+String WebInterface::groupFilterHtml_(const char *select_id, uint32_t node_id) const
 {
-    if (!hasGroups_() || !select_id)
+    if (!hasGroups_(node_id) || !select_id)
         return "";
-    const uint8_t selected_group_id = firstGroupId_();
+    const uint8_t selected_group_id = firstGroupId_(node_id);
     String html;
     html.reserve(640);
     html += "<div class=\"row\">";
@@ -920,7 +961,7 @@ String WebInterface::groupFilterHtml_(const char *select_id) const
     html += "<select id=\"";
     appendHtmlEscaped_(html, select_id);
     html += "\" class=\"field mini\">";
-    html += groupOptionsHtml_(selected_group_id, false, false);
+    html += groupOptionsHtml_(selected_group_id, false, false, node_id);
     html += "<option value=\"0\"";
     if (selected_group_id == 0)
         html += " selected";

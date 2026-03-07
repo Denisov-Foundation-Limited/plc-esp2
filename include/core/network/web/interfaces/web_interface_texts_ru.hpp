@@ -100,8 +100,8 @@ inline constexpr const char kText12[] = "<div class=\"form-row full\" style=\"ma
 inline constexpr const char kInputClassFieldNameMeteoNameType[] = "<div class=\"form-row name-local\"><label>Имя</label><input class=\"field name meteo-name\" type=\"text\" name=\"m";
 inline constexpr const char kSelectClassFieldNameMeteoSourceName[] = "<div class=\"form-row name-remote\" style=\"display:none;\"><label>Имя</label><select class=\"field name meteo-source\" name=\"m";
 inline constexpr const char kText13[] = "Давность: ";
-inline constexpr const char kSelectClassFieldMeteoTypeNameM[] = "<div class=\"form-row\"><label>Тип</label><select class=\"field meteo-type\" name=\"m";
-inline constexpr const char kSelectClassFieldMiniMeteoPinData[] = "<div class=\"form-row pin-cell\"><label>Пин</label><select class=\"field mini meteo-pin\" data-selected=\"";
+inline constexpr const char kSelectClassFieldMeteoTypeNameM[] = "<div class=\"form-row full\"><label>Тип</label><select class=\"field meteo-type\" name=\"m";
+inline constexpr const char kSelectClassFieldMiniMeteoPinData[] = "<div class=\"form-row pin-cell full\"><label>Пин</label><select class=\"field meteo-pin\" data-selected=\"";
 inline constexpr const char kSelectClassFieldAddrMeteoAddrName[] = "<div class=\"form-row addr-cell full\"><label>Адрес</label><select class=\"field addr meteo-addr\" name=\"m";
 } // namespace Meteo
 
@@ -460,7 +460,7 @@ inline constexpr const char kGeSelectClassFieldMiniNameW[] = "<div class=\"form-
 
 namespace Common
 {
-inline constexpr const char kDevice[] = "Устройство";
+inline constexpr const char kDevice[] = "Юнит";
 inline constexpr const char kNoDataFromSlave[] = "Нет данных со слейва";
 inline constexpr const char kErrorPrefix[] = "Ошибка: ";
 inline constexpr const char kStatusOk[] = "ОК";
@@ -685,6 +685,7 @@ inline constexpr const char kAll[] = "Все";
 inline constexpr const char kNoGroup[] = "Без группы";
 inline constexpr const char kNoGroups[] = "Нет групп";
 inline constexpr const char kEmptyList[] = "Список пуст";
+inline constexpr const char kWaitingSlave[] = "Ожидаем данные со слейва";
 inline constexpr const char kDeleteLower[] = "удалить";
 inline constexpr const char kAddFailed[] = "Не удалось добавить группу";
 inline constexpr const char kAdded[] = "Группа добавлена";

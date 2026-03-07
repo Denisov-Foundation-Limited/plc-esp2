@@ -25,12 +25,49 @@ public:
     struct StackSocketItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool state = false;
         uint8_t button_port = SocketController::kInvalidPort;
         uint8_t relay_port = SocketController::kInvalidPort;
         static constexpr size_t kNameLen = 48;
         char name[kNameLen] = {};
+    };
+    struct StackGroupItem
+    {
+        uint8_t id = 0;
+        uint16_t sort = 0;
+        static constexpr size_t kNameLen = 48;
+        char name[kNameLen] = {};
+    };
+    struct StackGroupsCache
+    {
+        static constexpr size_t kCapacity = 16;
+        uint32_t node_id = 0;
+        uint32_t updated_ms = 0;
+        uint16_t pending_cmd_id = 0;
+        bool pending = false;
+        bool has_data = false;
+        bool last_ok = false;
+        String last_error;
+        StackGroupItem *items = nullptr;
+        size_t capacity = kCapacity;
+        size_t item_count = 0;
+        void reset()
+        {
+            node_id = 0;
+            updated_ms = 0;
+            pending_cmd_id = 0;
+            pending = false;
+            has_data = false;
+            last_ok = false;
+            last_error = String();
+            item_count = 0;
+            if (!items)
+                return;
+            for (size_t i = 0; i < capacity; ++i)
+                items[i] = StackGroupItem{};
+        }
     };
     struct StackSocketsCache
     {
@@ -63,6 +100,7 @@ public:
     struct StackLightItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool state = false;
         uint8_t button_port = SocketController::kInvalidPort;
@@ -306,6 +344,7 @@ public:
     struct StackSecuritySensorItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool detect = false;
         bool silent = false;
@@ -392,6 +431,7 @@ public:
     struct StackMeteoItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool ok = false;
         bool has_temp = false;
@@ -441,6 +481,7 @@ public:
     struct StackThermoItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool power_on = false;
         bool heat_on = false;
@@ -488,6 +529,7 @@ public:
     struct StackSepticItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool monitor = false;
         uint8_t warning_port = SepticController::kInvalidPort;
@@ -532,6 +574,7 @@ public:
     struct StackTankItem
     {
         uint8_t id = 0;
+        uint8_t group_id = 0;
         bool enabled = false;
         bool power_on = false;
         uint8_t low = TankController::kInvalidPort;
@@ -794,6 +837,11 @@ public:
     const StackSocketsCache *socketsCache(uint32_t node_id) const { return findStackSocketsCache_(node_id, false); }
     bool requestSockets(uint32_t node_id) { return requestStackSockets_(node_id); }
     StackSocketItem *socketItem(StackSocketsCache &cache_ref, uint8_t id) { return findStackSocketItem_(cache_ref, id); }
+    StackGroupsCache &groupsLocal() { return _stack_groups_cache[0]; }
+    const StackGroupsCache &groupsLocal() const { return _stack_groups_cache[0]; }
+    StackGroupsCache *groupsCache(uint32_t node_id) { return findStackGroupsCache_(node_id, false); }
+    const StackGroupsCache *groupsCache(uint32_t node_id) const { return findStackGroupsCache_(node_id, false); }
+    bool requestGroups(uint32_t node_id) { return requestStackGroups_(node_id); }
 
     StackLightsCache &lightsLocal() { return _stack_lights_cache[0]; }
     const StackLightsCache &lightsLocal() const { return _stack_lights_cache[0]; }
@@ -989,6 +1037,14 @@ private:
                 cache.capacity = 0;
             cache.reset();
         }
+        for (auto &cache : _stack_groups_cache)
+        {
+            cache.items = allocItems_<StackGroupItem>(cache.capacity, "groups", &cache - _stack_groups_cache,
+                                                      _log, true);
+            if (!cache.items)
+                cache.capacity = 0;
+            cache.reset();
+        }
         for (auto &cache : _stack_lights_cache)
         {
             cache.items = allocItems_<StackLightItem>(cache.capacity, "lights", &cache - _stack_lights_cache,
@@ -1114,6 +1170,11 @@ private:
             releaseItems_(cache.items, cache.capacity);
             cache.items = nullptr;
         }
+        for (auto &cache : _stack_groups_cache)
+        {
+            releaseItems_(cache.items, cache.capacity);
+            cache.items = nullptr;
+        }
         for (auto &cache : _stack_lights_cache)
         {
             releaseItems_(cache.items, cache.capacity);
@@ -1204,6 +1265,8 @@ private:
         };
         for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
             log_fail("sockets", i, _stack_sockets_cache[i].items, _stack_sockets_cache[i].capacity);
+        for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
+            log_fail("groups", i, _stack_groups_cache[i].items, _stack_groups_cache[i].capacity);
         for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
             log_fail("lights", i, _stack_lights_cache[i].items, _stack_lights_cache[i].capacity);
         for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
@@ -1300,6 +1363,23 @@ private:
                                           _tx_payload_buf, len);
             };
 
+            auto append_groups = [&](JsonVariant data, uint32_t groups_node_id) {
+                const StackGroupsCache *groups_cache = findStackGroupsCache_(groups_node_id, false);
+                if (!groups_cache || !groups_cache->has_data || !groups_cache->items)
+                    return;
+                JsonArray groups = data["groups"].to<JsonArray>();
+                for (size_t i = 0; i < groups_cache->item_count; ++i)
+                {
+                    const StackGroupItem &g = groups_cache->items[i];
+                    if (g.id == 0 || !g.name[0])
+                        continue;
+                    JsonObject o = groups.add<JsonObject>();
+                    o["id"] = (unsigned)g.id;
+                    o["sort"] = (unsigned)g.sort;
+                    o["name"] = g.name;
+                }
+            };
+
             if ((StackFeature)feature == StackFeature::Meteo && action == "get")
             {
                 if (all)
@@ -1324,12 +1404,14 @@ private:
                         n["node_id"] = (unsigned long)cache.node_id;
                         if (node_name.length())
                             n["node_name"] = node_name;
+                        append_groups(n, cache.node_id);
                         JsonArray items = n["items"].to<JsonArray>();
                         for (size_t j = 0; j < cache.item_count; ++j)
                         {
                             const StackMeteoItem &it = cache.items[j];
                             JsonObject o = items.add<JsonObject>();
                             o["id"] = (unsigned)it.id;
+                            o["group_id"] = (unsigned)it.group_id;
                             o["enabled"] = it.enabled;
                             if (it.name[0])
                                 o["name"] = it.name;
@@ -1364,12 +1446,14 @@ private:
                 DynamicJsonDocument data(4096);
                 if (node_name.length())
                     data["node_name"] = node_name;
+                append_groups(data, target);
                 JsonArray items = data["items"].to<JsonArray>();
                 for (size_t i = 0; i < cache->item_count; ++i)
                 {
                     const StackMeteoItem &it = cache->items[i];
                     JsonObject o = items.add<JsonObject>();
                     o["id"] = (unsigned)it.id;
+                    o["group_id"] = (unsigned)it.group_id;
                     o["enabled"] = it.enabled;
                     if (it.name[0])
                         o["name"] = it.name;
@@ -1397,12 +1481,14 @@ private:
                 data["enabled"] = cache->enabled;
                 data["armed"] = cache->armed;
                 data["alarm"] = cache->alarm;
+                append_groups(data, target);
                 JsonArray items = data["items"].to<JsonArray>();
                 for (size_t i = 0; i < cache->item_count; ++i)
                 {
                     const StackSecuritySensorItem &it = cache->items[i];
                     JsonObject o = items.add<JsonObject>();
                     o["id"] = (unsigned)it.id;
+                    o["group_id"] = (unsigned)it.group_id;
                     o["enabled"] = it.enabled;
                     o["detect"] = it.detect;
                     o["silent"] = it.silent;
@@ -1430,12 +1516,14 @@ private:
                         return;
                     }
                     DynamicJsonDocument data(2048);
+                    append_groups(data, target);
                     JsonArray items = data["items"].to<JsonArray>();
                     for (size_t i = 0; i < cache->item_count; ++i)
                     {
                         const StackLightItem &it = cache->items[i];
                         JsonObject o = items.add<JsonObject>();
                         o["id"] = (unsigned)it.id;
+                        o["group_id"] = (unsigned)it.group_id;
                         o["enabled"] = it.enabled;
                         o["state"] = it.state;
                         if (it.button_port != SocketController::kInvalidPort)
@@ -1456,12 +1544,14 @@ private:
                     return;
                 }
                 DynamicJsonDocument data(2048);
+                append_groups(data, target);
                 JsonArray items = data["items"].to<JsonArray>();
                 for (size_t i = 0; i < cache->item_count; ++i)
                 {
                     const StackSocketItem &it = cache->items[i];
                     JsonObject o = items.add<JsonObject>();
                     o["id"] = (unsigned)it.id;
+                    o["group_id"] = (unsigned)it.group_id;
                     o["enabled"] = it.enabled;
                     o["state"] = it.state;
                     if (it.button_port != SocketController::kInvalidPort)
@@ -1484,15 +1574,58 @@ private:
                     return;
                 }
                 DynamicJsonDocument data(2048);
+                append_groups(data, target);
                 JsonArray items = data["items"].to<JsonArray>();
                 for (size_t i = 0; i < cache->item_count; ++i)
                 {
                     const StackSepticItem &it = cache->items[i];
                     JsonObject o = items.add<JsonObject>();
                     o["id"] = (unsigned)it.id;
+                    o["group_id"] = (unsigned)it.group_id;
                     o["enabled"] = it.enabled;
                     o["warning"] = it.warning;
                     o["alarm"] = it.alarm;
+                }
+                send_ok(data);
+                return;
+            }
+            if ((StackFeature)feature == StackFeature::Thermo && action == "get")
+            {
+                StackThermoCache *cache = findStackThermoCache_(target, false);
+                if (!cache || !cache->has_data || !cache->items)
+                {
+                    requestStackThermo_(target);
+                    send_err("no_data");
+                    return;
+                }
+                DynamicJsonDocument data(3072);
+                append_groups(data, target);
+                JsonArray items = data["items"].to<JsonArray>();
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const StackThermoItem &it = cache->items[i];
+                    JsonObject o = items.add<JsonObject>();
+                    o["id"] = (unsigned)it.id;
+                    o["group_id"] = (unsigned)it.group_id;
+                    o["enabled"] = it.enabled;
+                    o["power_on"] = it.power_on;
+                    o["heat_on"] = it.heat_on;
+                    o["cool_on"] = it.cool_on;
+                    o["sensor"] = (unsigned)it.sensor;
+                    if (it.sensor_node != 0)
+                        o["sensor_node"] = (unsigned long)it.sensor_node;
+                    o["target"] = it.target;
+                    o["hyst"] = it.hyst;
+                    if (it.heat != ThermoController::kInvalidPort)
+                        o["heat"] = it.heat;
+                    if (it.cool != ThermoController::kInvalidPort)
+                        o["cool"] = it.cool;
+                    if (it.button != ThermoController::kInvalidPort)
+                        o["button"] = it.button;
+                    if (it.name[0])
+                        o["name"] = it.name;
+                    if (it.mode[0])
+                        o["mode"] = it.mode;
                 }
                 send_ok(data);
                 return;
@@ -1507,12 +1640,14 @@ private:
                     return;
                 }
                 DynamicJsonDocument data(2048);
+                append_groups(data, target);
                 JsonArray items = data["items"].to<JsonArray>();
                 for (size_t i = 0; i < cache->item_count; ++i)
                 {
                     const StackTankItem &it = cache->items[i];
                     JsonObject o = items.add<JsonObject>();
                     o["id"] = (unsigned)it.id;
+                    o["group_id"] = (unsigned)it.group_id;
                     o["enabled"] = it.enabled;
                     o["levels_ok"] = it.levels_ok;
                     o["level_low"] = it.level_low;
@@ -1672,9 +1807,11 @@ private:
             return;
         }
         const uint16_t cmd_id = doc["cmd_id"] | 0;
+        const uint8_t rx_feature = (uint8_t)(doc["feature"] | 0u);
         String rx_action = doc["action"] | "";
         rx_action.toLowerCase();
         StackSocketsCache *sock_cache = findStackSocketsCacheByCmd_(cmd_id);
+        StackGroupsCache *groups_cache = findStackGroupsCache_(node_id, true);
         StackLightsCache *light_cache = findStackLightsCacheByCmd_(cmd_id);
         StackPortsCache *ports_cache = findStackPortsCacheByCmd_(cmd_id);
         StackExtendersCache *ext_cache = findStackExtendersCacheByCmd_(cmd_id);
@@ -1693,7 +1830,7 @@ private:
         bool status_is_plc = false;
         bool status_is_rtc = false;
         StackNodeStatusCache *status_cache = findStackNodeStatusCacheByCmd_(cmd_id, status_is_plc, status_is_rtc);
-        if (!sock_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !sec_prearm_cache && !meteo_cache &&
+        if (!sock_cache && !groups_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !sec_prearm_cache && !meteo_cache &&
             !thermo_cache && !septic_cache && !tanks_cache && !avr_cache && !leak_cache &&
             !watering_cache && !i2c_cache && !ow_cache && !temp_sensors_cache && !status_cache)
         {
@@ -1759,6 +1896,15 @@ private:
                 StackMeteoCache *c = findStackMeteoCache_(node_id, false);
                 if (c && c->pending)
                     meteo_cache = c;
+                break;
+            }
+            case StackFeature::Groups:
+            {
+                StackGroupsCache *c = findStackGroupsCache_(node_id, false);
+                if (rx_action == "set")
+                    groups_cache = c;
+                else if (c && c->pending)
+                    groups_cache = c;
                 break;
             }
             case StackFeature::Thermo:
@@ -1889,7 +2035,7 @@ private:
                 break;
             }
         }
-        if (!sock_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !sec_prearm_cache && !meteo_cache &&
+        if (!sock_cache && !groups_cache && !light_cache && !ports_cache && !ext_cache && !sec_cache && !sec_prearm_cache && !meteo_cache &&
             !thermo_cache && !septic_cache && !tanks_cache && !avr_cache && !leak_cache &&
             !watering_cache && !i2c_cache && !ow_cache && !temp_sensors_cache && !status_cache)
         {
@@ -1900,9 +2046,48 @@ private:
         const bool ok = (frame.type == (uint8_t)StackMsgType::Ack) && (doc["ok"] | false);
         JsonObjectConst data_obj = doc["data"].as<JsonObjectConst>();
         JsonArrayConst items = data_obj["items"].as<JsonArrayConst>();
+        auto apply_groups = [&]() {
+            if (!groups_cache || !groups_cache->items)
+                return;
+            JsonArrayConst groups = data_obj["groups"].as<JsonArrayConst>();
+            groups_cache->updated_ms = millis();
+            groups_cache->pending = false;
+            groups_cache->pending_cmd_id = 0;
+            groups_cache->item_count = 0;
+            groups_cache->has_data = false;
+            groups_cache->last_ok = ok;
+            groups_cache->last_error = "";
+            if (!ok)
+            {
+                groups_cache->last_error = doc["error"] | "error";
+                return;
+            }
+            if (groups.isNull())
+                return;
+            for (JsonObjectConst g : groups)
+            {
+                if (groups_cache->item_count >= groups_cache->capacity)
+                    break;
+                if (!g["id"].is<unsigned>())
+                    continue;
+                StackGroupItem &dst = groups_cache->items[groups_cache->item_count++];
+                dst.id = (uint8_t)g["id"].as<unsigned>();
+                dst.sort = (uint16_t)(g["sort"] | 0u);
+                copyStr_(dst.name, sizeof(dst.name), g["name"].as<const char *>());
+            }
+            groups_cache->node_id = node_id;
+            groups_cache->has_data = true;
+        };
+
+        if (groups_cache && rx_feature == (uint8_t)StackFeature::Groups)
+        {
+            apply_groups();
+            return;
+        }
 
         if (sock_cache)
         {
+            apply_groups();
             const uint32_t sock_now = millis();
             const bool sock_set_update = (rx_action == "set");
             sock_cache->updated_ms = sock_now;
@@ -1932,6 +2117,8 @@ private:
                             *dst = StackSocketItem{};
                             dst->id = id;
                         }
+                        if (item["group_id"].is<unsigned>() || item["group_id"].is<int>())
+                            dst->group_id = (uint8_t)(item["group_id"] | 0u);
                         if (item["enabled"].is<bool>() || item["enabled"].is<unsigned>() || item["enabled"].is<int>())
                             dst->enabled = item["enabled"].as<bool>();
                         if (item["state"].is<bool>() || item["state"].is<unsigned>() || item["state"].is<int>())
@@ -1973,6 +2160,7 @@ private:
                             continue;
                         StackSocketItem &dst = sock_cache->items[sock_cache->item_count++];
                         dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.group_id = (uint8_t)(item["group_id"] | 0u);
                         dst.enabled = item["enabled"] | false;
                         dst.state = item["state"] | false;
                         dst.button_port = item["button"].is<unsigned>() ? (uint8_t)item["button"].as<unsigned>()
@@ -1999,6 +2187,7 @@ private:
 
         if (light_cache)
         {
+            apply_groups();
             const uint32_t light_now = millis();
             const bool light_set_update = (rx_action == "set_lights");
             light_cache->updated_ms = light_now;
@@ -2029,6 +2218,8 @@ private:
                             *dst = StackLightItem{};
                             dst->id = id;
                         }
+                        if (item["group_id"].is<unsigned>() || item["group_id"].is<int>())
+                            dst->group_id = (uint8_t)(item["group_id"] | 0u);
                         if (item["enabled"].is<bool>() || item["enabled"].is<unsigned>() || item["enabled"].is<int>())
                             dst->enabled = item["enabled"].as<bool>();
                         if (item["state"].is<bool>() || item["state"].is<unsigned>() || item["state"].is<int>())
@@ -2071,6 +2262,7 @@ private:
                             continue;
                         StackLightItem &dst = light_cache->items[light_cache->item_count++];
                         dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.group_id = (uint8_t)(item["group_id"] | 0u);
                         dst.enabled = item["enabled"] | false;
                         dst.state = item["state"] | false;
                         dst.button_port = item["button"].is<unsigned>() ? (uint8_t)item["button"].as<unsigned>()
@@ -2257,6 +2449,7 @@ private:
 
         if (sec_cache)
         {
+            apply_groups();
             sec_cache->updated_ms = millis();
             if (!ok)
             {
@@ -2317,6 +2510,7 @@ private:
                         if (!dst_ptr)
                             continue;
                         StackSecuritySensorItem &dst = *dst_ptr;
+                        dst.group_id = (uint8_t)(item["group_id"] | 0u);
                         dst.enabled = item["enabled"] | false;
                         dst.detect = item["detect"] | false;
                         dst.silent = item["silent"] | false;
@@ -2376,6 +2570,7 @@ private:
 
         if (meteo_cache)
         {
+            apply_groups();
             meteo_cache->updated_ms = millis();
             if (!ok)
             {
@@ -2407,6 +2602,7 @@ private:
                             continue;
                         StackMeteoItem &dst = meteo_cache->items[meteo_cache->item_count++];
                         dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.group_id = (uint8_t)(item["group_id"] | 0u);
                         dst.enabled = item["enabled"] | false;
                         dst.ok = item["ok"] | false;
                         dst.has_temp = item["has_temp"] | false;
@@ -2441,6 +2637,7 @@ private:
 
         if (thermo_cache)
         {
+            apply_groups();
             thermo_cache->updated_ms = millis();
             if (!ok)
             {
@@ -2476,6 +2673,7 @@ private:
                             dst_ptr->id = id;
                         }
                         StackThermoItem &dst = *dst_ptr;
+                        dst.group_id = (uint8_t)(item["group_id"] | 0u);
                         if (item["enabled"].is<bool>() || item["enabled"].is<int>() || item["enabled"].is<unsigned>())
                             dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>() : (item["enabled"].as<int>() != 0);
                         if (item["power_on"].is<bool>() || item["power_on"].is<int>() || item["power_on"].is<unsigned>())
@@ -2531,6 +2729,7 @@ private:
                             continue;
                         StackThermoItem &dst = thermo_cache->items[thermo_cache->item_count++];
                         dst.id = (uint8_t)item["id"].as<unsigned>();
+                        dst.group_id = (uint8_t)(item["group_id"] | 0u);
                         dst.enabled = item["enabled"] | false;
                         dst.power_on = item["power_on"] | false;
                         dst.heat_on = item["heat_on"] | false;
@@ -2562,6 +2761,7 @@ private:
 
         if (septic_cache)
         {
+            apply_groups();
             septic_cache->updated_ms = millis();
             if (!ok)
             {
@@ -2618,6 +2818,7 @@ private:
                         if (!dst_ptr)
                             continue;
                         StackSepticItem &dst = *dst_ptr;
+                        dst.group_id = (uint8_t)(item["group_id"] | 0u);
                         dst.enabled = item["enabled"] | false;
                         dst.monitor = item["monitor"] | false;
                         copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
@@ -2646,6 +2847,7 @@ private:
 
         if (tanks_cache)
         {
+            apply_groups();
             tanks_cache->updated_ms = millis();
             if (!ok)
             {
@@ -2702,6 +2904,7 @@ private:
                         if (!dst_ptr)
                             continue;
                         StackTankItem &dst = *dst_ptr;
+                        dst.group_id = (uint8_t)(item["group_id"] | 0u);
                         dst.enabled = item["enabled"] | false;
                         dst.power_on = item["power_on"] | false;
                         dst.low = (uint8_t)(item["low"] | TankController::kInvalidPort);
@@ -3140,6 +3343,49 @@ private:
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
         cache->updated_ms = now;
+        return true;
+    }
+
+    bool requestStackGroups_(uint32_t node_id)
+    {
+        if (!_stack_master)
+            return false;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackGroupsCache *cache = findStackGroupsCache_(node_id, true);
+        if (!cache)
+            return false;
+        const uint32_t now = millis();
+        if (cache->pending)
+        {
+            if (cache->updated_ms && (uint32_t)(now - cache->updated_ms) > 4000u)
+            {
+                cache->pending = false;
+                cache->pending_cmd_id = 0;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        if (cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
+            return false;
+        const uint16_t cmd_id = nextStackCmdId_();
+        StaticJsonDocument<128> doc;
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)StackFeature::Groups;
+        doc["action"] = "get";
+        char payload[96] = {};
+        const size_t len = serializeJson(doc, payload, sizeof(payload));
+        if (len == 0)
+            return false;
+        if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
+                                   (const uint8_t *)payload, len))
+            return false;
+        cache->pending = true;
+        cache->pending_cmd_id = cmd_id;
+        cache->updated_ms = now;
+        cache->last_error = "";
         return true;
     }
 
@@ -4074,6 +4320,46 @@ private:
         return nullptr;
     }
 
+    StackGroupsCache *findStackGroupsCache_(uint32_t node_id, bool create)
+    {
+        if (!_stack_master)
+            return nullptr;
+        if (stackRole_() != ConfigsManagerIface::StackRole::Master)
+            return nullptr;
+        if (node_id == 0)
+            return nullptr;
+        for (auto &c : _stack_groups_cache)
+            if (c.node_id == node_id)
+                return &c;
+        if (!create)
+            return nullptr;
+        for (auto &c : _stack_groups_cache)
+        {
+            if (c.node_id == 0)
+            {
+                c.reset();
+                c.node_id = node_id;
+                return &c;
+            }
+        }
+        return nullptr;
+    }
+
+    const StackGroupsCache *findStackGroupsCache_(uint32_t node_id, bool create) const
+    {
+        return const_cast<StackCache *>(this)->findStackGroupsCache_(node_id, create);
+    }
+
+    StackGroupsCache *findStackGroupsCacheByCmd_(uint16_t cmd_id)
+    {
+        if (cmd_id == 0)
+            return nullptr;
+        for (auto &c : _stack_groups_cache)
+            if (c.pending && c.pending_cmd_id == cmd_id)
+                return &c;
+        return nullptr;
+    }
+
     StackLightsCache *findStackLightsCache_(uint32_t node_id, bool create)
     {
         if (!_stack_master)
@@ -4761,6 +5047,7 @@ private:
     bool _alloc_logged = false;
     uint8_t _tx_payload_buf[StackCodec::kMaxPayload] = {};
     StackSocketsCache _stack_sockets_cache[StackMaster::MAX_SESSIONS] = {};
+    StackGroupsCache _stack_groups_cache[StackMaster::MAX_SESSIONS] = {};
     StackLightsCache _stack_lights_cache[StackMaster::MAX_SESSIONS] = {};
     StackPortsCache _stack_ports_cache[StackMaster::MAX_SESSIONS] = {};
     StackExtendersCache _stack_ext_cache[StackMaster::MAX_SESSIONS] = {};

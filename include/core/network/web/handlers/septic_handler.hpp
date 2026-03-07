@@ -35,7 +35,7 @@ public:
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Septic, node_id))
             return;
         const bool stack_view = web.isStackSepticView_(node_id);
-        const bool groups_local = (!stack_view && web.hasGroups_());
+        const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
         const uint8_t page_size = 8u;
         const String page_str = web.paramValueAny_(request, "page");
         uint8_t page_idx = 0;
@@ -50,12 +50,20 @@ public:
         {
             web.requestStackSeptic_(node_id);
             web.requestStackPorts_(node_id);
-            const size_t visible = web.stackSepticVisibleCount_(node_id);
-            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
-            if (page_idx >= max_pages)
-                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            if (!groups_available)
+            {
+                const size_t visible = web.stackSepticVisibleCount_(node_id);
+                max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+                if (page_idx >= max_pages)
+                    page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            }
+            else
+            {
+                page_idx = 0;
+                max_pages = 1;
+            }
         }
-        else if (!groups_local)
+        else if (!groups_available)
         {
             const size_t visible = web.septicLocalRenderCount_();
             max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
@@ -101,7 +109,7 @@ public:
                 pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
-        else if (!stack_view && !groups_local && max_pages > 1)
+        else if (!stack_view && !groups_available && max_pages > 1)
         {
             pagination.reserve(256);
             pagination += "<div class=\"pagination\">";
@@ -137,13 +145,13 @@ public:
         page.replace("%SEPTIC_STATUS%", stack_view ? web.stackSepticStatusText_(node_id) : web._septic_status);
         page.replace("%SEPTIC_DEVICE_SELECT%",
                      web.composeTopFiltersHtml_(web.septicDeviceSelectHtml_(node_id, stack_view),
-                                                (!stack_view) ? web.groupFilterHtml_("septic-group-filter") : String("")));
+                                                groups_available ? web.groupFilterHtml_("septic-group-filter", stack_view ? node_id : 0u) : String("")));
         page.replace("%SEPTIC_PAGINATION%", pagination);
         page.replace("%SEPTIC_SAVE_BTN%",
                      web.webSessionIsAdmin_() ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>") : String(""));
         if (!web._controllers)
         {
-            page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id, (size_t)page_idx * page_size, page_size) : "");
+            page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size) : "");
             page.replace("%SEPTIC_DINPUT_JSON%", "[]");
             page.replace("%SEPTIC_RELAY_JSON%", "[]");
             page.replace("%SEPTIC_DINPUT_USED_JSON%", "[]");
@@ -162,9 +170,9 @@ public:
             web.sendHtml_(request, page, set_cookie);
             return;
         }
-        page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id, (size_t)page_idx * page_size, page_size)
-                                                  : web.listSepticHtml_(groups_local ? 0u : (size_t)page_idx * page_size,
-                                                                       groups_local ? SIZE_MAX : page_size));
+        page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size)
+                                                  : web.listSepticHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                       groups_available ? SIZE_MAX : page_size));
         page.replace("%SEPTIC_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
                                                         : web.septicPortOptionsJson_(PortIO::PinType::DInput));
         page.replace("%SEPTIC_RELAY_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay)
@@ -267,10 +275,11 @@ public:
                 const String relay_warn_key = prefix + "relay_warn";
                 const String relay_alarm_key = prefix + "relay_alarm";
                 const String monitor_key = prefix + "mon";
+                const String group_key = prefix + "group";
                 const bool has_any = request->hasParam(en_key, true) || request->hasParam(name_key, true) ||
                                      request->hasParam(warn_key, true) || request->hasParam(alarm_key, true) ||
                                      request->hasParam(relay_warn_key, true) || request->hasParam(relay_alarm_key, true) ||
-                                     request->hasParam(monitor_key, true);
+                                     request->hasParam(group_key, true) || request->hasParam(monitor_key, true);
                 if (!has_any)
                     continue;
                 if (!web.webAclCanControlItem_(UsersRegistry::AclController::Septic, it.id, node_id))
@@ -286,6 +295,7 @@ public:
                 const bool monitoring = (monitor_val == "on" || monitor_val == "1" || monitor_val == "true");
                 String name = web.paramValue_(request, name_key);
                 name.trim();
+                const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
                 String warn = web.paramValue_(request, warn_key);
                 String alarm = web.paramValue_(request, alarm_key);
                 String relay_warn = web.paramValue_(request, relay_warn_key);
@@ -325,6 +335,11 @@ public:
                     if (name != String(it.name))
                     {
                         p["name"] = name;
+                        item_changed = true;
+                    }
+                    if (it.group_id != group_id)
+                    {
+                        p["group_id"] = group_id;
                         item_changed = true;
                     }
                     if (it.warning_port != warn_port)
@@ -373,6 +388,7 @@ public:
                         if (can_admin)
                         {
                             dst.enabled = enabled;
+                            dst.group_id = group_id;
                             dst.warning_port = warn_port;
                             dst.alarm_port = alarm_port;
                             dst.relay_warning = relay_warn_port;

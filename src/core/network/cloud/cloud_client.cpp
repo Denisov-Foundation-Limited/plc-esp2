@@ -885,6 +885,7 @@ void CloudClient::scheduleStackControllers_(CloudClient::PendingRequest *p)
     p->pending_mask |= maskFor_(StackPart::Watering);
     p->pending_mask |= maskFor_(StackPart::SecurityStatus);
     p->pending_mask |= maskFor_(StackPart::SecuritySensors);
+    p->pending_mask |= maskFor_(StackPart::Groups);
     p->pending_mask |= maskFor_(StackPart::Ring);
     p->pending_mask |= maskFor_(StackPart::Avr);
     p->pending_mask |= maskFor_(StackPart::Leak);
@@ -901,6 +902,7 @@ void CloudClient::scheduleStackControllers_(CloudClient::PendingRequest *p)
     sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Watering, "get", watering_params);
     sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Security, "status");
     sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Security, "get");
+    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Groups, "get");
     sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Ring, "get");
     sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Avr, "get");
     sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Leak, "get");
@@ -1091,6 +1093,17 @@ void CloudClient::applyStackControllers_(JsonObject root, CloudClient::StackPart
             sec = ctrls.createNestedObject("security");
         copyItems_(sec, "sensors", data["items"].as<JsonArrayConst>(), first_part);
     }
+    else if (part == StackPart::Groups)
+    {
+        if (first_part)
+            ctrls.remove("groups");
+        JsonArray dst = ctrls["groups"].to<JsonArray>();
+        if (dst.isNull())
+            dst = ctrls.createNestedArray("groups");
+        JsonArrayConst src = data["groups"].as<JsonArrayConst>();
+        for (JsonVariantConst v : src)
+            dst.add(v);
+    }
     else if (part == StackPart::Ring)
     {
         JsonObject ring = ctrls["ring"].to<JsonObject>();
@@ -1214,6 +1227,7 @@ void CloudClient::fillSystemInfo_(JsonObject out)
 }
 void CloudClient::fillControllersInfo_(JsonObject out)
 {
+    fillGroups_(out.createNestedArray("groups"));
     fillSockets_(out.createNestedArray("sockets"), false);
     fillSockets_(out.createNestedArray("lights"), true);
     fillMeteo_(out.createNestedArray("meteo"));
@@ -1225,6 +1239,21 @@ void CloudClient::fillControllersInfo_(JsonObject out)
     fillRing_(out.createNestedObject("ring"));
     fillAvr_(out.createNestedObject("avr"));
     fillLeak_(out.createNestedArray("leak"));
+}
+void CloudClient::fillGroups_(JsonArray out)
+{
+    if (!_configs)
+        return;
+    for (size_t i = 0; i < _configs->groupCount(); ++i)
+    {
+        ConfigsManagerIface::GroupConfig g;
+        if (!_configs->groupByIndex(i, g) || g.id == 0 || g.name.length() == 0)
+            continue;
+        JsonObject o = out.add<JsonObject>();
+        o["id"] = (unsigned)g.id;
+        o["name"] = g.name;
+        o["sort"] = (unsigned)g.sort;
+    }
 }
 void CloudClient::fillSockets_(JsonArray out, bool lights)
 {
@@ -1239,6 +1268,7 @@ void CloudClient::fillSockets_(JsonArray out, bool lights)
             continue;
         JsonObject o = out.add<JsonObject>();
         o["id"] = (unsigned)cfg->id;
+        o["group_id"] = (unsigned)cfg->group_id;
         o["enabled"] = cfg->enabled;
         if (cfg->name.length())
             o["name"] = cfg->name;
@@ -1259,6 +1289,7 @@ void CloudClient::fillMeteo_(JsonArray out)
             continue;
         JsonObject o = out.add<JsonObject>();
         o["id"] = (unsigned)cfg->id;
+        o["group_id"] = (unsigned)cfg->group_id;
         o["enabled"] = cfg->enabled;
         if (cfg->name.length())
             o["name"] = cfg->name;
@@ -1291,6 +1322,7 @@ void CloudClient::fillThermo_(JsonArray out)
             continue;
         JsonObject o = out.add<JsonObject>();
         o["id"] = (unsigned)cfg->id;
+        o["group_id"] = (unsigned)cfg->group_id;
         o["enabled"] = cfg->enabled;
         if (cfg->name.length())
             o["name"] = cfg->name;
@@ -1319,6 +1351,7 @@ void CloudClient::fillTanks_(JsonArray out)
             continue;
         JsonObject o = out.add<JsonObject>();
         o["id"] = (unsigned)cfg->id;
+        o["group_id"] = (unsigned)cfg->group_id;
         o["enabled"] = cfg->enabled;
         o["power_on"] = cfg->power_on;
         if (cfg->name.length())
@@ -1354,6 +1387,7 @@ void CloudClient::fillSeptic_(JsonArray out)
             continue;
         JsonObject o = out.add<JsonObject>();
         o["id"] = (unsigned)cfg->id;
+        o["group_id"] = (unsigned)cfg->group_id;
         o["enabled"] = cfg->enabled;
         if (cfg->name.length())
             o["name"] = cfg->name;
@@ -1433,6 +1467,7 @@ void CloudClient::fillSecurity_(JsonObject out)
             continue;
         JsonObject o = arr.add<JsonObject>();
         o["id"] = (unsigned)cfg->id;
+        o["group_id"] = (unsigned)cfg->group_id;
         o["enabled"] = cfg->enabled;
         o["type"] = (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
         if (cfg->port != SecurityController::kInvalidPort)
@@ -1572,6 +1607,28 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
     const uint32_t now = millis();
     const uint32_t stale_ms = 10000;
 
+    const auto *groups = _stack_cache->groupsCache(node_id);
+    if (groups && groups->has_data)
+    {
+        JsonArray arr = out.createNestedArray("groups");
+        if (groups->items)
+        {
+            for (size_t i = 0; i < groups->item_count && i < groups->capacity; ++i)
+            {
+                const auto &g = groups->items[i];
+                if (g.id == 0 || !g.name[0])
+                    continue;
+                JsonObject o = arr.add<JsonObject>();
+                o["id"] = (unsigned)g.id;
+                o["name"] = g.name;
+                o["sort"] = (unsigned)g.sort;
+            }
+        }
+        has_any = true;
+    }
+    if (!groups || !groups->has_data || (groups->updated_ms && (int32_t)(now - groups->updated_ms) >= (int32_t)stale_ms))
+        _stack_cache->requestGroups(node_id);
+
     const auto *sockets = _stack_cache->socketsCache(node_id);
     if (sockets && sockets->has_data && sockets->items)
     {
@@ -1581,6 +1638,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             const auto &it = sockets->items[i];
             JsonObject o = arr.add<JsonObject>();
             o["id"] = (unsigned)it.id;
+            o["group_id"] = (unsigned)it.group_id;
             o["enabled"] = it.enabled;
             if (it.name[0])
                 o["name"] = it.name;
@@ -1604,6 +1662,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             const auto &it = lights->items[i];
             JsonObject o = arr.add<JsonObject>();
             o["id"] = (unsigned)it.id;
+            o["group_id"] = (unsigned)it.group_id;
             o["enabled"] = it.enabled;
             if (it.name[0])
                 o["name"] = it.name;
@@ -1627,6 +1686,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             const auto &it = meteo->items[i];
             JsonObject o = arr.add<JsonObject>();
             o["id"] = (unsigned)it.id;
+            o["group_id"] = (unsigned)it.group_id;
             o["enabled"] = it.enabled;
             if (it.name[0])
                 o["name"] = it.name;
@@ -1658,6 +1718,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             const auto &it = thermo->items[i];
             JsonObject o = arr.add<JsonObject>();
             o["id"] = (unsigned)it.id;
+            o["group_id"] = (unsigned)it.group_id;
             o["enabled"] = it.enabled;
             if (it.name[0])
                 o["name"] = it.name;
@@ -1690,6 +1751,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             const auto &it = tanks->items[i];
             JsonObject o = arr.add<JsonObject>();
             o["id"] = (unsigned)it.id;
+            o["group_id"] = (unsigned)it.group_id;
             o["enabled"] = it.enabled;
             o["power_on"] = it.power_on;
             if (it.name[0])
@@ -1728,6 +1790,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             const auto &it = septic->items[i];
             JsonObject o = arr.add<JsonObject>();
             o["id"] = (unsigned)it.id;
+            o["group_id"] = (unsigned)it.group_id;
             o["enabled"] = it.enabled;
             if (it.name[0])
                 o["name"] = it.name;
@@ -1814,6 +1877,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                 const auto &it = security->items[i];
                 JsonObject o = sensors.add<JsonObject>();
                 o["id"] = (unsigned)it.id;
+                o["group_id"] = (unsigned)it.group_id;
                 o["enabled"] = it.enabled;
                 if (it.name[0])
                     o["name"] = it.name;
@@ -2044,6 +2108,8 @@ CloudClient::StackPart CloudClient::partFrom_(StackFeature feature, const char *
         return StackPart::SecurityStatus;
     if (feature == StackFeature::Security && strcmp(action, "get") == 0)
         return StackPart::SecuritySensors;
+    if (feature == StackFeature::Groups && strcmp(action, "get") == 0)
+        return StackPart::Groups;
     if (feature == StackFeature::Ring)
         return StackPart::Ring;
     if (feature == StackFeature::Avr && strcmp(action, "get") == 0)

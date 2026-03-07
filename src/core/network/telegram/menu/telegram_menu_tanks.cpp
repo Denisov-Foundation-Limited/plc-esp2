@@ -15,6 +15,7 @@
 
 #include "core/network/telegram/menu/telegram_menu_tanks.hpp"
 
+
 // ---- telegram menu extracted definitions ----
 bool TelegramMenuTanks::cmdTanks_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
     {
@@ -172,6 +173,9 @@ bool TelegramMenuTanks::cmdTanks_(TelegramBot &bot, const TelegramClient::Update
 
     String TelegramMenuTanks::tankListTextHtml_(TelegramMenu &self, int64_t chat_id)
     {
+        const bool groups_enabled = self.isLocalSelected_(chat_id) ? (self._tanks && self.hasLocalGroups_())
+                                                                   : (self._stack_cache && self.hasGroups_(chat_id));
+        const bool group_active = groups_enabled && self.groupFilterActive_(chat_id, "tanks");
         String out = F("<b>Баки:</b>");
         out.reserve(768);
         if (self.isLocalSelected_(chat_id))
@@ -181,12 +185,117 @@ bool TelegramMenuTanks::cmdTanks_(TelegramBot &bot, const TelegramClient::Update
                 out += F("\n  недоступны");
                 return out;
             }
+            if (groups_enabled && !group_active)
+            {
+                bool any = false;
+                bool has_no_group = false;
+                for (size_t gi = 0; gi < self._configs_manager->groupCount(); ++gi)
+                {
+                    ConfigsManagerIface::GroupConfig g;
+                    if (!self._configs_manager->groupByIndex(gi, g) || g.id == 0)
+                        continue;
+                    bool group_any = false;
+                    for (size_t i = 0; i < TankController::kTankCount; ++i)
+                    {
+                        const auto *cfg = self._tanks->configByIndex(i);
+                        const auto *st = self._tanks->stateByIndex(i);
+                        if (!cfg || !st || !cfg->enabled)
+                            continue;
+                        if (cfg->group_id == 0)
+                            has_no_group = true;
+                        if (cfg->group_id != g.id)
+                            continue;
+                        if (!group_any)
+                        {
+                            out += F("\n  [");
+                            out += self.escapeHtml_(g.name);
+                            out += F("]");
+                            group_any = true;
+                            any = true;
+                        }
+                        out += F("\n    ");
+                        out += String((unsigned)cfg->id);
+                        out += F(": ");
+                        if (cfg->name.length())
+                        {
+                            out += "<b>";
+                            out += self.escapeHtml_(cfg->name);
+                            out += "</b>";
+                        }
+                        else
+                        {
+                            out += "<b>-</b>";
+                        }
+                        out += "\n      уровень: <b>";
+                        out += TelegramMenuTanks::tankLevelLabel_(*st);
+                        out += "</b>";
+                        out += "\n      клапан: <b>";
+                        out += st->valve_on ? F("🟢") : F("⚪");
+                        out += "</b>";
+                        out += "\n      насос: <b>";
+                        out += st->pump_on ? F("🟢") : F("⚪");
+                        out += "</b>";
+                        out += "\n      питание: <b>";
+                        out += cfg->power_on ? F("🟢") : F("⚪");
+                        out += "</b>";
+                    }
+                }
+                if (has_no_group)
+                {
+                    out += F("\n  [Без группы]");
+                    any = true;
+                    for (size_t i = 0; i < TankController::kTankCount; ++i)
+                    {
+                        const auto *cfg = self._tanks->configByIndex(i);
+                        const auto *st = self._tanks->stateByIndex(i);
+                        if (!cfg || !st || !cfg->enabled || cfg->group_id != 0)
+                            continue;
+                        out += F("\n    ");
+                        out += String((unsigned)cfg->id);
+                        out += F(": ");
+                        if (cfg->name.length())
+                        {
+                            out += "<b>";
+                            out += self.escapeHtml_(cfg->name);
+                            out += "</b>";
+                        }
+                        else
+                        {
+                            out += "<b>-</b>";
+                        }
+                        out += "\n      уровень: <b>";
+                        out += TelegramMenuTanks::tankLevelLabel_(*st);
+                        out += "</b>";
+                        out += "\n      клапан: <b>";
+                        out += st->valve_on ? F("🟢") : F("⚪");
+                        out += "</b>";
+                        out += "\n      насос: <b>";
+                        out += st->pump_on ? F("🟢") : F("⚪");
+                        out += "</b>";
+                        out += "\n      питание: <b>";
+                        out += cfg->power_on ? F("🟢") : F("⚪");
+                        out += "</b>";
+                    }
+                }
+                if (!any)
+                    out += F("\n  пусто");
+                return out;
+            }
+            if (groups_enabled && group_active)
+            {
+                out += F("\n  группа: <b>");
+                out += self.escapeHtml_(self.groupLabelById_(chat_id, self.groupFilterId_(chat_id, "tanks")));
+                out += F("</b>");
+            }
             bool any = false;
+            const uint8_t active_group_id = groups_enabled ? self.groupFilterId_(chat_id, "tanks") : 0;
             for (size_t i = 0; i < TankController::kTankCount; ++i)
             {
                 const auto *cfg = self._tanks->configByIndex(i);
                 const auto *st = self._tanks->stateByIndex(i);
                 if (!cfg || !st || !cfg->enabled)
+                    continue;
+                if (groups_enabled && cfg->group_id != active_group_id)
                     continue;
                 any = true;
                 out += "\n  ";
@@ -237,11 +346,81 @@ bool TelegramMenuTanks::cmdTanks_(TelegramBot &bot, const TelegramClient::Update
             out += F("\n  обновление...");
             return out;
         }
+        if (groups_enabled && !group_active)
+        {
+            bool any_group = false;
+            bool has_no_group = false;
+            const auto *groups = self.selectedGroupsCache_(chat_id);
+            if (groups && groups->has_data && groups->items)
+            {
+                for (size_t gi = 0; gi < groups->item_count; ++gi)
+                {
+                    const auto &g = groups->items[gi];
+                    if (g.id == 0 || !g.name[0])
+                        continue;
+                    bool section = false;
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        if (it.group_id == 0)
+                            has_no_group = true;
+                        if (it.group_id != g.id)
+                            continue;
+                        if (!section)
+                        {
+                            out += F("\n  [");
+                            out += self.escapeHtml_(String(g.name));
+                            out += F("]");
+                            section = true;
+                            any_group = true;
+                        }
+                        out += "\n  ";
+                        out += String((unsigned)it.id);
+                        out += ": ";
+                        out += it.name[0] ? String("<b>") + self.escapeHtml_(String(it.name)) + "</b>" : String("<b>-</b>");
+                        out += "\n    СѓСЂРѕРІРµРЅСЊ: <b>";
+                        out += TelegramMenuTanks::tankLevelLabelRemote_(it);
+                        out += "</b>";
+                    }
+                }
+            }
+            if (has_no_group)
+            {
+                out += F("\n  [Р‘РµР· РіСЂСѓРїРїС‹]");
+                any_group = true;
+                for (size_t i = 0; i < cache->item_count; ++i)
+                {
+                    const auto &it = cache->items[i];
+                    if (!it.enabled || it.group_id != 0)
+                        continue;
+                    out += "\n  ";
+                    out += String((unsigned)it.id);
+                    out += ": ";
+                    out += it.name[0] ? String("<b>") + self.escapeHtml_(String(it.name)) + "</b>" : String("<b>-</b>");
+                    out += "\n    СѓСЂРѕРІРµРЅСЊ: <b>";
+                    out += TelegramMenuTanks::tankLevelLabelRemote_(it);
+                    out += "</b>";
+                }
+            }
+            if (!any_group)
+                out += F("\n  РїСѓСЃС‚Рѕ");
+            return out;
+        }
+        if (groups_enabled && group_active)
+        {
+            out += F("\n  РіСЂСѓРїРїР°: <b>");
+            out += self.escapeHtml_(self.groupLabelById_(chat_id, self.groupFilterId_(chat_id, "tanks")));
+            out += F("</b>");
+        }
         bool any = false;
         for (size_t i = 0; i < cache->item_count; ++i)
         {
             const auto &it = cache->items[i];
             if (!it.enabled)
+                continue;
+            if (groups_enabled && it.group_id != self.groupFilterId_(chat_id, "tanks"))
                 continue;
             any = true;
             out += "\n  ";
@@ -375,29 +554,120 @@ bool TelegramMenuTanks::cmdTanks_(TelegramBot &bot, const TelegramClient::Update
         std::vector<String> labels;
         if (self.isLocalSelected_(chat_id))
         {
-            TelegramMenuTanks::buildTankLabels_(self, labels);
+            const bool groups_enabled = self._tanks && self.hasLocalGroups_();
+            const bool group_active = groups_enabled && self.groupFilterActive_(chat_id, "tanks");
+            if (groups_enabled && !group_active)
+            {
+                bool has_no_group = false;
+                for (size_t gi = 0; gi < self._configs_manager->groupCount(); ++gi)
+                {
+                    ConfigsManagerIface::GroupConfig g;
+                    if (!self._configs_manager->groupByIndex(gi, g) || g.id == 0)
+                        continue;
+                    bool present = false;
+                    for (size_t i = 0; i < TankController::kTankCount; ++i)
+                    {
+                        const auto *cfg = self._tanks->configByIndex(i);
+                        if (!cfg || !cfg->enabled)
+                            continue;
+                        if (cfg->group_id == g.id)
+                        {
+                            present = true;
+                            break;
+                        }
+                        if (cfg->group_id == 0)
+                            has_no_group = true;
+                    }
+                    if (present)
+                        labels.push_back(g.name);
+                }
+                if (has_no_group)
+                    labels.push_back(F("Без группы"));
+                labels.push_back(F("Назад"));
+            }
+            else
+            {
+                const uint8_t active_group_id = groups_enabled ? self.groupFilterId_(chat_id, "tanks") : 0;
+                for (size_t i = 0; i < TankController::kTankCount; ++i)
+                {
+                    const auto *cfg = self._tanks->configByIndex(i);
+                    if (!cfg || !cfg->enabled)
+                        continue;
+                    if (groups_enabled && cfg->group_id != active_group_id)
+                        continue;
+                    String label = String((unsigned)cfg->id) + ": ";
+                    label += cfg->name.length() ? cfg->name : String("Tank");
+                    labels.push_back(label);
+                }
+                if (groups_enabled)
+                    labels.push_back(F("Группы"));
+                labels.push_back(F("Назад"));
+            }
         }
         else if (self._stack_cache)
         {
             const uint32_t node_id = self.selectedNodeId_(chat_id);
+            const bool groups_enabled = self.hasGroups_(chat_id);
+            const bool group_active = groups_enabled && self.groupFilterActive_(chat_id, "tanks");
             if (node_id != 0)
             {
                 const auto *cache = self._stack_cache->tanksCache(node_id);
-                if (!cache || !cache->has_data)
+                if (groups_enabled && !group_active)
+                {
+                    bool has_no_group = false;
+                    const auto *groups = self.selectedGroupsCache_(chat_id);
+                    if (!cache || !cache->has_data)
+                    {
+                        self._stack_cache->requestTanks(node_id);
+                    }
+                    else if (groups && groups->has_data && groups->items)
+                    {
+                        for (size_t gi = 0; gi < groups->item_count; ++gi)
+                        {
+                            const auto &g = groups->items[gi];
+                            if (g.id == 0 || !g.name[0])
+                                continue;
+                            bool present = false;
+                            for (size_t i = 0; i < cache->item_count; ++i)
+                            {
+                                const auto &it = cache->items[i];
+                                if (!it.enabled)
+                                    continue;
+                                if (it.group_id == g.id)
+                                {
+                                    present = true;
+                                    break;
+                                }
+                                if (it.group_id == 0)
+                                    has_no_group = true;
+                            }
+                            if (present)
+                                labels.push_back(String(g.name));
+                        }
+                    }
+                    if (has_no_group)
+                        labels.push_back(F("Р‘РµР· РіСЂСѓРїРїС‹"));
+                }
+                else if (!cache || !cache->has_data)
                 {
                     self._stack_cache->requestTanks(node_id);
                 }
                 else
                 {
+                    const uint8_t active_group_id = groups_enabled ? self.groupFilterId_(chat_id, "tanks") : 0;
                     for (size_t i = 0; i < cache->item_count; ++i)
                     {
                         const auto &it = cache->items[i];
                         if (!it.enabled)
                             continue;
+                        if (groups_enabled && it.group_id != active_group_id)
+                            continue;
                         String label = String((unsigned)it.id) + ": ";
                         label += it.name[0] ? String(it.name) : String("Tank");
                         labels.push_back(label);
                     }
+                    if (groups_enabled)
+                        labels.push_back(F("Р“СЂСѓРїРїС‹"));
                 }
             }
             labels.push_back(F("Назад"));
@@ -548,8 +818,31 @@ bool TelegramMenuTanks::cmdTanks_(TelegramBot &bot, const TelegramClient::Update
             return false;
         if (u.text == F("Назад"))
         {
+            self.clearGroupFilter_(u.chat_id, "tanks");
             self._bot->enterMenu(u.chat_id, "device");
             return true;
+        }
+        if (((self.isLocalSelected_(u.chat_id) && self._tanks) || (!self.isLocalSelected_(u.chat_id) && self._stack_cache)) &&
+            self.hasGroups_(u.chat_id))
+        {
+            if (!self.groupFilterActive_(u.chat_id, "tanks"))
+            {
+                uint8_t group_id = 0;
+                if (!self.parseGroupLabel_(u.chat_id, u.text, group_id))
+                {
+                    self._bot->sendText(u.chat_id, F("Неизвестная группа"));
+                    return true;
+                }
+                self.setGroupFilter_(u.chat_id, "tanks", group_id);
+                TelegramMenuTanks::sendTanksMenu_(self, u.chat_id);
+                return true;
+            }
+            if (u.text == F("Группы"))
+            {
+                self.clearGroupFilter_(u.chat_id, "tanks");
+                TelegramMenuTanks::sendTanksMenu_(self, u.chat_id);
+                return true;
+            }
         }
         uint8_t id = 0;
         if (!TelegramMenuTanks::parseTankLabel_(u.text, id))

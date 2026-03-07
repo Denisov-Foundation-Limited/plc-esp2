@@ -64,7 +64,7 @@ public:
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Meteo, node_id))
             return;
         const bool stack_view = web.isStackMeteoView_(node_id);
-        const bool groups_local = (!stack_view && web.hasGroups_());
+        const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
         const uint8_t page_size = 8u;
         const String page_str = web.paramValueAny_(request, "page");
         uint8_t page_idx = 0;
@@ -79,12 +79,20 @@ public:
         {
             web.requestStackMeteo_(node_id);
             web.requestStackPorts_(node_id);
-            const size_t visible = web.stackMeteoVisibleCount_(node_id);
-            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
-            if (page_idx >= max_pages)
-                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            if (!groups_available)
+            {
+                const size_t visible = web.stackMeteoVisibleCount_(node_id);
+                max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+                if (page_idx >= max_pages)
+                    page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            }
+            else
+            {
+                page_idx = 0;
+                max_pages = 1;
+            }
         }
-        else if (!groups_local)
+        else if (!groups_available)
         {
             const size_t visible = web.meteoLocalRenderCount_();
             max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
@@ -151,7 +159,7 @@ public:
                 pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Meteo::kPageNext + "</span>";
             pagination += "</div>";
         }
-        if (!stack_view && !groups_local && max_pages > 1)
+        if (!stack_view && !groups_available && max_pages > 1)
         {
             pagination.reserve(256);
             pagination += "<div class=\"pagination\">";
@@ -184,9 +192,9 @@ public:
         }
         page.replace("%METEO_PAGE_TITLE%", WebUiRu::Meteo::kPageTitle);
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%METEO_TILES%", stack_view ? web.listStackMeteoHtml_(node_id, (size_t)page_idx * page_size, page_size)
-                                                 : web.listMeteoHtml_(groups_local ? 0u : (size_t)page_idx * page_size,
-                                                                      groups_local ? SIZE_MAX : page_size));
+        page.replace("%METEO_TILES%", stack_view ? web.listStackMeteoHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size)
+                                                 : web.listMeteoHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                      groups_available ? SIZE_MAX : page_size));
         page.replace("%METEO_PAGINATION%", pagination);
         page.replace("%METEO_STATUS%", stack_view ? web.stackMeteoStatusText_(node_id) : web._meteo_status);
         page.replace("%SENSOR_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Sensor)
@@ -213,7 +221,7 @@ public:
         }
         page.replace("%METEO_DEVICE_SELECT%",
                      web.composeTopFiltersHtml_(web.meteoDeviceSelectHtml_(node_id, stack_view),
-                                                (!stack_view) ? web.groupFilterHtml_("meteo-group-filter") : String("")));
+                                                groups_available ? web.groupFilterHtml_("meteo-group-filter", stack_view ? node_id : 0u) : String("")));
         page.replace("%METEO_SAVE_BTN%",
                      web.webSessionIsAdmin_() ? (String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>")
                                               : String(""));
@@ -356,11 +364,13 @@ public:
                 const String type_key = prefix + "type";
                 const String pin_key = prefix + "pin";
                 const String addr_key = prefix + "addr";
+                const String group_key = prefix + "group";
                 const bool has_any = request->hasParam(en_key, true) ||
                                      request->hasParam(name_key, true) ||
                                      request->hasParam(type_key, true) ||
                                      request->hasParam(pin_key, true) ||
-                                     request->hasParam(addr_key, true);
+                                     request->hasParam(addr_key, true) ||
+                                     request->hasParam(group_key, true);
                 if (!has_any)
                     continue;
                 if (!web.webAclCanControlItem_(UsersRegistry::AclController::Meteo, it.id, node_id))
@@ -383,6 +393,7 @@ public:
                 bool set_type = false;
                 bool set_pin = false;
                 bool set_addr = false;
+                bool set_group = false;
                 bool item_changed = false;
                 bool is_dht22 = (strcmp(it.type, "dht22") == 0);
                 bool is_ds18 = (strcmp(it.type, "ds18b20") == 0);
@@ -464,6 +475,12 @@ public:
                         new_addr = addr_norm;
                     }
                 }
+                const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
+                if (it.group_id != group_id)
+                {
+                    item_changed = true;
+                    set_group = true;
+                }
 
                 if (!item_changed)
                     continue;
@@ -490,6 +507,8 @@ public:
                     obj["addr"] = new_addr;
                 if (set_enabled)
                     obj["enabled"] = enabled;
+                if (set_group)
+                    obj["group_id"] = group_id;
                 char payload[256] = {};
                 const size_t len = serializeJson(doc, payload, sizeof(payload));
                 if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
@@ -509,6 +528,8 @@ public:
                             continue;
                         if (set_enabled)
                             dst.enabled = enabled;
+                        if (set_group)
+                            dst.group_id = group_id;
                         if (set_name)
                         {
                             const char *src = new_name.c_str();
@@ -535,6 +556,7 @@ public:
                                 dst.addr[p] = src[p];
                             dst.addr[p] = '\0';
                         }
+                        dst.group_id = group_id;
                         break;
                     }
                     cache_mut->updated_ms = millis();

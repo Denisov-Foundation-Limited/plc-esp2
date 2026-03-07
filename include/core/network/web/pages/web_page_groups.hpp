@@ -31,8 +31,26 @@ static const char kWebInterfaceGroupsHtml[] PROGMEM = R"HTML(
     p { margin:0 0 18px; color:var(--muted); }
     .section { margin-top:20px; }
     .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .field { width:100%; padding:10px; border-radius:8px; border:1px solid #334155; background:#0b1220; color:var(--text); }
+    .field, select.mini {
+      min-height:42px;
+      padding:8px 12px;
+      border-radius:10px;
+      border:1px solid #334155;
+      background:#0b1220;
+      color:var(--text);
+    }
+    .field { width:100%; }
+    select.field, select.mini {
+      appearance:none;
+      -webkit-appearance:none;
+      -moz-appearance:none;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5 7.5L10 12.5L15 7.5' stroke='%23e5e7eb' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat:no-repeat;
+      background-position:right 12px center;
+      padding-right:38px;
+    }
     .mini { width:120px; }
+    select.mini { width:190px; max-width:100%; }
     .btn { border:none; padding:10px 16px; border-radius:8px; background:var(--accent); color:#08111b; font-weight:700; cursor:pointer; }
     table { width:100%; border-collapse:collapse; margin-top:10px; }
     th, td { text-align:left; padding:8px 6px; border-bottom:1px solid #1f2937; vertical-align:middle; }
@@ -47,9 +65,11 @@ static const char kWebInterfaceGroupsHtml[] PROGMEM = R"HTML(
       %NAV%
       <h1>%GROUPS_TITLE%</h1>
       <p>%GROUPS_DESCRIPTION%</p>
+      %GROUPS_DEVICE_SELECT%
       <div class="section">
         <form method="POST" action="/groups">
           <input type="hidden" name="action" value="save">
+          %GROUPS_SAVE_HIDDEN%
           <table>
             <thead>
               <tr>
@@ -73,6 +93,7 @@ static const char kWebInterfaceGroupsHtml[] PROGMEM = R"HTML(
         <h2>%GROUPS_NEW_GROUP%</h2>
         <form method="POST" action="/groups">
           <input type="hidden" name="action" value="add">
+          %GROUPS_ADD_HIDDEN%
           <div class="row">
             <input class="field" type="text" name="name" placeholder="%GROUPS_NAME_PLACEHOLDER%">
             <input class="field mini" type="number" min="0" max="65535" name="sort" value="0">
@@ -82,6 +103,25 @@ static const char kWebInterfaceGroupsHtml[] PROGMEM = R"HTML(
       </div>
     </div>
   </div>
+  %GROUPS_AUTO_REFRESH%
+  <script>
+    const deviceSelect = document.getElementById('index-device');
+    if (deviceSelect) {
+      deviceSelect.addEventListener('change', () => {
+        const val = deviceSelect.value || 'local';
+        const url = new URL(window.location.href);
+        if (val === 'local') {
+          url.searchParams.delete('node');
+          url.searchParams.delete('node_id');
+          url.searchParams.delete('unit');
+        } else {
+          url.searchParams.set('unit', 'stack');
+          url.searchParams.set('node', val);
+        }
+        window.location.href = url.toString();
+      });
+    }
+  </script>
 </body>
 </html>
 )HTML";

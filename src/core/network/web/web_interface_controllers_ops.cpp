@@ -421,7 +421,24 @@ String WebInterfaceControllersOps::listStackNodesHtml_() const
 
 String WebInterfaceControllersOps::globalUsedPortsJson_(PortIO::PinType type) const
 {
-    return stackUsedPortsJson_(0, type);
+    String out;
+    out.reserve(128);
+    out += "[";
+    if (!_controllers)
+        return "[]";
+
+    bool first = true;
+    for (uint16_t i = 0; i < PortIO::PORT_COUNT; ++i)
+    {
+        if (!_controllers->gpioPortUsedByType((uint8_t)i, type))
+            continue;
+        if (!first)
+            out += ",";
+        out += String((unsigned)i);
+        first = false;
+    }
+    out += "]";
+    return out;
 }
 
 bool WebInterfaceControllersOps::stackPortTypeMatch_(const StackCache::StackPortItem &it, PortIO::PinType type) const

@@ -294,11 +294,11 @@ private:
     bool parseThermoSensor_(const String &input, uint8_t &out, uint32_t &out_node);
     bool parseThermoMode_(const String &input, ThermoController::Mode &out);
     bool parseThermoFloat_(const String &input, float &out);
-    bool hasGroups_() const;
-    uint8_t firstGroupId_() const;
-    String groupVisibilityStyleAttr_(uint8_t group_id) const;
-    String groupOptionsHtml_(uint8_t selected_group_id, bool include_none, bool disabled_if_empty) const;
-    String groupFilterHtml_(const char *select_id) const;
+    bool hasGroups_(uint32_t node_id = 0) const;
+    uint8_t firstGroupId_(uint32_t node_id = 0) const;
+    String groupVisibilityStyleAttr_(uint8_t group_id, uint32_t node_id = 0) const;
+    String groupOptionsHtml_(uint8_t selected_group_id, bool include_none, bool disabled_if_empty, uint32_t node_id = 0) const;
+    String groupFilterHtml_(const char *select_id, uint32_t node_id = 0) const;
     String topFiltersBackHtml_() const;
     String composeTopFiltersHtml_(const String &device_html, const String &group_html) const;
     uint8_t parseGroupIdParam_(AsyncWebServerRequest *request, const String &name) const;

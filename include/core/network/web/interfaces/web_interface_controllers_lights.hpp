@@ -403,10 +403,15 @@ public:
                 const bool can_edit = web.webSessionIsAdmin_();
                 const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Lights, cfg.id, node_id);
                 const bool on = cfg.enabled && cfg.state;
-                items += "<div class=\"tile";
+                const bool has_groups = web.hasGroups_(node_id);
+                items += "<div class=\"tile js-group-item";
                 if (!cfg.enabled)
                     items += " disabled";
-                items += "\">";
+                items += "\" data-group-id=\"";
+                items += String((unsigned)cfg.group_id);
+                items += "\"";
+                items += web.groupVisibilityStyleAttr_(cfg.group_id, node_id);
+                items += ">";
                 items += "<div class=\"sock-visual\">";
                 items += "<span class=\"badge\">#";
                 items += String((unsigned)cfg.id);
@@ -442,6 +447,14 @@ public:
                 if (!can_edit)
                     items += " readonly";
                 items += "></div>";
+                items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"s";
+                items += String((unsigned)cfg.id);
+                items += "_group\"";
+                if (!can_edit || !has_groups)
+                    items += " disabled";
+                items += ">";
+                items += web.groupOptionsHtml_(cfg.group_id, true, true, node_id);
+                items += "</select></div>";
                 items += "<div class=\"status-line\"><span class=\"status-dot ";
                 items += on ? "status-on" : "status-off";
                 items += "\"></span>";

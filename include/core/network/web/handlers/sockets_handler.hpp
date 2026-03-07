@@ -47,7 +47,7 @@ public:
         page.replace("%NAV%", web.navHtml_());
         const uint8_t page_size = 8u;
         const bool stack_view = web.isStackSocketsView_(node_id);
-        const bool groups_local = (!stack_view && web.hasGroups_());
+        const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
         if (stack_view)
         {
             web.requestStackSockets_(node_id);
@@ -64,7 +64,7 @@ public:
         uint8_t max_pages = 1;
         uint8_t start = 1;
         uint8_t end = SocketController::kSocketCount;
-        if (!stack_view && !groups_local)
+        if (!stack_view && !groups_available)
         {
             const size_t visible = web.socketsLocalRenderCount_();
             max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
@@ -89,7 +89,7 @@ public:
         }
         const size_t extra = 4096u + (size_t)page_size * 900u;
         page.reserve(page.length() + extra);
-        page.replace("%SOCKETS%", stack_view ? web.listStackSocketsHtml_(node_id, (size_t)page_idx * page_size, page_size)
+        page.replace("%SOCKETS%", stack_view ? web.listStackSocketsHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size)
                                              : web.listSocketsHtml_(start, end));
         page.replace("%SOCKETS_PAGE_TITLE%", WebUiRu::Sockets::kPageTitle);
         page.replace("%SOCKETS_PAGE_PREV%", WebUiRu::Sockets::kPagePrev);
@@ -110,7 +110,7 @@ public:
             page.replace("%DINPUT_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput));
             page.replace("%RELAY_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay));
             page.replace("%SOCKETS_STATUS%", web.stackSocketsStatusText_(node_id));
-            page.replace("%SOCKETS_PAGINATION_STYLE%", (max_pages > 1) ? "" : "style=\"display:none\"");
+            page.replace("%SOCKETS_PAGINATION_STYLE%", (groups_available || max_pages <= 1) ? "style=\"display:none\"" : "");
             page.replace("%SOCKETS_SAVE_BTN%", web.webSessionIsAdmin_() ? String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>" : "");
             page.replace("%SOCKETS_UNIT%", "stack");
             page.replace("%SOCKETS_NODE_ID%", String((unsigned long)node_id));
@@ -132,7 +132,7 @@ public:
             page.replace("%DINPUT_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::DInput));
             page.replace("%RELAY_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
             page.replace("%SOCKETS_STATUS%", web._sockets_status);
-            page.replace("%SOCKETS_PAGINATION_STYLE%", groups_local ? "style=\"display:none\"" : "");
+            page.replace("%SOCKETS_PAGINATION_STYLE%", groups_available ? "style=\"display:none\"" : "");
             page.replace("%SOCKETS_SAVE_BTN%", web.webSessionIsAdmin_() ? String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>" : "");
             page.replace("%SOCKETS_UNIT%", "local");
             page.replace("%SOCKETS_NODE_ID%", "0");
@@ -140,7 +140,7 @@ public:
         }
         page.replace("%SOCKETS_DEVICE_SELECT%",
                      web.composeTopFiltersHtml_(web.socketsDeviceSelectHtml_(node_id, stack_view),
-                                                (!stack_view) ? web.groupFilterHtml_("sockets-group-filter") : String("")));
+                                                groups_available ? web.groupFilterHtml_("sockets-group-filter", stack_view ? node_id : 0u) : String("")));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtmlRaw_(request, page, set_cookie);
     }
@@ -213,6 +213,7 @@ public:
                 String name = web.paramValue_(request, name_key);
                 String btn = web.paramValue_(request, btn_key);
                 String relay = web.paramValue_(request, relay_key);
+                const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
                 String action = web.paramValue_(request, action_key);
                 name.trim();
                 uint8_t btn_port = SocketController::kInvalidPort;
@@ -251,6 +252,11 @@ public:
                 if (cfg.relay_port != relay_port)
                 {
                     o["relay"] = relay_port;
+                    send = true;
+                }
+                if (cfg.group_id != group_id)
+                {
+                    o["group_id"] = group_id;
                     send = true;
                 }
                 if (action.length())
@@ -303,6 +309,7 @@ public:
                             dst.state = desired_state;
                         dst.button_port = btn_port;
                         dst.relay_port = relay_port;
+                        dst.group_id = group_id;
                         const char *src = name.c_str();
                         size_t p = 0;
                         for (; p + 1 < sizeof(dst.name) && src[p]; ++p)

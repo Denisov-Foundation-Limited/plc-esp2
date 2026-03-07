@@ -92,7 +92,7 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
     }
 
 
-    void TelegramMenuSockets::buildSocketLabels_(TelegramMenu &self, std::vector<String> &out, bool lights_only )
+void TelegramMenuSockets::buildSocketLabels_(TelegramMenu &self, std::vector<String> &out, bool lights_only )
     {
         out.clear();
         if (!self._sockets)
@@ -102,56 +102,47 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
         else if (lights_only)
         {
             out.reserve(SocketController::kLightCount + 1);
+            for (size_t i = 0; i < SocketController::kLightCount; ++i)
+            {
+                const auto *cfg = self._sockets->lightConfigByIndex(i);
+                if (!cfg || !cfg->enabled)
+                    continue;
+                String label;
+                if (cfg->name.length())
+                {
+                    label += String((unsigned)cfg->id);
+                    label += ": ";
+                    label += cfg->name;
+                }
+                else
+                {
+                    label += F("Свет ");
+                    label += String((unsigned)cfg->id);
+                }
+                out.push_back(label);
+            }
         }
         else
         {
             out.reserve(SocketController::kSocketCount + 1);
-        }
-        if (self._sockets)
-        {
-            if (lights_only)
+            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
             {
-                for (size_t i = 0; i < SocketController::kLightCount; ++i)
+                const auto *cfg = self._sockets->configByIndex(i);
+                if (!cfg || !cfg->enabled)
+                    continue;
+                String label;
+                if (cfg->name.length())
                 {
-                    const auto *cfg = self._sockets->lightConfigByIndex(i);
-                    if (!cfg || !cfg->enabled)
-                        continue;
-                    String label;
-                    if (cfg->name.length())
-                    {
-                        label += String((unsigned)cfg->id);
-                        label += ": ";
-                        label += cfg->name;
-                    }
-                    else
-                    {
-                        label += F("Свет ");
-                        label += String((unsigned)cfg->id);
-                    }
-                    out.push_back(label);
+                    label += String((unsigned)cfg->id);
+                    label += ": ";
+                    label += cfg->name;
                 }
-            }
-            else
-            {
-                for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+                else
                 {
-                    const auto *cfg = self._sockets->configByIndex(i);
-                    if (!cfg || !cfg->enabled)
-                        continue;
-                    String label;
-                    if (cfg->name.length())
-                    {
-                        label += String((unsigned)cfg->id);
-                        label += ": ";
-                        label += cfg->name;
-                    }
-                    else
-                    {
-                        label += F("Розетка ");
-                        label += String((unsigned)cfg->id);
-                    }
-                    out.push_back(label);
+                    label += F("Розетка ");
+                    label += String((unsigned)cfg->id);
                 }
+                out.push_back(label);
             }
         }
         out.push_back(F("Назад"));
@@ -160,6 +151,10 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
 
     String TelegramMenuSockets::socketListTextHtml_(TelegramMenu &self, int64_t chat_id, bool lights_only )
     {
+        const char *menu_id = lights_only ? "lights" : "sockets";
+        bool groups_enabled = self.isLocalSelected_(chat_id) ? (self._sockets && self.hasLocalGroups_())
+                                                             : (self._stack_cache && self.hasGroups_(chat_id));
+        const bool group_active = groups_enabled && self.groupFilterActive_(chat_id, menu_id);
         String out = lights_only ? F("<b>Свет:</b>") : F("<b>Розетки:</b>");
         out.reserve(512);
         if (self.isLocalSelected_(chat_id))
@@ -169,14 +164,163 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
                 out += F("\n  недоступны");
                 return out;
             }
+            if (groups_enabled && !group_active)
+            {
+                bool any = false;
+                bool has_no_group = false;
+                for (size_t gi = 0; gi < self._configs_manager->groupCount(); ++gi)
+                {
+                    ConfigsManagerIface::GroupConfig g;
+                    if (!self._configs_manager->groupByIndex(gi, g) || g.id == 0)
+                        continue;
+                    bool group_any = false;
+                    if (lights_only)
+                    {
+                        for (size_t i = 0; i < SocketController::kLightCount; ++i)
+                        {
+                            const auto *cfg = self._sockets->lightConfigByIndex(i);
+                            const auto *st = self._sockets->lightStateByIndex(i);
+                            if (!cfg || !st || !cfg->enabled)
+                                continue;
+                            if (cfg->group_id == 0)
+                                has_no_group = true;
+                            if (cfg->group_id != g.id)
+                                continue;
+                            if (!group_any)
+                            {
+                                out += F("\n  [");
+                                out += self.escapeHtml_(g.name);
+                                out += F("]");
+                                group_any = true;
+                                any = true;
+                            }
+                            out += F("\n    ");
+                            out += st->relay_on ? F("🟡 ") : F("⚪ ");
+                            out += String((unsigned)cfg->id);
+                            out += F(": ");
+                            if (cfg->name.length())
+                            {
+                                out += "<b>";
+                                out += self.escapeHtml_(cfg->name);
+                                out += "</b>";
+                            }
+                            else
+                            {
+                                out += "-";
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+                        {
+                            const auto *cfg = self._sockets->configByIndex(i);
+                            const auto *st = self._sockets->stateByIndex(i);
+                            if (!cfg || !st || !cfg->enabled)
+                                continue;
+                            if (cfg->group_id == 0)
+                                has_no_group = true;
+                            if (cfg->group_id != g.id)
+                                continue;
+                            if (!group_any)
+                            {
+                                out += F("\n  [");
+                                out += self.escapeHtml_(g.name);
+                                out += F("]");
+                                group_any = true;
+                                any = true;
+                            }
+                            out += F("\n    ");
+                            out += st->relay_on ? F("🟢 ") : F("⚪ ");
+                            out += String((unsigned)cfg->id);
+                            out += F(": ");
+                            if (cfg->name.length())
+                            {
+                                out += "<b>";
+                                out += self.escapeHtml_(cfg->name);
+                                out += "</b>";
+                            }
+                            else
+                            {
+                                out += "-";
+                            }
+                        }
+                    }
+                }
+                if (has_no_group)
+                {
+                    out += F("\n  [Без группы]");
+                    any = true;
+                    if (lights_only)
+                    {
+                        for (size_t i = 0; i < SocketController::kLightCount; ++i)
+                        {
+                            const auto *cfg = self._sockets->lightConfigByIndex(i);
+                            const auto *st = self._sockets->lightStateByIndex(i);
+                            if (!cfg || !st || !cfg->enabled || cfg->group_id != 0)
+                                continue;
+                            out += F("\n    ");
+                            out += st->relay_on ? F("🟡 ") : F("⚪ ");
+                            out += String((unsigned)cfg->id);
+                            out += F(": ");
+                            if (cfg->name.length())
+                            {
+                                out += "<b>";
+                                out += self.escapeHtml_(cfg->name);
+                                out += "</b>";
+                            }
+                            else
+                            {
+                                out += "-";
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+                        {
+                            const auto *cfg = self._sockets->configByIndex(i);
+                            const auto *st = self._sockets->stateByIndex(i);
+                            if (!cfg || !st || !cfg->enabled || cfg->group_id != 0)
+                                continue;
+                            out += F("\n    ");
+                            out += st->relay_on ? F("🟢 ") : F("⚪ ");
+                            out += String((unsigned)cfg->id);
+                            out += F(": ");
+                            if (cfg->name.length())
+                            {
+                                out += "<b>";
+                                out += self.escapeHtml_(cfg->name);
+                                out += "</b>";
+                            }
+                            else
+                            {
+                                out += "-";
+                            }
+                        }
+                    }
+                }
+                if (!any)
+                    out += F("\n  пусто");
+                return out;
+            }
+            if (groups_enabled && group_active)
+            {
+                out += F("\n  группа: <b>");
+                out += self.escapeHtml_(self.groupLabelById_(chat_id, self.groupFilterId_(chat_id, menu_id)));
+                out += F("</b>");
+            }
             bool any = false;
             if (lights_only)
             {
+                const uint8_t active_group_id = groups_enabled ? self.groupFilterId_(chat_id, menu_id) : 0;
                 for (size_t i = 0; i < SocketController::kLightCount; ++i)
                 {
                     const auto *cfg = self._sockets->lightConfigByIndex(i);
                     const auto *st = self._sockets->lightStateByIndex(i);
                     if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    if (groups_enabled && cfg->group_id != active_group_id)
                         continue;
                     any = true;
                     out += "\n  ";
@@ -197,11 +341,14 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
             }
             else
             {
+                const uint8_t active_group_id = groups_enabled ? self.groupFilterId_(chat_id, menu_id) : 0;
                 for (size_t i = 0; i < SocketController::kSocketCount; ++i)
                 {
                     const auto *cfg = self._sockets->configByIndex(i);
                     const auto *st = self._sockets->stateByIndex(i);
                     if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    if (groups_enabled && cfg->group_id != active_group_id)
                         continue;
                     any = true;
                     out += "\n  ";
@@ -236,6 +383,175 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
             out += F("\n  недоступны");
             return out;
         }
+        if (groups_enabled && !group_active)
+        {
+            bool any_group = false;
+            bool has_no_group = false;
+            const auto *groups = self.selectedGroupsCache_(chat_id);
+            if (!groups || !groups->has_data || !groups->items)
+            {
+                out += F("\n  РїСѓСЃС‚Рѕ");
+                return out;
+            }
+            if (lights_only)
+            {
+                const auto *cache = self._stack_cache->lightsCache(node_id);
+                if (!cache || !cache->has_data)
+                {
+                    self._stack_cache->requestLights(node_id);
+                    out += F("\n  РѕР±РЅРѕРІР»РµРЅРёРµ...");
+                    return out;
+                }
+                for (size_t gi = 0; gi < groups->item_count; ++gi)
+                {
+                    const auto &g = groups->items[gi];
+                    if (g.id == 0 || !g.name[0])
+                        continue;
+                    bool section = false;
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        if (it.group_id == 0)
+                            has_no_group = true;
+                        if (it.group_id != g.id)
+                            continue;
+                        if (!section)
+                        {
+                            out += F("\n  [");
+                            out += self.escapeHtml_(String(g.name));
+                            out += F("]");
+                            section = true;
+                            any_group = true;
+                        }
+                        out += F("\n    ");
+                        out += it.state ? F("рџџЎ ") : F("вљЄ ");
+                        out += String((unsigned)it.id);
+                        out += F(": ");
+                        if (it.name[0])
+                        {
+                            out += "<b>";
+                            out += self.escapeHtml_(String(it.name));
+                            out += "</b>";
+                        }
+                        else
+                        {
+                            out += "-";
+                        }
+                    }
+                }
+                if (has_no_group)
+                {
+                    out += F("\n  [Р‘РµР· РіСЂСѓРїРїС‹]");
+                    any_group = true;
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled || it.group_id != 0)
+                            continue;
+                        out += F("\n    ");
+                        out += it.state ? F("рџџЎ ") : F("вљЄ ");
+                        out += String((unsigned)it.id);
+                        out += F(": ");
+                        if (it.name[0])
+                        {
+                            out += "<b>";
+                            out += self.escapeHtml_(String(it.name));
+                            out += "</b>";
+                        }
+                        else
+                        {
+                            out += "-";
+                        }
+                    }
+                }
+            }
+            else
+            {
+                const auto *cache = self._stack_cache->socketsCache(node_id);
+                if (!cache || !cache->has_data)
+                {
+                    self._stack_cache->requestSockets(node_id);
+                    out += F("\n  РѕР±РЅРѕРІР»РµРЅРёРµ...");
+                    return out;
+                }
+                for (size_t gi = 0; gi < groups->item_count; ++gi)
+                {
+                    const auto &g = groups->items[gi];
+                    if (g.id == 0 || !g.name[0])
+                        continue;
+                    bool section = false;
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled)
+                            continue;
+                        if (it.group_id == 0)
+                            has_no_group = true;
+                        if (it.group_id != g.id)
+                            continue;
+                        if (!section)
+                        {
+                            out += F("\n  [");
+                            out += self.escapeHtml_(String(g.name));
+                            out += F("]");
+                            section = true;
+                            any_group = true;
+                        }
+                        out += F("\n    ");
+                        out += it.state ? F("рџџў ") : F("вљЄ ");
+                        out += String((unsigned)it.id);
+                        out += F(": ");
+                        if (it.name[0])
+                        {
+                            out += "<b>";
+                            out += self.escapeHtml_(String(it.name));
+                            out += "</b>";
+                        }
+                        else
+                        {
+                            out += "-";
+                        }
+                    }
+                }
+                if (has_no_group)
+                {
+                    out += F("\n  [Р‘РµР· РіСЂСѓРїРїС‹]");
+                    any_group = true;
+                    for (size_t i = 0; i < cache->item_count; ++i)
+                    {
+                        const auto &it = cache->items[i];
+                        if (!it.enabled || it.group_id != 0)
+                            continue;
+                        out += F("\n    ");
+                        out += it.state ? F("рџџў ") : F("вљЄ ");
+                        out += String((unsigned)it.id);
+                        out += F(": ");
+                        if (it.name[0])
+                        {
+                            out += "<b>";
+                            out += self.escapeHtml_(String(it.name));
+                            out += "</b>";
+                        }
+                        else
+                        {
+                            out += "-";
+                        }
+                    }
+                }
+            }
+            if (!any_group)
+                out += F("\n  РїСѓСЃС‚Рѕ");
+            return out;
+        }
+        if (groups_enabled && group_active)
+        {
+            out += F("\n  РіСЂСѓРїРїР°: <b>");
+            out += self.escapeHtml_(self.groupLabelById_(chat_id, self.groupFilterId_(chat_id, menu_id)));
+            out += F("</b>");
+        }
+        const uint8_t active_group_id = groups_enabled ? self.groupFilterId_(chat_id, menu_id) : 0;
         bool any = false;
         if (lights_only)
         {
@@ -250,6 +566,8 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
                 {
                     const auto &it = cache->items[i];
                     if (!it.enabled)
+                        continue;
+                    if (groups_enabled && it.group_id != active_group_id)
                         continue;
                     any = true;
                     out += "\n  ";
@@ -283,6 +601,8 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
                     const auto &it = cache->items[i];
                     if (!it.enabled)
                         continue;
+                    if (groups_enabled && it.group_id != active_group_id)
+                        continue;
                     any = true;
                     out += "\n  ";
                     out += it.state ? F("🟢 ") : F("⚪ ");
@@ -311,6 +631,7 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
     {
         if (!self._bot)
             return;
+        const char *menu_id = lights_only ? "lights" : "sockets";
         TelegramMenu::ChatAuth *st = self.ensureAuth_(chat_id);
         if (st)
         {
@@ -320,14 +641,163 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
         std::vector<String> labels;
         if (self.isLocalSelected_(chat_id))
         {
-            TelegramMenuSockets::buildSocketLabels_(self, labels, lights_only);
+            const bool groups_enabled = self._sockets && self.hasLocalGroups_();
+            const bool group_active = groups_enabled && self.groupFilterActive_(chat_id, menu_id);
+            if (groups_enabled && !group_active)
+            {
+                bool has_no_group = false;
+                for (size_t gi = 0; gi < self._configs_manager->groupCount(); ++gi)
+                {
+                    ConfigsManagerIface::GroupConfig g;
+                    if (!self._configs_manager->groupByIndex(gi, g) || g.id == 0)
+                        continue;
+                    bool present = false;
+                    if (lights_only)
+                    {
+                        for (size_t i = 0; i < SocketController::kLightCount; ++i)
+                        {
+                            const auto *cfg = self._sockets->lightConfigByIndex(i);
+                            if (!cfg || !cfg->enabled)
+                                continue;
+                            if (cfg->group_id == g.id)
+                            {
+                                present = true;
+                                break;
+                            }
+                            if (cfg->group_id == 0)
+                                has_no_group = true;
+                        }
+                    }
+                    else
+                    {
+                        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+                        {
+                            const auto *cfg = self._sockets->configByIndex(i);
+                            if (!cfg || !cfg->enabled)
+                                continue;
+                            if (cfg->group_id == g.id)
+                            {
+                                present = true;
+                                break;
+                            }
+                            if (cfg->group_id == 0)
+                                has_no_group = true;
+                        }
+                    }
+                    if (present)
+                        labels.push_back(g.name);
+                }
+                if (has_no_group)
+                    labels.push_back(F("Без группы"));
+                labels.push_back(F("Назад"));
+            }
+            else
+            {
+                const uint8_t active_group_id = groups_enabled ? self.groupFilterId_(chat_id, menu_id) : 0;
+                if (lights_only)
+                {
+                    for (size_t i = 0; i < SocketController::kLightCount; ++i)
+                    {
+                        const auto *cfg = self._sockets->lightConfigByIndex(i);
+                        if (!cfg || !cfg->enabled)
+                            continue;
+                        if (groups_enabled && cfg->group_id != active_group_id)
+                            continue;
+                        String label = String((unsigned)cfg->id) + ": ";
+                        label += cfg->name.length() ? cfg->name : String("Свет");
+                        labels.push_back(label);
+                    }
+                }
+                else
+                {
+                    for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+                    {
+                        const auto *cfg = self._sockets->configByIndex(i);
+                        if (!cfg || !cfg->enabled)
+                            continue;
+                        if (groups_enabled && cfg->group_id != active_group_id)
+                            continue;
+                        String label = String((unsigned)cfg->id) + ": ";
+                        label += cfg->name.length() ? cfg->name : String("Розетка");
+                        labels.push_back(label);
+                    }
+                }
+                if (groups_enabled)
+                    labels.push_back(F("Группы"));
+                labels.push_back(F("Назад"));
+            }
         }
         else if (self._stack_cache)
         {
             const uint32_t node_id = self.selectedNodeId_(chat_id);
+            const bool groups_enabled = self.hasGroups_(chat_id);
+            const bool group_active = groups_enabled && self.groupFilterActive_(chat_id, menu_id);
             if (node_id != 0)
             {
-                if (lights_only)
+                if (groups_enabled && !group_active)
+                {
+                    bool has_no_group = false;
+                    const auto *groups = self.selectedGroupsCache_(chat_id);
+                    if (groups && groups->has_data && groups->items)
+                    {
+                        for (size_t gi = 0; gi < groups->item_count; ++gi)
+                        {
+                            const auto &g = groups->items[gi];
+                            if (g.id == 0 || !g.name[0])
+                                continue;
+                            bool present = false;
+                            if (lights_only)
+                            {
+                                const auto *cache = self._stack_cache->lightsCache(node_id);
+                                if (!cache || !cache->has_data)
+                                {
+                                    self._stack_cache->requestLights(node_id);
+                                    break;
+                                }
+                                for (size_t i = 0; i < cache->item_count; ++i)
+                                {
+                                    const auto &it = cache->items[i];
+                                    if (!it.enabled)
+                                        continue;
+                                    if (it.group_id == g.id)
+                                    {
+                                        present = true;
+                                        break;
+                                    }
+                                    if (it.group_id == 0)
+                                        has_no_group = true;
+                                }
+                            }
+                            else
+                            {
+                                const auto *cache = self._stack_cache->socketsCache(node_id);
+                                if (!cache || !cache->has_data)
+                                {
+                                    self._stack_cache->requestSockets(node_id);
+                                    break;
+                                }
+                                for (size_t i = 0; i < cache->item_count; ++i)
+                                {
+                                    const auto &it = cache->items[i];
+                                    if (!it.enabled)
+                                        continue;
+                                    if (it.group_id == g.id)
+                                    {
+                                        present = true;
+                                        break;
+                                    }
+                                    if (it.group_id == 0)
+                                        has_no_group = true;
+                                }
+                            }
+                            if (present)
+                                labels.push_back(String(g.name));
+                        }
+                    }
+                    if (has_no_group)
+                        labels.push_back(F("Р‘РµР· РіСЂСѓРїРїС‹"));
+                }
+                else if (lights_only)
                 {
                     const auto *cache = self._stack_cache->lightsCache(node_id);
                     if (!cache || !cache->has_data)
@@ -340,6 +810,8 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
                         {
                             const auto &it = cache->items[i];
                             if (!it.enabled)
+                                continue;
+                            if (groups_enabled && it.group_id != self.groupFilterId_(chat_id, menu_id))
                                 continue;
                             String label;
                             label += String((unsigned)it.id);
@@ -363,6 +835,8 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
                             const auto &it = cache->items[i];
                             if (!it.enabled)
                                 continue;
+                            if (groups_enabled && it.group_id != self.groupFilterId_(chat_id, menu_id))
+                                continue;
                             String label;
                             label += String((unsigned)it.id);
                             label += ": ";
@@ -371,6 +845,8 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
                         }
                     }
                 }
+                if (groups_enabled)
+                    labels.push_back(F("Р“СЂСѓРїРїС‹"));
             }
             labels.push_back(F("Назад"));
         }
@@ -397,8 +873,32 @@ bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Up
             return false;
         if (u.text == F("Назад"))
         {
+            self.clearGroupFilter_(u.chat_id, lights_only ? "lights" : "sockets");
             self._bot->enterMenu(u.chat_id, "device");
             return true;
+        }
+        if (((self.isLocalSelected_(u.chat_id) && self._sockets) || (!self.isLocalSelected_(u.chat_id) && self._stack_cache)) &&
+            self.hasGroups_(u.chat_id))
+        {
+            const char *group_menu_id = lights_only ? "lights" : "sockets";
+            if (!self.groupFilterActive_(u.chat_id, group_menu_id))
+            {
+                uint8_t group_id = 0;
+                if (!self.parseGroupLabel_(u.chat_id, u.text, group_id))
+                {
+                    self._bot->sendText(u.chat_id, F("Неизвестная группа"));
+                    return true;
+                }
+                self.setGroupFilter_(u.chat_id, group_menu_id, group_id);
+                TelegramMenuSockets::sendSocketMenu_(self, u.chat_id, lights_only);
+                return true;
+            }
+            if (u.text == F("Группы"))
+            {
+                self.clearGroupFilter_(u.chat_id, group_menu_id);
+                TelegramMenuSockets::sendSocketMenu_(self, u.chat_id, lights_only);
+                return true;
+            }
         }
         uint8_t id = 0;
         const uint8_t max_id = lights_only ? (uint8_t)SocketController::kLightCount

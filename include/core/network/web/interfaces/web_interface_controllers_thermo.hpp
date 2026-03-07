@@ -252,9 +252,14 @@ public:
                     }
                 }
     
-                items += "<div class=\"tile";
+                const bool has_groups = web.hasGroups_(node_id);
+                items += "<div class=\"tile js-group-item";
                 if (!cfg.enabled)
                     items += " disabled";
+                items += "\" data-group-id=\"";
+                items += String((unsigned)cfg.group_id);
+                items += "\"";
+                items += web.groupVisibilityStyleAttr_(cfg.group_id, node_id);
                 items += WebUiRu::Thermo::kText9;
                 items += sensor_label;
                 items += sensor_suffix;
@@ -302,6 +307,14 @@ public:
                 if (!(can_admin && can_control))
                     items += " readonly";
                 items += ">";
+                items += String("<div class=\"form-row\" style=\"margin-top:8px;margin-bottom:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"t";
+                items += String((unsigned)cfg.id);
+                items += "_group\"";
+                if (!(can_admin && can_control) || !has_groups)
+                    items += " disabled";
+                items += ">";
+                items += web.groupOptionsHtml_(cfg.group_id, true, true, node_id);
+                items += "</select></div>";
                 items += "<div class=\"form-grid\"><div class=\"form-row\"><label>";
                 items += WebUiRu::Thermo::kLabelActive;
                 items += "</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
@@ -653,7 +666,7 @@ public:
             if (!(can_admin && can_control))
                 items += " readonly";
             items += "></div>";
-            items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"t";
+            items += String("<div class=\"form-row\" style=\"margin-top:8px;margin-bottom:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_group\"";
             if (!(can_admin && can_control) || !has_groups)

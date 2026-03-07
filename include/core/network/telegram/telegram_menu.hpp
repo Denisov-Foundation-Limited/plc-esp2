@@ -20,6 +20,7 @@
 #include "core/network/telegram/telegram_bot.hpp"
 #include "controllers/thermo_controller.hpp"
 #include "controllers/tank_controller.hpp"
+#include "core/network/stack/stack_cache.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/users_registry.hpp"
 #include "core/rules_controller.hpp"
@@ -139,6 +140,9 @@ private:
         uint32_t lock_until_ms = 0;
         bool selected_local = true;
         uint32_t selected_node_id = 0;
+        bool group_filter_active = false;
+        uint8_t group_filter_id = 0;
+        String group_filter_menu;
         uint8_t socket_action = 0;
         uint8_t selected_thermo_id = 0;
         uint8_t selected_tank_id = 0;
@@ -275,6 +279,32 @@ private:
     void resetAuth_(int64_t chat_id);
 
     void resetAwaiting_(int64_t chat_id);
+
+    const StackCache::StackGroupsCache *selectedGroupsCache_(int64_t chat_id) const;
+
+    bool hasLocalGroups_() const;
+
+    bool groupById_(uint8_t group_id, ConfigsManagerIface::GroupConfig &out) const;
+
+    bool hasGroups_(int64_t chat_id) const;
+
+    bool groupById_(int64_t chat_id, uint8_t group_id, ConfigsManagerIface::GroupConfig &out) const;
+
+    void clearGroupFilter_(int64_t chat_id, const char *menu_id = nullptr);
+
+    void setGroupFilter_(int64_t chat_id, const char *menu_id, uint8_t group_id);
+
+    bool groupFilterActive_(int64_t chat_id, const char *menu_id) const;
+
+    uint8_t groupFilterId_(int64_t chat_id, const char *menu_id) const;
+
+    bool parseGroupLabel_(const String &label, uint8_t &group_id) const;
+
+    bool parseGroupLabel_(int64_t chat_id, const String &label, uint8_t &group_id) const;
+
+    String groupLabelById_(uint8_t group_id) const;
+
+    String groupLabelById_(int64_t chat_id, uint8_t group_id) const;
 
     TelegramBot *_bot = nullptr;
     Logger *_logs = nullptr;

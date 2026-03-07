@@ -91,6 +91,7 @@ private:
         Watering,
         SecurityStatus,
         SecuritySensors,
+        Groups,
         Ring,
         Avr,
         Leak
@@ -220,6 +221,8 @@ private:
     void fillSystemInfo_(JsonObject out);
 
     void fillControllersInfo_(JsonObject out);
+
+    void fillGroups_(JsonArray out);
 
     void fillSockets_(JsonArray out, bool lights);
 

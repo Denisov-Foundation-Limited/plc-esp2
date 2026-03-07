@@ -204,10 +204,15 @@ public:
                 if (type_value != "dht22" && type_value != "ds18b20")
                     type_value = "none";
     
-                items += "<div class=\"tile";
+                const bool has_groups = web.hasGroups_(node_id);
+                items += "<div class=\"tile js-group-item";
                 if (!cfg.enabled)
                     items += " disabled";
-                items += "\" data-sensor-id=\"";
+                items += "\" data-group-id=\"";
+                items += String((unsigned)cfg.group_id);
+                items += "\"";
+                items += web.groupVisibilityStyleAttr_(cfg.group_id, node_id);
+                items += " data-sensor-id=\"";
                 items += String((unsigned)cfg.id);
                 items += "\">";
                 items += "<div class=\"sensor-visual\">";
@@ -263,6 +268,14 @@ public:
                 if (!can_edit_stack)
                     items += " readonly";
                 items += "></div>";
+                items += String("<div class=\"form-row\" style=\"margin-top:8px;margin-bottom:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field\" name=\"m";
+                items += String((unsigned)cfg.id);
+                items += "_group\"";
+                if (!can_edit_stack || !has_groups)
+                    items += " disabled";
+                items += ">";
+                items += web.groupOptionsHtml_(cfg.group_id, true, true, node_id);
+                items += "</select></div>";
                 items += "<div class=\"form-grid\">";
                 items += WebUiRu::Meteo::kSelectClassFieldMeteoTypeNameM;
                 items += String((unsigned)cfg.id);
@@ -531,7 +544,7 @@ public:
             if (!can_edit)
                 items += " readonly";
             items += "></div>";
-            items += String("<div class=\"form-row\" style=\"margin-top:8px;margin-bottom:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"m";
+            items += String("<div class=\"form-row\" style=\"margin-top:8px;margin-bottom:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field\" name=\"m";
             items += String((unsigned)cfg.id);
             items += "_group\"";
             if (!can_edit || !has_groups)

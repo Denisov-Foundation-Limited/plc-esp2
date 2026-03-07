@@ -268,6 +268,71 @@ bool TelegramMenuSecurity::cmdSecurity_(TelegramBot &bot, const TelegramClient::
         out += F("\n  Тревога: ");
         out += self._security->alarmOn() ? "🔴" : "⚪";
         out += F("\n  Датчики:\n");
+        const bool has_groups = self.hasLocalGroups_();
+        if (has_groups)
+        {
+            bool any = false;
+            bool has_no_group = false;
+            for (size_t gi = 0; gi < self._configs_manager->groupCount(); ++gi)
+            {
+                ConfigsManagerIface::GroupConfig g;
+                if (!self._configs_manager->groupByIndex(gi, g) || g.id == 0)
+                    continue;
+                bool group_any = false;
+                for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+                {
+                    const auto *cfg = self._security->configByIndex(i);
+                    const auto *st = self._security->stateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    if (cfg->group_id == 0)
+                        has_no_group = true;
+                    if (cfg->group_id != g.id)
+                        continue;
+                    if (!group_any)
+                    {
+                        out += F("    [");
+                        out += g.name;
+                        out += F("]\n");
+                        group_any = true;
+                        any = true;
+                    }
+                    out += F("      ");
+                    out += st->is_detect ? "рџ”ґ " : "рџџў ";
+                    if (cfg->name.length())
+                        out += cfg->name;
+                    else
+                        out += String(F("РґР°С‚С‡РёРє ")) + String((unsigned)cfg->id);
+                    out += F(" [");
+                    out += (cfg->type == SecurityController::SensorType::Reed) ? F("Reed") : F("PIR");
+                    out += F("]\n");
+                }
+            }
+            if (has_no_group)
+            {
+                out += F("    [Без группы]\n");
+                any = true;
+                for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+                {
+                    const auto *cfg = self._security->configByIndex(i);
+                    const auto *st = self._security->stateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled || cfg->group_id != 0)
+                        continue;
+                    out += F("      ");
+                    out += st->is_detect ? "рџ”ґ " : "рџџў ";
+                    if (cfg->name.length())
+                        out += cfg->name;
+                    else
+                        out += String(F("РґР°С‚С‡РёРє ")) + String((unsigned)cfg->id);
+                    out += F(" [");
+                    out += (cfg->type == SecurityController::SensorType::Reed) ? F("Reed") : F("PIR");
+                    out += F("]\n");
+                }
+            }
+            if (!any)
+                out += F("    РїСѓСЃС‚Рѕ\n");
+            return out;
+        }
         for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
         {
             const auto *cfg = self._security->configByIndex(i);
@@ -331,6 +396,79 @@ bool TelegramMenuSecurity::cmdSecurity_(TelegramBot &bot, const TelegramClient::
         if (!self._security)
             return "Охрана недоступна";
         String out = F("<b>Охрана:</b>\n");
+        const bool has_groups = self.hasLocalGroups_();
+        if (has_groups)
+        {
+            bool any = false;
+            bool has_no_group = false;
+            for (size_t gi = 0; gi < self._configs_manager->groupCount(); ++gi)
+            {
+                ConfigsManagerIface::GroupConfig g;
+                if (!self._configs_manager->groupByIndex(gi, g) || g.id == 0)
+                    continue;
+                bool group_any = false;
+                for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+                {
+                    const auto *cfg = self._security->configByIndex(i);
+                    const auto *st = self._security->stateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled)
+                        continue;
+                    if (cfg->group_id == 0)
+                        has_no_group = true;
+                    if (cfg->group_id != g.id)
+                        continue;
+                    if (!group_any)
+                    {
+                        out += F("\n<b>[");
+                        out += self.escapeHtml_(g.name);
+                        out += F("]</b>\n");
+                        group_any = true;
+                        any = true;
+                    }
+                    out += String((unsigned)cfg->id);
+                    out += F("  ");
+                    out += (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
+                    out += F("  ");
+                    out += (cfg->port != SecurityController::kInvalidPort) ? String((unsigned)cfg->port) : String("--");
+                    out += F("  ");
+                    out += cfg->silent ? "yes" : "no";
+                    out += F("  ");
+                    out += st->is_detect ? "yes" : "no";
+                    out += F("  ");
+                    if (cfg->name.length())
+                        out += self.escapeHtml_(cfg->name);
+                    out += F("\n");
+                }
+            }
+            if (has_no_group)
+            {
+                out += F("\n<b>[Без группы]</b>\n");
+                any = true;
+                for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+                {
+                    const auto *cfg = self._security->configByIndex(i);
+                    const auto *st = self._security->stateByIndex(i);
+                    if (!cfg || !st || !cfg->enabled || cfg->group_id != 0)
+                        continue;
+                    out += String((unsigned)cfg->id);
+                    out += F("  ");
+                    out += (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
+                    out += F("  ");
+                    out += (cfg->port != SecurityController::kInvalidPort) ? String((unsigned)cfg->port) : String("--");
+                    out += F("  ");
+                    out += cfg->silent ? "yes" : "no";
+                    out += F("  ");
+                    out += st->is_detect ? "yes" : "no";
+                    out += F("  ");
+                    if (cfg->name.length())
+                        out += self.escapeHtml_(cfg->name);
+                    out += F("\n");
+                }
+            }
+            if (!any)
+                out += F("\nРїСѓСЃС‚Рѕ");
+            return out;
+        }
         out += F("ID  Type  Port  Silent  Detect  Name\n");
         out += F("-----------------------------------\n");
         for (size_t i = 0; i < SecurityController::kSensorCount; ++i)

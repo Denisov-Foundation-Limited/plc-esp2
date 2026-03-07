@@ -875,6 +875,9 @@ void TelegramMenu::resetAuth_(int64_t chat_id)
     st->selected_watering_id = 0;
     st->selected_local = true;
     st->selected_node_id = 0;
+    st->group_filter_active = false;
+    st->group_filter_id = 0;
+    st->group_filter_menu = "";
 }
 void TelegramMenu::resetAwaiting_(int64_t chat_id)
 {
@@ -894,6 +897,175 @@ void TelegramMenu::resetAwaiting_(int64_t chat_id)
     st->selected_leak_id = 0;
     st->awaiting_watering = false;
     st->selected_watering_id = 0;
+}
+bool TelegramMenu::hasLocalGroups_() const
+{
+    return _configs_manager && _configs_manager->groupCount() > 0;
+}
+const StackCache::StackGroupsCache *TelegramMenu::selectedGroupsCache_(int64_t chat_id) const
+{
+    if (!_stack_cache || isLocalSelected_(chat_id))
+        return nullptr;
+    const uint32_t node_id = selectedNodeId_(chat_id);
+    if (node_id == 0)
+        return nullptr;
+    return _stack_cache->groupsCache(node_id);
+}
+bool TelegramMenu::groupById_(uint8_t group_id, ConfigsManagerIface::GroupConfig &out) const
+{
+    if (!_configs_manager || group_id == 0)
+        return false;
+    for (size_t i = 0; i < _configs_manager->groupCount(); ++i)
+    {
+        ConfigsManagerIface::GroupConfig g;
+        if (!_configs_manager->groupByIndex(i, g) || g.id == 0)
+            continue;
+        if (g.id != group_id)
+            continue;
+        out = g;
+        return true;
+    }
+    return false;
+}
+bool TelegramMenu::hasGroups_(int64_t chat_id) const
+{
+    if (isLocalSelected_(chat_id))
+        return hasLocalGroups_();
+    const StackCache::StackGroupsCache *cache = selectedGroupsCache_(chat_id);
+    return cache && cache->has_data && cache->item_count > 0;
+}
+bool TelegramMenu::groupById_(int64_t chat_id, uint8_t group_id, ConfigsManagerIface::GroupConfig &out) const
+{
+    if (group_id == 0)
+        return false;
+    if (isLocalSelected_(chat_id))
+        return groupById_(group_id, out);
+    const StackCache::StackGroupsCache *cache = selectedGroupsCache_(chat_id);
+    if (!cache || !cache->has_data || !cache->items)
+        return false;
+    for (size_t i = 0; i < cache->item_count; ++i)
+    {
+        const auto &g = cache->items[i];
+        if (g.id != group_id)
+            continue;
+        out.id = g.id;
+        out.sort = g.sort;
+        out.name = String(g.name);
+        return true;
+    }
+    return false;
+}
+void TelegramMenu::clearGroupFilter_(int64_t chat_id, const char *menu_id)
+{
+    ChatAuth *st = ensureAuth_(chat_id);
+    if (!st)
+        return;
+    if (!menu_id || !st->group_filter_menu.length() || st->group_filter_menu.equals(menu_id))
+    {
+        st->group_filter_active = false;
+        st->group_filter_id = 0;
+        st->group_filter_menu = "";
+    }
+}
+void TelegramMenu::setGroupFilter_(int64_t chat_id, const char *menu_id, uint8_t group_id)
+{
+    ChatAuth *st = ensureAuth_(chat_id);
+    if (!st || !menu_id)
+        return;
+    st->group_filter_active = true;
+    st->group_filter_id = group_id;
+    st->group_filter_menu = menu_id;
+}
+bool TelegramMenu::groupFilterActive_(int64_t chat_id, const char *menu_id) const
+{
+    const ChatAuth *st = findAuth_(chat_id);
+    if (!st || !st->group_filter_active || !menu_id)
+        return false;
+    return st->group_filter_menu.equals(menu_id);
+}
+uint8_t TelegramMenu::groupFilterId_(int64_t chat_id, const char *menu_id) const
+{
+    if (!groupFilterActive_(chat_id, menu_id))
+        return 0;
+    const ChatAuth *st = findAuth_(chat_id);
+    return st ? st->group_filter_id : 0;
+}
+bool TelegramMenu::parseGroupLabel_(const String &label, uint8_t &group_id) const
+{
+    group_id = 0;
+    if (!_configs_manager)
+        return false;
+    String text = label;
+    text.trim();
+    if (!text.length())
+        return false;
+    if (text == F("Без группы"))
+    {
+        group_id = 0;
+        return true;
+    }
+    for (size_t i = 0; i < _configs_manager->groupCount(); ++i)
+    {
+        ConfigsManagerIface::GroupConfig g;
+        if (!_configs_manager->groupByIndex(i, g) || g.id == 0)
+            continue;
+        if (g.name == text)
+        {
+            group_id = g.id;
+            return true;
+        }
+    }
+    return false;
+}
+bool TelegramMenu::parseGroupLabel_(int64_t chat_id, const String &label, uint8_t &group_id) const
+{
+    group_id = 0;
+    String text = label;
+    text.trim();
+    if (!text.length())
+        return false;
+    if (text == F("Без группы"))
+    {
+        group_id = 0;
+        return true;
+    }
+    if (isLocalSelected_(chat_id))
+        return parseGroupLabel_(text, group_id);
+    const StackCache::StackGroupsCache *cache = selectedGroupsCache_(chat_id);
+    if (!cache || !cache->has_data || !cache->items)
+        return false;
+    for (size_t i = 0; i < cache->item_count; ++i)
+    {
+        const auto &g = cache->items[i];
+        if (g.id == 0 || !g.name[0])
+            continue;
+        if (String(g.name) == text)
+        {
+            group_id = g.id;
+            return true;
+        }
+    }
+    return false;
+}
+String TelegramMenu::groupLabelById_(uint8_t group_id) const
+{
+    if (group_id == 0)
+        return F("Без группы");
+    ConfigsManagerIface::GroupConfig g;
+    if (groupById_(group_id, g) && g.name.length())
+        return g.name;
+    return F("Без группы");
+}
+String TelegramMenu::groupLabelById_(int64_t chat_id, uint8_t group_id) const
+{
+    if (group_id == 0)
+        return F("Без группы");
+    if (isLocalSelected_(chat_id))
+        return groupLabelById_(group_id);
+    ConfigsManagerIface::GroupConfig g;
+    if (groupById_(chat_id, group_id, g) && g.name.length())
+        return g.name;
+    return F("Без группы");
 }
 bool TelegramMenu::isLocked_(const ChatAuth &st) const
 {
@@ -2552,6 +2724,9 @@ bool TelegramMenu::selectDevice_(int64_t chat_id, const String &label)
             continue;
         st->selected_local = d.local;
         st->selected_node_id = d.local ? 0 : d.node_id;
+        st->group_filter_active = false;
+        st->group_filter_id = 0;
+        st->group_filter_menu = "";
         return true;
     }
     return false;

@@ -33,7 +33,7 @@ public:
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Tanks, node_id))
             return;
         const bool stack_view = web.isStackTanksView_(node_id);
-        const bool groups_local = (!stack_view && web.hasGroups_());
+        const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
         const uint8_t page_size = 8u;
         const String page_str = web.paramValueAny_(request, "page");
         uint8_t page_idx = 0;
@@ -48,12 +48,20 @@ public:
         {
             web.requestStackTanks_(node_id);
             web.requestStackPorts_(node_id);
-            const size_t visible = web.stackTanksVisibleCount_(node_id);
-            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
-            if (page_idx >= max_pages)
-                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            if (!groups_available)
+            {
+                const size_t visible = web.stackTanksVisibleCount_(node_id);
+                max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+                if (page_idx >= max_pages)
+                    page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            }
+            else
+            {
+                page_idx = 0;
+                max_pages = 1;
+            }
         }
-        else if (!groups_local)
+        else if (!groups_available)
         {
             const size_t visible = web.tanksLocalRenderCount_();
             max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
@@ -99,7 +107,7 @@ public:
                 pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
-        else if (!stack_view && !groups_local && max_pages > 1)
+        else if (!stack_view && !groups_available && max_pages > 1)
         {
             pagination.reserve(256);
             pagination += "<div class=\"pagination\">";
@@ -129,9 +137,9 @@ public:
         page.replace("%NAV%", web.navHtml_());
         page.replace("%TANK_PAGE_TITLE%", WebUiRu::Tanks::kPageTitle);
         page.replace("%TANK_STATUS%", stack_view ? web.stackTanksStatusText_(node_id) : web._tanks_status);
-        page.replace("%TANK_ITEMS%", stack_view ? web.listStackTanksHtml_(node_id, (size_t)page_idx * page_size, page_size)
-                                                : web.listTanksHtml_(groups_local ? 0u : (size_t)page_idx * page_size,
-                                                                    groups_local ? SIZE_MAX : page_size));
+        page.replace("%TANK_ITEMS%", stack_view ? web.listStackTanksHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size)
+                                                : web.listTanksHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                    groups_available ? SIZE_MAX : page_size));
         page.replace("%TANK_PAGINATION%", pagination);
         page.replace("%TANK_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
                                                       : web.tankPortOptionsJson_(PortIO::PinType::DInput));
@@ -145,7 +153,7 @@ public:
                                 : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%TANK_DEVICE_SELECT%",
                      web.composeTopFiltersHtml_(web.tanksDeviceSelectHtml_(node_id, stack_view),
-                                                (!stack_view) ? web.groupFilterHtml_("tanks-group-filter") : String("")));
+                                                groups_available ? web.groupFilterHtml_("tanks-group-filter", stack_view ? node_id : 0u) : String("")));
         page.replace("%TANK_SAVE_BTN%",
                      web.webSessionIsAdmin_() ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>") : String(""));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
@@ -230,6 +238,7 @@ public:
                 const bool power_on = (power_str == "on" || power_str == "1" || power_str == "true");
                 String name = web.paramValue_(request, name_key);
                 name.trim();
+                const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
 
                 uint8_t low_port = cfg.low;
                 uint8_t mid_port = cfg.mid;
@@ -273,6 +282,11 @@ public:
                 if (can_admin && strcmp(cfg.name, name.c_str()) != 0)
                 {
                     obj["name"] = name;
+                    item_changed = true;
+                }
+                if (cfg.group_id != group_id)
+                {
+                    obj["group_id"] = group_id;
                     item_changed = true;
                 }
                 auto put_port = [&](const char *key, uint8_t old_p, uint8_t new_p) {
@@ -323,6 +337,7 @@ public:
                             dst.valve = valve_port;
                             dst.pump = pump_port;
                             dst.alarm = alarm_port;
+                            dst.group_id = group_id;
                             const char *src = name.c_str();
                             size_t p = 0;
                             for (; p + 1 < sizeof(dst.name) && src[p]; ++p)
