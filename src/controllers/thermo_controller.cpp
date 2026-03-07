@@ -101,6 +101,12 @@ void ThermoController::applyConfig(JsonArrayConst devices){
         parsePort_(obj["button"], cfg.button_port);
         if (obj["name"].is<const char *>())
             cfg.name = obj["name"].as<const char *>();
+        if (obj["group_id"].is<unsigned>())
+        {
+            const unsigned raw = obj["group_id"].as<unsigned>();
+            if (raw <= 0xFFu)
+                cfg.group_id = (uint8_t)raw;
+        }
         parseFloat_(obj["target"], cfg.target_c);
         parseFloat_(obj["hyst"], cfg.hysteresis);
         if (obj["mode"].is<const char *>() || obj["mode"].is<unsigned>())
@@ -126,6 +132,8 @@ void ThermoController::serialize(JsonArray out) const{
             obj["sensor"] = cfg.sensor_id;
         if (cfg.sensor_node_id != 0)
             obj["sensor_node"] = (unsigned long)cfg.sensor_node_id;
+        if (cfg.group_id != 0)
+            obj["group_id"] = cfg.group_id;
         obj["mode"] = modeName_(cfg.mode);
         obj["target"] = cfg.target_c;
         obj["hyst"] = cfg.hysteresis;
@@ -351,6 +359,14 @@ bool ThermoController::setName(size_t id, const String &name){
     if (!indexById_(id, idx))
         return false;
     _cfg[idx].name = name;
+    return true;
+}
+
+bool ThermoController::setGroupId(size_t id, uint8_t group_id){
+    size_t idx = 0;
+    if (!indexById_(id, idx))
+        return false;
+    _cfg[idx].group_id = group_id;
     return true;
 }
 

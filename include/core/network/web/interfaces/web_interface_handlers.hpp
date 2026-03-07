@@ -12,6 +12,7 @@
 #include "core/network/web/handlers/buses_handler.hpp"
 #include "core/network/web/handlers/stack_handler.hpp"
 #include "core/network/web/handlers/users_handler.hpp"
+#include "core/network/web/handlers/groups_handler.hpp"
 #include "core/network/web/handlers/display_handler.hpp"
 #include "core/network/web/handlers/admin_handler.hpp"
 #include "core/network/web/handlers/logs_handler.hpp"

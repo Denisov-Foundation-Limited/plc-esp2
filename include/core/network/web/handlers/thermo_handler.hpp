@@ -35,6 +35,7 @@ public:
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Thermo, node_id))
             return;
         const bool stack_view = web.isStackThermoView_(node_id);
+        const bool groups_local = (!stack_view && web.hasGroups_());
         const uint8_t page_size = 8u;
         const String page_str = web.paramValueAny_(request, "page");
         uint8_t page_idx = 0;
@@ -55,12 +56,17 @@ public:
             if (page_idx >= max_pages)
                 page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
         }
-        else
+        else if (!groups_local)
         {
             const size_t visible = web.thermoLocalRenderCount_();
             max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
             if (page_idx >= max_pages)
                 page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+        else
+        {
+            page_idx = 0;
+            max_pages = 1;
         }
         if (!stack_view && web.stackRole_() == ConfigsManagerIface::StackRole::Slave)
         {
@@ -112,7 +118,7 @@ public:
                 pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
-        else if (!stack_view && max_pages > 1)
+        else if (!stack_view && !groups_local && max_pages > 1)
         {
             pagination.reserve(256);
             pagination += "<div class=\"pagination\">";
@@ -141,7 +147,8 @@ public:
         }
         page.replace("%NAV%", web.navHtml_());
         page.replace("%THERMO_ROWS%", stack_view ? web.listStackThermoHtml_(node_id, (size_t)page_idx * page_size, page_size)
-                                                 : web.listThermoHtml_((size_t)page_idx * page_size, page_size));
+                                                 : web.listThermoHtml_(groups_local ? 0u : (size_t)page_idx * page_size,
+                                                                       groups_local ? SIZE_MAX : page_size));
         page.replace("%THERMO_PAGINATION%", pagination);
         page.replace("%THERMO_STATUS%", stack_view ? web.stackThermoStatusText_(node_id) : web._thermo_status);
         page.replace("%THERMO_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
@@ -215,7 +222,9 @@ public:
                 }
             }
         }
-        page.replace("%THERMO_DEVICE_SELECT%", web.thermoDeviceSelectHtml_(node_id, stack_view));
+        page.replace("%THERMO_DEVICE_SELECT%",
+                     web.composeTopFiltersHtml_(web.thermoDeviceSelectHtml_(node_id, stack_view),
+                                                (!stack_view) ? web.groupFilterHtml_("thermo-group-filter") : String("")));
         page.replace("%THERMO_SAVE_BTN%",
                      can_save ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>")
                               : (String("<button type=\"submit\" disabled>") + WebUiRu::kSave + "</button>"));
@@ -688,6 +697,7 @@ public:
             const String heat_key = prefix + "heat";
             const String cool_key = prefix + "cool";
             const String button_key = prefix + "button";
+            const String group_key = prefix + "group";
             const String power_key = prefix + "power";
             const String en_force_key = prefix + "en_force";
             const bool has_any = request->hasParam(en_key, true) ||
@@ -699,6 +709,7 @@ public:
                                  request->hasParam(heat_key, true) ||
                                  request->hasParam(cool_key, true) ||
                                  request->hasParam(button_key, true) ||
+                                 request->hasParam(group_key, true) ||
                                  request->hasParam(power_key, true);
             if (!has_any)
                 continue;
@@ -731,6 +742,7 @@ public:
             const String heat_str = web.paramValue_(request, heat_key);
             const String cool_str = web.paramValue_(request, cool_key);
             const String button_str = web.paramValue_(request, button_key);
+            const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
             const String power_str = web.paramValue_(request, power_key);
             String name = web.paramValue_(request, name_key);
             name.trim();
@@ -851,6 +863,11 @@ public:
             if (cfg->name != name)
             {
                 thermo.setName(cfg->id, name);
+                changed = true;
+            }
+            if (cfg->group_id != group_id)
+            {
+                thermo.setGroupId(cfg->id, group_id);
                 changed = true;
             }
             if (cfg->sensor_id != sensor_id || cfg->sensor_node_id != sensor_node_id)

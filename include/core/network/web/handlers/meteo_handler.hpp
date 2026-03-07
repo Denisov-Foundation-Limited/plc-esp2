@@ -64,6 +64,7 @@ public:
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Meteo, node_id))
             return;
         const bool stack_view = web.isStackMeteoView_(node_id);
+        const bool groups_local = (!stack_view && web.hasGroups_());
         const uint8_t page_size = 8u;
         const String page_str = web.paramValueAny_(request, "page");
         uint8_t page_idx = 0;
@@ -83,12 +84,17 @@ public:
             if (page_idx >= max_pages)
                 page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
         }
-        else
+        else if (!groups_local)
         {
             const size_t visible = web.meteoLocalRenderCount_();
             max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
             if (page_idx >= max_pages)
                 page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+        else
+        {
+            page_idx = 0;
+            max_pages = 1;
         }
         if (!stack_view)
         {
@@ -145,7 +151,7 @@ public:
                 pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Meteo::kPageNext + "</span>";
             pagination += "</div>";
         }
-        if (!stack_view && max_pages > 1)
+        if (!stack_view && !groups_local && max_pages > 1)
         {
             pagination.reserve(256);
             pagination += "<div class=\"pagination\">";
@@ -179,7 +185,8 @@ public:
         page.replace("%METEO_PAGE_TITLE%", WebUiRu::Meteo::kPageTitle);
         page.replace("%NAV%", web.navHtml_());
         page.replace("%METEO_TILES%", stack_view ? web.listStackMeteoHtml_(node_id, (size_t)page_idx * page_size, page_size)
-                                                 : web.listMeteoHtml_((size_t)page_idx * page_size, page_size));
+                                                 : web.listMeteoHtml_(groups_local ? 0u : (size_t)page_idx * page_size,
+                                                                      groups_local ? SIZE_MAX : page_size));
         page.replace("%METEO_PAGINATION%", pagination);
         page.replace("%METEO_STATUS%", stack_view ? web.stackMeteoStatusText_(node_id) : web._meteo_status);
         page.replace("%SENSOR_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Sensor)
@@ -204,7 +211,9 @@ public:
         {
             page.replace("%METEO_FORM_HIDDEN%", "");
         }
-        page.replace("%METEO_DEVICE_SELECT%", web.meteoDeviceSelectHtml_(node_id, stack_view));
+        page.replace("%METEO_DEVICE_SELECT%",
+                     web.composeTopFiltersHtml_(web.meteoDeviceSelectHtml_(node_id, stack_view),
+                                                (!stack_view) ? web.groupFilterHtml_("meteo-group-filter") : String("")));
         page.replace("%METEO_SAVE_BTN%",
                      web.webSessionIsAdmin_() ? (String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>")
                                               : String(""));
@@ -566,11 +575,13 @@ public:
             const String pin_key = prefix + "pin";
             const String addr_key = prefix + "addr";
             const String src_key = prefix + "src";
+            const String group_key = prefix + "group";
             const bool has_any = request->hasParam(en_key, true) ||
                                  request->hasParam(name_key, true) ||
                                  request->hasParam(type_key, true) ||
                                  request->hasParam(pin_key, true) ||
                                  request->hasParam(addr_key, true) ||
+                                 request->hasParam(group_key, true) ||
                                  request->hasParam(src_key, true);
             if (!has_any)
                 continue;
@@ -588,6 +599,7 @@ public:
             const String pin_str = web.paramValue_(request, pin_key);
             const String addr_str = web.paramValue_(request, addr_key);
             const String src_str = web.paramValue_(request, src_key);
+            const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
 
             MeteoController::SensorType type = MeteoController::SensorType::None;
             if (!enabled)
@@ -646,6 +658,11 @@ public:
             if (cfg->name != name)
             {
                 meteo.setName(cfg->id, name);
+                changed = true;
+            }
+            if (cfg->group_id != group_id)
+            {
+                meteo.setGroupId(cfg->id, group_id);
                 changed = true;
             }
             if (cfg->type != type)

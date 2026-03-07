@@ -1,5 +1,16 @@
 ﻿#pragma once
 
+/**********************************************************************/
+/*                                                                    */
+/* Programmable Logic Controller for ESP microcontrollers             */
+/*                                                                    */
+/* Copyright (C) 2026 Denisov Foundation Limited                      */
+/* License: GPLv3                                                     */
+/* Written by Sergey Denisov aka LittleBuster                         */
+/* Email: DenisovFoundationLtd@gmail.com                              */
+/*                                                                    */
+/**********************************************************************/
+
 namespace WebUiRu
 {
 namespace Controllers
@@ -50,6 +61,8 @@ namespace Lights
 {
 inline constexpr const char kText[] = "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>";
 inline constexpr const char kText2[] = "Свет";
+inline constexpr const char kTitlePrefix[] = "Свет #";
+inline constexpr const char kLabelName[] = "Имя";
 inline constexpr const char kText3[] = "Включена";
 inline constexpr const char kText4[] = "Выключена";
 inline constexpr const char kPageTitle[] = "Свет";
@@ -68,6 +81,7 @@ namespace Meteo
 inline constexpr const char kText[] = "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
 inline constexpr const char kText2[] = "<div class=\"tile empty\"><strong>Датчики отсутствуют</strong></div>";
 inline constexpr const char kPageTitle[] = "Метео";
+inline constexpr const char kTitlePrefix[] = "Датчик #";
 inline constexpr const char kPagePrev[] = "Назад";
 inline constexpr const char kPagePage[] = "Страница";
 inline constexpr const char kPageNext[] = "Вперёд";
@@ -109,6 +123,7 @@ namespace Security
 {
 inline constexpr const char kText[] = "Датчики";
 inline constexpr const char kPageTitle[] = "Охрана";
+inline constexpr const char kLabelName[] = "Имя";
 inline constexpr const char kLabelStatus[] = "Статус";
 inline constexpr const char kLabelAlarm[] = "Тревога";
 inline constexpr const char kBtnArm[] = "Поставить";
@@ -140,6 +155,7 @@ inline constexpr const char kInputClassFieldMiniTypeTextValue3[] = "<div class=\
 namespace Septic
 {
 inline constexpr const char kPageTitle[] = "Септик";
+inline constexpr const char kLabelName[] = "Имя";
 inline constexpr const char kText[] = "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
 inline constexpr const char kText2[] = "<div class=\"tile empty\"><strong>Септик отсутствует</strong></div>";
 inline constexpr const char kText20[] = "Уровень: 20%";
@@ -169,6 +185,8 @@ namespace Sockets
 {
 inline constexpr const char kText[] = "<div class=\"tile empty\"><strong>Контроллеры недоступны</strong></div>";
 inline constexpr const char kText2[] = "Розетка";
+inline constexpr const char kTitlePrefix[] = "Розетка #";
+inline constexpr const char kLabelName[] = "Имя";
 inline constexpr const char kText3[] = "Включена";
 inline constexpr const char kText4[] = "Выключена";
 inline constexpr const char kPageTitle[] = "Розетки";
@@ -188,6 +206,8 @@ namespace Tanks
 inline constexpr const char kText[] = "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
 inline constexpr const char kText2[] = "<div class=\"tile empty\"><strong>Баки отсутствуют</strong></div>";
 inline constexpr const char kText3[] = "Бак";
+inline constexpr const char kTitlePrefix[] = "Бак #";
+inline constexpr const char kLabelName[] = "Имя";
 inline constexpr const char kText4[] = "\"></span><span>Питание</span></div>";
 inline constexpr const char kText5[] = "\"></span><span>Клапан</span></div>";
 inline constexpr const char kText6[] = "\"></span><span>Насос</span></div>";
@@ -356,6 +376,7 @@ namespace Thermo
 inline constexpr const char kText[] = "<div class=\"tile empty\"><strong>Ожидаем данные со слейва</strong></div>";
 inline constexpr const char kText2[] = "<div class=\"tile empty\"><strong>Термо отсутствует</strong></div>";
 inline constexpr const char kPageTitle[] = "Термо";
+inline constexpr const char kLabelName[] = "Имя";
 inline constexpr const char kText3[] = "авто";
 inline constexpr const char kText4[] = "выкл";
 inline constexpr const char kText5[] = "нагрев";
@@ -647,6 +668,27 @@ inline constexpr const char kControllerShort[] = "Контр.";
 inline constexpr const char kDeviceShort[] = "Устр.";
 inline constexpr const char kPin[] = "Пин";
 } // namespace PortsPage
+
+namespace GroupsPage
+{
+inline constexpr const char kPageTitle[] = "Группы";
+inline constexpr const char kTitle[] = "Группы";
+inline constexpr const char kDescription[] = "Общий список групп для элементов контроллеров.";
+inline constexpr const char kLabel[] = "Группа";
+inline constexpr const char kName[] = "Название";
+inline constexpr const char kSort[] = "Сортировка";
+inline constexpr const char kDelete[] = "Удалить";
+inline constexpr const char kNewGroup[] = "Новая группа";
+inline constexpr const char kNamePlaceholder[] = "Название";
+inline constexpr const char kAdd[] = "Добавить";
+inline constexpr const char kAll[] = "Все";
+inline constexpr const char kNoGroup[] = "Без группы";
+inline constexpr const char kNoGroups[] = "Нет групп";
+inline constexpr const char kEmptyList[] = "Список пуст";
+inline constexpr const char kDeleteLower[] = "удалить";
+inline constexpr const char kAddFailed[] = "Не удалось добавить группу";
+inline constexpr const char kAdded[] = "Группа добавлена";
+} // namespace GroupsPage
 
 namespace StackPage
 {

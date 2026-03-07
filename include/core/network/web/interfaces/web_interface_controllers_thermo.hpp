@@ -601,9 +601,14 @@ public:
                 cool_class += st.cool_on ? "active" : "inactive";
             }
     
-            items += "<div class=\"tile";
+            const bool has_groups = web.hasGroups_();
+            items += "<div class=\"tile js-group-item";
             if (!enabled)
                 items += " disabled";
+            items += "\" data-group-id=\"";
+            items += String((unsigned)cfg.group_id);
+            items += "\"";
+            items += web.groupVisibilityStyleAttr_(cfg.group_id);
             items += WebUiRu::Thermo::kText9;
             items += sensor_label;
             items += sensor_suffix;
@@ -640,14 +645,22 @@ public:
                 items += " disabled";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
             items += "</div>";
-            items += "<input class=\"field name\" type=\"text\" name=\"t";
+            items += String("<div class=\"form-row\"><label>") + WebUiRu::Thermo::kLabelName + "</label><input class=\"field name\" type=\"text\" name=\"t";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
             web.appendHtmlEscaped_(items, cfg.name.c_str());
             items += "\"";
             if (!(can_admin && can_control))
                 items += " readonly";
+            items += "></div>";
+            items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_group\"";
+            if (!(can_admin && can_control) || !has_groups)
+                items += " disabled";
             items += ">";
+            items += web.groupOptionsHtml_(cfg.group_id, true, true);
+            items += "</select></div>";
             items += "<div class=\"form-grid\"><div class=\"form-row\"><label>";
             items += WebUiRu::Thermo::kLabelActive;
             items += "</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";

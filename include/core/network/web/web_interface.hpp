@@ -134,6 +134,7 @@ private:
     friend class BusesHandler;
     friend class StackHandler;
     friend class UsersHandler;
+    friend class GroupsHandler;
     friend class DisplayHandler;
     friend class AdminHandler;
     friend class LogsHandler;
@@ -293,6 +294,14 @@ private:
     bool parseThermoSensor_(const String &input, uint8_t &out, uint32_t &out_node);
     bool parseThermoMode_(const String &input, ThermoController::Mode &out);
     bool parseThermoFloat_(const String &input, float &out);
+    bool hasGroups_() const;
+    uint8_t firstGroupId_() const;
+    String groupVisibilityStyleAttr_(uint8_t group_id) const;
+    String groupOptionsHtml_(uint8_t selected_group_id, bool include_none, bool disabled_if_empty) const;
+    String groupFilterHtml_(const char *select_id) const;
+    String topFiltersBackHtml_() const;
+    String composeTopFiltersHtml_(const String &device_html, const String &group_html) const;
+    uint8_t parseGroupIdParam_(AsyncWebServerRequest *request, const String &name) const;
 
 #define WEB_INTERFACE_CLASS_CONTEXT 1
 #include "core/network/web/interfaces/web_interface_controllers_sockets.hpp"
@@ -325,6 +334,12 @@ private:
 
 
     static void copyStr_(char *dst, size_t size, const char *src);
+
+
+    static String maskSecretValue_(const String &value);
+
+
+    static bool isMaskedSecret_(const String &input, const String &actual);
 
 
     static String safeHtmlValue_(const String &value, const char *fallback);
@@ -536,6 +551,7 @@ private:
     uint32_t _camera_preview_ver = 0;
     String _leak_status;
     String _security_status;
+    String _groups_status;
     String _rules_status;
     String _users_status;
     String _display_status;

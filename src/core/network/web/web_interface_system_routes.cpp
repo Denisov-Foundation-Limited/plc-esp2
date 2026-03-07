@@ -16,6 +16,7 @@ void WebInterfaceSystemRoutes::registerSecondary(WebInterface &web, AsyncWebServ
 {
     ControllersHandler::registerRoutes(web, server);
     UsersHandler::registerRoutes(web, server);
+    GroupsHandler::registerRoutes(web, server);
 }
 
 void WebInterfaceSystemRoutes::registerTail(WebInterface &web, AsyncWebServer &server)

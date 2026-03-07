@@ -202,11 +202,16 @@ public:
         auto appendRow = [&](const SocketController::LightConfig &cfg, bool enabled) {
             const bool can_edit = web.webSessionIsAdmin_();
             const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Lights, cfg.id);
+            const bool has_groups = web.hasGroups_();
             const bool on = enabled && sockets.lightRelayState(cfg.id, tmp_state) ? tmp_state : false;
-            items += "<div class=\"tile";
+            items += "<div class=\"tile js-group-item";
             if (!enabled)
                 items += " disabled";
-            items += "\">";
+            items += "\" data-group-id=\"";
+            items += String((unsigned)cfg.group_id);
+            items += "\"";
+            items += web.groupVisibilityStyleAttr_(cfg.group_id);
+            items += ">";
             items += "<div class=\"sock-visual\">";
             items += "<span class=\"badge\">#";
             items += String((unsigned)cfg.id);
@@ -220,10 +225,8 @@ public:
             items += "<div>";
             items += "<div class=\"tile-head\">";
             items += "<strong>";
-            if (cfg.name[0])
-                web.appendHtmlEscaped_(items, cfg.name);
-            else
-                items += WebUiRu::Lights::kText2;
+            items += WebUiRu::Lights::kTitlePrefix;
+            items += String((unsigned)cfg.id);
             items += "</strong>";
             items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-enable\" data-id=\"";
             items += String((unsigned)cfg.id);
@@ -236,14 +239,22 @@ public:
                 items += " disabled";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
             items += "</div>";
-            items += "<input class=\"field name\" type=\"text\" name=\"s";
+            items += String("<div class=\"form-row\"><label>") + WebUiRu::Lights::kLabelName + "</label><input class=\"field name\" type=\"text\" name=\"s";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
             web.appendHtmlEscaped_(items, cfg.name.c_str());
             items += "\"";
             if (!can_edit)
                 items += " readonly";
+            items += "></div>";
+            items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"s";
+            items += String((unsigned)cfg.id);
+            items += "_group\"";
+            if (!can_edit || !has_groups)
+                items += " disabled";
             items += ">";
+            items += web.groupOptionsHtml_(cfg.group_id, true, true);
+            items += "</select></div>";
             items += "<div class=\"status-line\"><span class=\"status-dot ";
             items += on ? "status-on" : "status-off";
             items += "\"></span>";
@@ -409,10 +420,8 @@ public:
                 items += "<div>";
                 items += "<div class=\"tile-head\">";
                 items += "<strong>";
-                if (cfg.name[0])
-                    web.appendHtmlEscaped_(items, cfg.name);
-                else
-                    items += WebUiRu::Lights::kText2;
+                items += WebUiRu::Lights::kTitlePrefix;
+                items += String((unsigned)cfg.id);
                 items += "</strong>";
                 items += "<label class=\"switch\"><input type=\"checkbox\" class=\"socket-enable\" data-id=\"";
                 items += String((unsigned)cfg.id);
@@ -425,14 +434,14 @@ public:
                     items += " disabled";
                 items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
                 items += "</div>";
-                items += "<input class=\"field name\" type=\"text\" name=\"s";
+                items += String("<div class=\"form-row\"><label>") + WebUiRu::Lights::kLabelName + "</label><input class=\"field name\" type=\"text\" name=\"s";
                 items += String((unsigned)cfg.id);
                 items += "_name\" value=\"";
                 web.appendHtmlEscaped_(items, cfg.name);
                 items += "\"";
                 if (!can_edit)
                     items += " readonly";
-                items += ">";
+                items += "></div>";
                 items += "<div class=\"status-line\"><span class=\"status-dot ";
                 items += on ? "status-on" : "status-off";
                 items += "\"></span>";

@@ -1170,7 +1170,7 @@ private:
             out += "<input type=\"hidden\" name=\"return_to\" value=\"/rules\">";
             out += "<label class=\"switch\"><input type=\"checkbox\" name=\"enabled\"";
             if (r->enabled)
-                out += " checked";
+            out += " checked";
             out += " onchange=\"this.form.submit()\"><span class=\"track\"><span class=\"knob\"></span></span></label>";
             out += "</form></div><span class=\"meta\">";
             out += WebUiRu::Rules::kRule;

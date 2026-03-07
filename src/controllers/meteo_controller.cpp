@@ -121,6 +121,12 @@ void MeteoController::applyConfig(JsonArrayConst sensors){
             cfg.ds18_addr_set = parseHexAddr(obj["addr"].as<const char *>(), cfg.ds18_addr);
         if (obj["name"].is<const char *>())
             cfg.name = obj["name"].as<const char *>();
+        if (obj["group_id"].is<unsigned>())
+        {
+            const unsigned raw = obj["group_id"].as<unsigned>();
+            if (raw <= 0xFFu)
+                cfg.group_id = (uint8_t)raw;
+        }
         if (obj["src_node"].is<unsigned>())
             cfg.source_node_id = (uint32_t)obj["src_node"].as<unsigned>();
         if (obj["src_sensor"].is<unsigned>())
@@ -166,6 +172,8 @@ void MeteoController::serialize(JsonArray out) const{
             obj["src_node"] = (unsigned long)cfg.source_node_id;
             obj["src_sensor"] = (unsigned)cfg.source_sensor_id;
         }
+        if (cfg.group_id != 0)
+            obj["group_id"] = cfg.group_id;
     }
 }
 
@@ -279,6 +287,14 @@ bool MeteoController::setName(size_t id, const String &name){
     if (!indexById_(id, idx))
         return false;
     _cfg[idx].name = name;
+    return true;
+}
+
+bool MeteoController::setGroupId(size_t id, uint8_t group_id){
+    size_t idx = 0;
+    if (!indexById_(id, idx))
+        return false;
+    _cfg[idx].group_id = group_id;
     return true;
 }
 

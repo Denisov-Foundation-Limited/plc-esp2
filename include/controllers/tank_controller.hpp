@@ -30,6 +30,7 @@ public:
     {
         uint8_t id = 1;
         bool enabled = false;
+        uint8_t group_id = 0;
         bool power_on = false;
         uint8_t level_low = kInvalidPort;
         uint8_t level_mid = kInvalidPort;
@@ -58,7 +59,7 @@ public:
     using DetectHandler = void (*)(void *ctx, uint8_t tank_id, const String &name, bool empty);
 
     TankController(Gpio &gpio, Logger &logs, TelegramBot &bot, TelegramAllowedUsersProvider &users)
-        ;bool begin();void task();void applyConfig(JsonArrayConst tanks);void serialize(JsonArray out) const;void buildSnapshot(uint8_t *power_mask, size_t bytes) const;void applySnapshot(const uint8_t *power_mask, size_t bytes);bool takeDirty();bool controllerEnabled() const;void setControllerEnabled(bool enabled);bool setEnabled(size_t id, bool enabled);bool setPower(size_t id, bool on);bool setName(size_t id, const String &name);bool setLevelLow(size_t id, uint8_t port);bool setLevelMid(size_t id, uint8_t port);bool setLevelFull(size_t id, uint8_t port);bool setValveRelay(size_t id, uint8_t port);bool setPumpRelay(size_t id, uint8_t port);bool setAlarmRelay(size_t id, uint8_t port);void setDetectHandler(DetectHandler cb, void *ctx);void setNotifyEnabled(bool enabled);void notifyRemoteEmpty(const String &source, uint8_t tank_id, const String &name);const TankConfig *config(size_t id) const;const TankState *state(size_t id) const;const TankConfig *configByIndex(size_t idx) const;const TankState *stateByIndex(size_t idx) const;private:
+        ;bool begin();void task();void applyConfig(JsonArrayConst tanks);void serialize(JsonArray out) const;void buildSnapshot(uint8_t *power_mask, size_t bytes) const;void applySnapshot(const uint8_t *power_mask, size_t bytes);bool takeDirty();bool controllerEnabled() const;void setControllerEnabled(bool enabled);bool setEnabled(size_t id, bool enabled);bool setPower(size_t id, bool on);bool setName(size_t id, const String &name);bool setGroupId(size_t id, uint8_t group_id);bool setLevelLow(size_t id, uint8_t port);bool setLevelMid(size_t id, uint8_t port);bool setLevelFull(size_t id, uint8_t port);bool setValveRelay(size_t id, uint8_t port);bool setPumpRelay(size_t id, uint8_t port);bool setAlarmRelay(size_t id, uint8_t port);void setDetectHandler(DetectHandler cb, void *ctx);void setNotifyEnabled(bool enabled);void notifyRemoteEmpty(const String &source, uint8_t tank_id, const String &name);const TankConfig *config(size_t id) const;const TankState *state(size_t id) const;const TankConfig *configByIndex(size_t idx) const;const TankState *stateByIndex(size_t idx) const;private:
     Gpio &_gpio;
     Logger &_logs;
     TelegramBot &_tgbot;

@@ -112,6 +112,12 @@ void SepticController::applyConfig(JsonArrayConst septic){
             cfg.monitoring_on = obj["monitor"].as<bool>();
         if (obj["name"].is<const char *>())
             cfg.name = obj["name"].as<const char *>();
+        if (obj["group_id"].is<unsigned>())
+        {
+            const unsigned raw = obj["group_id"].as<unsigned>();
+            if (raw <= 0xFFu)
+                cfg.group_id = (uint8_t)raw;
+        }
         parsePort_(obj["warning"], cfg.warning_port);
         parsePort_(obj["alarm"], cfg.alarm_port);
         parsePort_(obj["relay_warning"], cfg.relay_warning);
@@ -135,6 +141,8 @@ void SepticController::serialize(JsonArray out) const{
             obj["monitor"] = false;
         if (cfg.name.length())
             obj["name"] = cfg.name;
+        if (cfg.group_id != 0)
+            obj["group_id"] = cfg.group_id;
         if (cfg.warning_port != kInvalidPort)
             obj["warning"] = cfg.warning_port;
         if (cfg.alarm_port != kInvalidPort)
@@ -234,6 +242,14 @@ bool SepticController::setName(size_t id, const String &name){
     if (!indexById_((uint8_t)id, idx))
         return false;
     _cfg[idx].name = name;
+    return true;
+}
+
+bool SepticController::setGroupId(size_t id, uint8_t group_id){
+    size_t idx = 0;
+    if (!indexById_((uint8_t)id, idx))
+        return false;
+    _cfg[idx].group_id = group_id;
     return true;
 }
 

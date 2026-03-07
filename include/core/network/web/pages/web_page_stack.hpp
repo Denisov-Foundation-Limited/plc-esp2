@@ -137,7 +137,7 @@ static const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
             <div>
               <label>%STACK_LABEL_API_KEY%</label>
               <div class="row">
-                <input type="text" name="api_key" value="%STACK_API_KEY%" placeholder="%STACK_API_KEY_PLACEHOLDER%">
+                <input type="password" name="api_key" value="%STACK_API_KEY%" placeholder="%STACK_API_KEY_PLACEHOLDER%">
                 <button class="mini" type="button" id="gen-api-key">%STACK_BTN_GEN_KEY%</button>
               </div>
             </div>

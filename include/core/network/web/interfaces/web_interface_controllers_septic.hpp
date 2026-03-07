@@ -301,6 +301,7 @@ public:
             }
             ++visible_idx;
             const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Septic, cfg->id);
+            const bool has_groups = web.hasGroups_();
             const bool warn = st->warning;
             const bool alarm = st->alarm;
             const bool relay_warn = st->relay_warning;
@@ -320,10 +321,14 @@ public:
                 water_level = "80%";
                 water_label = WebUiRu::Septic::kText80;
             }
-            items += "<div class=\"tile";
+            items += "<div class=\"tile js-group-item";
             if (!cfg->enabled)
                 items += " disabled";
-            items += "\"><div class=\"septic-visual\"><div class=\"liquid ";
+                items += "\" data-group-id=\"";
+                items += String((unsigned)cfg->group_id);
+                items += "\"";
+                items += web.groupVisibilityStyleAttr_(cfg->group_id);
+                items += "><div class=\"septic-visual\"><div class=\"liquid ";
             items += water_class;
             items += "\" style=\"height:";
             items += water_level;
@@ -346,10 +351,19 @@ public:
             items += "</div>";
             if (can_control)
             {
-                items += "<input class=\"field name\" type=\"text\" name=\"sep";
+                items += String("<div class=\"form-row\"><label>") + WebUiRu::Septic::kLabelName + "</label><input class=\"field name\" type=\"text\" name=\"sep";
                 items += String((unsigned)cfg->id);
                 items += "_name\" value=\"";
                 web.appendHtmlEscaped_(items, cfg->name.c_str());
+                items += "\"></div>";
+                items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"sep";
+                items += String((unsigned)cfg->id);
+                items += "_group\"";
+                if (!has_groups)
+                    items += " disabled";
+                items += ">";
+                items += web.groupOptionsHtml_(cfg->group_id, true, true);
+                items += "</select></div>";
                 items += WebUiRu::Septic::kSelectClassFieldMiniSepticSelectData;
                 if (cfg->warning_port != SepticController::kInvalidPort)
                     items += String((unsigned)cfg->warning_port);

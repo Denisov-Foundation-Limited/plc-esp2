@@ -47,6 +47,7 @@ public:
         page.replace("%NAV%", web.navHtml_());
         const uint8_t page_size = 8u;
         const bool stack_view = web.isStackSocketsView_(node_id);
+        const bool groups_local = (!stack_view && web.hasGroups_());
         if (stack_view)
         {
             web.requestStackSockets_(node_id);
@@ -63,7 +64,7 @@ public:
         uint8_t max_pages = 1;
         uint8_t start = 1;
         uint8_t end = SocketController::kSocketCount;
-        if (!stack_view)
+        if (!stack_view && !groups_local)
         {
             const size_t visible = web.socketsLocalRenderCount_();
             max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
@@ -71,6 +72,13 @@ public:
                 page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
             start = (uint8_t)(page_idx * page_size + 1);
             end = (uint8_t)(start + page_size - 1);
+        }
+        else if (!stack_view)
+        {
+            page_idx = 0;
+            max_pages = 1;
+            start = 1;
+            end = SocketController::kSocketCount;
         }
         else
         {
@@ -124,13 +132,15 @@ public:
             page.replace("%DINPUT_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::DInput));
             page.replace("%RELAY_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
             page.replace("%SOCKETS_STATUS%", web._sockets_status);
-            page.replace("%SOCKETS_PAGINATION_STYLE%", "");
+            page.replace("%SOCKETS_PAGINATION_STYLE%", groups_local ? "style=\"display:none\"" : "");
             page.replace("%SOCKETS_SAVE_BTN%", web.webSessionIsAdmin_() ? String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>" : "");
             page.replace("%SOCKETS_UNIT%", "local");
             page.replace("%SOCKETS_NODE_ID%", "0");
             page.replace("%SOCKETS_FORM_HIDDEN%", "");
         }
-        page.replace("%SOCKETS_DEVICE_SELECT%", web.socketsDeviceSelectHtml_(node_id, stack_view));
+        page.replace("%SOCKETS_DEVICE_SELECT%",
+                     web.composeTopFiltersHtml_(web.socketsDeviceSelectHtml_(node_id, stack_view),
+                                                (!stack_view) ? web.groupFilterHtml_("sockets-group-filter") : String("")));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtmlRaw_(request, page, set_cookie);
     }
@@ -183,11 +193,13 @@ public:
                 const String name_key = prefix + "name";
                 const String btn_key = prefix + "btn";
                 const String relay_key = prefix + "relay";
+                const String group_key = prefix + "group";
                 const String action_key = prefix + "action";
                 const bool has_any = request->hasParam(en_key, true) ||
                                      request->hasParam(name_key, true) ||
                                      request->hasParam(btn_key, true) ||
                                      request->hasParam(relay_key, true) ||
+                                     request->hasParam(group_key, true) ||
                                      request->hasParam(action_key, true);
                 if (!has_any)
                     continue;
@@ -333,11 +345,13 @@ public:
             const String name_key = prefix + "name";
             const String btn_key = prefix + "btn";
             const String relay_key = prefix + "relay";
+            const String group_key = prefix + "group";
             const String action_key = prefix + "action";
             const bool has_any = request->hasParam(en_key, true) ||
                                  request->hasParam(name_key, true) ||
                                  request->hasParam(btn_key, true) ||
                                  request->hasParam(relay_key, true) ||
+                                 request->hasParam(group_key, true) ||
                                  request->hasParam(action_key, true);
             if (!has_any)
                 continue;
@@ -351,6 +365,7 @@ public:
             String name = web.paramValue_(request, name_key);
             String btn = web.paramValue_(request, btn_key);
             String relay = web.paramValue_(request, relay_key);
+            const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
             String action = web.paramValue_(request, action_key);
             name.trim();
             uint8_t btn_port = SocketController::kInvalidPort;
@@ -367,6 +382,8 @@ public:
                 sockets.setButtonPort(cfg->id, btn_port);
             if (cfg->relay_port != relay_port)
                 sockets.setRelayPort(cfg->id, relay_port);
+            if (cfg->group_id != group_id)
+                sockets.setGroupId(cfg->id, group_id);
             if (cfg->enabled != enabled)
                 sockets.setEnabled(cfg->id, enabled);
             if (action.length())

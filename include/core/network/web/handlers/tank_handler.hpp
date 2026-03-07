@@ -33,6 +33,7 @@ public:
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Tanks, node_id))
             return;
         const bool stack_view = web.isStackTanksView_(node_id);
+        const bool groups_local = (!stack_view && web.hasGroups_());
         const uint8_t page_size = 8u;
         const String page_str = web.paramValueAny_(request, "page");
         uint8_t page_idx = 0;
@@ -52,12 +53,17 @@ public:
             if (page_idx >= max_pages)
                 page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
         }
-        else
+        else if (!groups_local)
         {
             const size_t visible = web.tanksLocalRenderCount_();
             max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
             if (page_idx >= max_pages)
                 page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+        else
+        {
+            page_idx = 0;
+            max_pages = 1;
         }
         String page = FPSTR(kWebInterfaceTanksHtml);
         page.reserve(page.length() + 16384);
@@ -93,7 +99,7 @@ public:
                 pagination += String("<span class=\"page-btn disabled\">") + WebUiRu::Common::kPageNext + "</span>";
             pagination += "</div>";
         }
-        else if (!stack_view && max_pages > 1)
+        else if (!stack_view && !groups_local && max_pages > 1)
         {
             pagination.reserve(256);
             pagination += "<div class=\"pagination\">";
@@ -124,7 +130,8 @@ public:
         page.replace("%TANK_PAGE_TITLE%", WebUiRu::Tanks::kPageTitle);
         page.replace("%TANK_STATUS%", stack_view ? web.stackTanksStatusText_(node_id) : web._tanks_status);
         page.replace("%TANK_ITEMS%", stack_view ? web.listStackTanksHtml_(node_id, (size_t)page_idx * page_size, page_size)
-                                                : web.listTanksHtml_((size_t)page_idx * page_size, page_size));
+                                                : web.listTanksHtml_(groups_local ? 0u : (size_t)page_idx * page_size,
+                                                                    groups_local ? SIZE_MAX : page_size));
         page.replace("%TANK_PAGINATION%", pagination);
         page.replace("%TANK_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
                                                       : web.tankPortOptionsJson_(PortIO::PinType::DInput));
@@ -136,7 +143,9 @@ public:
         page.replace("%TANK_RELAY_USED_JSON%",
                      stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
                                 : web.globalUsedPortsJson_(PortIO::PinType::Relay));
-        page.replace("%TANK_DEVICE_SELECT%", web.tanksDeviceSelectHtml_(node_id, stack_view));
+        page.replace("%TANK_DEVICE_SELECT%",
+                     web.composeTopFiltersHtml_(web.tanksDeviceSelectHtml_(node_id, stack_view),
+                                                (!stack_view) ? web.groupFilterHtml_("tanks-group-filter") : String("")));
         page.replace("%TANK_SAVE_BTN%",
                      web.webSessionIsAdmin_() ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>") : String(""));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
@@ -196,6 +205,7 @@ public:
                 const String valve_key = prefix + "valve";
                 const String pump_key = prefix + "pump";
                 const String alarm_key = prefix + "alarm";
+                const String group_key = prefix + "group";
                 const bool has_any = request->hasParam(en_key, true) ||
                                      request->hasParam(power_key, true) ||
                                      request->hasParam(name_key, true) ||
@@ -204,6 +214,7 @@ public:
                                      request->hasParam(full_key, true) ||
                                      request->hasParam(valve_key, true) ||
                                      request->hasParam(pump_key, true) ||
+                                     request->hasParam(group_key, true) ||
                                      request->hasParam(alarm_key, true);
                 if (!has_any)
                     continue;
@@ -360,6 +371,7 @@ public:
             const String valve_key = prefix + "valve";
             const String pump_key = prefix + "pump";
             const String alarm_key = prefix + "alarm";
+            const String group_key = prefix + "group";
             const bool has_any = request->hasParam(en_key, true) ||
                                  request->hasParam(power_key, true) ||
                                  request->hasParam(name_key, true) ||
@@ -368,6 +380,7 @@ public:
                                  request->hasParam(full_key, true) ||
                                  request->hasParam(valve_key, true) ||
                                  request->hasParam(pump_key, true) ||
+                                 request->hasParam(group_key, true) ||
                                  request->hasParam(alarm_key, true);
             if (!has_any)
                 continue;
@@ -398,6 +411,7 @@ public:
             const String valve_str = web.paramValue_(request, valve_key);
             const String pump_str = web.paramValue_(request, pump_key);
             const String alarm_str = web.paramValue_(request, alarm_key);
+            const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
 
             uint8_t low_port = TankController::kInvalidPort;
             uint8_t mid_port = TankController::kInvalidPort;
@@ -430,6 +444,11 @@ public:
             if (cfg->name != name)
             {
                 tanks.setName(cfg->id, name);
+                changed = true;
+            }
+            if (cfg->group_id != group_id)
+            {
+                tanks.setGroupId(cfg->id, group_id);
                 changed = true;
             }
             if (cfg->level_low != low_port)

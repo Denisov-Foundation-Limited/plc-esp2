@@ -19,6 +19,13 @@
 class ConfigsManagerIface
 {
 public:
+    struct GroupConfig
+    {
+        uint8_t id = 0;
+        uint16_t sort = 0;
+        String name;
+    };
+
     enum class StackRole : uint8_t
     {
         Master = 0,
@@ -41,6 +48,11 @@ public:
     virtual uint32_t cloudEventIntervalMs() const = 0;
     virtual String cloudApiKey() const = 0;
     virtual String cloudFirmwareVersion() const = 0;
+    virtual size_t groupCount() const = 0;
+    virtual bool groupByIndex(size_t idx, GroupConfig &out) const = 0;
+    virtual bool setGroup(uint8_t id, const String &name, uint16_t sort) = 0;
+    virtual bool removeGroup(uint8_t id) = 0;
+    virtual uint8_t allocateGroupId() const = 0;
     virtual size_t displaySlotCount() const = 0;
     virtual bool displaySlot(size_t idx, DisplaySlotConfig &out) const = 0;
     virtual void setStackRole(StackRole role) = 0;

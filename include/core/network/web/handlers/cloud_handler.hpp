@@ -56,7 +56,7 @@ public:
         page.replace("%CLOUD_SSL_CHECKED%", web.cloudUseSsl_() ? "checked" : "");
         page.replace("%CLOUD_RECONNECT_MS%", String(web.cloudReconnectMs_()));
         page.replace("%CLOUD_EVENT_MS%", String(web.cloudEventMs_()));
-        page.replace("%CLOUD_API_KEY%", web.cloudApiKey_());
+        page.replace("%CLOUD_API_KEY%", WebInterface::maskSecretValue_(web.cloudApiKey_()));
         page.replace("%CLOUD_FW_VERSION%", web.cloudFwVersion_());
         page.replace("%CLOUD_DEVICE_ID%", String(web.cloudDeviceId_()));
         page.replace("%SAVE_TEXT%", WebUiRu::kSave);
@@ -146,7 +146,8 @@ public:
 
         String api_key = request->hasParam("api_key", true) ? request->getParam("api_key", true)->value() : String("");
         api_key.trim();
-        if (api_key != web._configs_manager->cloudApiKey())
+        if (!WebInterface::isMaskedSecret_(api_key, web._configs_manager->cloudApiKey()) &&
+            api_key != web._configs_manager->cloudApiKey())
         {
             web._configs_manager->setCloudApiKey(api_key);
             changed = true;

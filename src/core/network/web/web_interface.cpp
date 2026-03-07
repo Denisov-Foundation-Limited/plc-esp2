@@ -846,6 +846,154 @@ bool WebInterface::stackPortTypeMatch_(const StackCache::StackPortItem &it, Port
     return _controllers_ops.navHtml_();
 }
 
+    bool WebInterface::hasGroups_() const
+{
+    return _configs_manager && _configs_manager->groupCount() > 0;
+}
+
+    uint8_t WebInterface::firstGroupId_() const
+{
+    if (!_configs_manager)
+        return 0;
+    for (size_t i = 0; i < _configs_manager->groupCount(); ++i)
+    {
+        ConfigsManagerIface::GroupConfig g;
+        if (_configs_manager->groupByIndex(i, g) && g.id != 0 && g.name.length() != 0)
+            return g.id;
+    }
+    return 0;
+}
+
+    String WebInterface::groupVisibilityStyleAttr_(uint8_t group_id) const
+{
+    if (!hasGroups_())
+        return "";
+    const uint8_t selected_group_id = firstGroupId_();
+    if (selected_group_id == 0 || group_id == selected_group_id)
+        return "";
+    return " style=\"display:none\"";
+}
+
+    String WebInterface::groupOptionsHtml_(uint8_t selected_group_id, bool include_none, bool disabled_if_empty) const
+{
+    String html;
+    const bool has_groups = hasGroups_();
+    if (include_none)
+    {
+        html += "<option value=\"0\"";
+        if (selected_group_id == 0)
+            html += " selected";
+        html += ">";
+        html += has_groups ? WebUiRu::GroupsPage::kNoGroup : WebUiRu::GroupsPage::kNoGroups;
+        html += "</option>";
+    }
+    if (!_configs_manager)
+        return html;
+    for (size_t i = 0; i < _configs_manager->groupCount(); ++i)
+    {
+        ConfigsManagerIface::GroupConfig g;
+        if (!_configs_manager->groupByIndex(i, g) || g.id == 0 || g.name.length() == 0)
+            continue;
+        html += "<option value=\"";
+        html += String((unsigned)g.id);
+        html += "\"";
+        if (selected_group_id == g.id)
+            html += " selected";
+        html += ">";
+        appendHtmlEscaped_(html, g.name);
+        html += "</option>";
+    }
+    if (!has_groups && disabled_if_empty && !include_none)
+        html += String("<option value=\"0\" selected>") + WebUiRu::GroupsPage::kNoGroups + "</option>";
+    return html;
+}
+
+String WebInterface::groupFilterHtml_(const char *select_id) const
+{
+    if (!hasGroups_() || !select_id)
+        return "";
+    const uint8_t selected_group_id = firstGroupId_();
+    String html;
+    html.reserve(640);
+    html += "<div class=\"row\">";
+    html += String("<span class=\"muted\">") + WebUiRu::GroupsPage::kLabel + "</span>";
+    html += "<select id=\"";
+    appendHtmlEscaped_(html, select_id);
+    html += "\" class=\"field mini\">";
+    html += groupOptionsHtml_(selected_group_id, false, false);
+    html += "<option value=\"0\"";
+    if (selected_group_id == 0)
+        html += " selected";
+    html += ">";
+    html += WebUiRu::GroupsPage::kAll;
+    html += "</option>";
+    html += "</select></div>";
+    html += "<script>(function(){const init=()=>{const sel=document.getElementById('";
+    html += select_id;
+    html += "');if(!sel)return;const apply=()=>{const v=String(sel.value||'0');document.querySelectorAll('.js-group-item').forEach((el)=>{const g=String(el.getAttribute('data-group-id')||'0');el.style.display=(v==='0'||g===v)?'':'none';});};sel.addEventListener('change',apply);apply();};if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();})();</script>";
+    return html;
+}
+
+String WebInterface::topFiltersBackHtml_() const
+{
+    return String("<div class=\"row\"><a href=\"/controllers\" class=\"field mini\" style=\"display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:auto;padding:6px 14px;text-decoration:none;font-weight:600;color:#d7f3ff;background:linear-gradient(180deg, rgba(14,165,233,.18) 0%, rgba(14,165,233,.10) 100%);border-color:rgba(56,189,248,.28)\">Назад</a></div>");
+}
+
+    String WebInterface::composeTopFiltersHtml_(const String &device_html, const String &group_html) const
+{
+    if (!device_html.length())
+        return group_html;
+    if (!group_html.length())
+        return device_html;
+
+    const String row_prefix = "<div class=\"row\">";
+    const String row_suffix = "</div>";
+    String device_inner = device_html;
+    String group_inner = group_html;
+    String group_tail;
+
+    if (device_inner.startsWith(row_prefix) && device_inner.endsWith(row_suffix))
+        device_inner = device_inner.substring((int)row_prefix.length(), (int)device_inner.length() - (int)row_suffix.length());
+
+    if (group_inner.startsWith(row_prefix))
+    {
+        const int close_pos = group_inner.indexOf(row_suffix);
+        if (close_pos >= 0)
+        {
+            group_tail = group_inner.substring(close_pos + (int)row_suffix.length());
+            group_inner = group_inner.substring((int)row_prefix.length(), close_pos);
+        }
+    }
+
+    String out;
+    const String back_html = topFiltersBackHtml_();
+    String back_inner = back_html;
+    if (back_inner.startsWith(row_prefix) && back_inner.endsWith(row_suffix))
+        back_inner = back_inner.substring((int)row_prefix.length(), (int)back_inner.length() - (int)row_suffix.length());
+
+    out.reserve(device_html.length() + group_html.length() + back_html.length() + 48);
+    out += row_prefix;
+    out += device_inner;
+    out += group_inner;
+    out += back_inner;
+    out += row_suffix;
+    out += group_tail;
+    return out;
+}
+
+    uint8_t WebInterface::parseGroupIdParam_(AsyncWebServerRequest *request, const String &name) const
+{
+    if (!request)
+        return 0;
+    const String value = paramValue_(request, name);
+    if (!value.length())
+        return 0;
+    const int v = value.toInt();
+    if (v < 0 || v > 255)
+        return 0;
+    return (uint8_t)v;
+}
+
 
 
     String WebInterface::deviceName_() const
@@ -1137,6 +1285,27 @@ void WebInterface::copyStr_(char *dst, size_t size, const char *src)
             return;
         }
         strlcpy(dst, src, size);
+    }
+
+String WebInterface::maskSecretValue_(const String &value)
+{
+        if (value.length() == 0)
+            return String("");
+        String out;
+        out.reserve(value.length());
+        for (size_t i = 0; i < value.length(); ++i)
+            out += '*';
+        return out;
+    }
+
+bool WebInterface::isMaskedSecret_(const String &input, const String &actual)
+{
+        if (actual.length() == 0 || input.length() != actual.length())
+            return false;
+        for (size_t i = 0; i < input.length(); ++i)
+            if (input[i] != '*')
+                return false;
+        return true;
     }
 
 String WebInterface::safeHtmlValue_(const String &value, const char *fallback)

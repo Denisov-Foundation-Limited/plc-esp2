@@ -75,6 +75,12 @@ void SocketController::applyConfig(JsonArrayConst sockets, bool legacy_lights ){
         }
         if (obj["name"].is<const char *>())
             cfg.name = obj["name"].as<const char *>();
+        if (obj["group_id"].is<unsigned>())
+        {
+            const unsigned raw = obj["group_id"].as<unsigned>();
+            if (raw <= 0xFFu)
+                cfg.group_id = (uint8_t)raw;
+        }
         parsePort_(obj["button"], cfg.button_port);
         parsePort_(obj["relay"], cfg.relay_port);
         if (!enabled_set)
@@ -119,6 +125,12 @@ void SocketController::applyLightsConfig(JsonArrayConst lights){
         }
         if (obj["name"].is<const char *>())
             cfg.name = obj["name"].as<const char *>();
+        if (obj["group_id"].is<unsigned>())
+        {
+            const unsigned raw = obj["group_id"].as<unsigned>();
+            if (raw <= 0xFFu)
+                cfg.group_id = (uint8_t)raw;
+        }
         parsePort_(obj["button"], cfg.button_port);
         parsePort_(obj["relay"], cfg.relay_port);
         if (!enabled_set)
@@ -416,6 +428,14 @@ bool SocketController::setName(size_t id, const String &name){
     return true;
 }
 
+bool SocketController::setGroupId(size_t id, uint8_t group_id){
+    size_t idx = 0;
+    if (!indexById_(id, idx))
+        return false;
+    _cfg[idx].group_id = group_id;
+    return true;
+}
+
 bool SocketController::setLightEnabled(size_t id, bool enable){
     size_t idx = 0;
     if (!lightIndexById_(id, idx))
@@ -484,6 +504,14 @@ bool SocketController::setLightName(size_t id, const String &name){
     return true;
 }
 
+bool SocketController::setLightGroupId(size_t id, uint8_t group_id){
+    size_t idx = 0;
+    if (!lightIndexById_(id, idx))
+        return false;
+    _light_cfg[idx].group_id = group_id;
+    return true;
+}
+
 const SocketController::SocketConfig *SocketController::config(size_t id) const{
     size_t idx = 0;
     if (!indexById_(id, idx))
@@ -547,6 +575,8 @@ void SocketController::serialize(JsonArray out) const{
         obj["enabled"] = cfg.enabled;
         if (cfg.name.length())
             obj["name"] = cfg.name;
+        if (cfg.group_id != 0)
+            obj["group_id"] = cfg.group_id;
         if (cfg.button_port != kInvalidPort)
             obj["button"] = cfg.button_port;
         if (cfg.relay_port != kInvalidPort)
@@ -565,6 +595,8 @@ void SocketController::serializeLights(JsonArray out) const{
         obj["enabled"] = cfg.enabled;
         if (cfg.name.length())
             obj["name"] = cfg.name;
+        if (cfg.group_id != 0)
+            obj["group_id"] = cfg.group_id;
         if (cfg.button_port != kInvalidPort)
             obj["button"] = cfg.button_port;
         if (cfg.relay_port != kInvalidPort)

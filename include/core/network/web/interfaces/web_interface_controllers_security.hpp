@@ -212,10 +212,15 @@ public:
             const bool enabled = cfg.enabled;
             const bool detected = st.is_detect;
             const bool is_reed = cfg.type == SecurityController::SensorType::Reed;
-            items += "<div class=\"tile";
+            const bool has_groups = web.hasGroups_();
+            items += "<div class=\"tile js-group-item";
             if (!enabled)
                 items += " disabled";
-            items += "\" data-sensor-id=\"";
+            items += "\" data-group-id=\"";
+            items += String((unsigned)cfg.group_id);
+            items += "\"";
+            items += web.groupVisibilityStyleAttr_(cfg.group_id);
+            items += " data-sensor-id=\"";
             items += String((unsigned)cfg.id);
             items += "\"><div class=\"sock-visual\"><span class=\"badge\">#";
             items += String((unsigned)cfg.id);
@@ -253,11 +258,19 @@ public:
             if (enabled)
                 items += " checked";
             items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-            items += "<input class=\"field name\" type=\"text\" name=\"sec";
+            items += String("<div class=\"form-row\"><label>") + WebUiRu::Security::kLabelName + "</label><input class=\"field name\" type=\"text\" name=\"sec";
             items += String((unsigned)cfg.id);
             items += "_name\" value=\"";
             web.appendHtmlEscaped_(items, cfg.name.c_str());
-            items += "\">";
+            items += "\"></div>";
+            items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"sec";
+            items += String((unsigned)cfg.id);
+            items += "_group\"";
+            if (!has_groups)
+                items += " disabled";
+            items += ">";
+            items += web.groupOptionsHtml_(cfg.group_id, true, true);
+            items += "</select></div>";
             items += "<div class=\"status-line\"><span class=\"status-dot ";
             if (!enabled)
                 items += "status-off";
@@ -451,10 +464,8 @@ public:
             }
             items += "</svg></div><div>";
             items += "<div class=\"tile-head\"><strong>";
-            if (cfg.name[0])
-                web.appendHtmlEscaped_(items, cfg.name);
-            else
-                items += String(WebUiRu::Security::kNum) + String((unsigned)cfg.id);
+            items += WebUiRu::Security::kNum;
+            items += String((unsigned)cfg.id);
             items += "</strong><label class=\"switch\"><input type=\"checkbox\" name=\"sec";
             items += String((unsigned)cfg.id);
             items += "_en\"";

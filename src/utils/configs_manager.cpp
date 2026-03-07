@@ -12,6 +12,7 @@
 #include "utils/configs_manager.hpp"
 
 #include <LittleFS.h>
+#include <string.h>
 #include <vector>
 
 using CfgMgrStackRole = ConfigsManagerIface::StackRole;
@@ -61,6 +62,104 @@ uint32_t ConfigsManager::cloudEventIntervalMs() const{ return _cloud_event_ms; }
 String ConfigsManager::cloudApiKey() const{ return _cloud_api_key; }
 
 String ConfigsManager::cloudFirmwareVersion() const{ return _cloud_fw_version; }
+
+size_t ConfigsManager::groupCount() const{
+    size_t count = 0;
+    for (const auto &g : _groups)
+    {
+        if (g.id != 0 && g.name.length())
+            ++count;
+    }
+    return count;
+}
+
+bool ConfigsManager::groupByIndex(size_t idx, GroupConfig &out) const{
+    bool used[kGroupCount] = {};
+    for (size_t pos = 0; pos <= idx; ++pos)
+    {
+        size_t best = kGroupCount;
+        for (size_t i = 0; i < kGroupCount; ++i)
+        {
+            const auto &g = _groups[i];
+            if (used[i] || g.id == 0 || g.name.length() == 0)
+                continue;
+            if (best >= kGroupCount ||
+                g.sort < _groups[best].sort ||
+                (g.sort == _groups[best].sort && strcmp(g.name.c_str(), _groups[best].name.c_str()) < 0) ||
+                (g.sort == _groups[best].sort && g.name == _groups[best].name && g.id < _groups[best].id))
+            {
+                best = i;
+            }
+        }
+        if (best >= kGroupCount)
+            return false;
+        used[best] = true;
+        if (pos == idx)
+        {
+            out = _groups[best];
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ConfigsManager::setGroup(uint8_t id, const String &name, uint16_t sort){
+    if (id == 0)
+        return false;
+    const String clean = sanitizeUtf8_(name);
+    for (auto &g : _groups)
+    {
+        if (g.id == id)
+        {
+            g.name = clean;
+            g.sort = sort;
+            return true;
+        }
+    }
+    for (auto &g : _groups)
+    {
+        if (g.id == 0 || g.name.length() == 0)
+        {
+            g.id = id;
+            g.name = clean;
+            g.sort = sort;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ConfigsManager::removeGroup(uint8_t id){
+    if (id == 0)
+        return false;
+    for (auto &g : _groups)
+    {
+        if (g.id != id)
+            continue;
+        g = GroupConfig{};
+        clearGroupRefs_(id);
+        return true;
+    }
+    return false;
+}
+
+uint8_t ConfigsManager::allocateGroupId() const{
+    for (unsigned id = 1; id <= 255; ++id)
+    {
+        bool used = false;
+        for (const auto &g : _groups)
+        {
+            if (g.id == id)
+            {
+                used = true;
+                break;
+            }
+        }
+        if (!used)
+            return (uint8_t)id;
+    }
+    return 0;
+}
 
 size_t ConfigsManager::displaySlotCount() const{ return kDisplaySlotCount; }
 
@@ -226,6 +325,17 @@ bool ConfigsManager::save(){
 
     JsonObject ctrl = _doc["controllers"].to<JsonObject>();
     _controllers.serialize(ctrl);
+
+    JsonArray groups = _doc["groups"].to<JsonArray>();
+    for (const auto &gcfg : _groups)
+    {
+        if (gcfg.id == 0 || gcfg.name.length() == 0)
+            continue;
+        JsonObject g = groups.add<JsonObject>();
+        g["id"] = gcfg.id;
+        g["name"] = gcfg.name;
+        g["sort"] = gcfg.sort;
+    }
 
     JsonObject g = _doc["gsm"].to<JsonObject>();
     g["enabled"] = _gsm.enabled();
@@ -409,6 +519,33 @@ bool ConfigsManager::saveRulesToFs_(){
 }
 
 void ConfigsManager::applyConfig_(const JsonDocument &doc){
+    for (auto &g : _groups)
+        g = GroupConfig{};
+
+    if (doc["groups"].is<JsonArrayConst>())
+    {
+        size_t idx = 0;
+        for (JsonVariantConst v : doc["groups"].as<JsonArrayConst>())
+        {
+            if (idx >= kGroupCount || !v.is<JsonObjectConst>())
+                break;
+            JsonObjectConst obj = v.as<JsonObjectConst>();
+            GroupConfig &g = _groups[idx++];
+            if (obj["id"].is<unsigned>())
+            {
+                const unsigned raw = obj["id"].as<unsigned>();
+                if (raw <= 0xFFu)
+                    g.id = (uint8_t)raw;
+            }
+            if (obj["sort"].is<unsigned>())
+                g.sort = (uint16_t)obj["sort"].as<unsigned>();
+            if (obj["name"].is<const char *>())
+                g.name = sanitizeUtf8_(obj["name"].as<const char *>());
+            if (g.id == 0 || g.name.length() == 0)
+                g = GroupConfig{};
+        }
+    }
+
     if (doc["wifi"].is<JsonObjectConst>())
     {
         JsonObjectConst w = doc["wifi"].as<JsonObjectConst>();
@@ -732,6 +869,53 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
     if (doc["rules"].is<JsonArrayConst>())
     {
         _rules.applyConfig(doc["rules"].as<JsonArrayConst>());
+    }
+}
+
+void ConfigsManager::clearGroupRefs_(uint8_t group_id){
+    if (group_id == 0)
+        return;
+    for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+    {
+        const auto *cfg = _controllers.sockets().configByIndex(i);
+        if (cfg && cfg->group_id == group_id)
+            _controllers.sockets().setGroupId(cfg->id, 0);
+    }
+    for (size_t i = 0; i < SocketController::kLightCount; ++i)
+    {
+        const auto *cfg = _controllers.sockets().lightConfigByIndex(i);
+        if (cfg && cfg->group_id == group_id)
+            _controllers.sockets().setLightGroupId(cfg->id, 0);
+    }
+    for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+    {
+        const auto *cfg = _controllers.meteo().configByIndex(i);
+        if (cfg && cfg->group_id == group_id)
+            _controllers.meteo().setGroupId(cfg->id, 0);
+    }
+    for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+    {
+        const auto *cfg = _controllers.thermo().configByIndex(i);
+        if (cfg && cfg->group_id == group_id)
+            _controllers.thermo().setGroupId(cfg->id, 0);
+    }
+    for (size_t i = 0; i < TankController::kTankCount; ++i)
+    {
+        const auto *cfg = _controllers.tanks().configByIndex(i);
+        if (cfg && cfg->group_id == group_id)
+            _controllers.tanks().setGroupId(cfg->id, 0);
+    }
+    for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+    {
+        const auto *cfg = _controllers.septic().configByIndex(i);
+        if (cfg && cfg->group_id == group_id)
+            _controllers.septic().setGroupId(cfg->id, 0);
+    }
+    for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+    {
+        const auto *cfg = _controllers.security().configByIndex(i);
+        if (cfg && cfg->group_id == group_id)
+            _controllers.security().setGroupId(cfg->id, 0);
     }
 }
 

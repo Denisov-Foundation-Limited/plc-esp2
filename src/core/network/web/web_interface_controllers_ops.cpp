@@ -1078,7 +1078,8 @@ sendRedirect_(request, "/", set_cookie);
                              ? request->getParam("api_key", true)->value()
                              : String("");
         api_key.trim();
-        if (api_key != _configs_manager->stackApiKey())
+        if (!WebInterface::isMaskedSecret_(api_key, _configs_manager->stackApiKey()) &&
+            api_key != _configs_manager->stackApiKey())
         {
             _configs_manager->setStackApiKey(api_key);
             changed = true;
@@ -1628,23 +1629,72 @@ sendRedirect_(request, "/", set_cookie);
 
 
 
-    String WebInterfaceControllersOps::navHtml_() const
+String WebInterfaceControllersOps::navHtml_() const
 {
-        String nav = WebUiRu::Controllers::kFcplc;
+        auto appendNavLink = [](String &out, const __FlashStringHelper *href, const __FlashStringHelper *label, bool primary = false) {
+            out += F("<a href=\"");
+            out += href;
+            out += F("\" data-nav-path=\"");
+            out += href;
+            out += F("\" style=\"position:relative;display:inline-flex;align-items:center;justify-content:center;padding:");
+            out += primary ? F("9px 12px") : F("9px 10px");
+            out += F(";border-radius:12px;border:1px solid transparent;background:");
+            out += primary ? F("rgba(56,189,248,.08)") : F("transparent");
+            out += F(";color:");
+            out += primary ? F("#d9f5ff") : F("rgba(186,230,253,.88)");
+            out += F(";text-decoration:none;font-weight:");
+            out += primary ? F("700") : F("500");
+            out += F(";font-size:");
+            out += primary ? F("15px") : F("14px");
+            out += F(";letter-spacing:.01em;white-space:nowrap;transition:color .16s ease,background .16s ease,border-color .16s ease\">");
+            out += label;
+            out += F("</a>");
+        };
+
+        String nav;
+        nav.reserve(4800);
+        nav += F("<style>"
+                 ".fc-nav{margin-bottom:16px;padding:10px 12px 12px;border-radius:18px;border:1px solid rgba(56,189,248,.12);"
+                 "background:linear-gradient(180deg, rgba(7,17,36,.88) 0%, rgba(5,13,28,.74) 100%);"
+                 "box-shadow:0 14px 36px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.04)}"
+                 ".fc-nav__row{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center}"
+                 ".fc-nav__row a:hover{color:#e0f2fe !important;background:rgba(56,189,248,.08) !important;border-color:rgba(56,189,248,.14) !important}"
+                 ".fc-nav__row a.fc-nav__active{color:#e0f2fe !important;background:rgba(56,189,248,.12) !important;border-color:rgba(56,189,248,.22) !important;box-shadow:inset 0 -2px 0 rgba(56,189,248,.85)}"
+                 ".fc-nav__brand{margin-right:4px}"
+                 "@media (max-width:760px){.fc-nav{padding:10px}.fc-nav__row{gap:6px}.fc-nav__row a{font-size:13px !important;padding:8px 9px !important}}"
+                 "</style>");
+        nav += F("<div class=\"nav fc-nav\"><div class=\"fc-nav__row\">");
+        appendNavLink(nav, F("/"), F("FCPLC"), true);
+        appendNavLink(nav, F("/controllers"), F("Контроллеры"));
         if (webSessionIsAdmin_())
         {
-            nav += WebUiRu::Controllers::kText7;
-            nav += WebUiRu::Controllers::kText8;
-            nav += WebUiRu::Controllers::kText9;
-            nav += WebUiRu::Controllers::kText10;
-            nav += WebUiRu::Controllers::kTelegram;
-            nav += WebUiRu::Controllers::kLogs;
+            appendNavLink(nav, F("/wifi"), F("Сеть"));
+            appendNavLink(nav, F("/manage"), F("Прошивка и файлы"));
+            appendNavLink(nav, F("/ports"), F("Порты"));
+            appendNavLink(nav, F("/buses"), F("Шины"));
+            appendNavLink(nav, F("/stack"), F("Стек"));
+            appendNavLink(nav, F("/users"), F("Пользователи"));
+            appendNavLink(nav, F("/display"), F("Дисплей"));
+            appendNavLink(nav, F("/rules"), F("Правила"));
+            appendNavLink(nav, F("/groups"), F("Группы"));
+            appendNavLink(nav, F("/telegram"), F("Telegram"));
+            appendNavLink(nav, F("/cloud"), F("Облако"));
+            appendNavLink(nav, F("/admin"), F("Система"));
+            appendNavLink(nav, F("/logs"), F("Logs"));
         }
-        nav += F("</div>");
+        nav += F("</div></div>");
         nav += F(R"HTML(
 <div id="global-stack-toast-wrap" style="position:fixed;left:16px;top:16px;display:flex;flex-direction:column;gap:8px;z-index:9999;pointer-events:none"></div>
 <script>
 (function(){
+  const currentPath = window.location.pathname || '/';
+  document.querySelectorAll('.fc-nav [data-nav-path]').forEach(function(link){
+    const href = link.getAttribute('data-nav-path') || '';
+    if (!href) return;
+    if ((href === '/' && currentPath === '/') || (href !== '/' && currentPath === href)) {
+      link.classList.add('fc-nav__active');
+    }
+  });
   const wrap = document.getElementById('global-stack-toast-wrap');
   if (!wrap) return;
   const TOAST_SLAVE_CONNECTED_PREFIX = '%TOAST_SLAVE_CONNECTED_PREFIX%';

@@ -44,6 +44,7 @@ public:
         String page = FPSTR(kWebInterfaceLightsHtml);
         const uint8_t page_size = 8u;
         const bool stack_view = web.isStackLightsView_(node_id);
+        const bool groups_local = (!stack_view && web.hasGroups_());
         if (stack_view)
         {
             web.requestStackLights_(node_id);
@@ -60,7 +61,7 @@ public:
         uint8_t max_pages = 1;
         uint8_t start = 1;
         uint8_t end = SocketController::kLightCount;
-        if (!stack_view)
+        if (!stack_view && !groups_local)
         {
             const size_t visible = web.lightsLocalRenderCount_();
             max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
@@ -68,6 +69,13 @@ public:
                 page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
             start = (uint8_t)(page_idx * page_size + 1);
             end = (uint8_t)(start + page_size - 1);
+        }
+        else if (!stack_view)
+        {
+            page_idx = 0;
+            max_pages = 1;
+            start = 1;
+            end = SocketController::kLightCount;
         }
         else
         {
@@ -118,13 +126,15 @@ public:
             page.replace("%DINPUT_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::DInput));
             page.replace("%RELAY_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
             page.replace("%LIGHTS_STATUS%", web._lights_status);
-            page.replace("%LIGHTS_PAGINATION_STYLE%", "");
+            page.replace("%LIGHTS_PAGINATION_STYLE%", groups_local ? "style=\"display:none\"" : "");
             page.replace("%LIGHTS_SAVE_BTN%", web.webSessionIsAdmin_() ? String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>" : String(""));
             page.replace("%LIGHTS_UNIT%", "local");
             page.replace("%LIGHTS_NODE_ID%", "0");
             page.replace("%LIGHTS_FORM_HIDDEN%", "");
         }
-        page.replace("%LIGHTS_DEVICE_SELECT%", web.lightsDeviceSelectHtml_(node_id, stack_view));
+        page.replace("%LIGHTS_DEVICE_SELECT%",
+                     web.composeTopFiltersHtml_(web.lightsDeviceSelectHtml_(node_id, stack_view),
+                                                (!stack_view) ? web.groupFilterHtml_("lights-group-filter") : String("")));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
     }
@@ -178,11 +188,13 @@ public:
                 const String name_key = prefix + "name";
                 const String btn_key = prefix + "btn";
                 const String relay_key = prefix + "relay";
+                const String group_key = prefix + "group";
                 const String action_key = prefix + "action";
                 const bool has_any = request->hasParam(en_key, true) ||
                                      request->hasParam(name_key, true) ||
                                      request->hasParam(btn_key, true) ||
                                      request->hasParam(relay_key, true) ||
+                                     request->hasParam(group_key, true) ||
                                      request->hasParam(action_key, true);
                 if (!has_any)
                     continue;
@@ -328,11 +340,13 @@ public:
             const String name_key = prefix + "name";
             const String btn_key = prefix + "btn";
             const String relay_key = prefix + "relay";
+            const String group_key = prefix + "group";
             const String action_key = prefix + "action";
             const bool has_any = request->hasParam(en_key, true) ||
                                  request->hasParam(name_key, true) ||
                                  request->hasParam(btn_key, true) ||
                                  request->hasParam(relay_key, true) ||
+                                 request->hasParam(group_key, true) ||
                                  request->hasParam(action_key, true);
             if (!has_any)
                 continue;
@@ -346,6 +360,7 @@ public:
             String name = web.paramValue_(request, name_key);
             String btn = web.paramValue_(request, btn_key);
             String relay = web.paramValue_(request, relay_key);
+            const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
             String action = web.paramValue_(request, action_key);
             name.trim();
             uint8_t btn_port = SocketController::kInvalidPort;
@@ -362,6 +377,8 @@ public:
                 sockets.setLightButtonPort(cfg->id, btn_port);
             if (cfg->relay_port != relay_port)
                 sockets.setLightRelayPort(cfg->id, relay_port);
+            if (cfg->group_id != group_id)
+                sockets.setLightGroupId(cfg->id, group_id);
             if (cfg->enabled != enabled)
                 sockets.setLightEnabled(cfg->id, enabled);
             if (action.length())

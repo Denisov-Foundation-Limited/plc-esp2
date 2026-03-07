@@ -470,10 +470,15 @@ public:
             const bool show_hum = (ui_type == MeteoController::SensorType::Dht22);
             const bool ok_on = has_read && st.ok;
     
-            items += "<div class=\"tile";
+            const bool has_groups = web.hasGroups_();
+            items += "<div class=\"tile js-group-item";
             if (!enabled)
                 items += " disabled";
-            items += "\" data-sensor-id=\"";
+            items += "\" data-group-id=\"";
+            items += String((unsigned)cfg.group_id);
+            items += "\"";
+            items += web.groupVisibilityStyleAttr_(cfg.group_id);
+            items += " data-sensor-id=\"";
             items += String((unsigned)cfg.id);
             items += "\">";
             items += "<div class=\"sensor-visual\">";
@@ -504,10 +509,8 @@ public:
             items += "</div>";
             items += "<div>";
             items += "<div class=\"tile-head\"><strong>";
-            if (cfg.name[0])
-                web.appendHtmlEscaped_(items, cfg.name);
-            else
-                items += WebUiRu::Meteo::kText3;
+            items += WebUiRu::Meteo::kTitlePrefix;
+            items += String((unsigned)cfg.id);
             items += "</strong>";
             items += "<label class=\"switch\"><input type=\"checkbox\" class=\"meteo-enable\" name=\"m";
             items += String((unsigned)cfg.id);
@@ -528,6 +531,14 @@ public:
             if (!can_edit)
                 items += " readonly";
             items += "></div>";
+            items += String("<div class=\"form-row\" style=\"margin-top:8px;margin-bottom:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"m";
+            items += String((unsigned)cfg.id);
+            items += "_group\"";
+            if (!can_edit || !has_groups)
+                items += " disabled";
+            items += ">";
+            items += web.groupOptionsHtml_(cfg.group_id, true, true);
+            items += "</select></div>";
             items += WebUiRu::Meteo::kSelectClassFieldNameMeteoSourceName;
             items += String((unsigned)cfg.id);
             items += "_src\">";

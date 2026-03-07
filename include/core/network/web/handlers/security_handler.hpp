@@ -108,6 +108,7 @@ public:
         String page = FPSTR(kWebInterfaceSecurityHtml);
         const uint8_t page_size = 8u;
         const bool stack_view = web.isStackSecurityView_(node_id);
+        const bool groups_local = (!stack_view && web.hasGroups_());
         if (stack_view)
         {
             web.requestStackSecurity_(node_id);
@@ -124,7 +125,7 @@ public:
         uint8_t max_pages = 1;
         uint8_t start = 0;
         uint8_t end = SecurityController::kSensorCount;
-        if (!stack_view)
+        if (!stack_view && !groups_local)
         {
             const size_t visible = web.securityLocalRenderCount_();
             max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
@@ -132,6 +133,13 @@ public:
                 page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
             start = (uint8_t)(page_idx * page_size);
             end = (uint8_t)(start + page_size - 1);
+        }
+        else if (!stack_view)
+        {
+            page_idx = 0;
+            max_pages = 1;
+            start = 0;
+            end = SecurityController::kSensorCount;
         }
         else
         {
@@ -180,7 +188,7 @@ public:
             page.replace("%SECURITY_SENSORS_TITLE%", WebUiRu::Security::kText);
             page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", "");
             page.replace("%SECURITY_SAVE_BTN%", "");
-            page.replace("%SECURITY_DEVICE_SELECT%", "");
+        page.replace("%SECURITY_DEVICE_SELECT%", "");
             web.sendHtml_(request, page, set_cookie);
             return;
         }
@@ -206,7 +214,8 @@ public:
             page.replace("%SECURITY_SIREN%", "");
         page.replace("%SECURITY_SENSORS%",
                      stack_view ? web.listStackSecuritySensorsTiles_(node_id, (size_t)page_idx * page_size, page_size)
-                                : web.listSecuritySensorsTiles_(start, end));
+                                : web.listSecuritySensorsTiles_(groups_local ? 0 : start,
+                                                                 groups_local ? SecurityController::kSensorCount : end));
         page.replace("%SECURITY_SENSORS_PAGE%", String((unsigned)(page_idx + 1)));
         page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)max_pages));
         page.replace("%SECURITY_SENSOR_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
@@ -219,10 +228,12 @@ public:
                                                               : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%SECURITY_STATUS%", stack_view ? web.stackSecurityStatusText_(node_id) : web._security_status);
         page.replace("%SECURITY_SENSORS_TITLE%", stack_view ? web.stackSecurityTitle_(node_id) : String(WebUiRu::Security::kText));
-        page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", (max_pages > 1) ? "" : "style=\"display:none\"");
+        page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", (!groups_local && max_pages > 1) ? "" : "style=\"display:none\"");
         page.replace("%SECURITY_SAVE_BTN%",
                      (!web.webSessionIsAdmin_()) ? String("") : (String("<button class=\"primary\" name=\"action\" value=\"save\">") + WebUiRu::kSave + "</button>"));
-        page.replace("%SECURITY_DEVICE_SELECT%", web.securityDeviceSelectHtml_(node_id, stack_view));
+        page.replace("%SECURITY_DEVICE_SELECT%",
+                     web.composeTopFiltersHtml_(web.securityDeviceSelectHtml_(node_id, stack_view),
+                                                (!stack_view) ? web.groupFilterHtml_("security-group-filter") : String("")));
         web.sendHtml_(request, page, set_cookie);
     }
 
@@ -541,10 +552,12 @@ public:
             const String type_key = prefix + "type";
             const String port_key = prefix + "port";
             const String silent_key = prefix + "silent";
+            const String group_key = prefix + "group";
             const bool has_any = request->hasParam(en_key, true) ||
                                  request->hasParam(name_key, true) ||
                                  request->hasParam(type_key, true) ||
                                  request->hasParam(port_key, true) ||
+                                 request->hasParam(group_key, true) ||
                                  request->hasParam(silent_key, true);
             if (!has_any)
                 continue;
@@ -565,6 +578,7 @@ public:
                 continue;
             }
             const bool silent = request->hasParam(silent_key, true);
+            const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
             String name = web.paramValue_(request, name_key);
             name.trim();
             SecurityController::SensorType type = SecurityController::SensorType::Pir;
@@ -589,6 +603,11 @@ public:
             if (cfg->name != name)
             {
                 sec.setName(cfg->id, name);
+                changed = true;
+            }
+            if (cfg->group_id != group_id)
+            {
+                sec.setGroupId(cfg->id, group_id);
                 changed = true;
             }
             if (cfg->type != type)

@@ -212,10 +212,8 @@ public:
             items += "<div>";
             items += "<div class=\"tile-head\">";
             items += "<strong>";
-            if (cfg.name[0])
-                web.appendHtmlEscaped_(items, cfg.name);
-            else
-                items += WebUiRu::Tanks::kText3;
+            items += WebUiRu::Tanks::kTitlePrefix;
+            items += String((unsigned)cfg.id);
             items += "</strong>";
             items += "<label class=\"switch\"><input type=\"checkbox\" name=\"k";
             items += String((unsigned)cfg.id);
@@ -337,6 +335,7 @@ public:
                              bool enabled) {
             const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Tanks, cfg.id);
             const bool can_admin = web.webSessionIsAdmin_();
+            const bool has_groups = web.hasGroups_();
             const char *level = "0%";
             const char *level_class = "level-empty";
             unsigned level_pct = 0;
@@ -359,10 +358,14 @@ public:
                 level_pct = 33;
             }
     
-            items += "<div class=\"tile";
+            items += "<div class=\"tile js-group-item";
             if (!enabled)
                 items += " disabled";
-            items += "\">";
+                items += "\" data-group-id=\"";
+                items += String((unsigned)cfg.group_id);
+                items += "\"";
+                items += web.groupVisibilityStyleAttr_(cfg.group_id);
+                items += ">";
             items += "<div>";
             items += "<div class=\"tank-visual\">";
             items += "<div class=\"tank-fill ";
@@ -403,14 +406,22 @@ public:
             items += "</div>";
             if (can_control)
             {
-                items += "<input class=\"field name\" type=\"text\" name=\"k";
+                items += String("<div class=\"form-row\"><label>") + WebUiRu::Tanks::kLabelName + "</label><input class=\"field name\" type=\"text\" name=\"k";
                 items += String((unsigned)cfg.id);
                 items += "_name\" value=\"";
                 web.appendHtmlEscaped_(items, cfg.name.c_str());
                 items += "\"";
                 if (!can_admin)
                     items += " readonly";
+                items += "></div>";
+                items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"k";
+                items += String((unsigned)cfg.id);
+                items += "_group\"";
+                if (!can_admin || !has_groups)
+                    items += " disabled";
                 items += ">";
+                items += web.groupOptionsHtml_(cfg.group_id, true, true);
+                items += "</select></div>";
                 items += "<div class=\"form-grid\">";
                 items += WebUiRu::Tanks::kSelectClassFieldMiniTankSelectData;
                 if (cfg.level_low != TankController::kInvalidPort)

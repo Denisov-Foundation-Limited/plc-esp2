@@ -8,6 +8,7 @@
 #include "core/network/web/pages/web_page_wifi.hpp"
 #include "core/network/web/pages/web_page_controllers.hpp"
 #include "core/network/web/pages/web_page_users.hpp"
+#include "core/network/web/pages/web_page_groups.hpp"
 #include "core/network/web/pages/web_page_display.hpp"
 #include "core/network/web/pages/web_page_security.hpp"
 #include "core/network/web/pages/web_page_ring.hpp"
