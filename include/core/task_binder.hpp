@@ -62,16 +62,6 @@ public:
         bindTgbot();
         bindExtender();
         bindControllersStorage_();
-        bindSockets_();
-        bindMeteo_();
-        bindThermo_();
-        bindTanks_();
-        bindSeptic_();
-        bindSecurity_();
-        bindRing_();
-        bindWatering_();
-        bindAvr_();
-        bindLeak_();
         bindMeteoHistory_();
         bindDisplay_();
         bindPlc_();
@@ -156,7 +146,6 @@ public:
 private:
     typename TaskManager<N>::Handle bindControllersStorage_()
     {
-#if defined(ESP32)
         if (_control_task == nullptr)
         {
             BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::controlTaskEntry_, "control_loop", 8192, this, 2,
@@ -165,132 +154,6 @@ private:
                 _logs.error(F("TASK"), F("Bind failed: control_loop"));
         }
         return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&Controllers::task>(_controllers, opt, "controllers_storage");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindSockets_()
-    {
-#if defined(ESP32)
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&SocketController::task>(_controllers.sockets(), opt, "sockets");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindMeteo_()
-    {
-#if defined(ESP32)
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&MeteoController::task>(_controllers.meteo(), opt, "meteo");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindThermo_()
-    {
-#if defined(ESP32)
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&ThermoController::task>(_controllers.thermo(), opt, "thermo");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindTanks_()
-    {
-#if defined(ESP32)
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&TankController::task>(_controllers.tanks(), opt, "tanks");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindSeptic_()
-    {
-#if defined(ESP32)
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&SepticController::task>(_controllers.septic(), opt, "septic");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindSecurity_()
-    {
-#if defined(ESP32)
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&SecurityController::task>(_controllers.security(), opt, "security");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindRing_()
-    {
-#if defined(ESP32)
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&RingController::task>(_controllers.ring(), opt, "ring");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindWatering_()
-    {
-#if defined(ESP32)
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&WateringController::task>(_controllers.watering(), opt, "watering");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindAvr_()
-    {
-#if defined(ESP32)
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&AvrController::task>(_controllers.avr(), opt, "avr");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindLeak_()
-    {
-#if defined(ESP32)
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&LeakController::task>(_controllers.leak(), opt, "leak");
-#endif
     }
 
     typename TaskManager<N>::Handle bindWiFiManager()
