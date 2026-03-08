@@ -24,17 +24,30 @@ bool Logger::ready() const{ return _out != nullptr; }
 
 void Logger::setRtc(RTC &rtc){ _rtc = &rtc; }
 
-size_t Logger::recentCount() const{ return _recent_count; }
+size_t Logger::recentCount() const{
+    const_cast<Logger *>(this)->lock_();
+    const size_t out = _recent_count;
+    const_cast<Logger *>(this)->unlock_();
+    return out;
+}
 
 bool Logger::getRecentLine(size_t idx, char *out, size_t cap) const{
+    const_cast<Logger *>(this)->lock_();
     if (!out || cap == 0)
+    {
+        const_cast<Logger *>(this)->unlock_();
         return false;
+    }
     if (idx >= _recent_count)
+    {
+        const_cast<Logger *>(this)->unlock_();
         return false;
+    }
     const size_t start = (_recent_count < kRecentMax) ? 0 : _recent_head;
     const size_t pos = (start + idx) % kRecentMax;
     strncpy(out, _recent[pos], cap - 1);
     out[cap - 1] = '\0';
+    const_cast<Logger *>(this)->unlock_();
     return true;
 }
 
@@ -147,5 +160,21 @@ bool Logger::formatTimestamp_(char *out, size_t cap){
     (void)out;
     (void)cap;
     return false;
+#endif
+}
+
+void Logger::lock_(){
+#if defined(ESP32)
+    if (_lock == nullptr)
+        _lock = xSemaphoreCreateMutex();
+    if (_lock)
+        xSemaphoreTake(_lock, portMAX_DELAY);
+#endif
+}
+
+void Logger::unlock_(){
+#if defined(ESP32)
+    if (_lock)
+        xSemaphoreGive(_lock);
 #endif
 }

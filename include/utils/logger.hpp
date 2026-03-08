@@ -15,6 +15,11 @@
 #include <stdarg.h>
 #include <string.h>
 
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
+
 #include "core/rtc.hpp"
 
 #include "hal/bus/uart.hpp"
@@ -71,11 +76,13 @@ public:
         vsnprintf_P(msg, sizeof(msg), (const char *)fmt, ap);
         va_end(ap);
 
+        lock_();
 #if LOGGER_FORMAT_JSON
         writeJson_<L>(tag, msg);
 #else
         writeText_<L>(tag, msg);
 #endif
+        unlock_();
     }
 
     // ISR-safe: no ArduinoJson; minimal output
@@ -111,6 +118,9 @@ private:
     Stream *_out = nullptr;
     UartManager &uart_;
     RTC *_rtc = nullptr;
+#if defined(ESP32)
+    SemaphoreHandle_t _lock = nullptr;
+#endif
     static constexpr size_t kRecentMax = 30;
     char _recent[kRecentMax][LOGGER_BUFFER_SIZE] = {};
     uint8_t _recent_head = 0;
@@ -235,4 +245,4 @@ private:
     }
 
     void storeLine_(const char *line);void buildTextLine_(char *out, size_t cap, const __FlashStringHelper *tag,
-                        const char *level, const char *msg);bool formatTimestamp_(char *out, size_t cap);};
+                        const char *level, const char *msg);bool formatTimestamp_(char *out, size_t cap);void lock_();void unlock_();};

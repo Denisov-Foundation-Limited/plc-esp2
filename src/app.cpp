@@ -384,12 +384,10 @@ bool App::begin()
 
 void App::loop()
 {
-    stack.setTaskPhase(StackRuntime::TaskPhase::PreNetwork);
-    stack.taskPre();
+    control.task_binder.runStackPre(stack);
     control.plc_scan.tick();
     ui.console.loop();
     net.network.loop();
-    stack.setTaskPhase(StackRuntime::TaskPhase::PostNetwork);
+    control.task_binder.notifyStackPostNetwork();
     core.tm.loop();
-    stack.setTaskPhase(StackRuntime::TaskPhase::Idle);
 }
