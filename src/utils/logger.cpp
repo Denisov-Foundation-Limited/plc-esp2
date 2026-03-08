@@ -18,7 +18,10 @@ using LoggerLevel = Logger::Level;
 
 Logger::Logger(UartManager &uart) : uart_(uart){}
 
-void Logger::begin(Stream &out){ _out = &out; }
+void Logger::begin(Stream &out){
+    ensureLock_();
+    _out = &out;
+}
 
 bool Logger::ready() const{ return _out != nullptr; }
 
@@ -53,6 +56,7 @@ bool Logger::getRecentLine(size_t idx, char *out, size_t cap) const{
 
 bool Logger::beginAuto(){
     const LogCfg cfg = ActiveBoardProfile::LOG;
+    ensureLock_();
 
     if (cfg.sink == LogCfg::Sink::UsbSerial)
     {
@@ -71,6 +75,17 @@ bool Logger::beginAuto(){
     }
 
     return false;
+}
+
+void Logger::ensureLock_(){
+#if defined(ESP32)
+    if (_lock != nullptr)
+        return;
+    portENTER_CRITICAL(&_lock_init_mux);
+    if (_lock == nullptr)
+        _lock = xSemaphoreCreateMutex();
+    portEXIT_CRITICAL(&_lock_init_mux);
+#endif
 }
 
 char Logger::levelChar_(LoggerLevel l){
@@ -165,8 +180,7 @@ bool Logger::formatTimestamp_(char *out, size_t cap){
 
 void Logger::lock_(){
 #if defined(ESP32)
-    if (_lock == nullptr)
-        _lock = xSemaphoreCreateMutex();
+    ensureLock_();
     if (_lock)
         xSemaphoreTake(_lock, portMAX_DELAY);
 #endif

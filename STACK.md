@@ -31,14 +31,17 @@ Stack — внутренний TCP-протокол обмена между ко
 
 ```mermaid
 flowchart TD
-  MASTER[Master Node\nStackMaster + StackCache + App sync]
+  MASTER[Master Node\nStackMaster + StackCache + StackRuntime]
   SLAVE_A[Slave A\nStackNode + StackSlaveHandler]
   SLAVE_B[Slave B\nStackNode + StackSlaveHandler]
   UI[Web / Display / Telegram]
+  RTOS[TaskBinder + FreeRTOS tasks]
 
   SLAVE_A <--> MASTER
   SLAVE_B <--> MASTER
   MASTER --> UI
+  MASTER --> RTOS
+  RTOS --> UI
 ```
 
 ## 3. Основные компоненты
@@ -66,9 +69,14 @@ flowchart TD
 ### Интеграция в App
 
 - `src/app.cpp`
-  - `pollStackCaches_()`
+  - `runStackPre(stack)` в основном loop
+  - `notifyStackPostNetwork()` после `network.loop()`
   - обработка online/offline
   - логи синхронизации и инвентаризации
+- `include/core/task_binder.hpp`
+  - `stack_evt` task для `StackRuntime::taskPost/taskFlush`
+  - RTOS worker-задачи для network и `control_loop`
+  - `display` / `plc` / `extender` пока остаются в cooperative-слое
 
 ## 4. Транспортный формат
 
@@ -161,6 +169,33 @@ sequenceDiagram
   S-->>M: Ack/Err
 ```
 
+## 8.1. Runtime-исполнение stack после переноса на RTOS
+
+```mermaid
+flowchart TD
+  LOOP[App::loop]
+  PRE[runStackPre stack]
+  NET[network.loop]
+  SIG[notifyStackPostNetwork]
+  EVT[RTOS stack_evt]
+  POST[StackRuntime taskPost]
+  FLUSH[StackRuntime taskFlush]
+
+  LOOP --> PRE
+  PRE --> NET
+  NET --> SIG
+  SIG --> EVT
+  EVT --> POST
+  POST --> FLUSH
+```
+
+Ключевые правила:
+- `taskPre` остаётся синхронным и вызывается из основного loop.
+- `taskPost/taskFlush` выполняются в отдельной RTOS-задаче `stack_evt`.
+- Для `stack_evt` используется очередь и pending-защита:
+  - новое событие не ставится, пока предыдущее ещё не обработано.
+- Такая схема убирает влияние тяжёлых post-network путей на latency локального управления.
+
 ## 9. Модель кэша на master
 
 Типовые поля кэша фичи:
@@ -190,6 +225,12 @@ flowchart TD
 ```
 
 За тик отправляется один запрос одной фичи.
+
+После переноса на RTOS важно:
+- не вызывать `pollStackCaches_()` из нескольких потоков;
+- не дублировать `taskPost/taskFlush` одновременно из loop и RTOS worker;
+- не слать лишние `stack_evt` notify без pending-флага.
+- не выносить читателей общего stack/remote-cache в отдельные RTOS-задачи без синхронизации или snapshot-модели.
 
 ## 11. Тяжёлые фичи и постраничная синхронизация
 
@@ -227,6 +268,19 @@ sequenceDiagram
 4. логи sync (`Sync slave unit ...`, `Sync slave unit complete`)
 5. oversized payload (`json parse failed`)
 6. конфликты `node_id`
+7. RTOS метрики:
+   - `stack_evt exec_us / wavg_us / wmax_us`
+   - `cloud` пики во время reconnect
+   - `telegram` long-poll / reconnect пики
+
+Если локальное управление работает быстро, а `cloud/telegram` имеют большие пики, это нормально при условии, что:
+- `stack_evt` остаётся коротким;
+- `control_loop` не деградирует по latency.
+
+Текущее безопасное состояние:
+- `control_loop` вынесен в RTOS и проверен на slave без observed fatal.
+- `display` / `plc` / `extender` возвращены в cooperative execution.
+- Причина возврата: при параллельном доступе к shared state и remote-cache у slave возникал риск гонок и фаталов.
 
 ## 14. Правила для новых stack-фич
 
@@ -234,6 +288,9 @@ sequenceDiagram
 - Держать раздельные пути обработки `Ack set` и `Ack get`.
 - Для больших данных использовать paging.
 - Определять критерий «кэш готов» явно.
+- Не подвешивать критичный control-path на network/cloud/tg операции.
+- Если новая stack-фича добавляет тяжёлый post-processing, учитывать, что она теперь живёт в `stack_evt` RTOS task.
+- Перед выносом UI/display-потребителей в RTOS нужно отдельно решить синхронизацию чтения shared stack/remote-cache.
 - Синхронизировать изменения на всех слоях:
   - config
   - stack handler
@@ -260,6 +317,7 @@ sequenceDiagram
   - `include/core/network/stack/stack_cache.hpp`
 - Оркестрация polling/sync:
   - `src/app.cpp`
+  - `include/core/task_binder.hpp`
 - Ролевая интеграция stack:
   - `src/core/network/network.cpp`
 

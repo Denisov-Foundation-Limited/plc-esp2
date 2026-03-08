@@ -626,21 +626,15 @@ void MeteoController::logMeteoStateChange_(const MeteoController::SensorConfig &
     if (prev_ok == st.ok)
         return;
     String name = cfg.name.length() ? cfg.name : String((unsigned)cfg.id);
+    String source;
     if (cfg.source_node_id)
     {
-        String remote;
-        if (_remote_name_cb && _remote_name_cb(_remote_name_ctx, cfg.source_node_id, remote) &&
-            remote.length())
-        {
-            name += " @";
-            name += remote;
-        }
-        else
+        if (!(_remote_name_cb && _remote_name_cb(_remote_name_ctx, cfg.source_node_id, source) &&
+              source.length()))
         {
             char buf[12] = {};
             snprintf(buf, sizeof(buf), "0x%08lX", (unsigned long)cfg.source_node_id);
-            name += " @";
-            name += buf;
+            source = buf;
         }
     }
     SensorType log_type = cfg.type;
@@ -654,11 +648,23 @@ void MeteoController::logMeteoStateChange_(const MeteoController::SensorConfig &
     }
     const char *type = typeNameLog_(log_type);
     if (st.ok)
-        _logs.info(F("METEO"), F("Sensor ok: id: %u name: %s type: %s"),
-                   (unsigned)cfg.id, name.c_str(), type);
+    {
+        if (source.length())
+            _logs.info(F("METEO"), F("Sensor ok: id: %u name: %s source: %s type: %s"),
+                       (unsigned)cfg.id, name.c_str(), source.c_str(), type);
+        else
+            _logs.info(F("METEO"), F("Sensor ok: id: %u name: %s type: %s"),
+                       (unsigned)cfg.id, name.c_str(), type);
+    }
     else
-        _logs.warn(F("METEO"), F("Sensor error: id: %u name: %s type: %s"),
-                   (unsigned)cfg.id, name.c_str(), type);
+    {
+        if (source.length())
+            _logs.warn(F("METEO"), F("Sensor error: id: %u name: %s source: %s type: %s"),
+                       (unsigned)cfg.id, name.c_str(), source.c_str(), type);
+        else
+            _logs.warn(F("METEO"), F("Sensor error: id: %u name: %s type: %s"),
+                       (unsigned)cfg.id, name.c_str(), type);
+    }
     if (_alarm_cb)
         _alarm_cb(_alarm_ctx, cfg.source_node_id, cfg.id, !st.ok);
 }

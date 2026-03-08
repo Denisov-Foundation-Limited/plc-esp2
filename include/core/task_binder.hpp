@@ -145,6 +145,9 @@ public:
 #if defined(ESP32)
         if (_stack_evt_queue == nullptr)
             return;
+        if (_stack_evt_pending)
+            return;
+        _stack_evt_pending = true;
         uint8_t evt = 1;
         xQueueOverwrite(_stack_evt_queue, &evt);
 #endif
@@ -153,90 +156,141 @@ public:
 private:
     typename TaskManager<N>::Handle bindControllersStorage_()
     {
+#if defined(ESP32)
+        if (_control_task == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::controlTaskEntry_, "control_loop", 8192, this, 2,
+                                                    &_control_task, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: control_loop"));
+        }
+        return {};
+#else
         typename TaskManager<N>::Options opt;
         opt.interval_ms = 50;
         opt.priority = TaskManager<N>::Priority::Normal;
         return addChecked_<&Controllers::task>(_controllers, opt, "controllers_storage");
+#endif
     }
 
     typename TaskManager<N>::Handle bindSockets_()
     {
+#if defined(ESP32)
+        return {};
+#else
         typename TaskManager<N>::Options opt;
         opt.interval_ms = 50;
         opt.priority = TaskManager<N>::Priority::Normal;
         return addChecked_<&SocketController::task>(_controllers.sockets(), opt, "sockets");
+#endif
     }
 
     typename TaskManager<N>::Handle bindMeteo_()
     {
+#if defined(ESP32)
+        return {};
+#else
         typename TaskManager<N>::Options opt;
         opt.interval_ms = 50;
         opt.priority = TaskManager<N>::Priority::Normal;
         return addChecked_<&MeteoController::task>(_controllers.meteo(), opt, "meteo");
+#endif
     }
 
     typename TaskManager<N>::Handle bindThermo_()
     {
+#if defined(ESP32)
+        return {};
+#else
         typename TaskManager<N>::Options opt;
         opt.interval_ms = 50;
         opt.priority = TaskManager<N>::Priority::Normal;
         return addChecked_<&ThermoController::task>(_controllers.thermo(), opt, "thermo");
+#endif
     }
 
     typename TaskManager<N>::Handle bindTanks_()
     {
+#if defined(ESP32)
+        return {};
+#else
         typename TaskManager<N>::Options opt;
         opt.interval_ms = 50;
         opt.priority = TaskManager<N>::Priority::Normal;
         return addChecked_<&TankController::task>(_controllers.tanks(), opt, "tanks");
+#endif
     }
 
     typename TaskManager<N>::Handle bindSeptic_()
     {
+#if defined(ESP32)
+        return {};
+#else
         typename TaskManager<N>::Options opt;
         opt.interval_ms = 50;
         opt.priority = TaskManager<N>::Priority::Normal;
         return addChecked_<&SepticController::task>(_controllers.septic(), opt, "septic");
+#endif
     }
 
     typename TaskManager<N>::Handle bindSecurity_()
     {
+#if defined(ESP32)
+        return {};
+#else
         typename TaskManager<N>::Options opt;
         opt.interval_ms = 50;
         opt.priority = TaskManager<N>::Priority::Normal;
         return addChecked_<&SecurityController::task>(_controllers.security(), opt, "security");
+#endif
     }
 
     typename TaskManager<N>::Handle bindRing_()
     {
+#if defined(ESP32)
+        return {};
+#else
         typename TaskManager<N>::Options opt;
         opt.interval_ms = 50;
         opt.priority = TaskManager<N>::Priority::Normal;
         return addChecked_<&RingController::task>(_controllers.ring(), opt, "ring");
+#endif
     }
 
     typename TaskManager<N>::Handle bindWatering_()
     {
+#if defined(ESP32)
+        return {};
+#else
         typename TaskManager<N>::Options opt;
         opt.interval_ms = 50;
         opt.priority = TaskManager<N>::Priority::Normal;
         return addChecked_<&WateringController::task>(_controllers.watering(), opt, "watering");
+#endif
     }
 
     typename TaskManager<N>::Handle bindAvr_()
     {
+#if defined(ESP32)
+        return {};
+#else
         typename TaskManager<N>::Options opt;
         opt.interval_ms = 50;
         opt.priority = TaskManager<N>::Priority::Normal;
         return addChecked_<&AvrController::task>(_controllers.avr(), opt, "avr");
+#endif
     }
 
     typename TaskManager<N>::Handle bindLeak_()
     {
+#if defined(ESP32)
+        return {};
+#else
         typename TaskManager<N>::Options opt;
         opt.interval_ms = 50;
         opt.priority = TaskManager<N>::Priority::Normal;
         return addChecked_<&LeakController::task>(_controllers.leak(), opt, "leak");
+#endif
     }
 
     typename TaskManager<N>::Handle bindWiFiManager()
@@ -386,16 +440,19 @@ private:
     TaskHandle_t _wifi_task = nullptr;
     TaskHandle_t _tgbot_task = nullptr;
     TaskHandle_t _meteo_history_task = nullptr;
+    TaskHandle_t _control_task = nullptr;
     TaskHandle_t _gsm_task_rtos = nullptr;
     TaskHandle_t _cloud_task_rtos = nullptr;
     TaskHandle_t _stack_evt_task = nullptr;
     QueueHandle_t _stack_evt_queue = nullptr;
     SemaphoreHandle_t _stack_phase_mtx = nullptr;
     StackRuntime *_stack_runtime = nullptr;
+    volatile bool _stack_evt_pending = false;
 #if TASK_BINDER_RTOS_DEBUG
     RtosDebugStats _dbg_wifi{};
     RtosDebugStats _dbg_tg{};
     RtosDebugStats _dbg_meteo_history{};
+    RtosDebugStats _dbg_control{};
     RtosDebugStats _dbg_gsm{};
     RtosDebugStats _dbg_cloud{};
     RtosDebugStats _dbg_stack_evt{};
@@ -561,6 +618,33 @@ private:
         }
     }
 
+    static void controlTaskEntry_(void *arg)
+    {
+        auto *self = static_cast<TaskBinder *>(arg);
+        TickType_t last = xTaskGetTickCount();
+        for (;;)
+        {
+            const uint32_t t0 = micros();
+            self->_controllers.task();
+            self->_controllers.sockets().task();
+            self->_controllers.meteo().task();
+            self->_controllers.thermo().task();
+            self->_controllers.tanks().task();
+            self->_controllers.septic().task();
+            self->_controllers.security().task();
+            self->_controllers.ring().task();
+            self->_controllers.watering().task();
+            self->_controllers.avr().task();
+            self->_controllers.leak().task();
+#if TASK_BINDER_RTOS_DEBUG
+            const uint32_t dt = (uint32_t)(micros() - t0);
+            const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
+            self->updateRtosDebug_("control", dt, hwm, self->_dbg_control);
+#endif
+            vTaskDelayUntil(&last, pdMS_TO_TICKS(50));
+        }
+    }
+
     static void cloudTaskEntry_(void *arg)
     {
         auto *self = static_cast<TaskBinder *>(arg);
@@ -594,6 +678,7 @@ private:
                 continue;
             if (evt != 1 || self->_stack_runtime == nullptr)
                 continue;
+            self->_stack_evt_pending = false;
 
             const uint32_t t0 = micros();
             if (self->_stack_phase_mtx)

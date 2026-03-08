@@ -20,13 +20,19 @@
 ```mermaid
 flowchart TD
   UI[Пользовательские интерфейсы\nWeb UI / CLI / LCD / Telegram]
-  APP[Ядро приложения\nApp / TaskManager / Configs / Rules]
+  APP[Ядро приложения\nApp / Configs / Rules / StackRuntime]
+  RTOS[RTOS workers\nTaskBinder + FreeRTOS tasks]
   NET[Сеть\nWi-Fi / GSM / Cloud / Stack]
   CTRL[Контроллеры\nSockets/Lights/Meteo/Thermo/Tanks/Septic/Security/Watering/AVR/Leak/Ring]
+  IO[I/O\nExtender / Display / PLC]
 
   UI --> APP
+  APP --> RTOS
   APP --> NET
   APP --> CTRL
+  RTOS --> NET
+  RTOS --> CTRL
+  RTOS --> IO
   NET --> CTRL
 ```
 
@@ -38,13 +44,40 @@ flowchart TD
   INIT --> BIND[TaskBinder::bindAll + bindStack]
   BIND --> LOOP[App::loop]
 
-  LOOP --> PRE[Stack taskPre]
-  PRE --> CONSOLE[CLI console loop]
+  LOOP --> PRE[runStackPre stack]
+  PRE --> PLCSCAN[plc_scan.tick]
+  PLCSCAN --> CONSOLE[CLI console loop]
   CONSOLE --> NETLOOP[Network loop]
-  NETLOOP --> TMLOOP[TaskManager loop]
-  TMLOOP --> POST[Stack taskPost/taskFlush]
-  POST --> LOOP
+  NETLOOP --> POSTSIG[notifyStackPostNetwork]
+  POSTSIG --> TMLOOP[TaskManager loop fallback]
+  TMLOOP --> LOOP
+
+  RTOSNET[RTOS\nwifi / telegram / gsm / cloud / meteo_history] --> LOOP
+  RTOSCTRL[RTOS\ncontrol_loop] --> LOOP
+  STACKEVT[RTOS\nstack_evt post/flush] --> LOOP
+  COOPIO[TaskManager\nextender / display / plc + legacy] --> LOOP
 ```
+
+### Runtime после внедрения RTOS
+
+- `App::loop()` теперь в основном оркестрирует фазы, а не выполняет весь тяжёлый runtime сам.
+- В отдельные FreeRTOS-задачи вынесены:
+  - `wifi`
+  - `telegram`
+  - `gsm`
+  - `cloud`
+  - `meteo_history`
+  - `stack_evt` (`taskPost/taskFlush`)
+  - `control_loop` для контроллеров
+- `extender`, `display` и `plc` пока оставлены в `TaskManager`.
+- Причина: эти части всё ещё пересекаются с общим state/stack-cache и в текущем безопасном варианте не вынесены в параллельные RTOS-задачи.
+- `TaskManager` остаётся как fallback/cooperative слой для legacy-путей и для тех подсистем, которые ещё не готовы к безопасному параллельному исполнению.
+
+### Логирование в многозадачном runtime
+
+- После выноса части подсистем в FreeRTOS лог считается многопоточным.
+- `Logger` сериализует вывод через mutex и пишет строку логa одним вызовом, чтобы уменьшить риск разрыва строк в UART.
+- Если в логах всё ещё появляются артефакты, проверять нужно не только `Logger`, но и прямые `Serial.print`/`printf` в стороннем коде.
 
 ## Основные возможности
 
