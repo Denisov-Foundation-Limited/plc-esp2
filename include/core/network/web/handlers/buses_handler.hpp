@@ -10,40 +10,13 @@
 /**********************************************************************/
 
 #pragma once
+#include "core/network/web/interfaces/web_interface_handler_base.hpp"
 
-class WebInterface;
-class AsyncWebServer;
-class AsyncWebServerRequest;
 
 class BusesHandler
 {
 public:
-    static void registerRoutes(WebInterface &web, AsyncWebServer &server)
-    {
-        server.on("/buses", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleBuses(web, request); });
-    }
+    static void registerRoutes(WebInterface &web, AsyncWebServer &server);
 
-    static void handleBuses(WebInterface &web, AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!web.checkAuth_(request, &set_cookie))
-            return;
-        if (!web.requireWebAdmin_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceBusesHtml);
-        page.reserve(page.length() + 3072);
-        page.replace("%NAV%", web.navHtml_());
-        page.replace("%BUSES_PAGE_TITLE%", WebUiRu::BusesPage::kPageTitle);
-        page.replace("%BUSES_TITLE%", WebUiRu::BusesPage::kTitle);
-        page.replace("%BUSES_SCAN_I2C%", WebUiRu::BusesPage::kScanI2C);
-        page.replace("%BUSES_SCAN_OW%", WebUiRu::BusesPage::kScanOw);
-        page.replace("%I2C%", web.listI2cHtml_());
-        page.replace("%OW%", web.listOwHtml_());
-        page.replace("%BUS_DEVICE_SELECT%", "");
-        page.replace("%BUS_STACK_STATUS%", "");
-        page.replace("%BUS_I2C_SCAN_URL%", String("/buses"));
-        page.replace("%BUS_OW_SCAN_URL%", String("/buses"));
-        page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
-        web.sendHtml_(request, page, set_cookie);
-    }
+    static void handleBuses(WebInterface &web, AsyncWebServerRequest *request);
 };

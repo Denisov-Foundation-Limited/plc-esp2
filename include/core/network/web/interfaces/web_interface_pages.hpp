@@ -1,4 +1,15 @@
-﻿#pragma once
+/**********************************************************************/
+/*                                                                    */
+/* Programmable Logic Controller for ESP microcontrollers             */
+/*                                                                    */
+/* Copyright (C) 2026 Denisov Foundation Limited                      */
+/* License: GPLv3                                                     */
+/* Written by Sergey Denisov aka LittleBuster                         */
+/* Email: DenisovFoundationLtd@gmail.com                              */
+/*                                                                    */
+/**********************************************************************/
+
+#pragma once
 
 #include "core/network/web/pages/web_page_page.hpp"
 #include "core/network/web/pages/web_page_manage.hpp"

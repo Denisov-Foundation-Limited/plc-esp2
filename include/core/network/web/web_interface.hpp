@@ -54,8 +54,16 @@
 #include "controllers/controllers.hpp"
 #include "core/rules_controller.hpp"
 #include "core/network/web/interfaces/web_interface_assets.hpp"
-
-class WebInterfaceControllersRingHelper;
+#include "core/network/web/interfaces/web_interface_controllers_sockets.hpp"
+#include "core/network/web/interfaces/web_interface_controllers_lights.hpp"
+#include "core/network/web/interfaces/web_interface_controllers_security.hpp"
+#include "core/network/web/interfaces/web_interface_controllers_meteo.hpp"
+#include "core/network/web/interfaces/web_interface_controllers_thermo.hpp"
+#include "core/network/web/interfaces/web_interface_controllers_septic.hpp"
+#include "core/network/web/interfaces/web_interface_controllers_tanks.hpp"
+#include "core/network/web/interfaces/web_interface_controllers_watering.hpp"
+#include "core/network/web/interfaces/web_interface_controllers_display.hpp"
+#include "core/network/web/interfaces/web_interface_controllers_ring.hpp"
 
 class WebInterface
 {
@@ -303,17 +311,123 @@ private:
     String composeTopFiltersHtml_(const String &device_html, const String &group_html) const;
     uint8_t parseGroupIdParam_(AsyncWebServerRequest *request, const String &name) const;
 
-#define WEB_INTERFACE_CLASS_CONTEXT 1
-#include "core/network/web/interfaces/web_interface_controllers_sockets.hpp"
-#include "core/network/web/interfaces/web_interface_controllers_lights.hpp"
-#include "core/network/web/interfaces/web_interface_controllers_security.hpp"
-#include "core/network/web/interfaces/web_interface_controllers_meteo.hpp"
-#include "core/network/web/interfaces/web_interface_controllers_thermo.hpp"
-#include "core/network/web/interfaces/web_interface_controllers_septic.hpp"
-#include "core/network/web/interfaces/web_interface_controllers_tanks.hpp"
-#include "core/network/web/interfaces/web_interface_controllers_watering.hpp"
-#include "core/network/web/interfaces/web_interface_controllers_display.hpp"
-#undef WEB_INTERFACE_CLASS_CONTEXT
+    size_t socketsLocalRenderCount_() const;
+    String listSocketsHtml_(uint8_t start_id, uint8_t end_id);
+    size_t stackSocketsVisibleCount_(uint32_t node_id) const;
+    String listStackSocketsHtml_(uint32_t node_id, size_t offset, size_t limit);
+    String socketsDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const;
+    String stackSocketsStatusText_(uint32_t node_id) const;
+    bool isStackSocketsView_(uint32_t node_id) const;
+    void handleStackSocketsToggle_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie);
+    void handleStackSocketsEnable_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie);
+    bool requestStackSockets_(uint32_t node_id);
+    String socketPortOptionsJson_(PortIO::PinType type) const;
+    String socketUsedPortsJson_(PortIO::PinType type) const;
+
+    size_t lightsLocalRenderCount_() const;
+    String lightsDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const;
+    String stackLightsStatusText_(uint32_t node_id) const;
+    bool isStackLightsView_(uint32_t node_id) const;
+    void handleStackLightsToggle_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie);
+    bool requestStackLights_(uint32_t node_id);
+    String listLightsHtml_(uint8_t start_id, uint8_t end_id);
+    size_t stackLightsVisibleCount_(uint32_t node_id) const;
+    String listStackLightsHtml_(uint32_t node_id, size_t offset, size_t limit);
+
+    size_t securityLocalRenderCount_() const;
+    String securityDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const;
+    String stackSecurityStatusText_(uint32_t node_id) const;
+    String stackSecurityTitle_(uint32_t node_id) const;
+    bool isStackSecurityView_(uint32_t node_id) const;
+    bool requestStackSecurity_(uint32_t node_id);
+    String listSecuritySensorsHtml_();
+    String listSecuritySensorsTiles_(uint8_t start_idx, uint8_t end_idx);
+    size_t stackSecurityVisibleCount_(uint32_t node_id) const;
+    String listStackSecuritySensorsTiles_(uint32_t node_id, size_t offset, size_t limit);
+    String securityPortOptionsJson_() const;
+    String securityUsedPinsJson_() const;
+
+    size_t meteoLocalRenderCount_() const;
+    String meteoDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const;
+    String stackMeteoStatusText_(uint32_t node_id) const;
+    bool isStackMeteoView_(uint32_t node_id) const;
+    bool requestStackMeteo_(uint32_t node_id);
+    size_t stackMeteoVisibleCount_(uint32_t node_id) const;
+    String listStackMeteoHtml_(uint32_t node_id, size_t offset, size_t limit);
+    String listMeteoHtml_();
+    String listMeteoHtml_(size_t offset, size_t limit);
+    String meteoPortOptionsJson_() const;
+    String meteoUsedPinsJson_() const;
+    String meteoSensorOptionsHtml_(uint8_t selected_id, uint32_t selected_node_id,
+                                   const uint8_t used_local[MeteoController::kSensorCount + 1],
+                                   const uint32_t *used_remote, size_t used_remote_count) const;
+    String meteoRemoteSensorOptionsHtml_(uint8_t selected_id, uint32_t selected_node_id) const;
+    String meteoRemoteNodeOptionsHtml_(uint32_t selected_node_id) const;
+    String meteoRemoteLabel_(uint32_t node_id, uint8_t sensor_id) const;
+    String meteoRemoteSensorName_(uint32_t node_id, uint8_t sensor_id) const;
+    bool meteoRemoteType_(uint32_t node_id, uint8_t sensor_id, MeteoController::SensorType &out) const;
+    bool isMeteoSensorActive_(uint8_t id) const;
+    bool isRemoteMeteoSensorActive_(uint32_t node_id, uint8_t id) const;
+
+    size_t thermoLocalRenderCount_() const;
+    String thermoDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const;
+    String stackThermoStatusText_(uint32_t node_id) const;
+    bool isStackThermoView_(uint32_t node_id) const;
+    bool requestStackThermo_(uint32_t node_id);
+    size_t stackThermoVisibleCount_(uint32_t node_id) const;
+    String listStackThermoHtml_(uint32_t node_id, size_t offset, size_t limit);
+    String listThermoHtml_();
+    String listThermoHtml_(size_t offset, size_t limit);
+    String thermoPortOptionsJson_(PortIO::PinType type) const;
+    String thermoUsedPortsJson_(PortIO::PinType type) const;
+
+    size_t septicLocalRenderCount_() const;
+    String septicDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const;
+    String stackSepticStatusText_(uint32_t node_id) const;
+    bool isStackSepticView_(uint32_t node_id) const;
+    bool requestStackSeptic_(uint32_t node_id);
+    size_t stackSepticVisibleCount_(uint32_t node_id) const;
+    String listStackSepticHtml_(uint32_t node_id, size_t offset, size_t limit);
+    String listSepticHtml_();
+    String listSepticHtml_(size_t offset, size_t limit);
+    String septicPortOptionsJson_(PortIO::PinType type) const;
+    String septicUsedPortsJson_(PortIO::PinType type) const;
+
+    size_t tanksLocalRenderCount_() const;
+    String tanksDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const;
+    String stackTanksStatusText_(uint32_t node_id) const;
+    bool isStackTanksView_(uint32_t node_id) const;
+    bool requestStackTanks_(uint32_t node_id);
+    size_t stackTanksVisibleCount_(uint32_t node_id) const;
+    String listStackTanksHtml_(uint32_t node_id, size_t offset, size_t limit);
+    String listTanksHtml_();
+    String listTanksHtml_(size_t offset, size_t limit);
+    String tankPortOptionsJson_(PortIO::PinType type) const;
+    String tankUsedPortsJson_(PortIO::PinType type) const;
+
+    size_t wateringLocalRenderCount_() const;
+    String wateringDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const;
+    String stackWateringStatusText_(uint32_t node_id) const;
+    bool isStackWateringView_(uint32_t node_id) const;
+    bool requestStackWatering_(uint32_t node_id);
+    size_t stackWateringVisibleCount_(uint32_t node_id) const;
+    String listStackWateringHtml_(uint32_t node_id, size_t offset, size_t limit);
+    String listWateringHtml_();
+    String listWateringHtml_(size_t offset, size_t limit);
+    String wateringPortOptionsJson_() const;
+    String wateringTankOptionsJson_() const;
+    String stackWateringTankOptionsJson_(uint32_t node_id) const;
+
+    String displaySlotsHtml_() const;
+    String displayDeviceOptionsJson_() const;
+    String displaySocketOptionsJson_() const;
+    String displayLightOptionsJson_() const;
+    String displayMeteoOptionsJson_() const;
+    String displayThermoOptionsJson_() const;
+    String displayTankOptionsJson_() const;
+    String displaySepticOptionsJson_() const;
+    String displayAvrOptionsJson_() const;
+    String displayLeakOptionsJson_() const;
 
     String ringDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const;
     bool isStackRingView_(uint32_t node_id) const;

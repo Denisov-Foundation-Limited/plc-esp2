@@ -10,56 +10,13 @@
 /**********************************************************************/
 
 #pragma once
+#include "core/network/web/interfaces/web_interface_handler_base.hpp"
 
-class WebInterface;
-class AsyncWebServer;
-class AsyncWebServerRequest;
 
 class LogsHandler
 {
 public:
-    static void registerRoutes(WebInterface &web, AsyncWebServer &server)
-    {
-        server.on("/logs", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleLogs(web, request); });
-    }
+    static void registerRoutes(WebInterface &web, AsyncWebServer &server);
 
-    static void handleLogs(WebInterface &web, AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!web.checkAuth_(request, &set_cookie))
-            return;
-        if (!web.requireWebAdmin_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceLogsHtml);
-        page.reserve(page.length() + 4096);
-        page.replace("%NAV%", web.navHtml_());
-        String lines;
-        if (web._log)
-        {
-            const size_t count = web._log->recentCount();
-            lines.reserve(count * 96 + 64);
-            if (count == 0)
-            {
-                lines = "No logs";
-            }
-            else
-            {
-                char buf[LOGGER_BUFFER_SIZE] = {};
-                for (size_t i = 0; i < count; ++i)
-                {
-                    if (web._log->getRecentLine(i, buf, sizeof(buf)))
-                    {
-                        web.appendHtmlEscaped_(lines, buf);
-                        lines += "\n";
-                    }
-                }
-            }
-        }
-        else
-        {
-            lines = "Logger unavailable";
-        }
-        page.replace("%LOG_LINES%", lines);
-        web.sendHtml_(request, page, set_cookie);
-    }
+    static void handleLogs(WebInterface &web, AsyncWebServerRequest *request);
 };

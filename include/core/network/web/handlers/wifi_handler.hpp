@@ -10,149 +10,17 @@
 /**********************************************************************/
 
 #pragma once
-
-class WebInterface;
-class AsyncWebServer;
-class AsyncWebServerRequest;
+#include "core/network/web/interfaces/web_interface_handler_base.hpp"
 
 class WifiHandler
 {
 public:
-    static void registerRoutes(WebInterface &web, AsyncWebServer &server)
-    {
-        server.on("/wifi", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleWifi(web, request); });
-    }
+    static void registerRoutes(WebInterface &web, AsyncWebServer &server);
 
-    static void handleWifi(WebInterface &web, AsyncWebServerRequest *request)
-    {
-        bool set_cookie = false;
-        if (!web.checkAuth_(request, &set_cookie))
-            return;
-        if (!web.requireWebAdmin_(request, &set_cookie))
-            return;
-        String page = FPSTR(kWebInterfaceWifiHtml);
-        page.reserve(page.length() + 1536);
-        page.replace("%NAV%", web.navHtml_());
-        page.replace("%WIFI_PAGE_TITLE%", WebUiRu::WifiPage::kPageTitle);
-        page.replace("%WIFI_LABEL_MODE%", WebUiRu::WifiPage::kMode);
-        page.replace("%WIFI_LABEL_PASSWORD%", WebUiRu::WifiPage::kPassword);
-        page.replace("%WIFI_STA_PASSWORD_PLACEHOLDER%", WebUiRu::WifiPage::kStaPasswordPlaceholder);
-        page.replace("%WIFI_LABEL_AP_PASSWORD%", WebUiRu::WifiPage::kApPassword);
-        page.replace("%WIFI_AP_PASSWORD_PLACEHOLDER%", WebUiRu::WifiPage::kApPasswordPlaceholder);
-        page.replace("%WIFI_LABEL_ENABLED%", WebUiRu::WifiPage::kEnabled);
-        page.replace("%WIFI_GSM_TITLE%", WebUiRu::WifiPage::kGsmTitle);
-        page.replace("%WIFI_GSM_STATE%", WebUiRu::WifiPage::kState);
-        page.replace("%WIFI_GSM_OPERATOR%", WebUiRu::WifiPage::kOperator);
-        page.replace("%WIFI_GSM_SIGNAL%", WebUiRu::WifiPage::kSignal);
-        page.replace("%WIFI_GSM_REG%", WebUiRu::WifiPage::kRegistration);
-        page.replace("%WIFI_GSM_ERROR%", WebUiRu::WifiPage::kError);
-        page.replace("%WIFI_GSM_LAST_URC%", WebUiRu::WifiPage::kLastUrc);
-        page.replace("%WIFI_GSM_LAST_SMS%", WebUiRu::WifiPage::kLastSms);
-        page.replace("%WIFI_GSM_LAST_CALL%", WebUiRu::WifiPage::kLastCall);
-        page.replace("%WIFI_GSM_LAST_USSD%", WebUiRu::WifiPage::kLastUssd);
-        page.replace("%WIFI_MODE%", web._wifi.ap() ? "AP" : "STA");
-        page.replace("%WIFI_CUR_SSID%", web._wifi.ap() ? web._wifi.apSsid() : web._wifi.ssid());
-        page.replace("%WIFI_IP%", web.wifiIp_());
-        if (web._wifi.ap())
-        {
-            page.replace("%WIFI_STA_ROW%", "");
-        }
-        else
-        {
-            String row = "<tr><td>";
-            row += WebUiRu::WifiPage::kStaStatusRowLabel;
-            row += "</td><td><strong>";
-            row += web.wifiStaStatus_();
-            row += "</strong></td></tr>";
-            page.replace("%WIFI_STA_ROW%", row);
-        }
-        page.replace("%WIFI_STA_SEL%", web._wifi.ap() ? "" : "selected");
-        page.replace("%WIFI_AP_SEL%", web._wifi.ap() ? "selected" : "");
-        page.replace("%WIFI_SSID%", web._wifi.ssid());
-        page.replace("%WIFI_AP_SSID%", web._wifi.apSsid());
-        page.replace("%SAVE_TEXT%", WebUiRu::kSave);
-        page.replace("%WIFI_STATUS%", web._wifi_status);
-        page.replace("%GSM_STATUS%", web._gsm_status);
-        if (!web._gsm)
-        {
-            page.replace("%GSM_ENABLED_CHECKED%", "");
-            page.replace("%GSM_ENABLED_LABEL%", WebUiRu::WifiPage::kUnavailable);
-            page.replace("%GSM_STARTED_LABEL%", WebUiRu::WifiPage::kUnavailable);
-            page.replace("%GSM_IMEI%", "n/a");
-            page.replace("%GSM_IMSI%", "n/a");
-            page.replace("%GSM_OPERATOR%", "n/a");
-            page.replace("%GSM_SIGNAL%", "n/a");
-            page.replace("%GSM_REG_STATUS%", "n/a");
-            page.replace("%GSM_LAST_ERROR%", "n/a");
-            page.replace("%GSM_LAST_URC%", "n/a");
-            page.replace("%GSM_LAST_SMS%", "n/a");
-            page.replace("%GSM_LAST_CALL%", "n/a");
-            page.replace("%GSM_LAST_USSD%", "n/a");
-            page.replace("%GSM_HTTP_STATUS%", "n/a");
-            page.replace("%GSM_HTTP_LEN%", "n/a");
-        }
-        else
-        {
-            const bool available = ActiveBoardProfile::GSM.enabled;
-            const bool enabled = available && web._gsm->enabled();
-            page.replace("%GSM_ENABLED_CHECKED%", enabled ? "checked" : "");
-            page.replace("%GSM_ENABLED_LABEL%", available ? (enabled ? WebUiRu::WifiPage::kOn : WebUiRu::WifiPage::kOff)
-                                                          : WebUiRu::WifiPage::kUnavailable);
-            page.replace("%GSM_STARTED_LABEL%", web._gsm->started() ? WebUiRu::WifiPage::kStarted
-                                                                    : WebUiRu::WifiPage::kNotStarted);
-            page.replace("%GSM_IMEI%", web.safeHtmlValue_(web._gsm->imei(), "n/a"));
-            page.replace("%GSM_IMSI%", web.safeHtmlValue_(web._gsm->imsi(), "n/a"));
-            page.replace("%GSM_OPERATOR%", web.safeHtmlValue_(web._gsm->operatorName(), "n/a"));
-            page.replace("%GSM_SIGNAL%", web.safeHtmlValue_(formatSignalForWeb_(web._gsm->signalQuality()), "n/a"));
-            page.replace("%GSM_REG_STATUS%", web.safeHtmlValue_(web._gsm->regStatus(), "n/a"));
-            page.replace("%GSM_LAST_ERROR%", web.safeHtmlValue_(web._gsm->lastError(), "n/a"));
-            page.replace("%GSM_LAST_URC%", web.safeHtmlValue_(web._gsm->lastUrc(), "n/a"));
-            page.replace("%GSM_LAST_SMS%",
-                         web._gsm->lastSmsIndex() ? String(web._gsm->lastSmsIndex()) : String("n/a"));
-            page.replace("%GSM_LAST_CALL%", web.safeHtmlValue_(web._gsm->lastCallNumber(), "n/a"));
-            page.replace("%GSM_LAST_USSD%", web.safeHtmlValue_(web._gsm->lastUssd(), "n/a"));
-            page.replace("%GSM_HTTP_STATUS%",
-                         (web._gsm->lastHttpStatus() >= 0) ? String(web._gsm->lastHttpStatus()) : String("n/a"));
-            page.replace("%GSM_HTTP_LEN%",
-                         (web._gsm->lastHttpLen() >= 0) ? String(web._gsm->lastHttpLen()) : String("n/a"));
-        }
-        web.sendHtml_(request, page, set_cookie);
-    }
+    static void handleWifi(WebInterface &web, AsyncWebServerRequest *request);
 
 private:
-    static const char *signalLabel_(int rssi)
-    {
-        if (rssi >= 20)
-            return "best";
-        if (rssi >= 14)
-            return "medium";
-        if (rssi >= 10)
-            return "weak";
-        return "very weak";
-    }
+    static const char *signalLabel_(int rssi);
 
-    static String formatSignalForWeb_(const String &signal)
-    {
-        String v = signal;
-        v.trim();
-        if (!v.length())
-            return "";
-        if (v.indexOf("dBm") >= 0)
-            return v;
-        const int comma = v.indexOf(',');
-        if (comma < 0)
-            return v;
-        const int rssi = v.substring(0, comma).toInt();
-        const int ber = v.substring(comma + 1).toInt();
-        if (rssi < 0 || rssi > 31 || rssi == 99 || (rssi == 0 && ber == 0))
-            return "";
-        const int dbm = -113 + (2 * rssi);
-        String out;
-        out.reserve(32);
-        out += String(dbm);
-        out += " dBm (";
-        out += signalLabel_(rssi);
-        out += ")";
-        return out;
-    }
+    static String formatSignalForWeb_(const String &signal);
 };
