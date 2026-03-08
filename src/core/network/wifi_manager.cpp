@@ -11,6 +11,8 @@
 
 #include "core/network/wifi_manager.hpp"
 
+#include "boards/board_profile.hpp"
+#include "hal/io_stack.hpp"
 #include "utils/logger.hpp"
 
 WifiManager::WifiManager(Logger &log)
@@ -21,6 +23,7 @@ bool WifiManager::begin()
 {
     _last_status = (wl_status_t)0xFF;
     _last_ap_clients = 0xFF;
+    initNetLed_();
 
     if (_ap)
     {
@@ -28,6 +31,7 @@ bool WifiManager::begin()
             _log.info(F("WIFI"), F("Mode: AP (SSID: %s)"), _ap_ssid.c_str());
         WiFi.mode(WIFI_AP);
         const bool ok = WiFi.softAP(_ap_ssid.c_str(), _ap_password.c_str());
+        setNetLed_(ok);
         if (ok && _log.ready())
         {
             const String ip = WiFi.softAPIP().toString();
@@ -55,6 +59,7 @@ bool WifiManager::restart()
 {
     if (_log.ready())
         _log.info(F("WIFI"), F("Restart"));
+    setNetLed_(false);
     WiFi.disconnect(true, true);
     WiFi.mode(WIFI_OFF);
     delay(200);
@@ -71,6 +76,7 @@ void WifiManager::task()
             if (_log.ready())
                 _log.info(F("WIFI"), F("AP clients: %u"), clients);
         }
+        setNetLed_(true);
         return;
     }
 
@@ -86,6 +92,7 @@ void WifiManager::task()
             _log.info(F("WIFI"), F("STA IP %s"), ip.c_str());
         }
     }
+    setNetLed_(st == WL_CONNECTED);
 }
 void WifiManager::setSsid(const String &ssid)
 { _ssid = ssid; }
@@ -97,6 +104,11 @@ void WifiManager::setApSsid(const String &ssid)
 { _ap_ssid = ssid; }
 void WifiManager::setApPassword(const String &password)
 { _ap_password = password; }
+void WifiManager::setIo(IoStack &io)
+{
+    _io = &io;
+    _net_led_initialized = false;
+}
 const String &WifiManager::ssid() const
 { return _ssid; }
 const String &WifiManager::password() const
@@ -139,4 +151,28 @@ const char *WifiManager::statusToString_(wl_status_t st)
     default:
         return kUnknown;
     }
+}
+
+void WifiManager::initNetLed_()
+{
+    if (_net_led_initialized || !_io)
+        return;
+    const uint8_t pin = ActiveBoardProfile::NET_LED_PIN;
+    if (pin == 0xFF)
+        return;
+    _io->pinMode(pin, PortIO::PortMode::Output);
+    _io->write(pin, false);
+    _net_led_state = false;
+    _net_led_initialized = true;
+}
+
+void WifiManager::setNetLed_(bool on)
+{
+    if (!_io)
+        return;
+    initNetLed_();
+    if (!_net_led_initialized || _net_led_state == on)
+        return;
+    _io->write(ActiveBoardProfile::NET_LED_PIN, on);
+    _net_led_state = on;
 }

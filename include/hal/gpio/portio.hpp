@@ -19,7 +19,7 @@
 class PortIO
 {
 public:
-    static constexpr uint8_t PORT_COUNT = 171;
+    static constexpr uint8_t PORT_COUNT = 172;
     using PortId = uint8_t;
 
     enum class PinType : uint8_t

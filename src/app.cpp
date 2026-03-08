@@ -104,6 +104,7 @@ App::App()
           cfg(core, hw, comms, control, ui, net),
           stack(core, hw, comms, control, ui, net, cfg)
 {
+    comms.wifi.setIo(hw.io);
     core.logs.setRtc(hw.rtc);
     ui.console.setStackMaster(&net.network.stackMaster());
     ui.console.setStackSlave(&net.stack_slave);

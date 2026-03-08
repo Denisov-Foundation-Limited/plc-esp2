@@ -641,11 +641,8 @@ void SocketController::applySnapshot(const uint8_t *enabled_mask, const uint8_t 
         if ((enabled_mask[byte] & bit) == 0)
             continue;
         const bool on = (state_mask[byte] & bit) != 0;
-        if (st.relay_on != on)
-        {
-            st.relay_on = on;
-            writeRelay_(cfg, st.relay_on);
-        }
+        st.relay_on = on;
+        writeRelay_(cfg, st.relay_on);
     }
 }
 
@@ -686,11 +683,8 @@ void SocketController::applyLightsSnapshot(const uint8_t *enabled_mask, const ui
         if ((enabled_mask[byte] & bit) == 0)
             continue;
         const bool on = (state_mask[byte] & bit) != 0;
-        if (st.relay_on != on)
-        {
-            st.relay_on = on;
-            writeRelay_(cfg, st.relay_on);
-        }
+        st.relay_on = on;
+        writeRelay_(cfg, st.relay_on);
     }
 }
 

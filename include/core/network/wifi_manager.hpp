@@ -15,6 +15,7 @@
 #include <WiFi.h>
 
 class Logger;
+class IoStack;
 
 class WifiManager
 {
@@ -32,6 +33,7 @@ public:
     void setAp(bool ap);
     void setApSsid(const String &ssid);
     void setApPassword(const String &password);
+    void setIo(IoStack &io);
 
     const String &ssid() const;
     const String &password() const;
@@ -52,4 +54,10 @@ private:
     wl_status_t _last_status = (wl_status_t)0xFF;
     uint8_t _last_ap_clients = 0xFF;
     Logger &_log;
+    IoStack *_io = nullptr;
+    bool _net_led_initialized = false;
+    bool _net_led_state = false;
+
+    void initNetLed_();
+    void setNetLed_(bool on);
 };

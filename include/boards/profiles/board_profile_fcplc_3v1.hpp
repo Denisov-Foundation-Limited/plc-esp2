@@ -56,7 +56,7 @@ struct BoardProfileFCPLC_3v1 : BoardProfileCommon
     static inline constexpr uint8_t BUZZER_PIN = 6;
     static inline constexpr uint8_t STATUS_PIN = 7;
     static inline constexpr uint8_t NET_LED_PIN = 36;
-    static inline constexpr uint8_t MASTER_LED_PIN = NET_LED_PIN;
+    static inline constexpr uint8_t MASTER_LED_PIN = 171;
     static inline constexpr uint8_t FAN_PIN = 37;
     static inline constexpr uint8_t ALARM_LED_PIN = 38;
     static inline constexpr uint8_t BTN_UP_PIN = 39;
@@ -323,6 +323,9 @@ struct BoardProfileFCPLC_3v1 : BoardProfileCommon
         /* 168 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::DInput, .location = PortIO::Location::Ext8, .allow_control = true, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 9, .pin = 13, .inverted = false } } },
         /* 169 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::DInput, .location = PortIO::Location::Ext8, .allow_control = true, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 9, .pin = 14, .inverted = false } } },
         /* 170 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_PU, .mode = PortIO::PortMode::InputPullUp, .type = PortIO::PinType::DInput, .location = PortIO::Location::Ext8, .allow_control = true, .initial_level = true, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 9, .pin = 0, .inverted = false } } },
+
+        // Master LED (Rear pannel extender free pin)
+        /* 171 */ { .backend = PortIO::Backend::Extender, .caps = MCP_GPIO_OUT, .mode = PortIO::PortMode::Output, .type = PortIO::PinType::Led, .location = PortIO::Location::Cpu, .allow_control = false, .initial_level = false, .pwm_enable = false, .pwm = {}, .u = { .ext = { .dev = 1, .pin = 6, .inverted = false } } },
     }};
 
     template <uint8_t P>
