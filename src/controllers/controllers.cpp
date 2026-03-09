@@ -101,7 +101,8 @@ bool Controllers::begin(){
         _logs.error(F("CTRL"), F("Leak init failed"));
         return false;
     }
-    loadFromStorage_();
+    if (_eeprom_load_enabled)
+        loadFromStorage_();
     _logs.info(F("CTRL"), F("Init done"));
     return true;
 }
@@ -259,6 +260,14 @@ bool Controllers::gpioPortUsedByType(uint8_t port, PortIO::PinType type) const{
 
 void Controllers::setSaveIntervalMs(uint32_t ms){ _save_interval_ms = ms; }
 
+bool Controllers::eepromSaveEnabled() const{ return _eeprom_save_enabled; }
+
+bool Controllers::eepromLoadEnabled() const{ return _eeprom_load_enabled; }
+
+void Controllers::setEepromSaveEnabled(bool enabled){ _eeprom_save_enabled = enabled; }
+
+void Controllers::setEepromLoadEnabled(bool enabled){ _eeprom_load_enabled = enabled; }
+
 void Controllers::markPortUsed_(bool used[], uint8_t port){
     if (port < PortIO::PORT_COUNT)
         used[port] = true;
@@ -408,6 +417,8 @@ void Controllers::loadFromStorage_(){
 }
 
 void Controllers::saveIfNeeded_(){
+    if (!_eeprom_save_enabled)
+        return;
     if (!_storage.isReady())
         return;
     const uint32_t now = millis();

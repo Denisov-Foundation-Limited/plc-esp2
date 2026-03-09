@@ -16,6 +16,26 @@
 #include "boards/profile_validator.hpp"
 #include "utils/build_info.hpp"
 
+#ifndef APP_GPIO_SCAN_METRICS
+#define APP_GPIO_SCAN_METRICS 0
+#endif
+
+#ifndef APP_GPIO_SCAN_PERIOD_MS
+#define APP_GPIO_SCAN_PERIOD_MS 1000u
+#endif
+
+#ifndef APP_GPIO_SCAN_WARN_MS
+#define APP_GPIO_SCAN_WARN_MS 100u
+#endif
+
+#ifndef APP_GPIO_SCAN_WARN_CONSECUTIVE
+#define APP_GPIO_SCAN_WARN_CONSECUTIVE 3u
+#endif
+
+#ifndef APP_GPIO_SCAN_REPORT_MS
+#define APP_GPIO_SCAN_REPORT_MS 60000u
+#endif
+
 CoreContext::CoreContext()
         : logs(uart),
           tm(),
@@ -59,10 +79,10 @@ ControlContext::ControlContext(CoreContext &core, HardwareContext &hw, CommsCont
                       hw.rtc),
           rules(),
           meteo_history(hw.rtc, controllers.meteo()),
+          plc_scan(hw.io),
           task_binder(core.tm, comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history,
-                      hw.display, hw.plc, core.logs),
-          ftest(core.logs, hw.io, hw.ow, hw.ibutton, hw.ds18b20, hw.i2c, hw.rtc, hw.ext, core.tm, task_binder),
-          plc_scan(hw.io)
+                      hw.display, hw.plc, plc_scan, core.logs),
+          ftest(core.logs, hw.io, hw.ow, hw.ibutton, hw.ds18b20, hw.i2c, hw.rtc, hw.ext, core.tm, task_binder)
 {
 }
 
@@ -389,5 +409,97 @@ void App::loop()
     ui.console.loop();
     net.network.loop();
     control.task_binder.notifyStackPostNetwork();
+
+#if APP_GPIO_SCAN_METRICS
+    {
+        static uint32_t last_scan_ms = 0;
+        static uint32_t last_report_ms = 0;
+        static uint32_t max_scan_us = 0;
+        static uint32_t max_gap_us = 0;
+        static uint32_t max_gap_overrun_us = 0;
+        static uint32_t prev_scan_started_us = 0;
+        static uint16_t slow_scan_streak = 0;
+        static bool slow_warn_active = false;
+
+        const uint32_t now_ms = millis();
+        if ((uint32_t)(now_ms - last_scan_ms) >= APP_GPIO_SCAN_PERIOD_MS)
+        {
+            last_scan_ms = now_ms;
+
+            uint16_t input_count = 0;
+            uint16_t ext_input_count = 0;
+            const uint32_t started_us = micros();
+            uint32_t gap_us = 0;
+            uint32_t gap_overrun_us = 0;
+            if (prev_scan_started_us != 0)
+            {
+                gap_us = started_us - prev_scan_started_us;
+                const uint32_t expected_gap_us = APP_GPIO_SCAN_PERIOD_MS * 1000u;
+                if (gap_us > expected_gap_us)
+                    gap_overrun_us = gap_us - expected_gap_us;
+            }
+            prev_scan_started_us = started_us;
+
+            for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+            {
+                const auto &p = hw.portio.desc(i);
+                if (p.caps == Cap::None || !has(p.caps, Cap::Input))
+                    continue;
+                ++input_count;
+                if (p.backend == PortIO::Backend::Extender)
+                    ++ext_input_count;
+                (void)hw.portio.read(i);
+            }
+            const uint32_t scan_us = micros() - started_us;
+            if (scan_us > max_scan_us)
+                max_scan_us = scan_us;
+            if (gap_us > max_gap_us)
+                max_gap_us = gap_us;
+            if (gap_overrun_us > max_gap_overrun_us)
+                max_gap_overrun_us = gap_overrun_us;
+
+            const bool slow_scan = (scan_us >= APP_GPIO_SCAN_WARN_MS * 1000u);
+            const bool delayed_scan = (gap_overrun_us >= APP_GPIO_SCAN_WARN_MS * 1000u);
+            const bool slow_condition = (slow_scan || delayed_scan);
+            if (slow_condition)
+                ++slow_scan_streak;
+            else
+                slow_scan_streak = 0;
+
+            if (slow_scan_streak >= APP_GPIO_SCAN_WARN_CONSECUTIVE && !slow_warn_active)
+            {
+                core.logs.warn(F("GPIO"), F("Input scan slow streak: gap_us: %lu max_gap_us: %lu gap_overrun_us: %lu max_gap_overrun_us: %lu scan_us: %lu max_us: %lu streak: %u limit_ms: %u inputs: %u ext_inputs: %u"),
+                               (unsigned long)gap_us,
+                               (unsigned long)max_gap_us,
+                               (unsigned long)gap_overrun_us,
+                               (unsigned long)max_gap_overrun_us,
+                               (unsigned long)scan_us,
+                               (unsigned long)max_scan_us,
+                               (unsigned)slow_scan_streak,
+                               (unsigned)APP_GPIO_SCAN_WARN_MS,
+                               (unsigned)input_count,
+                               (unsigned)ext_input_count);
+                slow_warn_active = true;
+            }
+            if (!slow_condition)
+                slow_warn_active = false;
+
+            if ((uint32_t)(now_ms - last_report_ms) >= APP_GPIO_SCAN_REPORT_MS)
+            {
+                last_report_ms = now_ms;
+                core.logs.info(F("GPIO"), F("Input scan stats: gap_us: %lu max_gap_us: %lu gap_overrun_us: %lu max_gap_overrun_us: %lu scan_us: %lu max_us: %lu inputs: %u ext_inputs: %u"),
+                               (unsigned long)gap_us,
+                               (unsigned long)max_gap_us,
+                               (unsigned long)gap_overrun_us,
+                               (unsigned long)max_gap_overrun_us,
+                               (unsigned long)scan_us,
+                               (unsigned long)max_scan_us,
+                               (unsigned)input_count,
+                               (unsigned)ext_input_count);
+            }
+        }
+    }
+#endif
+
     core.tm.loop();
 }

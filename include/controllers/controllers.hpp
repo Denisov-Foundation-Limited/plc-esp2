@@ -36,7 +36,7 @@ class Controllers
 public:
     Controllers(Gpio &gpio, OneWireManager &ow, EepromStorage &storage, Logger &logs,
                 TelegramBot &tgbot, TelegramAllowedUsersProvider &tgmenu, GsmModem &gsm, RTC &rtc)
-        ;bool begin();void task();void applyConfig(JsonObjectConst cfg);void serialize(JsonObject out) const;SocketController &sockets();const SocketController &sockets() const;MeteoController &meteo();const MeteoController &meteo() const;ThermoController &thermo();const ThermoController &thermo() const;TankController &tanks();const TankController &tanks() const;SepticController &septic();const SepticController &septic() const;SecurityController &security();const SecurityController &security() const;RingController &ring();const RingController &ring() const;WateringController &watering();const WateringController &watering() const;AvrController &avr();const AvrController &avr() const;LeakController &leak();const LeakController &leak() const;void invalidateGpioUsageCache() const;bool gpioPortUsed(uint8_t port) const;bool gpioPortUsedByType(uint8_t port, PortIO::PinType type) const;void setSaveIntervalMs(uint32_t ms);private:
+        ;bool begin();void task();void applyConfig(JsonObjectConst cfg);void serialize(JsonObject out) const;SocketController &sockets();const SocketController &sockets() const;MeteoController &meteo();const MeteoController &meteo() const;ThermoController &thermo();const ThermoController &thermo() const;TankController &tanks();const TankController &tanks() const;SepticController &septic();const SepticController &septic() const;SecurityController &security();const SecurityController &security() const;RingController &ring();const RingController &ring() const;WateringController &watering();const WateringController &watering() const;AvrController &avr();const AvrController &avr() const;LeakController &leak();const LeakController &leak() const;void invalidateGpioUsageCache() const;bool gpioPortUsed(uint8_t port) const;bool gpioPortUsedByType(uint8_t port, PortIO::PinType type) const;void setSaveIntervalMs(uint32_t ms);bool eepromSaveEnabled() const;bool eepromLoadEnabled() const;void setEepromSaveEnabled(bool enabled);void setEepromLoadEnabled(bool enabled);private:
     struct GpioUsageCache
     {
         bool valid = false;
@@ -58,6 +58,8 @@ public:
     Logger &_logs;
     uint32_t _last_save_ms = 0;
     uint32_t _save_interval_ms = 10000;
+    bool _eeprom_save_enabled = true;
+    bool _eeprom_load_enabled = true;
     mutable GpioUsageCache _gpio_usage_cache;
 
     static void markPortUsed_(bool used[], uint8_t port);void rebuildGpioUsageCache_() const;void ensureGpioUsageCache_() const;void loadFromStorage_();void saveIfNeeded_();};

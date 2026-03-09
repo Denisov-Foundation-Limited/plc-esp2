@@ -15,6 +15,16 @@
 - Окружение сборки: `platformio.ini`, `build.ps1`
 - Профили плат и аппаратные маппинги: `include/boards/*`
 
+## Build Profile (fcplc)
+
+- Платформа PlatformIO: `espressif32@6.13.0`
+- Framework: `arduino`
+- Плата: `4d_systems_esp32s3_gen4_r8n16`
+- Включено: `board_build.psram = enabled`
+- Ключевые `build_flags`:
+  - `TASK_BINDER_RTOS_DEBUG=0`
+  - `TASK_BINDER_PLC_SCAN_TICK_MS=5`
+
 ## System Overview
 
 ```mermaid
@@ -70,6 +80,8 @@ flowchart TD
   - `stack_evt` (`taskPost/taskFlush`)
   - `control_loop` для контроллеров
 - `extender`, `display` и `plc` пока оставлены в `TaskManager`.
+- `plc_scan.tick()` на ESP32 остаётся в `App::loop()` (избегаем конкурентного доступа к `Wire/I2C` из нескольких задач).
+- Для не-ESP32 сборок `plc_scan` может быть вынесен в отдельную задачу c интервалом `TASK_BINDER_PLC_SCAN_TICK_MS`.
 - Причина: эти части всё ещё пересекаются с общим state/stack-cache и в текущем безопасном варианте не вынесены в параллельные RTOS-задачи.
 - `TaskManager` остаётся как fallback/cooperative слой для legacy-путей и для тех подсистем, которые ещё не готовы к безопасному параллельному исполнению.
 
@@ -89,6 +101,7 @@ flowchart TD
   - входящие вызовы, SMS/дозвон уведомления, статус регистрации/оператора/сигнала
 - Web UI:
   - ACL, локальный и stack-режимы страниц, быстрые действия и формы настройки
+  - Admin (`/admin`): RTC, buzzer и флаги EEPROM (`Сохранять`, `Загружать`)
 - CLI:
   - иерархические контексты конфигурации, диагностика, управление контроллерами и стеком
 

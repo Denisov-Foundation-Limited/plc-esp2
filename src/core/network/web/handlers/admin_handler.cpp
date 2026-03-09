@@ -45,6 +45,12 @@ void AdminHandler::handleAdmin(WebInterface &web, AsyncWebServerRequest *request
         page.replace("%RTC_TIME_VAL%", rtc_time_val);
         page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         page.replace("%SAVE_RTC_TEXT%", WebUiRu::kSaveRtc);
+        page.replace("%EEPROM_SAVE_TEXT%", WebUiRu::AdminPage::kEepromSave);
+        page.replace("%EEPROM_LOAD_TEXT%", WebUiRu::AdminPage::kEepromLoad);
         page.replace("%BUZZER_CHECKED%", (web._plc && web._plc->buzzerEnabled()) ? "checked" : "");
+        page.replace("%EEPROM_SAVE_CHECKED%",
+                     (web._configs_manager && web._configs_manager->eepromSaveEnabled()) ? "checked" : "");
+        page.replace("%EEPROM_LOAD_CHECKED%",
+                     (web._configs_manager && web._configs_manager->eepromLoadEnabled()) ? "checked" : "");
         web.sendHtml_(request, page, set_cookie);
     }

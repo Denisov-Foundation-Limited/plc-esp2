@@ -499,22 +499,30 @@ bool MeteoController::readDht22_(const MeteoController::SensorConfig &cfg, float
     {
         return false;
     }
-    float t = 0.0f;
-    float h = 0.0f;
     if (_dht22_pin != gpio)
     {
         _dht22.begin(gpio);
         _dht22_pin = gpio;
     }
-    if (!_dht22.read(t, h))
+    for (uint8_t attempt = 0; attempt < kDht22ReadAttempts; ++attempt)
     {
-        return false;
+        float t = 0.0f;
+        float h = 0.0f;
+        if (_dht22.read(t, h))
+        {
+            out_temp = t;
+            out_hum = h;
+            out_has_temp = true;
+            out_has_hum = true;
+            return true;
+        }
+        if (attempt + 1u < kDht22ReadAttempts)
+        {
+            delay(0);
+            delayMicroseconds(kDht22RetryDelayUs);
+        }
     }
-    out_temp = t;
-    out_hum = h;
-    out_has_temp = true;
-    out_has_hum = true;
-    return true;
+    return false;
 }
 
 bool MeteoController::mapDhtPinToGpio_(uint8_t port, uint8_t &gpio){

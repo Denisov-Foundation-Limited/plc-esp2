@@ -761,6 +761,14 @@ void CliConsole::showHelpTopic_(const String &topic)
         _io->println(F("  admin password <pass>   - set admin password"));
         return;
     }
+    if (t == "eeprom")
+    {
+        _io->println(F("EEPROM commands:"));
+        _io->println(F("  eeprom show             - show EEPROM save/load flags"));
+        _io->println(F("  eeprom save <on|off>    - enable/disable EEPROM periodic save"));
+        _io->println(F("  eeprom load <on|off>    - enable/disable EEPROM load on boot"));
+        return;
+    }
     if (t == "tgbot")
     {
         _tgbot_cli.printHelpTopic();
@@ -922,9 +930,12 @@ void CliConsole::handleTab_()
         "help avr",
         "help leak"}};
 
-    static const std::array<const char *, 43> kConfigCmds = {{
+    static const std::array<const char *, 47> kConfigCmds = {{
         "password <pass>",
         "admin password <pass>",
+        "eeprom show",
+        "eeprom save <on|off>",
+        "eeprom load <on|off>",
         "stack role <master|slave>",
         "stack master <host>",
         "stack fallback <on|off>",
@@ -953,6 +964,7 @@ void CliConsole::handleTab_()
         "help show",
         "help wifi",
         "help user",
+        "help eeprom",
         "help system",
         "help tgbot",
         "help cloud",

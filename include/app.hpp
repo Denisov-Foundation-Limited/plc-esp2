@@ -123,10 +123,10 @@ struct ControlContext
     Controllers controllers;
     RulesController rules;
     MeteoHistory meteo_history;
+    PlcScanLoop plc_scan;
 
     TaskBinder<TASK_MGR_TSK_COUNT> task_binder;
     Ftest ftest;
-    PlcScanLoop plc_scan;
 
     ControlContext(CoreContext &core, HardwareContext &hw, CommsContext &comms);
 };

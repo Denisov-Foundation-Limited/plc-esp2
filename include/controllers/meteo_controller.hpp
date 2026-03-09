@@ -70,6 +70,8 @@ public:
     static constexpr uint32_t kDs18b20IntervalMs = 1000;
     static constexpr uint32_t kRemoteIntervalMs = 2000;
     static constexpr uint8_t kFailThreshold = 10;
+    static constexpr uint8_t kDht22ReadAttempts = 2;
+    static constexpr uint16_t kDht22RetryDelayUs = 500;
 
     OneWireManager &_ow;
     Logger &_logs;

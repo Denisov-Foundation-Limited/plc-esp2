@@ -114,6 +114,9 @@
 
 - `password <pass>`
 - `admin password <pass>`
+- `eeprom show`
+- `eeprom save <on|off>`
+- `eeprom load <on|off>`
 
 ### Stack-настройки
 

@@ -75,6 +75,10 @@ public:
             _c._io->println(F("  Admin:"));
             _c._io->println(F("    password <pass>         - set admin password"));
             _c._io->println(F("    admin password <pass>   - set admin password"));
+            _c._io->println(F("  EEPROM:"));
+            _c._io->println(F("    eeprom show             - show EEPROM save/load flags"));
+            _c._io->println(F("    eeprom save <on|off>    - enable/disable EEPROM periodic save"));
+            _c._io->println(F("    eeprom load <on|off>    - enable/disable EEPROM load on boot"));
             _c._io->println(F("  Stack:"));
             _c._io->println(F("    stack role <master|slave> - set device role"));
             _c._io->println(F("    stack master <host>       - set master host/IP"));
@@ -186,6 +190,11 @@ public:
         if (lower.startsWith("stack "))
         {
             handleStack_(cmd, lower);
+            return;
+        }
+        if (lower.startsWith("eeprom "))
+        {
+            handleEeprom_(cmd, lower);
             return;
         }
         if (handleAdminPassword_(cmd, lower))
@@ -933,6 +942,56 @@ private:
         return false;
     }
 
+    void handleEeprom_(const String &cmd, const String &lower)
+    {
+        if (!_c._configs_manager)
+        {
+            _c._io->println(F("Config manager missing"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "eeprom show")
+        {
+            _c._io->println(F("EEPROM:"));
+            _c.printKeyValue_(F("save"), _c._configs_manager->eepromSaveEnabled() ? F("true") : F("false"), 4);
+            _c.printKeyValue_(F("load"), _c._configs_manager->eepromLoadEnabled() ? F("true") : F("false"), 4);
+            _c.printPrompt_();
+            return;
+        }
+        if (lower.startsWith("eeprom save "))
+        {
+            const String value = cmd.substring(12);
+            bool enabled = false;
+            if (!parseOnOff_(value, enabled))
+            {
+                _c._io->println(F("Invalid save value"));
+                _c.printPrompt_();
+                return;
+            }
+            _c._configs_manager->setEepromSaveEnabled(enabled);
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower.startsWith("eeprom load "))
+        {
+            const String value = cmd.substring(12);
+            bool enabled = false;
+            if (!parseOnOff_(value, enabled))
+            {
+                _c._io->println(F("Invalid load value"));
+                _c.printPrompt_();
+                return;
+            }
+            _c._configs_manager->setEepromLoadEnabled(enabled);
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
+    }
+
     void handleStack_(const String &cmd, const String &lower)
     {
         if (lower.startsWith("stack role "))
@@ -1135,6 +1194,23 @@ private:
         }
         buf[32] = '\0';
         return String(buf);
+    }
+
+    static bool parseOnOff_(String value, bool &out)
+    {
+        value.trim();
+        value.toLowerCase();
+        if (value == "on" || value == "1" || value == "true" || value == "yes")
+        {
+            out = true;
+            return true;
+        }
+        if (value == "off" || value == "0" || value == "false" || value == "no")
+        {
+            out = false;
+            return true;
+        }
+        return false;
     }
 
     ConsoleT &_c;

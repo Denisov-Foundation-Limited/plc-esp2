@@ -17,6 +17,7 @@
 #include "core/network/wifi_manager.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
 #include "core/display.hpp"
+#include "core/plc_scan.hpp"
 #include "core/stack/stack_runtime.hpp"
 #include "hal/gpio/extender.hpp"
 #include "controllers/controllers.hpp"
@@ -35,13 +36,17 @@
 #define TASK_BINDER_RTOS_DEBUG 0
 #endif
 
+#ifndef TASK_BINDER_PLC_SCAN_TICK_MS
+#define TASK_BINDER_PLC_SCAN_TICK_MS 1
+#endif
+
 template <size_t N>
 class TaskBinder
 {
 public:
     TaskBinder(TaskManager<N> &tm, WifiManager &wifi, TelegramBot &tgbot, Extender &ext,
                Controllers &controllers, MeteoHistory &meteo_history,
-               Display &display, PlcControl &plc, Logger &logs)
+               Display &display, PlcControl &plc, PlcScanLoop &plc_scan, Logger &logs)
         : _tm(tm),
           _wifi(wifi),
           _tgbot(tgbot),
@@ -50,6 +55,7 @@ public:
           _meteo_history(meteo_history),
           _display(display),
           _plc(plc),
+          _plc_scan(plc_scan),
           _logs(logs)
     {
     }
@@ -61,6 +67,7 @@ public:
         bindCloud_();
         bindTgbot();
         bindExtender();
+        bindPlcScan_();
         bindControllersStorage_();
         bindMeteoHistory_();
         bindDisplay_();
@@ -154,6 +161,20 @@ private:
                 _logs.error(F("TASK"), F("Bind failed: control_loop"));
         }
         return {};
+    }
+
+    typename TaskManager<N>::Handle bindPlcScan_()
+    {
+#if defined(ESP32)
+        // Keep plc_scan in App::loop on ESP32 to avoid concurrent Wire access
+        // from multiple RTOS tasks (extender + RTC/PLC/display/network I2C users).
+        return {};
+#else
+        typename TaskManager<N>::Options opt;
+        opt.interval_ms = TASK_BINDER_PLC_SCAN_TICK_MS;
+        opt.priority = TaskManager<N>::Priority::Highest;
+        return addChecked_<&TaskBinder::plcScanTask_>(*this, opt, "plc_scan");
+#endif
     }
 
     typename TaskManager<N>::Handle bindWiFiManager()
@@ -274,6 +295,7 @@ private:
     MeteoHistory &_meteo_history;
     Display &_display;
     PlcControl &_plc;
+    PlcScanLoop &_plc_scan;
     Logger &_logs;
     GsmModem *_gsm = nullptr;
     CloudClient *_cloud = nullptr;
@@ -304,6 +326,7 @@ private:
     TaskHandle_t _tgbot_task = nullptr;
     TaskHandle_t _meteo_history_task = nullptr;
     TaskHandle_t _control_task = nullptr;
+    TaskHandle_t _plc_scan_task = nullptr;
     TaskHandle_t _gsm_task_rtos = nullptr;
     TaskHandle_t _cloud_task_rtos = nullptr;
     TaskHandle_t _stack_evt_task = nullptr;
@@ -316,6 +339,7 @@ private:
     RtosDebugStats _dbg_tg{};
     RtosDebugStats _dbg_meteo_history{};
     RtosDebugStats _dbg_control{};
+    RtosDebugStats _dbg_plc_scan{};
     RtosDebugStats _dbg_gsm{};
     RtosDebugStats _dbg_cloud{};
     RtosDebugStats _dbg_stack_evt{};
@@ -326,6 +350,11 @@ private:
     {
         if (_wifi.isConnected())
             _tgbot.task();
+    }
+
+    void plcScanTask_()
+    {
+        _plc_scan.tick();
     }
 
     typename TaskManager<N>::Handle bindDisplay_()
@@ -489,22 +518,39 @@ private:
         {
             const uint32_t t0 = micros();
             self->_controllers.task();
-            self->_controllers.sockets().task();
             self->_controllers.meteo().task();
-            self->_controllers.thermo().task();
             self->_controllers.tanks().task();
             self->_controllers.septic().task();
             self->_controllers.security().task();
-            self->_controllers.ring().task();
             self->_controllers.watering().task();
             self->_controllers.avr().task();
             self->_controllers.leak().task();
+            self->_controllers.sockets().task();
+            self->_controllers.thermo().task();
+            self->_controllers.ring().task();
 #if TASK_BINDER_RTOS_DEBUG
             const uint32_t dt = (uint32_t)(micros() - t0);
             const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
             self->updateRtosDebug_("control", dt, hwm, self->_dbg_control);
 #endif
             vTaskDelayUntil(&last, pdMS_TO_TICKS(50));
+        }
+    }
+
+    static void plcScanTaskEntry_(void *arg)
+    {
+        auto *self = static_cast<TaskBinder *>(arg);
+        TickType_t last = xTaskGetTickCount();
+        for (;;)
+        {
+            const uint32_t t0 = micros();
+            self->plcScanTask_();
+#if TASK_BINDER_RTOS_DEBUG
+            const uint32_t dt = (uint32_t)(micros() - t0);
+            const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
+            self->updateRtosDebug_("plc_scan", dt, hwm, self->_dbg_plc_scan);
+#endif
+            vTaskDelayUntil(&last, pdMS_TO_TICKS(TASK_BINDER_PLC_SCAN_TICK_MS));
         }
     }
 
