@@ -126,7 +126,8 @@ private:
     portMUX_TYPE _lock_init_mux = portMUX_INITIALIZER_UNLOCKED;
 #endif
     static constexpr size_t kRecentMax = 30;
-    char _recent[kRecentMax][LOGGER_BUFFER_SIZE] = {};
+    static constexpr size_t kRecentLineSize = LOGGER_BUFFER_SIZE + 48;
+    char _recent[kRecentMax][kRecentLineSize] = {};
     uint8_t _recent_head = 0;
     uint8_t _recent_count = 0;
 

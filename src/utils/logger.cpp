@@ -127,8 +127,8 @@ const char *Logger::levelName_(LoggerLevel l){
 void Logger::storeLine_(const char *line){
     if (!line)
         return;
-    strncpy(_recent[_recent_head], line, LOGGER_BUFFER_SIZE - 1);
-    _recent[_recent_head][LOGGER_BUFFER_SIZE - 1] = '\0';
+    strncpy(_recent[_recent_head], line, kRecentLineSize - 1);
+    _recent[_recent_head][kRecentLineSize - 1] = '\0';
     _recent_head = (uint8_t)((_recent_head + 1) % kRecentMax);
     if (_recent_count < kRecentMax)
         ++_recent_count;

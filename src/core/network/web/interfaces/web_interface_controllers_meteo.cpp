@@ -125,8 +125,6 @@ size_t WebInterfaceControllersMeteoHelper::stackMeteoVisibleCount_(const WebInte
     }
 
 String WebInterfaceControllersMeteoHelper::listStackMeteoHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
-            if (web._stack_cache)
-                web.requestStackTempSensors_(node_id);
             const auto *cache = web._stack_cache->meteoCache(node_id);
             if (!cache || !cache->has_data)
                 return WebUiRu::Meteo::kText;

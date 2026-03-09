@@ -33,20 +33,6 @@ void MeteoHandler::handleRemoteSources(WebInterface &web, AsyncWebServerRequest 
             web.sendText_(request, 200, "text/html; charset=utf-8", "", set_cookie);
             return;
         }
-        if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
-        {
-            web._stack_slave->requestRemoteMeteoAll();
-        }
-        else if (web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_master)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t id = web._stack_master->nodeIdAt(i);
-                if (id != 0)
-                    web.requestStackMeteo_(id);
-            }
-        }
         web.sendText_(request, 200, "text/html; charset=utf-8", web.meteoRemoteSensorOptionsHtml_(0, 0), set_cookie);
     }
 
@@ -71,8 +57,6 @@ void MeteoHandler::handleMeteo(WebInterface &web, AsyncWebServerRequest *request
         uint8_t max_pages = 1;
         if (stack_view)
         {
-            web.requestStackMeteo_(node_id);
-            web.requestStackPorts_(node_id);
             if (!groups_available)
             {
                 const size_t visible = web.stackMeteoVisibleCount_(node_id);
@@ -97,23 +81,6 @@ void MeteoHandler::handleMeteo(WebInterface &web, AsyncWebServerRequest *request
         {
             page_idx = 0;
             max_pages = 1;
-        }
-        if (!stack_view)
-        {
-            if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
-            {
-                web._stack_slave->requestRemoteMeteoAll();
-            }
-            else if (web.stackRole_() == ConfigsManagerIface::StackRole::Master)
-            {
-                const size_t count = web._stack_master ? web._stack_master->nodeCount() : 0;
-                for (size_t i = 0; i < count; ++i)
-                {
-                    const uint32_t id = web._stack_master->nodeIdAt(i);
-                    if (id != 0)
-                        web.requestStackMeteo_(id);
-                }
-            }
         }
         String page = FPSTR(kWebInterfaceMeteoHtml);
         page.reserve(page.length() + 16384);
@@ -339,7 +306,6 @@ void MeteoHandler::handleMeteoSave(WebInterface &web, AsyncWebServerRequest *req
             const auto *cache = web._stack_cache->meteoCache(node_id);
             if (!cache || !cache->has_data || !cache->items)
             {
-                web.requestStackMeteo_(node_id);
                 web._meteo_status = "No data";
                 web.sendRedirect_(request, back, set_cookie);
                 return;
@@ -556,9 +522,6 @@ void MeteoHandler::handleMeteoSave(WebInterface &web, AsyncWebServerRequest *req
             }
             if (changed)
             {
-                web.requestStackMeteo_(node_id);
-                web.refreshStackPorts_(node_id);
-                web.refreshStackTempSensors_(node_id);
                 web._meteo_status = "Updated";
             }
             else
