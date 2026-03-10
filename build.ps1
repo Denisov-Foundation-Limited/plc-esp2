@@ -1,6 +1,7 @@
 param(
     [string]$Environment = "fcplc",
-    [switch]$Clean
+    [switch]$Clean,
+    [switch]$SingleCore
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,7 +20,25 @@ if ($Clean) {
 }
 
 Write-Host "Using PlatformIO: $pioExe"
-Write-Host "Command: pio $($args -join ' ')"
+if ($SingleCore) {
+    $argsSingle = @($args + @("-j", "1"))
+    Write-Host "Command: pio $($argsSingle -join ' ')"
+    & $pioExe @argsSingle
+    exit $LASTEXITCODE
+}
 
-& $pioExe @args
+$jobs = [Environment]::ProcessorCount
+if ($jobs -lt 1) { $jobs = 1 }
+$argsMulti = @($args + @("-j", "$jobs"))
+
+Write-Host "Command: pio $($argsMulti -join ' ')"
+& $pioExe @argsMulti
+if ($LASTEXITCODE -eq 0 -or $jobs -eq 1) {
+    exit $LASTEXITCODE
+}
+
+Write-Host "Build failed, retrying with single core (-j 1)..."
+$argsFallback = @($args + @("-j", "1"))
+Write-Host "Command: pio $($argsFallback -join ' ')"
+& $pioExe @argsFallback
 exit $LASTEXITCODE

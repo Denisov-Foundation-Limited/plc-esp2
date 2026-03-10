@@ -46,6 +46,7 @@ bool MeteoController::begin(){
     _ds_bus = _ow.busPtrById(OneWireManager::OwBusType::Temp);
     if (_ds_bus)
     {
+        _ds18b20.setBusLockCallbacks(&MeteoController::owLockCb_, &MeteoController::owUnlockCb_, this);
         _ds18b20.begin(*_ds_bus);
         _logs.info(F("METEO"), F("DS18B20 bus ready"));
     }
@@ -54,6 +55,19 @@ bool MeteoController::begin(){
         _logs.warn(F("METEO"), F("DS18B20 bus missing"));
     }
     return true;
+}
+
+bool MeteoController::owLockCb_(void *ctx, uint32_t timeout_ms)
+{
+    auto *self = static_cast<MeteoController *>(ctx);
+    return self ? self->_ow.lockBusById(OneWireManager::OwBusType::Temp, timeout_ms) : false;
+}
+
+void MeteoController::owUnlockCb_(void *ctx)
+{
+    auto *self = static_cast<MeteoController *>(ctx);
+    if (self)
+        self->_ow.unlockBusById(OneWireManager::OwBusType::Temp);
 }
 
 void MeteoController::task(){
@@ -499,22 +513,30 @@ bool MeteoController::readDht22_(const MeteoController::SensorConfig &cfg, float
     {
         return false;
     }
-    float t = 0.0f;
-    float h = 0.0f;
     if (_dht22_pin != gpio)
     {
         _dht22.begin(gpio);
         _dht22_pin = gpio;
     }
-    if (!_dht22.read(t, h))
+    for (uint8_t attempt = 0; attempt < kDht22ReadAttempts; ++attempt)
     {
-        return false;
+        float t = 0.0f;
+        float h = 0.0f;
+        if (_dht22.read(t, h))
+        {
+            out_temp = t;
+            out_hum = h;
+            out_has_temp = true;
+            out_has_hum = true;
+            return true;
+        }
+        if (attempt + 1u < kDht22ReadAttempts)
+        {
+            delay(0);
+            delayMicroseconds(kDht22RetryDelayUs);
+        }
     }
-    out_temp = t;
-    out_hum = h;
-    out_has_temp = true;
-    out_has_hum = true;
-    return true;
+    return false;
 }
 
 bool MeteoController::mapDhtPinToGpio_(uint8_t port, uint8_t &gpio){
@@ -626,21 +648,15 @@ void MeteoController::logMeteoStateChange_(const MeteoController::SensorConfig &
     if (prev_ok == st.ok)
         return;
     String name = cfg.name.length() ? cfg.name : String((unsigned)cfg.id);
+    String source;
     if (cfg.source_node_id)
     {
-        String remote;
-        if (_remote_name_cb && _remote_name_cb(_remote_name_ctx, cfg.source_node_id, remote) &&
-            remote.length())
-        {
-            name += " @";
-            name += remote;
-        }
-        else
+        if (!(_remote_name_cb && _remote_name_cb(_remote_name_ctx, cfg.source_node_id, source) &&
+              source.length()))
         {
             char buf[12] = {};
             snprintf(buf, sizeof(buf), "0x%08lX", (unsigned long)cfg.source_node_id);
-            name += " @";
-            name += buf;
+            source = buf;
         }
     }
     SensorType log_type = cfg.type;
@@ -654,11 +670,23 @@ void MeteoController::logMeteoStateChange_(const MeteoController::SensorConfig &
     }
     const char *type = typeNameLog_(log_type);
     if (st.ok)
-        _logs.info(F("METEO"), F("Sensor ok: id: %u name: %s type: %s"),
-                   (unsigned)cfg.id, name.c_str(), type);
+    {
+        if (source.length())
+            _logs.info(F("METEO"), F("Sensor ok: id: %u name: %s source: %s type: %s"),
+                       (unsigned)cfg.id, name.c_str(), source.c_str(), type);
+        else
+            _logs.info(F("METEO"), F("Sensor ok: id: %u name: %s type: %s"),
+                       (unsigned)cfg.id, name.c_str(), type);
+    }
     else
-        _logs.warn(F("METEO"), F("Sensor error: id: %u name: %s type: %s"),
-                   (unsigned)cfg.id, name.c_str(), type);
+    {
+        if (source.length())
+            _logs.warn(F("METEO"), F("Sensor error: id: %u name: %s source: %s type: %s"),
+                       (unsigned)cfg.id, name.c_str(), source.c_str(), type);
+        else
+            _logs.warn(F("METEO"), F("Sensor error: id: %u name: %s type: %s"),
+                       (unsigned)cfg.id, name.c_str(), type);
+    }
     if (_alarm_cb)
         _alarm_cb(_alarm_ctx, cfg.source_node_id, cfg.id, !st.ok);
 }

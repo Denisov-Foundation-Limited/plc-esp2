@@ -120,6 +120,7 @@ public:
 
     bool begin();
     void loop();
+    void setOutputsEnabled(bool enabled);
     Error lastError() const;
     bool lastState(PortId id, bool &outLogical) const;
     const PortDesc &desc(PortId id) const;
@@ -136,6 +137,7 @@ private:
     const std::array<PortDesc, PORT_COUNT> &_ports;
     Extender *_ext;
     Error _err = Error::Ok;
+    bool _outputs_enabled = false;
 
     static constexpr uint8_t kMaxPin =
 #if defined(ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32S3)
@@ -151,5 +153,6 @@ private:
     bool usesExtender_() const;
     static uint8_t toArduinoMode_(PortMode m);
     bool validate_(const PortDesc &p);
+    void applyDeferredOutputs_();
     void restoreExtenderOutputs_(uint8_t dev);
 };

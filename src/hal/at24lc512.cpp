@@ -13,6 +13,29 @@
 #include <Arduino.h>
 #include <Wire.h>
 
+namespace
+{
+struct At24LockGuard
+{
+    At24LockGuard(At24lc512::LockCallback lock_cb, At24lc512::UnlockCallback unlock_cb, void *ctx, uint32_t timeout_ms)
+        : _unlock_cb(unlock_cb), _ctx(ctx)
+    {
+        _locked = lock_cb ? lock_cb(ctx, timeout_ms) : true;
+    }
+    ~At24LockGuard()
+    {
+        if (_locked && _unlock_cb)
+            _unlock_cb(_ctx);
+    }
+    bool locked() const { return _locked; }
+
+private:
+    At24lc512::UnlockCallback _unlock_cb = nullptr;
+    void *_ctx = nullptr;
+    bool _locked = false;
+};
+} // namespace
+
 At24lc512::At24lc512(TwoWire &wire)
     : _wire(&wire)
 {
@@ -26,11 +49,25 @@ bool At24lc512::begin(TwoWire &wire, uint8_t addr)
     return _wire != nullptr;
 }
 
+void At24lc512::setBusLockCallbacks(LockCallback lock_cb, UnlockCallback unlock_cb, void *ctx)
+{
+    _lock_cb = lock_cb;
+    _unlock_cb = unlock_cb;
+    _lock_ctx = ctx;
+}
+
 bool At24lc512::read(uint16_t mem_addr, uint8_t *buf, uint16_t len)
 {
     if (!_wire)
     {
         _err = Error::NoBus;
+        return false;
+    }
+
+    At24LockGuard lk(_lock_cb, _unlock_cb, _lock_ctx, 100);
+    if (!lk.locked())
+    {
+        _err = Error::I2c;
         return false;
     }
 
@@ -66,6 +103,13 @@ bool At24lc512::write(uint16_t mem_addr, const uint8_t *buf, uint16_t len)
     if (!_wire)
     {
         _err = Error::NoBus;
+        return false;
+    }
+
+    At24LockGuard lk(_lock_cb, _unlock_cb, _lock_ctx, 100);
+    if (!lk.locked())
+    {
+        _err = Error::I2c;
         return false;
     }
 

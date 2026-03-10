@@ -47,7 +47,10 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
     {
         Ds3231Mz::DateTime dt{};
         if (!hw.rtc.Time(dt))
-            return false;
+        {
+            memcpy(out, "ERR ", 4);
+            return true;
+        }
         if (slot.field == DisplaySlotField::TimeMin)
             snprintf(out, 5, "%02u ", (unsigned)dt.minute);
         else

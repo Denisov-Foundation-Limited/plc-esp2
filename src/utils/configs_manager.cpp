@@ -63,6 +63,10 @@ String ConfigsManager::cloudApiKey() const{ return _cloud_api_key; }
 
 String ConfigsManager::cloudFirmwareVersion() const{ return _cloud_fw_version; }
 
+bool ConfigsManager::eepromSaveEnabled() const{ return _eeprom_save_enabled; }
+
+bool ConfigsManager::eepromLoadEnabled() const{ return _eeprom_load_enabled; }
+
 size_t ConfigsManager::groupCount() const{
     size_t count = 0;
     for (const auto &g : _groups)
@@ -245,6 +249,20 @@ void ConfigsManager::setCloudFirmwareVersion(const String &ver){
     _network.setCloudFirmwareVersion(ver);
 }
 
+void ConfigsManager::setEepromSaveEnabled(bool enabled){
+    if (enabled == _eeprom_save_enabled)
+        return;
+    _eeprom_save_enabled = enabled;
+    _controllers.setEepromSaveEnabled(enabled);
+}
+
+void ConfigsManager::setEepromLoadEnabled(bool enabled){
+    if (enabled == _eeprom_load_enabled)
+        return;
+    _eeprom_load_enabled = enabled;
+    _controllers.setEepromLoadEnabled(enabled);
+}
+
 void ConfigsManager::setDisplaySlot(size_t idx, const DisplaySlotConfig &slot){
     if (idx >= kDisplaySlotCount)
         return;
@@ -314,6 +332,10 @@ bool ConfigsManager::save(){
     JsonObject plc = _doc["plc"].to<JsonObject>();
     plc["device_name"] = _plc.deviceName();
     plc["buzzer"] = _plc.buzzerEnabled();
+
+    JsonObject eeprom = _doc["eeprom"].to<JsonObject>();
+    eeprom["save"] = _eeprom_save_enabled;
+    eeprom["load"] = _eeprom_load_enabled;
 
     JsonObject s = _doc["stack"].to<JsonObject>();
     s["role"] = (_stack_role == StackRole::Master) ? "master" : "slave";
@@ -387,6 +409,11 @@ bool ConfigsManager::save(const JsonDocument &doc){
     tmp.set(doc);
     if (tmp.overflowed())
         return false;
+    JsonObject eeprom = tmp["eeprom"].is<JsonObject>() ? tmp["eeprom"].as<JsonObject>() : tmp["eeprom"].to<JsonObject>();
+    if (!eeprom["save"].is<bool>())
+        eeprom["save"] = _eeprom_save_enabled;
+    if (!eeprom["load"].is<bool>())
+        eeprom["load"] = _eeprom_load_enabled;
     if (doc["users"].is<JsonArrayConst>())
     {
         _users.applyFromJson(doc["users"].as<JsonArrayConst>());
@@ -746,6 +773,17 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
             }
         }
     }
+
+    if (doc["eeprom"].is<JsonObjectConst>())
+    {
+        JsonObjectConst eeprom = doc["eeprom"].as<JsonObjectConst>();
+        if (eeprom["save"].is<bool>())
+            _eeprom_save_enabled = eeprom["save"].as<bool>();
+        if (eeprom["load"].is<bool>())
+            _eeprom_load_enabled = eeprom["load"].as<bool>();
+    }
+    _controllers.setEepromSaveEnabled(_eeprom_save_enabled);
+    _controllers.setEepromLoadEnabled(_eeprom_load_enabled);
 
     if (doc["gsm"].is<JsonObjectConst>())
     {

@@ -18,6 +18,9 @@ class TwoWire;
 class At24lc512
 {
 public:
+    using LockCallback = bool (*)(void *ctx, uint32_t timeout_ms);
+    using UnlockCallback = void (*)(void *ctx);
+
     enum class Error : uint8_t
     {
         Ok = 0,
@@ -32,6 +35,7 @@ public:
     explicit At24lc512(TwoWire &wire);
 
     bool begin(TwoWire &wire, uint8_t addr = kDefaultAddr);
+    void setBusLockCallbacks(LockCallback lock_cb, UnlockCallback unlock_cb, void *ctx);
     bool read(uint16_t mem_addr, uint8_t *buf, uint16_t len);
     bool write(uint16_t mem_addr, const uint8_t *buf, uint16_t len);
 
@@ -49,4 +53,7 @@ private:
     uint8_t _addr = kDefaultAddr;
     Error _err = Error::Ok;
     uint32_t _used_end = 0;
+    LockCallback _lock_cb = nullptr;
+    UnlockCallback _unlock_cb = nullptr;
+    void *_lock_ctx = nullptr;
 };

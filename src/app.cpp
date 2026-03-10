@@ -16,9 +16,77 @@
 #include "boards/profile_validator.hpp"
 #include "utils/build_info.hpp"
 
+namespace
+{
+void appConsoleLoopCb_(void *ctx)
+{
+    if (!ctx)
+        return;
+    static_cast<CliConsole *>(ctx)->loop();
+}
+
+struct AppI2cLockCtx
+{
+    I2CManager *i2c = nullptr;
+    uint8_t bus = 0;
+};
+AppI2cLockCtx g_app_eeprom_lock_ctx{};
+
+struct AppI2cProbeEntry
+{
+    uint8_t addr;
+    const __FlashStringHelper *name;
+};
+
+bool appI2cLockCb_(void *ctx, uint32_t timeout_ms)
+{
+    AppI2cLockCtx *c = static_cast<AppI2cLockCtx *>(ctx);
+    return c && c->i2c ? c->i2c->lockBus(c->bus, timeout_ms) : false;
+}
+
+void appI2cUnlockCb_(void *ctx)
+{
+    AppI2cLockCtx *c = static_cast<AppI2cLockCtx *>(ctx);
+    if (c && c->i2c)
+        c->i2c->unlockBus(c->bus);
+}
+
+void appLogI2cProbeMap_(Logger &logs, I2CManager &i2c, uint8_t bus,
+                        const AppI2cProbeEntry *items, size_t count)
+{
+    if (!items || count == 0)
+        return;
+    for (size_t i = 0; i < count; ++i)
+    {
+        const bool ok = i2c.probeAddress(bus, items[i].addr);
+        logs.info(F("I2C"), F("Probe: bus: %u addr: 0x%02X dev: %S ok: %s"),
+                  (unsigned)bus, (unsigned)items[i].addr, items[i].name, ok ? "true" : "false");
+    }
+}
+} // namespace
+
+#ifndef APP_GPIO_SCAN_METRICS
+#define APP_GPIO_SCAN_METRICS 0
+#endif
+
+#ifndef APP_GPIO_SCAN_PERIOD_MS
+#define APP_GPIO_SCAN_PERIOD_MS 1000u
+#endif
+
+#ifndef APP_GPIO_SCAN_WARN_MS
+#define APP_GPIO_SCAN_WARN_MS 100u
+#endif
+
+#ifndef APP_GPIO_SCAN_WARN_CONSECUTIVE
+#define APP_GPIO_SCAN_WARN_CONSECUTIVE 3u
+#endif
+
+#ifndef APP_GPIO_SCAN_REPORT_MS
+#define APP_GPIO_SCAN_REPORT_MS 60000u
+#endif
+
 CoreContext::CoreContext()
         : logs(uart),
-          tm(),
           configs()
 {
 }
@@ -59,10 +127,10 @@ ControlContext::ControlContext(CoreContext &core, HardwareContext &hw, CommsCont
                       hw.rtc),
           rules(),
           meteo_history(hw.rtc, controllers.meteo()),
-          task_binder(core.tm, comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history,
-                      hw.display, hw.plc, core.logs),
-          ftest(core.logs, hw.io, hw.ow, hw.ibutton, hw.ds18b20, hw.i2c, hw.rtc, hw.ext, core.tm, task_binder),
-          plc_scan(hw.io)
+          plc_scan(hw.io),
+          task_binder(comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history,
+                      hw.display, hw.plc, plc_scan, core.logs),
+          ftest(core.logs, hw.io, hw.ow, hw.ibutton, hw.ds18b20, hw.i2c, hw.rtc, hw.ext, task_binder)
 {
 }
 
@@ -94,21 +162,20 @@ ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContex
 {
 }
 
-App::App()
-        : core(),
-          hw(core.logs, core.uart),
-          comms(core.logs, core.uart),
+    App::App()
+            : core(),
+              hw(core.logs, core.uart),
+              comms(core.logs, core.uart),
           control(core, hw, comms),
           ui(core, hw, comms, control),
           net(core, hw, comms, control, ui),
-          cfg(core, hw, comms, control, ui, net),
-          stack(core, hw, comms, control, ui, net, cfg)
-{
-    comms.wifi.setIo(hw.io);
-    core.logs.setRtc(hw.rtc);
-    ui.console.setStackMaster(&net.network.stackMaster());
-    ui.console.setStackSlave(&net.stack_slave);
-    ui.console.setConfigsManager(cfg.configs_manager);
+              cfg(core, hw, comms, control, ui, net),
+              stack(core, hw, comms, control, ui, net, cfg)
+    {
+        comms.wifi.setIo(hw.io);
+        ui.console.setStackMaster(&net.network.stackMaster());
+        ui.console.setStackSlave(&net.stack_slave);
+        ui.console.setConfigsManager(cfg.configs_manager);
 
     control.telegram_menu.setConfigsManager(cfg.configs_manager);
     control.telegram_menu.setStackMaster(net.network.stackMaster());
@@ -138,6 +205,8 @@ App::App()
     net.network.setStackConfig(cfg.configs_manager);
     control.task_binder.setGsmModem(comms.gsm);
     control.task_binder.setCloudClient(net.network.cloudClient());
+    control.task_binder.setNetwork(net.network);
+    control.task_binder.setConsoleLoop(&appConsoleLoopCb_, &ui.console);
 
     control.controllers.security().setRfidI2c(&hw.i2c);
     control.controllers.security().setUsersRegistry(control.users);
@@ -256,6 +325,9 @@ bool App::begin()
     core.logs.info(F("APP"), F("Initializing EEPROM"));
     {
         const auto cfg_eeprom = ActiveBoardProfile::EEPROM;
+        g_app_eeprom_lock_ctx.i2c = &hw.i2c;
+        g_app_eeprom_lock_ctx.bus = cfg_eeprom.bus_num;
+        hw.eeprom.setBusLockCallbacks(&appI2cLockCb_, &appI2cUnlockCb_, &g_app_eeprom_lock_ctx);
         TwoWire *wire = hw.i2c.wirePtr(cfg_eeprom.bus_num);
         const bool eeprom_present = wire && hw.i2c.probeAddress(cfg_eeprom.bus_num, cfg_eeprom.addr);
         const bool eeprom_ok = eeprom_present && hw.eeprom.begin(*wire, cfg_eeprom.addr);
@@ -273,7 +345,19 @@ bool App::begin()
     }
 
     core.logs.info(F("APP"), F("Initializing RTC"));
-    if (!hw.rtc.begin())
+    {
+        static constexpr AppI2cProbeEntry kBus0BootProbe[] = {
+            { 0x20, F("mcp0") },
+            { 0x21, F("mcp1") },
+            { 0x22, F("lcd") },
+            { 0x50, F("eeprom") },
+            { 0x68, F("rtc") },
+        };
+        appLogI2cProbeMap_(core.logs, hw.i2c, 0, kBus0BootProbe,
+                           sizeof(kBus0BootProbe) / sizeof(kBus0BootProbe[0]));
+    }
+    const bool rtc_ok = hw.rtc.begin();
+    if (!rtc_ok)
     {
         switch (hw.rtc.lastError())
         {
@@ -291,14 +375,13 @@ bool App::begin()
             break;
         }
     }
+    else
+    {
+        core.logs.setRtc(hw.rtc);
+    }
 
     core.logs.info(F("APP"), F("Initializing Display"));
     const uint8_t bl_pin = ActiveBoardProfile::LCD_BACKLIGHT_PIN;
-    if (bl_pin != 0xFF)
-    {
-        hw.portio.pinMode(bl_pin, PortIO::PortMode::Output);
-        hw.portio.write(bl_pin, true);
-    }
     if (!hw.display.begin())
     {
         switch (hw.display.lastError())
@@ -316,6 +399,11 @@ bool App::begin()
             core.logs.warn(F("APP"), F("LCD Init failed"));
             break;
         }
+    }
+    else if (bl_pin != 0xFF)
+    {
+        hw.portio.pinMode(bl_pin, PortIO::PortMode::Output);
+        hw.portio.write(bl_pin, true);
     }
 
     core.logs.info(F("APP"), F("Initializing PLC Control"));
@@ -378,18 +466,105 @@ bool App::begin()
     control.task_binder.bindAll();
     control.task_binder.bindStack(stack);
     control.plc_scan.begin();
+    control.controllers.restoreFromStorage();
+    hw.io.applyOutputs();
+    hw.portio.setOutputsEnabled(true);
 
     return ok;
 }
 
 void App::loop()
 {
-    stack.setTaskPhase(StackRuntime::TaskPhase::PreNetwork);
-    stack.taskPre();
-    control.plc_scan.tick();
-    ui.console.loop();
-    net.network.loop();
-    stack.setTaskPhase(StackRuntime::TaskPhase::PostNetwork);
-    core.tm.loop();
-    stack.setTaskPhase(StackRuntime::TaskPhase::Idle);
+    control.task_binder.runStackPre(stack);
+
+#if APP_GPIO_SCAN_METRICS
+    {
+        static uint32_t last_scan_ms = 0;
+        static uint32_t last_report_ms = 0;
+        static uint32_t max_scan_us = 0;
+        static uint32_t max_gap_us = 0;
+        static uint32_t max_gap_overrun_us = 0;
+        static uint32_t prev_scan_started_us = 0;
+        static uint16_t slow_scan_streak = 0;
+        static bool slow_warn_active = false;
+
+        const uint32_t now_ms = millis();
+        if ((uint32_t)(now_ms - last_scan_ms) >= APP_GPIO_SCAN_PERIOD_MS)
+        {
+            last_scan_ms = now_ms;
+
+            uint16_t input_count = 0;
+            uint16_t ext_input_count = 0;
+            const uint32_t started_us = micros();
+            uint32_t gap_us = 0;
+            uint32_t gap_overrun_us = 0;
+            if (prev_scan_started_us != 0)
+            {
+                gap_us = started_us - prev_scan_started_us;
+                const uint32_t expected_gap_us = APP_GPIO_SCAN_PERIOD_MS * 1000u;
+                if (gap_us > expected_gap_us)
+                    gap_overrun_us = gap_us - expected_gap_us;
+            }
+            prev_scan_started_us = started_us;
+
+            for (uint8_t i = 0; i < PortIO::PORT_COUNT; ++i)
+            {
+                const auto &p = hw.portio.desc(i);
+                if (p.caps == Cap::None || !has(p.caps, Cap::Input))
+                    continue;
+                ++input_count;
+                if (p.backend == PortIO::Backend::Extender)
+                    ++ext_input_count;
+                (void)hw.portio.read(i);
+            }
+            const uint32_t scan_us = micros() - started_us;
+            if (scan_us > max_scan_us)
+                max_scan_us = scan_us;
+            if (gap_us > max_gap_us)
+                max_gap_us = gap_us;
+            if (gap_overrun_us > max_gap_overrun_us)
+                max_gap_overrun_us = gap_overrun_us;
+
+            const bool slow_scan = (scan_us >= APP_GPIO_SCAN_WARN_MS * 1000u);
+            const bool delayed_scan = (gap_overrun_us >= APP_GPIO_SCAN_WARN_MS * 1000u);
+            const bool slow_condition = (slow_scan || delayed_scan);
+            if (slow_condition)
+                ++slow_scan_streak;
+            else
+                slow_scan_streak = 0;
+
+            if (slow_scan_streak >= APP_GPIO_SCAN_WARN_CONSECUTIVE && !slow_warn_active)
+            {
+                core.logs.warn(F("GPIO"), F("Input scan slow streak: gap_us: %lu max_gap_us: %lu gap_overrun_us: %lu max_gap_overrun_us: %lu scan_us: %lu max_us: %lu streak: %u limit_ms: %u inputs: %u ext_inputs: %u"),
+                               (unsigned long)gap_us,
+                               (unsigned long)max_gap_us,
+                               (unsigned long)gap_overrun_us,
+                               (unsigned long)max_gap_overrun_us,
+                               (unsigned long)scan_us,
+                               (unsigned long)max_scan_us,
+                               (unsigned)slow_scan_streak,
+                               (unsigned)APP_GPIO_SCAN_WARN_MS,
+                               (unsigned)input_count,
+                               (unsigned)ext_input_count);
+                slow_warn_active = true;
+            }
+            if (!slow_condition)
+                slow_warn_active = false;
+
+            if ((uint32_t)(now_ms - last_report_ms) >= APP_GPIO_SCAN_REPORT_MS)
+            {
+                last_report_ms = now_ms;
+                core.logs.info(F("GPIO"), F("Input scan stats: gap_us: %lu max_gap_us: %lu gap_overrun_us: %lu max_gap_overrun_us: %lu scan_us: %lu max_us: %lu inputs: %u ext_inputs: %u"),
+                               (unsigned long)gap_us,
+                               (unsigned long)max_gap_us,
+                               (unsigned long)gap_overrun_us,
+                               (unsigned long)max_gap_overrun_us,
+                               (unsigned long)scan_us,
+                               (unsigned long)max_scan_us,
+                               (unsigned)input_count,
+                               (unsigned)ext_input_count);
+            }
+        }
+    }
+#endif
 }

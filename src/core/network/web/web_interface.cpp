@@ -161,6 +161,8 @@ void WebInterface::registerRoutes()
             return;
         const bool has_rtc = request->hasParam("rtc_date", true) || request->hasParam("rtc_time", true);
         const bool has_buzzer = request->hasParam("buzzer_present", true);
+        const bool has_eeprom = request->hasParam("eeprom_present", true);
+        const bool has_system = has_buzzer || has_eeprom;
 
         if (has_rtc)
         {
@@ -194,14 +196,29 @@ void WebInterface::registerRoutes()
             }
             const bool enabled = request->hasParam("buzzer_enabled", true);
             _plc->setBuzzerEnabled(enabled);
-            if (_configs_manager && !_configs_manager->save())
+        }
+
+        if (has_eeprom)
+        {
+            if (!_configs_manager)
+            {
+                sendText_(request, 500, "text/plain", "Config manager unavailable", set_cookie);
+                return;
+            }
+            _configs_manager->setEepromSaveEnabled(request->hasParam("eeprom_save", true));
+            _configs_manager->setEepromLoadEnabled(request->hasParam("eeprom_load", true));
+        }
+
+        if (has_system)
+        {
+            if (!_configs_manager || !_configs_manager->save())
             {
                 sendText_(request, 500, "text/plain", "Save failed", set_cookie);
                 return;
             }
         }
 
-        if (!has_rtc && !has_buzzer)
+        if (!has_rtc && !has_system)
         {
             sendText_(request, 400, "text/plain", "Missing data", set_cookie);
             return;

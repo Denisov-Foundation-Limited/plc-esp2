@@ -18,24 +18,39 @@ IButton::IButton(OneWireBus &bus)
 
 bool IButton::begin(OneWireBus &bus)
 {
+    if (!lockBus_())
+        return false;
     _bus = &bus;
     _bus->reset_search();
+    unlockBus_();
     return true;
 }
 
 bool IButton::readSerial(uint8_t out[8])
 {
+    if (!lockBus_())
+        return false;
     OneWireBus *bus = bus_();
     if (!bus)
+    {
+        unlockBus_();
         return false;
+    }
 
     bus->reset_search();
     if (!bus->search(out))
+    {
+        unlockBus_();
         return false;
+    }
 
     if (OneWireBus::crc8(out, 7) != out[7])
+    {
+        unlockBus_();
         return false;
+    }
 
+    unlockBus_();
     return true;
 }
 
@@ -90,4 +105,24 @@ String IButton::readSerialString()
 OneWireBus *IButton::bus_()
 {
     return _bus;
+}
+
+void IButton::setBusLockCallbacks(BusLockCallback lock_cb, BusUnlockCallback unlock_cb, void *ctx)
+{
+    _bus_lock_cb = lock_cb;
+    _bus_unlock_cb = unlock_cb;
+    _bus_lock_ctx = ctx;
+}
+
+bool IButton::lockBus_(uint32_t timeout_ms)
+{
+    if (_bus_lock_cb)
+        return _bus_lock_cb(_bus_lock_ctx, timeout_ms);
+    return true;
+}
+
+void IButton::unlockBus_()
+{
+    if (_bus_unlock_cb)
+        _bus_unlock_cb(_bus_lock_ctx);
 }

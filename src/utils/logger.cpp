@@ -18,28 +18,45 @@ using LoggerLevel = Logger::Level;
 
 Logger::Logger(UartManager &uart) : uart_(uart){}
 
-void Logger::begin(Stream &out){ _out = &out; }
+void Logger::begin(Stream &out){
+    ensureLock_();
+    _out = &out;
+}
 
 bool Logger::ready() const{ return _out != nullptr; }
 
 void Logger::setRtc(RTC &rtc){ _rtc = &rtc; }
 
-size_t Logger::recentCount() const{ return _recent_count; }
+size_t Logger::recentCount() const{
+    const_cast<Logger *>(this)->lock_();
+    const size_t out = _recent_count;
+    const_cast<Logger *>(this)->unlock_();
+    return out;
+}
 
 bool Logger::getRecentLine(size_t idx, char *out, size_t cap) const{
+    const_cast<Logger *>(this)->lock_();
     if (!out || cap == 0)
+    {
+        const_cast<Logger *>(this)->unlock_();
         return false;
+    }
     if (idx >= _recent_count)
+    {
+        const_cast<Logger *>(this)->unlock_();
         return false;
+    }
     const size_t start = (_recent_count < kRecentMax) ? 0 : _recent_head;
     const size_t pos = (start + idx) % kRecentMax;
     strncpy(out, _recent[pos], cap - 1);
     out[cap - 1] = '\0';
+    const_cast<Logger *>(this)->unlock_();
     return true;
 }
 
 bool Logger::beginAuto(){
     const LogCfg cfg = ActiveBoardProfile::LOG;
+    ensureLock_();
 
     if (cfg.sink == LogCfg::Sink::UsbSerial)
     {
@@ -58,6 +75,17 @@ bool Logger::beginAuto(){
     }
 
     return false;
+}
+
+void Logger::ensureLock_(){
+#if defined(ESP32)
+    if (_lock != nullptr)
+        return;
+    portENTER_CRITICAL(&_lock_init_mux);
+    if (_lock == nullptr)
+        _lock = xSemaphoreCreateMutex();
+    portEXIT_CRITICAL(&_lock_init_mux);
+#endif
 }
 
 char Logger::levelChar_(LoggerLevel l){
@@ -99,8 +127,8 @@ const char *Logger::levelName_(LoggerLevel l){
 void Logger::storeLine_(const char *line){
     if (!line)
         return;
-    strncpy(_recent[_recent_head], line, LOGGER_BUFFER_SIZE - 1);
-    _recent[_recent_head][LOGGER_BUFFER_SIZE - 1] = '\0';
+    strncpy(_recent[_recent_head], line, kRecentLineSize - 1);
+    _recent[_recent_head][kRecentLineSize - 1] = '\0';
     _recent_head = (uint8_t)((_recent_head + 1) % kRecentMax);
     if (_recent_count < kRecentMax)
         ++_recent_count;
@@ -147,5 +175,20 @@ bool Logger::formatTimestamp_(char *out, size_t cap){
     (void)out;
     (void)cap;
     return false;
+#endif
+}
+
+void Logger::lock_(){
+#if defined(ESP32)
+    ensureLock_();
+    if (_lock)
+        xSemaphoreTake(_lock, portMAX_DELAY);
+#endif
+}
+
+void Logger::unlock_(){
+#if defined(ESP32)
+    if (_lock)
+        xSemaphoreGive(_lock);
 #endif
 }

@@ -18,7 +18,6 @@
 #include "boards/board_profile.hpp"
 
 #include "core/task_binder.hpp"
-#include "core/task_manager.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/network/gsm_modem.hpp"
 #include "core/rtc.hpp"
@@ -66,7 +65,6 @@ struct CoreContext
 {
     UartManager uart;
     Logger logs;
-    TaskManager<TASK_MGR_TSK_COUNT> tm;
     Configs configs;
 
     CoreContext();
@@ -123,10 +121,10 @@ struct ControlContext
     Controllers controllers;
     RulesController rules;
     MeteoHistory meteo_history;
-
-    TaskBinder<TASK_MGR_TSK_COUNT> task_binder;
-    Ftest ftest;
     PlcScanLoop plc_scan;
+
+    TaskBinder task_binder;
+    Ftest ftest;
 
     ControlContext(CoreContext &core, HardwareContext &hw, CommsContext &comms);
 };

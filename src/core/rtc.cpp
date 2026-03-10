@@ -19,7 +19,9 @@ RTC::RTC(I2CManager &i2c, Ds3231Mz &rtc) : _i2c(i2c), _rtc(rtc) {}
 bool RTC::begin()
 {
     const uint8_t bus_num = ActiveBoardProfile::RTC.bus_num;
+    _bus_num = bus_num;
     const uint8_t addr = ActiveBoardProfile::RTC.addr;
+    _ready = false;
     if (!busExists_(bus_num))
     {
         _err = Error::InvalidConfig;
@@ -33,21 +35,45 @@ bool RTC::begin()
         return false;
     }
 
-    if (!_rtc.begin(*wire, addr))
     {
-        _err = Error::I2c;
-        return false;
+        I2CManager::ScopedBusLock lk(_i2c, _bus_num);
+        if (!lk.locked())
+        {
+            _err = Error::I2c;
+            return false;
+        }
+        if (!_i2c.probeAddressLocked(_bus_num, addr))
+        {
+            _err = Error::I2c;
+            return false;
+        }
+        if (!_rtc.begin(*wire, addr))
+        {
+            _err = Error::I2c;
+            return false;
+        }
     }
 
     _err = Error::Ok;
+    _ready = true;
     return true;
 }
 
 bool RTC::setTime(const Ds3231Mz::DateTime &dt)
 {
+    if (!_ready && !begin())
+        return false;
+    I2CManager::ScopedBusLock lk(_i2c, _bus_num);
+    if (!lk.locked())
+    {
+        _err = Error::I2c;
+        _ready = false;
+        return false;
+    }
     if (!_rtc.set(dt))
     {
         _err = Error::I2c;
+        _ready = false;
         return false;
     }
     _err = Error::Ok;
@@ -56,9 +82,19 @@ bool RTC::setTime(const Ds3231Mz::DateTime &dt)
 
 bool RTC::Time(Ds3231Mz::DateTime &out)
 {
+    if (!_ready && !begin())
+        return false;
+    I2CManager::ScopedBusLock lk(_i2c, _bus_num);
+    if (!lk.locked())
+    {
+        _err = Error::I2c;
+        _ready = false;
+        return false;
+    }
     if (!_rtc.read(out))
     {
         _err = Error::I2c;
+        _ready = false;
         return false;
     }
     _err = Error::Ok;
@@ -67,9 +103,19 @@ bool RTC::Time(Ds3231Mz::DateTime &out)
 
 bool RTC::readTemp(float &out_c)
 {
+    if (!_ready && !begin())
+        return false;
+    I2CManager::ScopedBusLock lk(_i2c, _bus_num);
+    if (!lk.locked())
+    {
+        _err = Error::I2c;
+        _ready = false;
+        return false;
+    }
     if (!_rtc.readTempC(out_c))
     {
         _err = Error::I2c;
+        _ready = false;
         return false;
     }
     _err = Error::Ok;

@@ -70,6 +70,8 @@ public:
     static constexpr uint32_t kDs18b20IntervalMs = 1000;
     static constexpr uint32_t kRemoteIntervalMs = 2000;
     static constexpr uint8_t kFailThreshold = 10;
+    static constexpr uint8_t kDht22ReadAttempts = 2;
+    static constexpr uint16_t kDht22RetryDelayUs = 500;
 
     OneWireManager &_ow;
     Logger &_logs;
@@ -95,5 +97,5 @@ public:
     AlarmHandler _alarm_cb = nullptr;
     void *_alarm_ctx = nullptr;
 
-    void reset_();bool indexById_(uint8_t id, size_t &out) const;bool readIfDue_(size_t idx, uint32_t now);bool readRemoteIfDue_(const SensorConfig &cfg, SensorState &st, uint32_t now);bool readDs18b20IfDue_(const SensorConfig &cfg, SensorState &st, uint32_t now);bool readDht22_(const SensorConfig &cfg, float &out_temp, bool &out_has_temp, float &out_hum, bool &out_has_hum);static bool mapDhtPinToGpio_(uint8_t port, uint8_t &gpio);static SensorType parseType_(JsonVariantConst v);static bool parsePin_(JsonVariantConst v, uint8_t &out);static const char *typeName_(SensorType type);static const char *typeNameLog_(SensorType type);static int hexNibble_(char c);void updateDs18Conversion_(uint32_t now);void logMeteoStateChange_(const SensorConfig &cfg, const SensorState &st, bool prev_ok);void applyReadResult_(const SensorConfig &cfg, SensorState &st, bool ok, bool has_temp, float temp_c, bool has_hum,
+    void reset_();bool indexById_(uint8_t id, size_t &out) const;bool readIfDue_(size_t idx, uint32_t now);bool readRemoteIfDue_(const SensorConfig &cfg, SensorState &st, uint32_t now);bool readDs18b20IfDue_(const SensorConfig &cfg, SensorState &st, uint32_t now);bool readDht22_(const SensorConfig &cfg, float &out_temp, bool &out_has_temp, float &out_hum, bool &out_has_hum);static bool mapDhtPinToGpio_(uint8_t port, uint8_t &gpio);static SensorType parseType_(JsonVariantConst v);static bool parsePin_(JsonVariantConst v, uint8_t &out);static const char *typeName_(SensorType type);static const char *typeNameLog_(SensorType type);static int hexNibble_(char c);void updateDs18Conversion_(uint32_t now);void logMeteoStateChange_(const SensorConfig &cfg, const SensorState &st, bool prev_ok);static bool owLockCb_(void *ctx, uint32_t timeout_ms);static void owUnlockCb_(void *ctx);void applyReadResult_(const SensorConfig &cfg, SensorState &st, bool ok, bool has_temp, float temp_c, bool has_hum,
                           float hum);};
