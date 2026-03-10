@@ -67,7 +67,7 @@ struct BoardProfileFCPLC_3v1 : BoardProfileCommon
     // ---- I2C ----
     static inline constexpr uint8_t I2C_COUNT = 2;
     static inline constexpr std::array<I2cCfg, I2C_COUNT> I2CS{{
-        /*  0 */ { .bus_num = 0, .sda = 24, .scl = 25, .freq = 400000 },
+        /*  0 */ { .bus_num = 0, .sda = 24, .scl = 25, .freq = 100000 },
         /*  1 */ { .bus_num = 1, .sda = 26, .scl = 27, .freq = 400000 }
     }};
     static inline constexpr uint8_t RFID_I2C_INDEX = 1;

@@ -139,11 +139,14 @@ bool I2CManager::probeAddressLocked(uint8_t bus_num, uint8_t addr)
         return false;
     }
     w->beginTransmission(addr);
-    if (w->endTransmission() == 0)
+    const uint8_t first = w->endTransmission();
+    if (first == 0)
         return true;
-    recoverBus_(bus_num);
-    w->beginTransmission(addr);
-    return w->endTransmission() == 0;
+
+    // Probe path must be side-effect free under RTOS load:
+    // return only ACK/NACK status and do not toggle SDA/SCL here.
+    // Bus recovery is handled by dedicated paths, not by every probe.
+    return false;
 }
 
 bool I2CManager::lockBus(uint8_t bus_num, uint32_t timeout_ms)

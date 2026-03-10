@@ -39,7 +39,7 @@ public:
         uint16_t port = 0;
         String path = "/";
         bool use_ssl = false;
-        uint32_t reconnect_ms = 5000;
+        uint32_t reconnect_ms = 15000;
     };
 
     CloudClient(Logger &log, Controllers &controllers, PlcControl &plc, WifiManager &wifi, RTC &rtc);
@@ -141,6 +141,8 @@ private:
     uint32_t _last_hello_ms = 0;
     uint32_t _last_disconnect_ms = 0;
     bool _disconnect_reported = false;
+    uint32_t _reconnect_backoff_until_ms = 0;
+    uint8_t _reconnect_fail_streak = 0;
 
     PendingRequest _pending[kMaxPending] = {};
     PendingStackCmd _stack_cmds[kMaxStackCmds] = {};

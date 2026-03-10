@@ -46,6 +46,7 @@ SecurityController::SecurityController(Gpio &gpio, OneWireManager &ow, Logger &l
 }
 
 bool SecurityController::begin(){
+    _runtime_ready = true;
     if (!_controller_enabled)
         return true;
     _rfid_disabled_startup_missing = false;
@@ -571,6 +572,10 @@ void SecurityController::setControllerEnabled(bool enabled){
         return;
     }
     _logs.info(F("SECURITY"), F("controller: enabled"));
+    // Config can enable security before HAL has initialized I2C/OneWire.
+    // Defer all hardware touches until begin() marks runtime ready.
+    if (!_runtime_ready)
+        return;
     setupOutputs_();
     initIButton_();
     initRfid_();

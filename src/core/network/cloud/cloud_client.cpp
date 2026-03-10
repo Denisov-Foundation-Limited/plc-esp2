@@ -44,6 +44,25 @@ uint32_t parseNodeId_(JsonVariantConst v)
     }
     return 0;
 }
+
+uint32_t cloudBackoffMs_(uint8_t streak, uint32_t base_ms)
+{
+    const uint32_t base = (base_ms < 15000u) ? 15000u : base_ms;
+    if (streak == 0)
+        return base;
+    const uint8_t shift = (streak > 3) ? 3 : streak;
+    uint32_t out = base << shift;
+    if (out > 120000u)
+        out = 120000u;
+    return out;
+}
+
+void cloudLogMem_(Logger &log, const __FlashStringHelper *prefix)
+{
+    log.warn(F("CLOUD"), F("%S heap_free: %lu min_heap: %lu psram_free: %lu"),
+             prefix ? prefix : F("mem"), (unsigned long)ESP.getFreeHeap(),
+             (unsigned long)ESP.getMinFreeHeap(), (unsigned long)ESP.getFreePsram());
+}
 } // namespace
 
 CloudClient::CloudClient(Logger &log, Controllers &controllers, PlcControl &plc, WifiManager &wifi, RTC &rtc)
@@ -102,6 +121,8 @@ void CloudClient::begin(const CloudClient::Config &cfg)
     _cfg = cfg;
     if (_cfg.path.length() == 0)
         _cfg.path = "/";
+    if (_cfg.reconnect_ms < 15000u)
+        _cfg.reconnect_ms = 15000u;
     _log.info(F("CLOUD"), F("WS begin: %s:%u%s%s"),
               _cfg.host.c_str(), _cfg.port,
               _cfg.use_ssl ? " ssl " : " ",
@@ -128,6 +149,13 @@ void CloudClient::loop()
         handlePendingTimeouts_();
         return;
     }
+    const uint32_t now = millis();
+    if (!isConnected() && _reconnect_backoff_until_ms != 0 &&
+        (int32_t)(now - _reconnect_backoff_until_ms) < 0)
+    {
+        handlePendingTimeouts_();
+        return;
+    }
     _ws.loop();
     maintainConnectionHealth_();
     handlePendingTimeouts_();
@@ -143,6 +171,8 @@ void CloudClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
         _last_connect_ms = millis();
         _last_rx_ms = _last_connect_ms;
         _last_disconnect_ms = 0;
+        _reconnect_backoff_until_ms = 0;
+        _reconnect_fail_streak = 0;
         if (_disconnect_reported)
             _log.info(F("CLOUD"), F("WS connection restored"));
         _disconnect_reported = false;
@@ -165,6 +195,12 @@ void CloudClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
         {
             _log.warn(F("CLOUD"), F("WS error"));
         }
+        ++_reconnect_fail_streak;
+        const uint32_t wait_ms = cloudBackoffMs_(_reconnect_fail_streak, _cfg.reconnect_ms);
+        _reconnect_backoff_until_ms = millis() + wait_ms;
+        _log.warn(F("CLOUD"), F("WS backoff: %lu ms fail_streak: %u"),
+                  (unsigned long)wait_ms, (unsigned)_reconnect_fail_streak);
+        cloudLogMem_(_log, F("WS error mem"));
         break;
     }
     case WStype_TEXT:
@@ -177,12 +213,15 @@ void CloudClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
     case WStype_DISCONNECTED:
         _session_id = "";
         _last_disconnect_ms = millis();
+        ++_reconnect_fail_streak;
+        _reconnect_backoff_until_ms = _last_disconnect_ms + cloudBackoffMs_(_reconnect_fail_streak, _cfg.reconnect_ms);
         clearPending_();
         if (!_disconnect_reported)
         {
             _log.warn(F("CLOUD"), F("WS disconnected"));
             _disconnect_reported = true;
         }
+        cloudLogMem_(_log, F("WS disconnected mem"));
         break;
     default:
         break;
@@ -281,6 +320,8 @@ void CloudClient::maintainConnectionHealth_()
     const bool connected = isConnected();
     if (!connected)
     {
+        if (_reconnect_backoff_until_ms != 0 && (int32_t)(now - _reconnect_backoff_until_ms) < 0)
+            return;
         if (_last_disconnect_ms == 0)
             _last_disconnect_ms = now;
         if (_cfg.host.length() &&

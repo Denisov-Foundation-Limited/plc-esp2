@@ -110,6 +110,7 @@ public:
     uint8_t _last_rfid_len = 0;
     uint32_t _last_rfid_ms = 0;
     uint32_t _last_rfid_poll_ms = 0;
+    bool _runtime_ready = false;
     bool _controller_enabled = false;
     bool _armed = false;
     bool _alarm_on = false;

@@ -11,6 +11,7 @@
 
 #include "hal/gpio/extender.hpp"
 
+#include <Arduino.h>
 #include <Wire.h>
 #include "hal/bus/i2c.hpp"
 #include "utils/logger.hpp"
@@ -30,6 +31,7 @@ void Extender::initState_()
         _dev_failed[i] = false;
         _present[i] = false;
         _warned_missing[i] = false;
+        _miss_streak[i] = 0;
     }
 }
 
@@ -64,7 +66,13 @@ void Extender::logPresentChange_(uint8_t dev, bool present) const
     if (present)
         _log->info(F("EXT"), F("Extender %u detected"), dev);
     else
+    {
         _log->warn(F("EXT"), F("Extender %u missing"), dev);
+        _log->warn(F("EXT"), F("mem heap_free: %lu min_heap: %lu psram_free: %lu"),
+                   (unsigned long)ESP.getFreeHeap(),
+                   (unsigned long)ESP.getMinFreeHeap(),
+                   (unsigned long)ESP.getFreePsram());
+    }
 }
 
 void Extender::setPresent_(uint8_t dev, bool present) const
@@ -76,6 +84,7 @@ void Extender::setPresent_(uint8_t dev, bool present) const
     logPresentChange_(dev, present);
     if (!present)
     {
+        _miss_streak[dev] = 0;
         _mcp_inited[dev] = false;
         _pcf_inited[dev] = false;
         _mcp_cache_valid[dev] = 0;
@@ -86,10 +95,34 @@ void Extender::setPresent_(uint8_t dev, bool present) const
     }
     else
     {
+        _miss_streak[dev] = 0;
         _dev_failed[dev] = false;
         _mcp_cache_valid[dev] = 0;
         _pcf_cache_valid[dev] = 0;
     }
+}
+
+void Extender::noteProbeResult_(uint8_t dev, bool present) const
+{
+    if (dev >= _dev_count)
+        return;
+    if (present)
+    {
+        _miss_streak[dev] = 0;
+        setPresent_(dev, true);
+        return;
+    }
+
+    // Avoid false "missing" flaps on occasional I2C probe timeouts.
+    if (_present[dev] && _miss_confirm_count > 1)
+    {
+        if (_miss_streak[dev] < 0xFF)
+            ++_miss_streak[dev];
+        if (_miss_streak[dev] < _miss_confirm_count)
+            return;
+    }
+
+    setPresent_(dev, false);
 }
 
 bool Extender::begin()
@@ -146,6 +179,15 @@ void Extender::noteRuntimeIoFailure_(uint8_t dev) const
 {
     if (dev >= _dev_count)
         return;
+    // Runtime I/O can fail transiently (contention/noise). Confirm before
+    // dropping device to avoid one-shot detected/missing flaps.
+    if (_present[dev] && _miss_confirm_count > 1)
+    {
+        if (_miss_streak[dev] < 0xFF)
+            ++_miss_streak[dev];
+        if (_miss_streak[dev] < _miss_confirm_count)
+            return;
+    }
     setPresent_(dev, false);
 }
 
@@ -208,7 +250,7 @@ void Extender::scanDeviceLocked_(uint8_t i)
         setPresent_(i, false);
         return;
     }
-    setPresent_(i, _i2c->probeAddressLocked(bus, addr));
+    noteProbeResult_(i, _i2c->probeAddressLocked(bus, addr));
 }
 
 bool Extender::isPresent(uint8_t dev) const
