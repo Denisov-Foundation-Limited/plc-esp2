@@ -29,6 +29,7 @@
 #include <freertos/task.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
+#include <atomic>
 
 #ifndef TASK_BINDER_RTOS_DEBUG
 #define TASK_BINDER_RTOS_DEBUG 0
@@ -148,9 +149,9 @@ public:
     {
         if (_stack_evt_queue == nullptr)
             return;
-        if (_stack_evt_pending)
+        bool expected = false;
+        if (!_stack_evt_pending.compare_exchange_strong(expected, true))
             return;
-        _stack_evt_pending = true;
         uint8_t evt = 1;
         xQueueOverwrite(_stack_evt_queue, &evt);
     }
@@ -564,6 +565,7 @@ private:
         {
             const uint32_t t0 = micros();
             self->networkLoopTask_();
+            self->notifyStackPostNetwork();
 #if TASK_BINDER_RTOS_DEBUG
             const uint32_t dt = (uint32_t)(micros() - t0);
             const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
@@ -622,7 +624,7 @@ private:
                 continue;
             if (evt != 1 || self->_stack_runtime == nullptr)
                 continue;
-            self->_stack_evt_pending = false;
+            self->_stack_evt_pending.store(false);
 
             const uint32_t t0 = micros();
             if (self->_stack_phase_mtx)
@@ -677,7 +679,7 @@ private:
     QueueHandle_t _stack_evt_queue = nullptr;
     SemaphoreHandle_t _stack_phase_mtx = nullptr;
     StackRuntime *_stack_runtime = nullptr;
-    volatile bool _stack_evt_pending = false;
+    std::atomic<bool> _stack_evt_pending{false};
 
 #if TASK_BINDER_RTOS_DEBUG
     RtosDebugStats _dbg_wifi{};

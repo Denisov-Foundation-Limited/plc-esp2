@@ -58,6 +58,9 @@ private:
                                   uint8_t &out_sda_gpio, uint8_t &out_scl_gpio);
     static TwoWire *wirePtr_(uint8_t bus_num);
     static int8_t busIdx_(uint8_t bus_num);
+    static bool busPins_(uint8_t bus_num, uint8_t &out_sda_gpio, uint8_t &out_scl_gpio);
+    static void recoverBus_(uint8_t sda_gpio, uint8_t scl_gpio);
+    static void recoverBus_(uint8_t bus_num);
 #if defined(ESP32)
     void ensureBusMutex_(uint8_t bus_num);
     void *currentTaskToken_() const;

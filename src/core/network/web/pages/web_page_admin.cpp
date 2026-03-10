@@ -92,10 +92,12 @@ const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
     .section { margin-top: 18px; padding-top: 12px; border-top: 1px solid #1f2937; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .check-list { display: grid; gap: 10px; margin-top: 10px; }
+    .check-list.inline-pairs { grid-template-columns: repeat(2, max-content); column-gap: 18px; align-items: center; }
     .check-item { display:flex; align-items:center; gap:8px; color: var(--text); }
     .section-title { margin: 0 0 6px; font-size: 15px; font-weight: 700; color: var(--text); }
     @media (max-width: 520px) {
       .row { grid-template-columns: 1fr; }
+      .check-list.inline-pairs { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -116,7 +118,7 @@ const char kWebInterfaceAdminHtml[] PROGMEM = R"HTML(
         <div class="section">
           <p class="section-title">EEPROM</p>
           <input type="hidden" name="eeprom_present" value="1">
-          <div class="check-list">
+          <div class="check-list inline-pairs">
             <label class="check-item">
               <input type="checkbox" name="eeprom_save" %EEPROM_SAVE_CHECKED%>
               %EEPROM_SAVE_TEXT%

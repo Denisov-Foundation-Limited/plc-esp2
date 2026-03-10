@@ -18,7 +18,7 @@ class IoStack;
 class PlcScanLoop
 {
 public:
-    static constexpr uint32_t kCycleUs = 1000; // 1ms fixed PLC scan cycle
+    static constexpr uint32_t kCycleUs = 1000; // Default scan cycle; actual scheduler period is set by caller/build flags.
 
     explicit PlcScanLoop(IoStack &io);
 

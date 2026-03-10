@@ -86,9 +86,10 @@ private:
     mutable bool _present[MAX_DEVS] = {};
     mutable bool _warned_missing[MAX_DEVS] = {};
     uint32_t _rescan_interval_ms = 5000;
-    uint32_t _next_scan_ms = 0;
-    uint8_t _scan_index = 0;
-    bool _scan_active = false;
+    uint32_t _fast_rescan_interval_ms = 250;
+    mutable uint32_t _next_scan_ms = 0;
+    mutable uint8_t _scan_index = 0;
+    mutable bool _scan_active = false;
 
     void initState_();
     void scanDevice_(uint8_t dev);
@@ -99,4 +100,7 @@ private:
     void logInitFailOnce_(uint8_t dev, const __FlashStringHelper *msg) const;
     void logPresentChange_(uint8_t dev, bool present) const;
     void setPresent_(uint8_t dev, bool present) const;
+    void noteRuntimeIoFailure_(uint8_t dev) const;
+    bool anyMissing_() const;
+    void scheduleFastRescan_() const;
 };

@@ -54,6 +54,7 @@ bool I2CManager::beginAll()
             return false;
         }
         w->begin(sda_gpio, scl_gpio, c.freq);
+        w->setTimeOut(50);
 #else
         w->begin();
         w->setClock(c.freq);
@@ -137,6 +138,10 @@ bool I2CManager::probeAddressLocked(uint8_t bus_num, uint8_t addr)
         _err = Error::InvalidBus;
         return false;
     }
+    w->beginTransmission(addr);
+    if (w->endTransmission() == 0)
+        return true;
+    recoverBus_(bus_num);
     w->beginTransmission(addr);
     return w->endTransmission() == 0;
 }
@@ -243,6 +248,59 @@ bool I2CManager::i2cPinsFromPorts_(uint8_t sda_port, uint8_t scl_port,
     out_sda_gpio = psda.u.esp.gpio;
     out_scl_gpio = pscl.u.esp.gpio;
     return true;
+}
+
+bool I2CManager::busPins_(uint8_t bus_num, uint8_t &out_sda_gpio, uint8_t &out_scl_gpio)
+{
+    for (uint8_t i = 0; i < ActiveBoardProfile::I2C_COUNT; ++i)
+    {
+        const auto c = ActiveBoardProfile::I2CS[i];
+        if (c.bus_num != bus_num)
+            continue;
+        return i2cPinsFromPorts_(c.sda, c.scl, out_sda_gpio, out_scl_gpio);
+    }
+    return false;
+}
+
+void I2CManager::recoverBus_(uint8_t sda_gpio, uint8_t scl_gpio)
+{
+#if defined(ESP32)
+    pinMode(sda_gpio, INPUT_PULLUP);
+    pinMode(scl_gpio, INPUT_PULLUP);
+    delayMicroseconds(10);
+
+    if (digitalRead(sda_gpio) == HIGH && digitalRead(scl_gpio) == HIGH)
+        return;
+
+    for (uint8_t i = 0; i < 9 && digitalRead(sda_gpio) == LOW; ++i)
+    {
+        pinMode(scl_gpio, OUTPUT);
+        digitalWrite(scl_gpio, LOW);
+        delayMicroseconds(8);
+        pinMode(scl_gpio, INPUT_PULLUP);
+        delayMicroseconds(8);
+    }
+
+    pinMode(sda_gpio, OUTPUT);
+    digitalWrite(sda_gpio, LOW);
+    delayMicroseconds(8);
+    pinMode(scl_gpio, INPUT_PULLUP);
+    delayMicroseconds(8);
+    pinMode(sda_gpio, INPUT_PULLUP);
+    delayMicroseconds(8);
+#else
+    (void)sda_gpio;
+    (void)scl_gpio;
+#endif
+}
+
+void I2CManager::recoverBus_(uint8_t bus_num)
+{
+    uint8_t sda_gpio = 0;
+    uint8_t scl_gpio = 0;
+    if (!busPins_(bus_num, sda_gpio, scl_gpio))
+        return;
+    recoverBus_(sda_gpio, scl_gpio);
 }
 
 TwoWire *I2CManager::wirePtr_(uint8_t bus_num)

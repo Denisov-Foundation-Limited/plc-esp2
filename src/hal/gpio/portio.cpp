@@ -20,6 +20,7 @@
 bool PortIO::begin()
 {
     _err = Error::Ok;
+    _outputs_enabled = false;
     for (uint8_t i = 0; i < PORT_COUNT; ++i)
     {
         _hasLast[i] = false;
@@ -100,6 +101,15 @@ void PortIO::loop()
     }
 }
 
+void PortIO::setOutputsEnabled(bool enabled)
+{
+    if (_outputs_enabled == enabled)
+        return;
+    _outputs_enabled = enabled;
+    if (_outputs_enabled)
+        applyDeferredOutputs_();
+}
+
 PortIO::Error PortIO::lastError() const { return _err; }
 
 bool PortIO::lastState(PortId id, bool &outLogical) const
@@ -151,6 +161,9 @@ void PortIO::write(PortId id, bool logicalLevel)
 
     _last[id] = logicalLevel;
     _hasLast[id] = true;
+
+    if (!_outputs_enabled)
+        return;
 
     bool v = logicalLevel;
 
@@ -403,6 +416,38 @@ bool PortIO::validate_(const PortDesc &p)
     }
 
     return true;
+}
+
+void PortIO::applyDeferredOutputs_()
+{
+    for (uint8_t i = 0; i < PORT_COUNT; ++i)
+    {
+        const auto &p = _ports[i];
+        if (p.caps == Cap::None)
+            continue;
+        if (!has(p.caps, Cap::Output) || has(p.caps, Cap::InputOnly))
+            continue;
+        if (!_hasLast[i])
+            continue;
+
+        bool v = _last[i];
+        if (p.backend == Backend::Esp32)
+        {
+            if (p.u.esp.gpio == 0xFF)
+                continue;
+            if (p.u.esp.inverted)
+                v = !v;
+            ::digitalWrite(p.u.esp.gpio, v ? HIGH : LOW);
+        }
+        else if (_ext)
+        {
+            if (p.u.ext.inverted)
+                v = !v;
+            _ext->write(p.u.ext.dev, p.u.ext.pin, v);
+        }
+    }
+    if (_ext)
+        _ext->flushAll();
 }
 
 void PortIO::restoreExtenderOutputs_(uint8_t dev)

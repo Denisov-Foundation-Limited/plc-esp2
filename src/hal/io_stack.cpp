@@ -57,11 +57,13 @@ void IoStack::initImages()
         }
         if (has(p.caps, Cap::Output) && !has(p.caps, Cap::InputOnly))
         {
-            bool v = false;
-            if (_portio.lastState(i, v))
-                _outputs[i] = v;
-            _applied[i] = _outputs[i];
-            _dirty[i] = false;
+            if (!_dirty[i])
+            {
+                bool v = false;
+                if (_portio.lastState(i, v))
+                    _outputs[i] = v;
+                _applied[i] = _outputs[i];
+            }
         }
     }
 }

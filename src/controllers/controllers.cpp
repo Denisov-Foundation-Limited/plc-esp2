@@ -101,8 +101,6 @@ bool Controllers::begin(){
         _logs.error(F("CTRL"), F("Leak init failed"));
         return false;
     }
-    if (_eeprom_load_enabled)
-        loadFromStorage_();
     _logs.info(F("CTRL"), F("Init done"));
     return true;
 }
@@ -267,6 +265,13 @@ bool Controllers::eepromLoadEnabled() const{ return _eeprom_load_enabled; }
 void Controllers::setEepromSaveEnabled(bool enabled){ _eeprom_save_enabled = enabled; }
 
 void Controllers::setEepromLoadEnabled(bool enabled){ _eeprom_load_enabled = enabled; }
+
+void Controllers::restoreFromStorage()
+{
+    if (!_eeprom_load_enabled)
+        return;
+    loadFromStorage_();
+}
 
 void Controllers::markPortUsed_(bool used[], uint8_t port){
     if (port < PortIO::PORT_COUNT)

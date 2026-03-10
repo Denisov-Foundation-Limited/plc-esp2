@@ -32,6 +32,12 @@ struct AppI2cLockCtx
 };
 AppI2cLockCtx g_app_eeprom_lock_ctx{};
 
+struct AppI2cProbeEntry
+{
+    uint8_t addr;
+    const __FlashStringHelper *name;
+};
+
 bool appI2cLockCb_(void *ctx, uint32_t timeout_ms)
 {
     AppI2cLockCtx *c = static_cast<AppI2cLockCtx *>(ctx);
@@ -43,6 +49,19 @@ void appI2cUnlockCb_(void *ctx)
     AppI2cLockCtx *c = static_cast<AppI2cLockCtx *>(ctx);
     if (c && c->i2c)
         c->i2c->unlockBus(c->bus);
+}
+
+void appLogI2cProbeMap_(Logger &logs, I2CManager &i2c, uint8_t bus,
+                        const AppI2cProbeEntry *items, size_t count)
+{
+    if (!items || count == 0)
+        return;
+    for (size_t i = 0; i < count; ++i)
+    {
+        const bool ok = i2c.probeAddress(bus, items[i].addr);
+        logs.info(F("I2C"), F("Probe: bus: %u addr: 0x%02X dev: %S ok: %s"),
+                  (unsigned)bus, (unsigned)items[i].addr, items[i].name, ok ? "true" : "false");
+    }
 }
 } // namespace
 
@@ -143,21 +162,20 @@ ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContex
 {
 }
 
-App::App()
-        : core(),
-          hw(core.logs, core.uart),
-          comms(core.logs, core.uart),
+    App::App()
+            : core(),
+              hw(core.logs, core.uart),
+              comms(core.logs, core.uart),
           control(core, hw, comms),
           ui(core, hw, comms, control),
           net(core, hw, comms, control, ui),
-          cfg(core, hw, comms, control, ui, net),
-          stack(core, hw, comms, control, ui, net, cfg)
-{
-    comms.wifi.setIo(hw.io);
-    core.logs.setRtc(hw.rtc);
-    ui.console.setStackMaster(&net.network.stackMaster());
-    ui.console.setStackSlave(&net.stack_slave);
-    ui.console.setConfigsManager(cfg.configs_manager);
+              cfg(core, hw, comms, control, ui, net),
+              stack(core, hw, comms, control, ui, net, cfg)
+    {
+        comms.wifi.setIo(hw.io);
+        ui.console.setStackMaster(&net.network.stackMaster());
+        ui.console.setStackSlave(&net.stack_slave);
+        ui.console.setConfigsManager(cfg.configs_manager);
 
     control.telegram_menu.setConfigsManager(cfg.configs_manager);
     control.telegram_menu.setStackMaster(net.network.stackMaster());
@@ -327,7 +345,19 @@ bool App::begin()
     }
 
     core.logs.info(F("APP"), F("Initializing RTC"));
-    if (!hw.rtc.begin())
+    {
+        static constexpr AppI2cProbeEntry kBus0BootProbe[] = {
+            { 0x20, F("mcp0") },
+            { 0x21, F("mcp1") },
+            { 0x22, F("lcd") },
+            { 0x50, F("eeprom") },
+            { 0x68, F("rtc") },
+        };
+        appLogI2cProbeMap_(core.logs, hw.i2c, 0, kBus0BootProbe,
+                           sizeof(kBus0BootProbe) / sizeof(kBus0BootProbe[0]));
+    }
+    const bool rtc_ok = hw.rtc.begin();
+    if (!rtc_ok)
     {
         switch (hw.rtc.lastError())
         {
@@ -345,14 +375,13 @@ bool App::begin()
             break;
         }
     }
+    else
+    {
+        core.logs.setRtc(hw.rtc);
+    }
 
     core.logs.info(F("APP"), F("Initializing Display"));
     const uint8_t bl_pin = ActiveBoardProfile::LCD_BACKLIGHT_PIN;
-    if (bl_pin != 0xFF)
-    {
-        hw.portio.pinMode(bl_pin, PortIO::PortMode::Output);
-        hw.portio.write(bl_pin, true);
-    }
     if (!hw.display.begin())
     {
         switch (hw.display.lastError())
@@ -370,6 +399,11 @@ bool App::begin()
             core.logs.warn(F("APP"), F("LCD Init failed"));
             break;
         }
+    }
+    else if (bl_pin != 0xFF)
+    {
+        hw.portio.pinMode(bl_pin, PortIO::PortMode::Output);
+        hw.portio.write(bl_pin, true);
     }
 
     core.logs.info(F("APP"), F("Initializing PLC Control"));
@@ -432,6 +466,9 @@ bool App::begin()
     control.task_binder.bindAll();
     control.task_binder.bindStack(stack);
     control.plc_scan.begin();
+    control.controllers.restoreFromStorage();
+    hw.io.applyOutputs();
+    hw.portio.setOutputsEnabled(true);
 
     return ok;
 }
@@ -439,7 +476,6 @@ bool App::begin()
 void App::loop()
 {
     control.task_binder.runStackPre(stack);
-    control.task_binder.notifyStackPostNetwork();
 
 #if APP_GPIO_SCAN_METRICS
     {

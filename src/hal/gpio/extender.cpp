@@ -82,6 +82,7 @@ void Extender::setPresent_(uint8_t dev, bool present) const
         _pcf_cache_valid[dev] = 0;
         _dev_failed[dev] = false;
         _warned_missing[dev] = false;
+        scheduleFastRescan_();
     }
     else
     {
@@ -93,7 +94,17 @@ void Extender::setPresent_(uint8_t dev, bool present) const
 
 bool Extender::begin()
 {
-    rescan();
+    if (_i2c && _dev_count)
+    {
+        // Do a fast startup probe only for the base bus.
+        // External extender buses are allowed to appear later via task()-driven rescans.
+        for (uint8_t i = 0; i < _dev_count; ++i)
+        {
+            if (_devs[i].bus_num != 0)
+                continue;
+            scanDevice_(i);
+        }
+    }
     _scan_active = false;
     _scan_index = 0;
     _next_scan_ms = millis() + _rescan_interval_ms;
@@ -122,13 +133,40 @@ void Extender::task()
     {
         _scan_active = false;
         _scan_index = 0;
-        _next_scan_ms = now + _rescan_interval_ms;
+        _next_scan_ms = now + (anyMissing_() ? _fast_rescan_interval_ms : _rescan_interval_ms);
     }
     else
     {
         // Continue pass quickly, but spread probes over scheduler ticks.
         _next_scan_ms = now + 1;
     }
+}
+
+void Extender::noteRuntimeIoFailure_(uint8_t dev) const
+{
+    if (dev >= _dev_count)
+        return;
+    setPresent_(dev, false);
+}
+
+bool Extender::anyMissing_() const
+{
+    for (uint8_t i = 0; i < _dev_count; ++i)
+    {
+        if (!isConfigured(i))
+            continue;
+        if (!_present[i])
+            return true;
+    }
+    return false;
+}
+
+void Extender::scheduleFastRescan_() const
+{
+    const uint32_t now = millis();
+    const uint32_t fast_at = now + _fast_rescan_interval_ms;
+    if (!_scan_active || (int32_t)(_next_scan_ms - fast_at) > 0)
+        _next_scan_ms = fast_at;
 }
 
 void Extender::rescan()
@@ -220,6 +258,7 @@ bool Extender::ensureDevLocked_(uint8_t dev) const
         if (!mcp->begin(*wire, cfg.i2c_addr))
         {
             logInitFailOnce_(dev, F("MCP23017 init failed for extender %u"));
+            setPresent_(dev, false);
             return false;
         }
         _mcp_inited[dev] = true;
@@ -233,6 +272,7 @@ bool Extender::ensureDevLocked_(uint8_t dev) const
         if (!pcf->begin(*wire, cfg.i2c_addr))
         {
             logInitFailOnce_(dev, F("PCF8574 init failed for extender %u"));
+            setPresent_(dev, false);
             return false;
         }
         _pcf_inited[dev] = true;
@@ -257,7 +297,8 @@ void Extender::pinMode(uint8_t dev, uint8_t pin, uint8_t mode)
         Mcp23017 *mcp = mcp_(dev);
         if (!mcp)
             return;
-        (void)mcp->pinMode(pin, mode);
+        if (!mcp->pinMode(pin, mode))
+            noteRuntimeIoFailure_(dev);
         return;
     }
     if (cfg.type == Type::PCF8574)
@@ -265,7 +306,8 @@ void Extender::pinMode(uint8_t dev, uint8_t pin, uint8_t mode)
         Pcf8574 *pcf = pcf_(dev);
         if (!pcf)
             return;
-        (void)pcf->pinMode(pin, mode);
+        if (!pcf->pinMode(pin, mode))
+            noteRuntimeIoFailure_(dev);
         return;
     }
 }
@@ -285,7 +327,8 @@ void Extender::write(uint8_t dev, uint8_t pin, bool level)
         Mcp23017 *mcp = mcp_(dev);
         if (!mcp)
             return;
-        (void)mcp->writePin(pin, level);
+        if (!mcp->writePin(pin, level))
+            noteRuntimeIoFailure_(dev);
         return;
     }
     if (cfg.type == Type::PCF8574)
@@ -293,7 +336,8 @@ void Extender::write(uint8_t dev, uint8_t pin, bool level)
         Pcf8574 *pcf = pcf_(dev);
         if (!pcf)
             return;
-        (void)pcf->writePin(pin, level);
+        if (!pcf->writePin(pin, level))
+            noteRuntimeIoFailure_(dev);
         return;
     }
 }
@@ -316,6 +360,7 @@ bool Extender::read(uint8_t dev, uint8_t pin) const
         bool v = false;
         if (!mcp->readPin(pin, v))
         {
+            noteRuntimeIoFailure_(dev);
             const uint8_t bit = (uint8_t)(pin & 0x0F);
             const uint16_t mask = (uint16_t)(1u << bit);
             if (_mcp_cache_valid[dev] & mask)
@@ -341,6 +386,7 @@ bool Extender::read(uint8_t dev, uint8_t pin) const
         bool v = false;
         if (!pcf->readPin(pin, v))
         {
+            noteRuntimeIoFailure_(dev);
             const uint8_t bit = (uint8_t)(pin & 0x07);
             const uint8_t mask = (uint8_t)(1u << bit);
             if (_pcf_cache_valid[dev] & mask)
@@ -370,9 +416,9 @@ void Extender::flushAll()
         I2CManager::ScopedBusLock lk(*_i2c, _devs[i].bus_num);
         if (!lk.locked())
             continue;
-        if (_mcp_inited[i])
-            (void)_mcp[i].flush();
-        if (_pcf_inited[i])
-            (void)_pcf[i].flush();
+        if (_mcp_inited[i] && !_mcp[i].flush())
+            noteRuntimeIoFailure_(i);
+        if (_pcf_inited[i] && !_pcf[i].flush())
+            noteRuntimeIoFailure_(i);
     }
 }
