@@ -57,41 +57,36 @@
 
 ## FreeRTOS / TaskBinder: текущее состояние
 
-- В проекте начат поэтапный перенос с `TaskManager` на FreeRTOS-задачи через `TaskBinder`.
-- Цель переноса:
-  - убрать микрозадержки в управлении реле;
-  - вынести сетевые и блокирующие фоновые операции из общего cooperative-loop;
-  - сохранить детерминированный control-path для контроллеров.
+- Перенос runtime на FreeRTOS через `TaskBinder` завершён; `TaskManager` удалён.
+- Текущая цель архитектуры:
+  - короткий и детерминированный `control_loop`;
+  - изоляция сетевых/блокирующих операций в фоновых RTOS-задачах;
+  - минимальный и предсказуемый `App::loop()`.
 
-### Волны переноса
+### Текущий состав RTOS-задач
 
-- **Волна 1**:
-  - `GsmModem::loop`
-  - `CloudClient::loop`
-  - `TelegramBot::task`
-- **Волна 2**:
-  - `WifiManager::task`
-  - `MeteoHistory::task`
-- **Волна 3**:
-  - `StackRuntime::taskPost`
-  - `StackRuntime::taskFlush`
-  - обработка `PostNetwork/Flush` вынесена в отдельный `stack_evt` task через очередь
-- **Следующий этап, уже внедрён**:
-  - общий `control_loop` task для всех controller `task()`
-  - отдельный `extender` task
-  - отдельный `display` task
-  - отдельный `plc` task
+- Сеть/интеграции:
+  - `network_loop`
+  - `console_loop`
+  - `wifi`
+  - `gsm`
+  - `cloud`
+  - `telegram`
+  - `meteo_history`
+- Контроль и I/O:
+  - `control_loop`
+  - `plc_scan`
+  - `extender`
+  - `display`
+  - `plc`
+- Stack:
+  - `stack_evt` (`taskPost/taskFlush`) через очередь.
 
 ### Что осталось в основном loop
 
-- `App::loop()` больше не должен напрямую крутить тяжёлые сетевые и controller-задачи.
-- В основном loop остаются:
-  - `runStackPre(stack)` перед network loop;
-  - `plc_scan.tick()`
-  - `console.loop()`
-  - `network.loop()`
-  - `notifyStackPostNetwork()`
-  - `core.tm.loop()` для legacy/fallback задач, если они ещё не перенесены.
+- `App::loop()` сейчас выполняет только `runStackPre(stack)` (и опциональные GPIO-метрики под флагом).
+- `notifyStackPostNetwork()` вызывается из RTOS-задачи `network_loop`.
+- Прямых вызовов `network.loop()/console.loop()/plc_scan.tick()` из `App::loop()` больше нет.
 
 ### Архитектурные договорённости по RTOS
 
@@ -99,10 +94,13 @@
 - Для быстрых контроллеров предпочтителен **один общий `control_loop`**, а не десяток параллельных задач с гонками за `Controllers/Gpio`.
 - `stack_evt` должен работать через очередь, а не через прямой вызов `taskPost/taskFlush` из `App::loop`.
 - Для `stack_evt` добавлен флаг pending:
-  - не надо заново посылать уведомление, если предыдущее ещё не обработано.
+  - не надо заново посылать уведомление, если предыдущее ещё не обработано;
+  - флаг реализован атомарно (`std::atomic`), не через `volatile bool`.
 - Отдельные задачи оправданы для:
   - network / cloud / telegram / gsm;
+  - console loop;
   - display;
+  - plc scan;
   - extender / I/O-обвязки;
   - meteo history;
   - plc background.
@@ -154,10 +152,29 @@
 - Логи `RTOS`:
   - рост `wmax_us` у `control`
   - уменьшение `hwm/min_hwm`
+  - `network`/`stack_evt` (не растёт ли latency post-network фазы)
   - всплески у `cloud` во время reconnect
   - всплески у `telegram` во время long-poll / reconnect
 - Если появляются артефакты в логах — сначала проверять потокобезопасность логгера, а не сами метрики.
 
+## I2C/extender/выходы: текущее состояние надёжности
+
+- `I2CManager`:
+  - при `probeAddress`-ошибке пытается восстановить шину (clock pulses + STOP) и повторить probe;
+  - на ESP32 для `Wire` включён timeout (`setTimeOut(50)`).
+- `RTC`:
+  - хранит `_ready`;
+  - при I2C-сбое сбрасывает ready и при следующем обращении делает повторный `begin()`.
+- `Display`:
+  - при `Time`-слоте и ошибке `RTC` выводит `ERR` вместо пустого/битого значения;
+  - custom-символы и backlight инициализируются в task под lock, а не в раннем begin без проверки шины.
+- `Extender`:
+  - runtime I/O fail -> устройство помечается `missing`;
+  - включается ускоренный перескан (`fast_rescan_interval_ms`) до восстановления.
+- `PortIO`:
+  - добавлен режим `setOutputsEnabled(false/true)`;
+  - выходы не применяются физически до явного разрешения;
+  - в `App::begin()` порядок: `controllers.restoreFromStorage()` -> `io.applyOutputs()` -> `portio.setOutputsEnabled(true)`.
 ## Стековые кэши: структура работы
 
 - Два уровня кэшей:

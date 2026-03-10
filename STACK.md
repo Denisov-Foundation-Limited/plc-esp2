@@ -69,14 +69,15 @@ flowchart TD
 ### Интеграция в App
 
 - `src/app.cpp`
+  - `pollStackCaches_()`
   - `runStackPre(stack)` в основном loop
-  - `notifyStackPostNetwork()` после `network.loop()`
+  - без прямого `network.loop()/console.loop()`
   - обработка online/offline
   - логи синхронизации и инвентаризации
 - `include/core/task_binder.hpp`
   - `stack_evt` task для `StackRuntime::taskPost/taskFlush`
-  - RTOS worker-задачи для network и `control_loop`
-  - `display` / `plc` / `extender` пока остаются в cooperative-слое
+  - `network_loop` + `console_loop` как RTOS worker-задачи
+  - `plc_scan`, `display`, `plc`, `extender` также выполняются в RTOS-задачах
 
 ## 4. Транспортный формат
 
@@ -175,14 +176,14 @@ sequenceDiagram
 flowchart TD
   LOOP[App::loop]
   PRE[runStackPre stack]
-  NET[network.loop]
-  SIG[notifyStackPostNetwork]
+  NET[RTOS network_loop]
+  SIG[notifyStackPostNetwork in network_loop]
   EVT[RTOS stack_evt]
   POST[StackRuntime taskPost]
   FLUSH[StackRuntime taskFlush]
 
   LOOP --> PRE
-  PRE --> NET
+  PRE --> LOOP
   NET --> SIG
   SIG --> EVT
   EVT --> POST
@@ -191,12 +192,13 @@ flowchart TD
 
 Ключевые правила:
 - `taskPre` остаётся синхронным и вызывается из основного loop.
-- На ESP32 `plc_scan.tick()` также остаётся в основном loop (без параллельного RTOS-вызова) из-за общего I2C/Wire доступа.
+- `network.loop()` и `console.loop()` больше не вызываются из `App::loop()`; они живут в RTOS (`network_loop`/`console_loop`).
+- `plc_scan.tick()` выполняется в отдельной RTOS-задаче (`plc_scan`) с интервалом `TASK_BINDER_PLC_SCAN_TICK_MS`.
 - `taskPost/taskFlush` выполняются в отдельной RTOS-задаче `stack_evt`.
 - Для `stack_evt` используется очередь и pending-защита:
   - новое событие не ставится, пока предыдущее ещё не обработано.
+- pending-флаг сделан атомарным (`std::atomic`), чтобы исключить гонку между producer/consumer.
 - Такая схема убирает влияние тяжёлых post-network путей на latency локального управления.
-
 ## 9. Модель кэша на master
 
 Типовые поля кэша фичи:
@@ -280,8 +282,8 @@ sequenceDiagram
 
 Текущее безопасное состояние:
 - `control_loop` вынесен в RTOS и проверен на slave без observed fatal.
-- `display` / `plc` / `extender` возвращены в cooperative execution.
-- Причина возврата: при параллельном доступе к shared state и remote-cache у slave возникал риск гонок и фаталов.
+- `display` / `plc` / `extender` / `plc_scan` работают в RTOS-задачах.
+- Стабильность обеспечивается bus-lock механизмами (`I2C/OneWire`) и pending-защитой stack-событий.
 
 ## 14. Правила для новых stack-фич
 

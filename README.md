@@ -55,22 +55,21 @@ flowchart TD
   BIND --> LOOP[App::loop]
 
   LOOP --> PRE[runStackPre stack]
-  PRE --> PLCSCAN[plc_scan.tick]
-  PLCSCAN --> CONSOLE[CLI console loop]
-  CONSOLE --> NETLOOP[Network loop]
-  NETLOOP --> POSTSIG[notifyStackPostNetwork]
-  POSTSIG --> LOOP
+  PRE --> LOOP
 
-  RTOSNET[RTOS\nwifi / telegram / gsm / cloud / meteo_history] --> LOOP
+  RTOSNET[RTOS\nnetwork_loop / console_loop / wifi / telegram / gsm / cloud / meteo_history] --> SIG[notifyStackPostNetwork]
+  SIG --> STACKEVT[RTOS\nstack_evt post/flush]
+  STACKEVT --> LOOP
   RTOSCTRL[RTOS\ncontrol_loop] --> LOOP
-  STACKEVT[RTOS\nstack_evt post/flush] --> LOOP
-  RTOSIO[RTOS\nextender / display / plc] --> LOOP
+  RTOSIO[RTOS\nextender / display / plc / plc_scan] --> LOOP
 ```
 
 ### Runtime после внедрения RTOS
 
 - `App::loop()` теперь в основном оркестрирует фазы, а не выполняет весь тяжёлый runtime сам.
 - В отдельные FreeRTOS-задачи вынесены:
+  - `network_loop`
+  - `console_loop`
   - `wifi`
   - `telegram`
   - `gsm`
@@ -83,7 +82,9 @@ flowchart TD
   - `display`
   - `plc`
   - `plc_scan`
-- Основной `App::loop()` больше не крутит cooperative-рантайм и используется для оркестрации stack-phase (`runStackPre` + `notifyStackPostNetwork`).
+- `TaskManager` полностью удалён из runtime.
+- Основной `App::loop()` сейчас выполняет только `runStackPre(stack)` (плюс опциональные GPIO-метрики по compile-time флагу).
+- `notifyStackPostNetwork()` теперь вызывается из RTOS-задачи `network_loop`; защита pending в `stack_evt` реализована через `std::atomic`.
 
 ### Логирование в многозадачном runtime
 
@@ -91,6 +92,15 @@ flowchart TD
 - `Logger` сериализует вывод через mutex и пишет строку логa одним вызовом, чтобы уменьшить риск разрыва строк в UART.
 - Если в логах всё ещё появляются артефакты, проверять нужно не только `Logger`, но и прямые `Serial.print`/`printf` в стороннем коде.
 
+### Надёжность I2C/extender (последние изменения)
+
+- В `I2CManager` добавлено мягкое восстановление шины при `probeAddress`-ошибке (clock pulses + STOP), а также timeout на `Wire`.
+- На старте `App` логируется карта I2C-проб (`mcp0/mcp1/lcd/eeprom/rtc`) для быстрой диагностики.
+- `RTC` и `Display` усилены проверками доступности I2C-устройства; при runtime-сбое `RTC` повторно инициируется при следующем обращении.
+- `Extender` теперь при runtime I/O-ошибках помечается как missing и уходит в fast-rescan (ускоренный повторный поиск).
+- В `PortIO` включено отложенное применение выходов:
+  - до завершения восстановления состояний физические выходы не включаются;
+  - после `restoreFromStorage()` выполняются `applyOutputs()` и `setOutputsEnabled(true)`.
 ## Основные возможности
 
 - Контроллеры автоматизации:
