@@ -16,6 +16,11 @@
 
 #include "hal/sim800l.hpp"
 
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
+
 class UartManager;
 class Logger;
 
@@ -33,9 +38,6 @@ public:
 
     void loop();
 
-    Sim800l &driver();
-    const Sim800l &driver() const;
-
     const String &lastUrc() const;
     uint16_t lastSmsIndex() const;
     const String &lastCallNumber() const;
@@ -52,6 +54,8 @@ public:
     bool started() const;
     void setEnabled(bool enabled);
     bool sendSms(const String &number, const String &text);
+    bool dial(const String &number);
+    bool hangup();
     bool takeLastCall(String &out);
 
 private:
@@ -139,6 +143,10 @@ private:
     uint8_t _call_count = 0;
     uint8_t _timeout_streak = 0;
 
+#if defined(ESP32)
+    SemaphoreHandle_t _modem_mtx = nullptr;
+#endif
+
     void enqueueOrLog_(bool ok, const __FlashStringHelper *name);
 
     void handleCmdDone_(bool ok, const String &response, const String &cmd);
@@ -168,4 +176,7 @@ private:
     static String cmdTimeoutLabel_(const String &cmd);
 
     void logInitSummary_();
+    void ensureModemLock_();
+    bool lockModem_(uint32_t timeout_ms = 1000);
+    void unlockModem_();
 };

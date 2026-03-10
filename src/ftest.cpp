@@ -16,10 +16,9 @@
 
 Ftest::Ftest(Logger &logs, IoStack &io, OneWireManager &ow, IButton &ibutton,
                Ds18b20 &ds18b20, I2CManager &i2c, RTC &rtc, Extender &ext,
-               TaskManager<TASK_MGR_TSK_COUNT> &tm,
-               TaskBinder<TASK_MGR_TSK_COUNT> &tb)
+               TaskBinder &tb)
     : _logs(logs), _io(io), _ow(ow), _ibutton(ibutton),
-      _ds18b20(ds18b20), _i2c(i2c), _rtc(rtc), _ext(ext), _tm(tm), _tb(tb){
+      _ds18b20(ds18b20), _i2c(i2c), _rtc(rtc), _ext(ext), _tb(tb){
 }
 
 void Ftest::start(){
@@ -27,9 +26,7 @@ void Ftest::start(){
     initBoardTemp_();
     initEeprom_();
 
-    const auto h = _tb.getFtestTask();
-    if (h)
-        _tm.enable(h, true);
+    _tb.enableFtest(true);
 }
 
 void Ftest::task(){
@@ -75,6 +72,9 @@ void Ftest::task(){
 
 void Ftest::initEeprom_(){
     const auto cfg = ActiveBoardProfile::EEPROM;
+    _eeprom_lock_ctx.i2c = &_i2c;
+    _eeprom_lock_ctx.bus = cfg.bus_num;
+    _eeprom.setBusLockCallbacks(&Ftest::i2cLockCb_, &Ftest::i2cUnlockCb_, &_eeprom_lock_ctx);
     TwoWire *wire = _i2c.wirePtr(cfg.bus_num);
     if (!wire || !_eeprom.begin(*wire, cfg.addr))
     {
@@ -100,8 +100,10 @@ void Ftest::logEeprom_(){
 
 void Ftest::initBoardTemp_(){
     const auto cfg = ActiveBoardProfile::BOARD_TEMP;
+    _lm75_bus = cfg.bus_num;
     TwoWire *wire = _i2c.wirePtr(cfg.bus_num);
-    if (!wire || !_lm75.begin(*wire, cfg.addr))
+    I2CManager::ScopedBusLock lk(_i2c, _lm75_bus);
+    if (!wire || !lk.locked() || !_lm75.begin(*wire, cfg.addr))
     {
         _lm75_ok = false;
         _logs.error(F("FTEST"), F("LM75 init failed"));
@@ -117,12 +119,26 @@ void Ftest::logBoardTemp_(){
         return;
     }
     float t = 0.0f;
-    if (!_lm75.readTempC(t))
+    I2CManager::ScopedBusLock lk(_i2c, _lm75_bus);
+    if (!lk.locked() || !_lm75.readTempC(t))
     {
         _logs.info(F("FTEST"), F("BOARD: err"));
         return;
     }
     _logs.info(F("FTEST"), F("BOARD: %.2fC"), t);
+}
+
+bool Ftest::i2cLockCb_(void *ctx, uint32_t timeout_ms)
+{
+    I2cLockCtx *c = static_cast<I2cLockCtx *>(ctx);
+    return c && c->i2c ? c->i2c->lockBus(c->bus, timeout_ms) : false;
+}
+
+void Ftest::i2cUnlockCb_(void *ctx)
+{
+    I2cLockCtx *c = static_cast<I2cLockCtx *>(ctx);
+    if (c && c->i2c)
+        c->i2c->unlockBus(c->bus);
 }
 
 void Ftest::logCPUTemp_(){
@@ -253,6 +269,8 @@ void Ftest::logIbutton_(){
 }
 
 void Ftest::initOneWire_(){
+    _ibutton.setBusLockCallbacks(&Ftest::owIButtonLockCb_, &Ftest::owIButtonUnlockCb_, this);
+    _ds18b20.setBusLockCallbacks(&Ftest::owTempLockCb_, &Ftest::owTempUnlockCb_, this);
     OneWireBus *ib_bus = _ow.busPtrById(OneWireManager::OwBusType::iButton);
     if (!ib_bus || !_ibutton.begin(*ib_bus))
     {
@@ -267,6 +285,32 @@ void Ftest::initOneWire_(){
     }
     _ds18b20.begin(*temp_bus);
     _ds18b20_ok = true;
+}
+
+bool Ftest::owIButtonLockCb_(void *ctx, uint32_t timeout_ms)
+{
+    auto *self = static_cast<Ftest *>(ctx);
+    return self ? self->_ow.lockBusById(OneWireManager::OwBusType::iButton, timeout_ms) : false;
+}
+
+void Ftest::owIButtonUnlockCb_(void *ctx)
+{
+    auto *self = static_cast<Ftest *>(ctx);
+    if (self)
+        self->_ow.unlockBusById(OneWireManager::OwBusType::iButton);
+}
+
+bool Ftest::owTempLockCb_(void *ctx, uint32_t timeout_ms)
+{
+    auto *self = static_cast<Ftest *>(ctx);
+    return self ? self->_ow.lockBusById(OneWireManager::OwBusType::Temp, timeout_ms) : false;
+}
+
+void Ftest::owTempUnlockCb_(void *ctx)
+{
+    auto *self = static_cast<Ftest *>(ctx);
+    if (self)
+        self->_ow.unlockBusById(OneWireManager::OwBusType::Temp);
 }
 
 const char *Ftest::pinTypeName_(PortIO::PinType t){

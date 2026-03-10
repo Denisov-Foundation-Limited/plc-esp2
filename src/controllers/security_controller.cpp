@@ -1318,6 +1318,7 @@ void SecurityController::initIButton_(){
         _logs.warn(F("SECURITY"), F("iButton bus missing"));
         return;
     }
+    _ibutton.setBusLockCallbacks(&SecurityController::owIButtonLockCb_, &SecurityController::owIButtonUnlockCb_, this);
     _ibutton.begin(*bus);
     _ibutton_ready = true;
 }
@@ -1358,6 +1359,12 @@ void SecurityController::initRfid_(bool startup ){
         _logs.warn(F("SECURITY"), F("RFID SDA/SCL port mapping failed"));
         return;
     }
+    I2CManager::ScopedBusLock lk(*_rfid_i2c, cfg.bus_num);
+    if (!lk.locked())
+    {
+        _logs.warn(F("SECURITY"), F("RFID lock timeout"));
+        return;
+    }
     _rfid_ready = _rfid.begin(*wire, sda_gpio, scl_gpio, cfg.freq, kRfidI2cAddr, -1, -1);
     if (!_rfid_ready)
         _logs.warn(F("SECURITY"), F("RFID init failed"));
@@ -1392,6 +1399,9 @@ void SecurityController::handleRfid_(){
             return;
     }
     PN532::UID uid{};
+    I2CManager::ScopedBusLock lk(*_rfid_i2c, cfg.bus_num);
+    if (!lk.locked())
+        return;
     const PN532::Status st = _rfid.readPassiveTargetID(uid, kRfidReadTimeoutMs);
     if (st == PN532::Status::I2cError)
     {
@@ -1419,6 +1429,19 @@ void SecurityController::handleIButton_(){
     if (_ibutton_serial_cb && _ibutton_serial_cb(_ibutton_serial_ctx, String(hex)))
         return;
     processIButtonAddr(addr, "ibutton");
+}
+
+bool SecurityController::owIButtonLockCb_(void *ctx, uint32_t timeout_ms)
+{
+    auto *self = static_cast<SecurityController *>(ctx);
+    return self ? self->_ow.lockBusById(OneWireManager::OwBusType::iButton, timeout_ms) : false;
+}
+
+void SecurityController::owIButtonUnlockCb_(void *ctx)
+{
+    auto *self = static_cast<SecurityController *>(ctx);
+    if (self)
+        self->_ow.unlockBusById(OneWireManager::OwBusType::iButton);
 }
 
 bool SecurityController::isAllowedKey_(const uint8_t addr[8]) const{
@@ -1493,7 +1516,7 @@ void SecurityController::handleGsm_(){
     String number;
     if (!_gsm->takeLastCall(number))
         return;
-    _gsm->driver().hangup();
+    _gsm->hangup();
     String user;
     if (!matchPhone_(number, user))
     {
@@ -2025,7 +2048,7 @@ void SecurityController::sendSmsNotify_(const SecurityController::SensorConfig &
         if (phone.length() == 0)
             continue;
         ++call_targets;
-        if (!_gsm->driver().dial(phone))
+        if (!_gsm->dial(phone))
             _logs.warn(F("SECURITY"), F("GSM call enqueue failed: user: %s phone: %s"),
                        u.username.c_str(), phone.c_str());
         else
@@ -2077,7 +2100,7 @@ void SecurityController::sendSmsNotify_(uint8_t sensor_id, const String &name){
         if (phone.length() == 0)
             continue;
         ++call_targets;
-        if (!_gsm->driver().dial(phone))
+        if (!_gsm->dial(phone))
             _logs.warn(F("SECURITY"), F("GSM call enqueue failed: user: %s phone: %s"),
                        u.username.c_str(), phone.c_str());
         else

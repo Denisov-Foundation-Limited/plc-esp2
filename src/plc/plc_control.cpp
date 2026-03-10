@@ -20,6 +20,7 @@ PlcControl::PlcControl(I2CManager &i2c, IoStack &io, RTC &rtc)
 
 bool PlcControl::begin(){
     const auto cfg = ActiveBoardProfile::BOARD_TEMP;
+    _lm75_bus = cfg.bus_num;
     if (!busExists_(cfg.bus_num))
     {
         _err = Error::InvalidConfig;
@@ -33,10 +34,18 @@ bool PlcControl::begin(){
         return false;
     }
 
-    if (!_lm75.begin(*wire, cfg.addr))
     {
-        _err = Error::I2c;
-        return false;
+        I2CManager::ScopedBusLock lk(_i2c, _lm75_bus);
+        if (!lk.locked())
+        {
+            _err = Error::I2c;
+            return false;
+        }
+        if (!_lm75.begin(*wire, cfg.addr))
+        {
+            _err = Error::I2c;
+            return false;
+        }
     }
 
     _fan_on_c = cfg.fan_on_c;
@@ -52,12 +61,14 @@ void PlcControl::task(){
         _next_sample_ms = now + _sample_interval_ms;
         _last_cpu_temp_c = readCpuTemp_();
         _cpu_temp_valid = isfinite(_last_cpu_temp_c);
-        const auto cfg = ActiveBoardProfile::BOARD_TEMP;
         float sample = 0.0f;
-        if (_lm75.readTempC(sample))
         {
-            _last_temp_c = sample;
-            _temp_valid = true;
+            I2CManager::ScopedBusLock lk(_i2c, _lm75_bus);
+            if (lk.locked() && _lm75.readTempC(sample))
+            {
+                _last_temp_c = sample;
+                _temp_valid = true;
+            }
         }
         float rtc_sample = 0.0f;
         if (_rtc.readTemp(rtc_sample))

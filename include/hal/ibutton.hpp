@@ -18,10 +18,14 @@
 class IButton
 {
 public:
+    using BusLockCallback = bool (*)(void *ctx, uint32_t timeout_ms);
+    using BusUnlockCallback = void (*)(void *ctx);
+
     IButton() = default;
     explicit IButton(OneWireBus &bus);
 
     bool begin(OneWireBus &bus);
+    void setBusLockCallbacks(BusLockCallback lock_cb, BusUnlockCallback unlock_cb, void *ctx);
     bool readSerial(uint8_t out[8]);
     bool readSerial(uint64_t &out);
 
@@ -33,6 +37,11 @@ public:
 
 private:
     OneWireBus *bus_();
+    bool lockBus_(uint32_t timeout_ms = 200);
+    void unlockBus_();
 
     OneWireBus *_bus = nullptr;
+    BusLockCallback _bus_lock_cb = nullptr;
+    BusUnlockCallback _bus_unlock_cb = nullptr;
+    void *_bus_lock_ctx = nullptr;
 };

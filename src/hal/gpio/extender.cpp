@@ -144,6 +144,20 @@ void Extender::scanDevice_(uint8_t i)
 {
     if (i >= _dev_count)
         return;
+    const uint8_t bus = _devs[i].bus_num;
+    I2CManager::ScopedBusLock lk(*_i2c, bus);
+    if (!lk.locked())
+    {
+        setPresent_(i, false);
+        return;
+    }
+    scanDeviceLocked_(i);
+}
+
+void Extender::scanDeviceLocked_(uint8_t i)
+{
+    if (i >= _dev_count)
+        return;
     if (!isConfigured(i))
     {
         setPresent_(i, false);
@@ -156,7 +170,7 @@ void Extender::scanDevice_(uint8_t i)
         setPresent_(i, false);
         return;
     }
-    setPresent_(i, _i2c->probeAddress(bus, addr));
+    setPresent_(i, _i2c->probeAddressLocked(bus, addr));
 }
 
 bool Extender::isPresent(uint8_t dev) const
@@ -166,7 +180,7 @@ bool Extender::isPresent(uint8_t dev) const
     return _present[dev];
 }
 
-bool Extender::ensureDev_(uint8_t dev) const
+bool Extender::ensureDevLocked_(uint8_t dev) const
 {
     if (!isConfigured(dev))
         return false;
@@ -230,9 +244,14 @@ bool Extender::ensureDev_(uint8_t dev) const
 
 void Extender::pinMode(uint8_t dev, uint8_t pin, uint8_t mode)
 {
-    if (!ensureDev_(dev))
+    if (dev >= _dev_count || !_i2c)
         return;
     const DevCfg &cfg = _devs[dev];
+    I2CManager::ScopedBusLock lk(*_i2c, cfg.bus_num);
+    if (!lk.locked())
+        return;
+    if (!ensureDevLocked_(dev))
+        return;
     if (cfg.type == Type::MCP23017)
     {
         Mcp23017 *mcp = mcp_(dev);
@@ -253,9 +272,14 @@ void Extender::pinMode(uint8_t dev, uint8_t pin, uint8_t mode)
 
 void Extender::write(uint8_t dev, uint8_t pin, bool level)
 {
-    if (!ensureDev_(dev))
+    if (dev >= _dev_count || !_i2c)
         return;
     const DevCfg &cfg = _devs[dev];
+    I2CManager::ScopedBusLock lk(*_i2c, cfg.bus_num);
+    if (!lk.locked())
+        return;
+    if (!ensureDevLocked_(dev))
+        return;
     if (cfg.type == Type::MCP23017)
     {
         Mcp23017 *mcp = mcp_(dev);
@@ -276,9 +300,14 @@ void Extender::write(uint8_t dev, uint8_t pin, bool level)
 
 bool Extender::read(uint8_t dev, uint8_t pin) const
 {
-    if (!ensureDev_(dev))
+    if (dev >= _dev_count || !_i2c)
         return false;
     const DevCfg &cfg = _devs[dev];
+    I2CManager::ScopedBusLock lk(*_i2c, cfg.bus_num);
+    if (!lk.locked())
+        return false;
+    if (!ensureDevLocked_(dev))
+        return false;
     if (cfg.type == Type::MCP23017)
     {
         Mcp23017 *mcp = mcp_(dev);
@@ -336,6 +365,11 @@ void Extender::flushAll()
 {
     for (uint8_t i = 0; i < _dev_count; ++i)
     {
+        if (!_i2c)
+            return;
+        I2CManager::ScopedBusLock lk(*_i2c, _devs[i].bus_num);
+        if (!lk.locked())
+            continue;
         if (_mcp_inited[i])
             (void)_mcp[i].flush();
         if (_pcf_inited[i])

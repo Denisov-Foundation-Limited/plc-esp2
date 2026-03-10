@@ -13,6 +13,11 @@
 #include "boards/board_profile.hpp"
 #include "hal/gpio/portio.hpp"
 
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
+
 bool OneWireManager::beginAll()
 {
     _err = Error::Ok;
@@ -37,6 +42,10 @@ bool OneWireManager::beginAll()
         }
         _cfg[i] = c;
         _bus[i].begin(gpio);
+#if defined(ESP32)
+        if (_bus_mtx_[i] == nullptr)
+            _bus_mtx_[i] = (void *)xSemaphoreCreateRecursiveMutex();
+#endif
     }
     _count = ActiveBoardProfile::ONEWIRE_COUNT;
     return true;
@@ -68,6 +77,71 @@ OneWireBus *OneWireManager::busPtrById(OwBusType bus_id)
     return nullptr;
 }
 
+int8_t OneWireManager::busIndexById(OwBusType bus_id) const
+{
+    for (uint8_t i = 0; i < _count; ++i)
+    {
+        if (_cfg[i].bus_id == static_cast<OneWireCfg::OwType>(bus_id))
+            return (int8_t)i;
+    }
+    return -1;
+}
+
+bool OneWireManager::lockBus(uint8_t bus_idx, uint32_t timeout_ms)
+{
+    if (bus_idx >= _count)
+    {
+        _err = Error::InvalidIndex;
+        return false;
+    }
+#if defined(ESP32)
+    SemaphoreHandle_t mtx = (SemaphoreHandle_t)_bus_mtx_[bus_idx];
+    if (mtx == nullptr)
+    {
+        _bus_mtx_[bus_idx] = (void *)xSemaphoreCreateRecursiveMutex();
+        mtx = (SemaphoreHandle_t)_bus_mtx_[bus_idx];
+        if (mtx == nullptr)
+            return false;
+    }
+    if (xSemaphoreTakeRecursive(mtx, pdMS_TO_TICKS(timeout_ms)) != pdTRUE)
+        return false;
+#else
+    (void)timeout_ms;
+#endif
+    return true;
+}
+
+void OneWireManager::unlockBus(uint8_t bus_idx)
+{
+    if (bus_idx >= _count)
+        return;
+#if defined(ESP32)
+    SemaphoreHandle_t mtx = (SemaphoreHandle_t)_bus_mtx_[bus_idx];
+    if (mtx == nullptr)
+        return;
+    xSemaphoreGiveRecursive(mtx);
+#endif
+}
+
+bool OneWireManager::lockBusById(OwBusType bus_id, uint32_t timeout_ms)
+{
+    const int8_t idx = busIndexById(bus_id);
+    if (idx < 0)
+    {
+        _err = Error::InvalidIndex;
+        return false;
+    }
+    return lockBus((uint8_t)idx, timeout_ms);
+}
+
+void OneWireManager::unlockBusById(OwBusType bus_id)
+{
+    const int8_t idx = busIndexById(bus_id);
+    if (idx < 0)
+        return;
+    unlockBus((uint8_t)idx);
+}
+
 OneWireManager::Error OneWireManager::lastError() const
 {
     return _err;
@@ -84,4 +158,23 @@ bool OneWireManager::oneWirePinFromPort_(int8_t port, uint8_t &out_gpio)
         return false;
     out_gpio = p.u.esp.gpio;
     return true;
+}
+
+OneWireManager::ScopedBusLock::ScopedBusLock(OneWireManager &mgr, uint8_t bus_idx, uint32_t timeout_ms)
+    : _mgr(&mgr), _bus_idx((int8_t)bus_idx)
+{
+    _locked = _mgr->lockBus(bus_idx, timeout_ms);
+}
+
+OneWireManager::ScopedBusLock::ScopedBusLock(OneWireManager &mgr, OwBusType bus_id, uint32_t timeout_ms)
+    : _mgr(&mgr), _bus_idx(mgr.busIndexById(bus_id))
+{
+    if (_bus_idx >= 0)
+        _locked = _mgr->lockBus((uint8_t)_bus_idx, timeout_ms);
+}
+
+OneWireManager::ScopedBusLock::~ScopedBusLock()
+{
+    if (_mgr && _locked && _bus_idx >= 0)
+        _mgr->unlockBus((uint8_t)_bus_idx);
 }

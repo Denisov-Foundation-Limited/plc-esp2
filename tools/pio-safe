@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -u
+
+PIO_BIN="${PIO_BIN:-pio}"
+
+if ! command -v "$PIO_BIN" >/dev/null 2>&1; then
+  if [ -x "/Users/serg/Library/Python/3.10/bin/pio" ]; then
+    PIO_BIN="/Users/serg/Library/Python/3.10/bin/pio"
+  else
+    echo "pio-safe: PlatformIO (pio) not found" >&2
+    exit 127
+  fi
+fi
+
+args=("$@")
+
+is_run=0
+has_jobs=0
+for a in "${args[@]}"; do
+  if [ "$a" = "run" ]; then
+    is_run=1
+  fi
+  if [ "$a" = "-j" ] || [ "$a" = "--jobs" ]; then
+    has_jobs=1
+  fi
+  case "$a" in
+    -j*|--jobs=*) has_jobs=1 ;;
+  esac
+done
+
+if [ $is_run -eq 0 ] || [ $has_jobs -eq 1 ]; then
+  exec "$PIO_BIN" "${args[@]}"
+fi
+
+jobs=1
+if command -v nproc >/dev/null 2>&1; then
+  jobs="$(nproc)"
+elif command -v sysctl >/dev/null 2>&1; then
+  jobs="$(sysctl -n hw.logicalcpu 2>/dev/null || echo 1)"
+fi
+
+case "$jobs" in
+  ''|*[!0-9]*) jobs=1 ;;
+esac
+if [ "$jobs" -lt 1 ]; then
+  jobs=1
+fi
+
+echo "pio-safe: first try with -j$jobs"
+if "$PIO_BIN" "${args[@]}" -j"$jobs"; then
+  exit 0
+fi
+
+if [ "$jobs" -eq 1 ]; then
+  exit 1
+fi
+
+echo "pio-safe: build failed, retrying with -j1"
+exec "$PIO_BIN" "${args[@]}" -j1

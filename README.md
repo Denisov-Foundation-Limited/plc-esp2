@@ -59,13 +59,12 @@ flowchart TD
   PLCSCAN --> CONSOLE[CLI console loop]
   CONSOLE --> NETLOOP[Network loop]
   NETLOOP --> POSTSIG[notifyStackPostNetwork]
-  POSTSIG --> TMLOOP[TaskManager loop fallback]
-  TMLOOP --> LOOP
+  POSTSIG --> LOOP
 
   RTOSNET[RTOS\nwifi / telegram / gsm / cloud / meteo_history] --> LOOP
   RTOSCTRL[RTOS\ncontrol_loop] --> LOOP
   STACKEVT[RTOS\nstack_evt post/flush] --> LOOP
-  COOPIO[TaskManager\nextender / display / plc + legacy] --> LOOP
+  RTOSIO[RTOS\nextender / display / plc] --> LOOP
 ```
 
 ### Runtime после внедрения RTOS
@@ -79,11 +78,12 @@ flowchart TD
   - `meteo_history`
   - `stack_evt` (`taskPost/taskFlush`)
   - `control_loop` для контроллеров
-- `extender`, `display` и `plc` пока оставлены в `TaskManager`.
-- `plc_scan.tick()` на ESP32 остаётся в `App::loop()` (избегаем конкурентного доступа к `Wire/I2C` из нескольких задач).
-- Для не-ESP32 сборок `plc_scan` может быть вынесен в отдельную задачу c интервалом `TASK_BINDER_PLC_SCAN_TICK_MS`.
-- Причина: эти части всё ещё пересекаются с общим state/stack-cache и в текущем безопасном варианте не вынесены в параллельные RTOS-задачи.
-- `TaskManager` остаётся как fallback/cooperative слой для legacy-путей и для тех подсистем, которые ещё не готовы к безопасному параллельному исполнению.
+- В отдельные RTOS-задачи также вынесены:
+  - `extender`
+  - `display`
+  - `plc`
+  - `plc_scan`
+- Основной `App::loop()` больше не крутит cooperative-рантайм и используется для оркестрации stack-phase (`runStackPre` + `notifyStackPostNetwork`).
 
 ### Логирование в многозадачном runtime
 

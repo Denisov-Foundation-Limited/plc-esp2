@@ -380,6 +380,7 @@ public:
           _leak(leak),
           _controllers(controllers)
     {
+        _ds18b20.setBusLockCallbacks(&StackSlaveHandler::owTempLockCb_, &StackSlaveHandler::owTempUnlockCb_, this);
     }
     ~StackSlaveHandler()
     {
@@ -3568,6 +3569,9 @@ private:
             OneWireBus *bus = _ow.busPtrByIndex(i);
             if (!bus)
                 continue;
+            OneWireManager::ScopedBusLock lk(_ow, i, 200);
+            if (!lk.locked())
+                continue;
             uint8_t addr[8] = {};
             bus->reset_search();
             while (bus->search(addr))
@@ -3582,6 +3586,19 @@ private:
                 _last_ow[_last_ow_count++] = e;
             }
         }
+    }
+
+    static bool owTempLockCb_(void *ctx, uint32_t timeout_ms)
+    {
+        auto *self = static_cast<StackSlaveHandler *>(ctx);
+        return self ? self->_ow.lockBusById(OneWireManager::OwBusType::Temp, timeout_ms) : false;
+    }
+
+    static void owTempUnlockCb_(void *ctx)
+    {
+        auto *self = static_cast<StackSlaveHandler *>(ctx);
+        if (self)
+            self->_ow.unlockBusById(OneWireManager::OwBusType::Temp);
     }
 
     void addrToHex_(const uint8_t in[8], char out[17]) const

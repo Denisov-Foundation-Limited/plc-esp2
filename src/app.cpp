@@ -16,6 +16,36 @@
 #include "boards/profile_validator.hpp"
 #include "utils/build_info.hpp"
 
+namespace
+{
+void appConsoleLoopCb_(void *ctx)
+{
+    if (!ctx)
+        return;
+    static_cast<CliConsole *>(ctx)->loop();
+}
+
+struct AppI2cLockCtx
+{
+    I2CManager *i2c = nullptr;
+    uint8_t bus = 0;
+};
+AppI2cLockCtx g_app_eeprom_lock_ctx{};
+
+bool appI2cLockCb_(void *ctx, uint32_t timeout_ms)
+{
+    AppI2cLockCtx *c = static_cast<AppI2cLockCtx *>(ctx);
+    return c && c->i2c ? c->i2c->lockBus(c->bus, timeout_ms) : false;
+}
+
+void appI2cUnlockCb_(void *ctx)
+{
+    AppI2cLockCtx *c = static_cast<AppI2cLockCtx *>(ctx);
+    if (c && c->i2c)
+        c->i2c->unlockBus(c->bus);
+}
+} // namespace
+
 #ifndef APP_GPIO_SCAN_METRICS
 #define APP_GPIO_SCAN_METRICS 0
 #endif
@@ -38,7 +68,6 @@
 
 CoreContext::CoreContext()
         : logs(uart),
-          tm(),
           configs()
 {
 }
@@ -80,9 +109,9 @@ ControlContext::ControlContext(CoreContext &core, HardwareContext &hw, CommsCont
           rules(),
           meteo_history(hw.rtc, controllers.meteo()),
           plc_scan(hw.io),
-          task_binder(core.tm, comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history,
+          task_binder(comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history,
                       hw.display, hw.plc, plc_scan, core.logs),
-          ftest(core.logs, hw.io, hw.ow, hw.ibutton, hw.ds18b20, hw.i2c, hw.rtc, hw.ext, core.tm, task_binder)
+          ftest(core.logs, hw.io, hw.ow, hw.ibutton, hw.ds18b20, hw.i2c, hw.rtc, hw.ext, task_binder)
 {
 }
 
@@ -158,6 +187,8 @@ App::App()
     net.network.setStackConfig(cfg.configs_manager);
     control.task_binder.setGsmModem(comms.gsm);
     control.task_binder.setCloudClient(net.network.cloudClient());
+    control.task_binder.setNetwork(net.network);
+    control.task_binder.setConsoleLoop(&appConsoleLoopCb_, &ui.console);
 
     control.controllers.security().setRfidI2c(&hw.i2c);
     control.controllers.security().setUsersRegistry(control.users);
@@ -276,6 +307,9 @@ bool App::begin()
     core.logs.info(F("APP"), F("Initializing EEPROM"));
     {
         const auto cfg_eeprom = ActiveBoardProfile::EEPROM;
+        g_app_eeprom_lock_ctx.i2c = &hw.i2c;
+        g_app_eeprom_lock_ctx.bus = cfg_eeprom.bus_num;
+        hw.eeprom.setBusLockCallbacks(&appI2cLockCb_, &appI2cUnlockCb_, &g_app_eeprom_lock_ctx);
         TwoWire *wire = hw.i2c.wirePtr(cfg_eeprom.bus_num);
         const bool eeprom_present = wire && hw.i2c.probeAddress(cfg_eeprom.bus_num, cfg_eeprom.addr);
         const bool eeprom_ok = eeprom_present && hw.eeprom.begin(*wire, cfg_eeprom.addr);
@@ -405,9 +439,6 @@ bool App::begin()
 void App::loop()
 {
     control.task_binder.runStackPre(stack);
-    control.plc_scan.tick();
-    ui.console.loop();
-    net.network.loop();
     control.task_binder.notifyStackPostNetwork();
 
 #if APP_GPIO_SCAN_METRICS
@@ -500,6 +531,4 @@ void App::loop()
         }
     }
 #endif
-
-    core.tm.loop();
 }

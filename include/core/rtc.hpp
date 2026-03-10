@@ -42,4 +42,5 @@ private:
     Ds3231Mz &_rtc;
     I2CManager &_i2c;
     Error _err = Error::Ok;
+    uint8_t _bus_num = 0;
 };

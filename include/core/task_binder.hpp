@@ -11,10 +11,10 @@
 
 #pragma once
 
-#include "core/task_manager.hpp"
 #include "core/network/gsm_modem.hpp"
 #include "core/network/cloud/cloud_client.hpp"
 #include "core/network/wifi_manager.hpp"
+#include "core/network/network.hpp"
 #include "core/network/telegram/telegram_bot.hpp"
 #include "core/display.hpp"
 #include "core/plc_scan.hpp"
@@ -25,12 +25,10 @@
 #include "utils/logger.hpp"
 #include "plc/plc_control.hpp"
 
-#if defined(ESP32)
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
-#endif
 
 #ifndef TASK_BINDER_RTOS_DEBUG
 #define TASK_BINDER_RTOS_DEBUG 0
@@ -40,15 +38,24 @@
 #define TASK_BINDER_PLC_SCAN_TICK_MS 1
 #endif
 
-template <size_t N>
+#ifndef TASK_BINDER_NETWORK_LOOP_TICK_MS
+#define TASK_BINDER_NETWORK_LOOP_TICK_MS 10
+#endif
+
+#ifndef TASK_BINDER_CONSOLE_LOOP_TICK_MS
+#define TASK_BINDER_CONSOLE_LOOP_TICK_MS 10
+#endif
+
 class TaskBinder
 {
 public:
-    TaskBinder(TaskManager<N> &tm, WifiManager &wifi, TelegramBot &tgbot, Extender &ext,
+    using LoopCallback = void (*)(void *ctx);
+    using FtestCallback = void (*)(void *ctx);
+
+    TaskBinder(WifiManager &wifi, TelegramBot &tgbot, Extender &ext,
                Controllers &controllers, MeteoHistory &meteo_history,
                Display &display, PlcControl &plc, PlcScanLoop &plc_scan, Logger &logs)
-        : _tm(tm),
-          _wifi(wifi),
+        : _wifi(wifi),
           _tgbot(tgbot),
           _ext(ext),
           _controllers(controllers),
@@ -70,35 +77,47 @@ public:
         bindPlcScan_();
         bindControllersStorage_();
         bindMeteoHistory_();
+        bindNetworkLoop_();
+        bindConsoleLoop_();
         bindDisplay_();
         bindPlc_();
-        if (_tm.used() == _tm.capacity())
-            _logs.warn(F("TASK"), F("TaskManager is full: %u/%u"),
-                       (unsigned)_tm.used(), (unsigned)_tm.capacity());
     }
 
     template <typename FtestT>
-    typename TaskManager<N>::Handle bindFtest(FtestT &ftest)
+    void bindFtest(FtestT &ftest)
     {
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 500;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        opt.enabled = false;
-        _ftest_task = _tm.template add<&FtestT::task>(ftest, opt);
-        if (!_ftest_task)
-            _logs.error(F("TASK"), F("Bind failed: ftest"));
-        return _ftest_task;
+        _ftest_ctx = &ftest;
+        _ftest_cb = [](void *ctx) {
+            if (!ctx)
+                return;
+            static_cast<FtestT *>(ctx)->task();
+        };
+        if (_ftest_task == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::ftestTaskEntry_, "ftest", 4096, this, 1,
+                                                    &_ftest_task, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: ftest"));
+        }
+        _ftest_enabled = false;
     }
 
-    typename TaskManager<N>::Handle getFtestTask() const { return _ftest_task; }
+    void enableFtest(bool enabled) { _ftest_enabled = enabled; }
 
     void setGsmModem(GsmModem &gsm) { _gsm = &gsm; }
 
     void setCloudClient(CloudClient &cloud) { _cloud = &cloud; }
 
+    void setNetwork(Network &network) { _network = &network; }
+
+    void setConsoleLoop(LoopCallback cb, void *ctx)
+    {
+        _console_loop_cb = cb;
+        _console_loop_ctx = ctx;
+    }
+
     void bindStack(StackRuntime &stack)
     {
-#if defined(ESP32)
         _stack_runtime = &stack;
         if (_stack_phase_mtx == nullptr)
             _stack_phase_mtx = xSemaphoreCreateMutex();
@@ -111,18 +130,10 @@ public:
             if (ok != pdPASS)
                 _logs.error(F("TASK"), F("Bind failed: stack_evt"));
         }
-#else
-        bindStackPost_(stack);
-        bindStackFlush_(stack);
-#endif
-        if (_tm.used() == _tm.capacity())
-            _logs.warn(F("TASK"), F("TaskManager is full: %u/%u"),
-                       (unsigned)_tm.used(), (unsigned)_tm.capacity());
     }
 
     void runStackPre(StackRuntime &stack)
     {
-#if defined(ESP32)
         _stack_runtime = &stack;
         if (_stack_phase_mtx)
             xSemaphoreTake(_stack_phase_mtx, portMAX_DELAY);
@@ -131,15 +142,10 @@ public:
         stack.setTaskPhase(StackRuntime::TaskPhase::Idle);
         if (_stack_phase_mtx)
             xSemaphoreGive(_stack_phase_mtx);
-#else
-        stack.setTaskPhase(StackRuntime::TaskPhase::PreNetwork);
-        stack.taskPre();
-#endif
     }
 
     void notifyStackPostNetwork()
     {
-#if defined(ESP32)
         if (_stack_evt_queue == nullptr)
             return;
         if (_stack_evt_pending)
@@ -147,167 +153,9 @@ public:
         _stack_evt_pending = true;
         uint8_t evt = 1;
         xQueueOverwrite(_stack_evt_queue, &evt);
-#endif
     }
 
 private:
-    typename TaskManager<N>::Handle bindControllersStorage_()
-    {
-        if (_control_task == nullptr)
-        {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::controlTaskEntry_, "control_loop", 8192, this, 2,
-                                                    &_control_task, tskNO_AFFINITY);
-            if (ok != pdPASS)
-                _logs.error(F("TASK"), F("Bind failed: control_loop"));
-        }
-        return {};
-    }
-
-    typename TaskManager<N>::Handle bindPlcScan_()
-    {
-#if defined(ESP32)
-        // Keep plc_scan in App::loop on ESP32 to avoid concurrent Wire access
-        // from multiple RTOS tasks (extender + RTC/PLC/display/network I2C users).
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = TASK_BINDER_PLC_SCAN_TICK_MS;
-        opt.priority = TaskManager<N>::Priority::Highest;
-        return addChecked_<&TaskBinder::plcScanTask_>(*this, opt, "plc_scan");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindWiFiManager()
-    {
-#if defined(ESP32)
-        if (_wifi_task == nullptr)
-        {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::wifiTaskEntry_, "wifi_mgr", 3072, this, 2, &_wifi_task,
-                                                    tskNO_AFFINITY);
-            if (ok != pdPASS)
-                _logs.error(F("TASK"), F("Bind failed: wifi"));
-        }
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 1000;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&WifiManager::task>(_wifi, opt, "wifi");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindTgbot()
-    {
-#if defined(ESP32)
-        if (_tgbot_task == nullptr)
-        {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::telegramTaskEntry_, "tg_bot", 6144, this, 1,
-                                                    &_tgbot_task, tskNO_AFFINITY);
-            if (ok != pdPASS)
-                _logs.error(F("TASK"), F("Bind failed: telegram_bot"));
-        }
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 200;
-        opt.priority = TaskManager<N>::Priority::Low;
-        return addChecked_<&TaskBinder::tgbotTask_>(*this, opt, "telegram_bot");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindExtender()
-    {
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::Low;
-        _ext_task = addChecked_<&Extender::task>(_ext, opt, "extender");
-        return _ext_task;
-    }
-
-    typename TaskManager<N>::Handle bindMeteoHistory_()
-    {
-#if defined(ESP32)
-        if (_meteo_history_task == nullptr)
-        {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::meteoHistoryTaskEntry_, "meteo_hist", 4096, this, 1,
-                                                    &_meteo_history_task, tskNO_AFFINITY);
-            if (ok != pdPASS)
-                _logs.error(F("TASK"), F("Bind failed: meteo_history"));
-        }
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 60000;
-        opt.priority = TaskManager<N>::Priority::Low;
-        return addChecked_<&MeteoHistory::task>(_meteo_history, opt, "meteo_history");
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindGsm_()
-    {
-        if (!_gsm)
-            return {};
-#if defined(ESP32)
-        if (_gsm_task_rtos == nullptr)
-        {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::gsmTaskEntry_, "gsm_modem", 4096, this, 3,
-                                                    &_gsm_task_rtos, tskNO_AFFINITY);
-            if (ok != pdPASS)
-                _logs.error(F("TASK"), F("Bind failed: gsm_modem"));
-        }
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::High;
-        _gsm_task = addChecked_<&GsmModem::loop>(*_gsm, opt, "gsm_modem");
-        return _gsm_task;
-#endif
-    }
-
-    typename TaskManager<N>::Handle bindCloud_()
-    {
-        if (!_cloud)
-            return {};
-#if defined(ESP32)
-        if (_cloud_task_rtos == nullptr)
-        {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::cloudTaskEntry_, "cloud_cli", 8192, this, 3,
-                                                    &_cloud_task_rtos, tskNO_AFFINITY);
-            if (ok != pdPASS)
-                _logs.error(F("TASK"), F("Bind failed: cloud_client"));
-        }
-        return {};
-#else
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 50;
-        opt.priority = TaskManager<N>::Priority::High;
-        _cloud_task = addChecked_<&CloudClient::loop>(*_cloud, opt, "cloud_client");
-        return _cloud_task;
-#endif
-    }
-
-    TaskManager<N> &_tm;
-    WifiManager &_wifi;
-    TelegramBot &_tgbot;
-    Extender &_ext;
-    Controllers &_controllers;
-    MeteoHistory &_meteo_history;
-    Display &_display;
-    PlcControl &_plc;
-    PlcScanLoop &_plc_scan;
-    Logger &_logs;
-    GsmModem *_gsm = nullptr;
-    CloudClient *_cloud = nullptr;
-    typename TaskManager<N>::Handle _ftest_task{};
-    typename TaskManager<N>::Handle _gsm_task{};
-    typename TaskManager<N>::Handle _cloud_task{};
-    typename TaskManager<N>::Handle _ext_task{};
-    typename TaskManager<N>::Handle _display_task{};
-    typename TaskManager<N>::Handle _stack_pre_task{};
-    typename TaskManager<N>::Handle _stack_post_task{};
-    typename TaskManager<N>::Handle _stack_flush_task{};
-#if defined(ESP32)
     struct RtosDebugStats
     {
         uint32_t last_exec_us = 0;
@@ -322,29 +170,141 @@ private:
         UBaseType_t min_stack_hwm_words = 0;
     };
 
-    TaskHandle_t _wifi_task = nullptr;
-    TaskHandle_t _tgbot_task = nullptr;
-    TaskHandle_t _meteo_history_task = nullptr;
-    TaskHandle_t _control_task = nullptr;
-    TaskHandle_t _plc_scan_task = nullptr;
-    TaskHandle_t _gsm_task_rtos = nullptr;
-    TaskHandle_t _cloud_task_rtos = nullptr;
-    TaskHandle_t _stack_evt_task = nullptr;
-    QueueHandle_t _stack_evt_queue = nullptr;
-    SemaphoreHandle_t _stack_phase_mtx = nullptr;
-    StackRuntime *_stack_runtime = nullptr;
-    volatile bool _stack_evt_pending = false;
-#if TASK_BINDER_RTOS_DEBUG
-    RtosDebugStats _dbg_wifi{};
-    RtosDebugStats _dbg_tg{};
-    RtosDebugStats _dbg_meteo_history{};
-    RtosDebugStats _dbg_control{};
-    RtosDebugStats _dbg_plc_scan{};
-    RtosDebugStats _dbg_gsm{};
-    RtosDebugStats _dbg_cloud{};
-    RtosDebugStats _dbg_stack_evt{};
-#endif
-#endif
+    void bindControllersStorage_()
+    {
+        if (_control_task == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::controlTaskEntry_, "control_loop", 8192, this, 2,
+                                                    &_control_task, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: control_loop"));
+        }
+    }
+
+    void bindPlcScan_()
+    {
+        if (_plc_scan_task == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::plcScanTaskEntry_, "plc_scan", 3072, this, 4,
+                                                    &_plc_scan_task, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: plc_scan"));
+        }
+    }
+
+    void bindWiFiManager()
+    {
+        if (_wifi_task == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::wifiTaskEntry_, "wifi_mgr", 3072, this, 2, &_wifi_task,
+                                                    tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: wifi"));
+        }
+    }
+
+    void bindTgbot()
+    {
+        if (_tgbot_task == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::telegramTaskEntry_, "tg_bot", 6144, this, 1,
+                                                    &_tgbot_task, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: telegram_bot"));
+        }
+    }
+
+    void bindExtender()
+    {
+        if (_ext_task_rtos == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::extenderTaskEntry_, "extender", 3072, this, 1,
+                                                    &_ext_task_rtos, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: extender"));
+        }
+    }
+
+    void bindMeteoHistory_()
+    {
+        if (_meteo_history_task == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::meteoHistoryTaskEntry_, "meteo_hist", 4096, this, 1,
+                                                    &_meteo_history_task, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: meteo_history"));
+        }
+    }
+
+    void bindGsm_()
+    {
+        if (!_gsm)
+            return;
+        if (_gsm_task_rtos == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::gsmTaskEntry_, "gsm_modem", 4096, this, 3,
+                                                    &_gsm_task_rtos, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: gsm_modem"));
+        }
+    }
+
+    void bindCloud_()
+    {
+        if (!_cloud)
+            return;
+        if (_cloud_task_rtos == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::cloudTaskEntry_, "cloud_cli", 8192, this, 3,
+                                                    &_cloud_task_rtos, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: cloud_client"));
+        }
+    }
+
+    void bindNetworkLoop_()
+    {
+        if (_network_task_rtos == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::networkTaskEntry_, "network_loop", 4096, this, 3,
+                                                    &_network_task_rtos, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: network_loop"));
+        }
+    }
+
+    void bindConsoleLoop_()
+    {
+        if (_console_task_rtos == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::consoleTaskEntry_, "console_loop", 4096, this, 1,
+                                                    &_console_task_rtos, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: console_loop"));
+        }
+    }
+
+    void bindDisplay_()
+    {
+        if (_display_task_rtos == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::displayTaskEntry_, "display", 3072, this, 1,
+                                                    &_display_task_rtos, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: display"));
+        }
+    }
+
+    void bindPlc_()
+    {
+        if (_plc_task_rtos == nullptr)
+        {
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::plcTaskEntry_, "plc", 4096, this, 2,
+                                                    &_plc_task_rtos, tskNO_AFFINITY);
+            if (ok != pdPASS)
+                _logs.error(F("TASK"), F("Bind failed: plc"));
+        }
+    }
 
     void tgbotTask_()
     {
@@ -357,51 +317,24 @@ private:
         _plc_scan.tick();
     }
 
-    typename TaskManager<N>::Handle bindDisplay_()
+    void networkLoopTask_()
     {
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 250;
-        opt.priority = TaskManager<N>::Priority::Low;
-        _display_task = addChecked_<&Display::task>(_display, opt, "display");
-        return _display_task;
+        if (_network)
+            _network->loop();
     }
 
-    typename TaskManager<N>::Handle bindPlc_()
+    void consoleLoopTask_()
     {
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 100;
-        opt.priority = TaskManager<N>::Priority::Normal;
-        return addChecked_<&PlcControl::task>(_plc, opt, "plc");
+        if (_console_loop_cb)
+            _console_loop_cb(_console_loop_ctx);
     }
 
-    typename TaskManager<N>::Handle bindStackPre_(StackRuntime &stack)
+    void ftestTask_()
     {
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 1;
-        opt.priority = TaskManager<N>::Priority::Highest;
-        _stack_pre_task = addChecked_<&StackRuntime::taskPre>(stack, opt, "stack_pre");
-        return _stack_pre_task;
+        if (_ftest_enabled && _ftest_cb)
+            _ftest_cb(_ftest_ctx);
     }
 
-    typename TaskManager<N>::Handle bindStackPost_(StackRuntime &stack)
-    {
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 1;
-        opt.priority = TaskManager<N>::Priority::High;
-        _stack_post_task = addChecked_<&StackRuntime::taskPost>(stack, opt, "stack_post");
-        return _stack_post_task;
-    }
-
-    typename TaskManager<N>::Handle bindStackFlush_(StackRuntime &stack)
-    {
-        typename TaskManager<N>::Options opt;
-        opt.interval_ms = 1;
-        opt.priority = TaskManager<N>::Priority::Lowest;
-        _stack_flush_task = addChecked_<&StackRuntime::taskFlush>(stack, opt, "stack_flush");
-        return _stack_flush_task;
-    }
-
-#if defined(ESP32)
     void updateRtosDebug_(const char *task_name, uint32_t exec_us, UBaseType_t stack_hwm_words, RtosDebugStats &st)
     {
         const uint32_t now = millis();
@@ -554,6 +487,57 @@ private:
         }
     }
 
+    static void extenderTaskEntry_(void *arg)
+    {
+        auto *self = static_cast<TaskBinder *>(arg);
+        TickType_t last = xTaskGetTickCount();
+        for (;;)
+        {
+            const uint32_t t0 = micros();
+            self->_ext.task();
+#if TASK_BINDER_RTOS_DEBUG
+            const uint32_t dt = (uint32_t)(micros() - t0);
+            const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
+            self->updateRtosDebug_("extender", dt, hwm, self->_dbg_ext);
+#endif
+            vTaskDelayUntil(&last, pdMS_TO_TICKS(50));
+        }
+    }
+
+    static void displayTaskEntry_(void *arg)
+    {
+        auto *self = static_cast<TaskBinder *>(arg);
+        TickType_t last = xTaskGetTickCount();
+        for (;;)
+        {
+            const uint32_t t0 = micros();
+            self->_display.task();
+#if TASK_BINDER_RTOS_DEBUG
+            const uint32_t dt = (uint32_t)(micros() - t0);
+            const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
+            self->updateRtosDebug_("display", dt, hwm, self->_dbg_display);
+#endif
+            vTaskDelayUntil(&last, pdMS_TO_TICKS(250));
+        }
+    }
+
+    static void plcTaskEntry_(void *arg)
+    {
+        auto *self = static_cast<TaskBinder *>(arg);
+        TickType_t last = xTaskGetTickCount();
+        for (;;)
+        {
+            const uint32_t t0 = micros();
+            self->_plc.task();
+#if TASK_BINDER_RTOS_DEBUG
+            const uint32_t dt = (uint32_t)(micros() - t0);
+            const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
+            self->updateRtosDebug_("plc", dt, hwm, self->_dbg_plc);
+#endif
+            vTaskDelayUntil(&last, pdMS_TO_TICKS(100));
+        }
+    }
+
     static void cloudTaskEntry_(void *arg)
     {
         auto *self = static_cast<TaskBinder *>(arg);
@@ -569,6 +553,57 @@ private:
             self->updateRtosDebug_("cloud", dt, hwm, self->_dbg_cloud);
 #endif
             vTaskDelayUntil(&last, pdMS_TO_TICKS(50));
+        }
+    }
+
+    static void networkTaskEntry_(void *arg)
+    {
+        auto *self = static_cast<TaskBinder *>(arg);
+        TickType_t last = xTaskGetTickCount();
+        for (;;)
+        {
+            const uint32_t t0 = micros();
+            self->networkLoopTask_();
+#if TASK_BINDER_RTOS_DEBUG
+            const uint32_t dt = (uint32_t)(micros() - t0);
+            const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
+            self->updateRtosDebug_("network", dt, hwm, self->_dbg_network);
+#endif
+            vTaskDelayUntil(&last, pdMS_TO_TICKS(TASK_BINDER_NETWORK_LOOP_TICK_MS));
+        }
+    }
+
+    static void consoleTaskEntry_(void *arg)
+    {
+        auto *self = static_cast<TaskBinder *>(arg);
+        TickType_t last = xTaskGetTickCount();
+        for (;;)
+        {
+            const uint32_t t0 = micros();
+            self->consoleLoopTask_();
+#if TASK_BINDER_RTOS_DEBUG
+            const uint32_t dt = (uint32_t)(micros() - t0);
+            const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
+            self->updateRtosDebug_("console", dt, hwm, self->_dbg_console);
+#endif
+            vTaskDelayUntil(&last, pdMS_TO_TICKS(TASK_BINDER_CONSOLE_LOOP_TICK_MS));
+        }
+    }
+
+    static void ftestTaskEntry_(void *arg)
+    {
+        auto *self = static_cast<TaskBinder *>(arg);
+        TickType_t last = xTaskGetTickCount();
+        for (;;)
+        {
+            const uint32_t t0 = micros();
+            self->ftestTask_();
+#if TASK_BINDER_RTOS_DEBUG
+            const uint32_t dt = (uint32_t)(micros() - t0);
+            const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
+            self->updateRtosDebug_("ftest", dt, hwm, self->_dbg_ftest);
+#endif
+            vTaskDelayUntil(&last, pdMS_TO_TICKS(500));
         }
     }
 
@@ -605,15 +640,59 @@ private:
 #endif
         }
     }
-#endif
 
-    template <auto Method, typename T>
-    typename TaskManager<N>::Handle addChecked_(T &obj, const typename TaskManager<N>::Options &opt,
-                                                const char *name)
-    {
-        const auto h = _tm.template add<Method>(obj, opt);
-        if (!h)
-            _logs.error(F("TASK"), F("Bind failed: %s"), name ? name : "-");
-        return h;
-    }
+    WifiManager &_wifi;
+    TelegramBot &_tgbot;
+    Extender &_ext;
+    Controllers &_controllers;
+    MeteoHistory &_meteo_history;
+    Display &_display;
+    PlcControl &_plc;
+    PlcScanLoop &_plc_scan;
+    Logger &_logs;
+
+    GsmModem *_gsm = nullptr;
+    CloudClient *_cloud = nullptr;
+    Network *_network = nullptr;
+    LoopCallback _console_loop_cb = nullptr;
+    void *_console_loop_ctx = nullptr;
+    FtestCallback _ftest_cb = nullptr;
+    void *_ftest_ctx = nullptr;
+    volatile bool _ftest_enabled = false;
+
+    TaskHandle_t _wifi_task = nullptr;
+    TaskHandle_t _tgbot_task = nullptr;
+    TaskHandle_t _meteo_history_task = nullptr;
+    TaskHandle_t _control_task = nullptr;
+    TaskHandle_t _plc_scan_task = nullptr;
+    TaskHandle_t _ext_task_rtos = nullptr;
+    TaskHandle_t _display_task_rtos = nullptr;
+    TaskHandle_t _plc_task_rtos = nullptr;
+    TaskHandle_t _gsm_task_rtos = nullptr;
+    TaskHandle_t _cloud_task_rtos = nullptr;
+    TaskHandle_t _stack_evt_task = nullptr;
+    TaskHandle_t _network_task_rtos = nullptr;
+    TaskHandle_t _console_task_rtos = nullptr;
+    TaskHandle_t _ftest_task = nullptr;
+    QueueHandle_t _stack_evt_queue = nullptr;
+    SemaphoreHandle_t _stack_phase_mtx = nullptr;
+    StackRuntime *_stack_runtime = nullptr;
+    volatile bool _stack_evt_pending = false;
+
+#if TASK_BINDER_RTOS_DEBUG
+    RtosDebugStats _dbg_wifi{};
+    RtosDebugStats _dbg_tg{};
+    RtosDebugStats _dbg_meteo_history{};
+    RtosDebugStats _dbg_control{};
+    RtosDebugStats _dbg_plc_scan{};
+    RtosDebugStats _dbg_ext{};
+    RtosDebugStats _dbg_display{};
+    RtosDebugStats _dbg_plc{};
+    RtosDebugStats _dbg_gsm{};
+    RtosDebugStats _dbg_cloud{};
+    RtosDebugStats _dbg_stack_evt{};
+    RtosDebugStats _dbg_network{};
+    RtosDebugStats _dbg_console{};
+    RtosDebugStats _dbg_ftest{};
+#endif
 };

@@ -14,7 +14,6 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-#include "core/task_manager.hpp"
 #include "core/task_binder.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
@@ -32,8 +31,7 @@ class Ftest
 public:
     explicit Ftest(Logger &logs, IoStack &io, OneWireManager &ow, IButton &ibutton,
                    Ds18b20 &ds18b20, I2CManager &i2c, RTC &rtc, Extender &ext,
-                   TaskManager<TASK_MGR_TSK_COUNT> &tm,
-                   TaskBinder<TASK_MGR_TSK_COUNT> &tb);
+                   TaskBinder &tb);
 
     void start();
     void task();
@@ -64,6 +62,12 @@ private:
     static constexpr char kTypeUnknown[] PROGMEM = "Unknown";
 
     bool isPortActive_(const PortIO::PortDesc &p) const;
+    static bool i2cLockCb_(void *ctx, uint32_t timeout_ms);
+    static void i2cUnlockCb_(void *ctx);
+    static bool owIButtonLockCb_(void *ctx, uint32_t timeout_ms);
+    static void owIButtonUnlockCb_(void *ctx);
+    static bool owTempLockCb_(void *ctx, uint32_t timeout_ms);
+    static void owTempUnlockCb_(void *ctx);
 
     Logger &_logs;
     IoStack &_io;
@@ -78,7 +82,12 @@ private:
     At24lc512 _eeprom;
     bool _eeprom_ok = false;
     bool _ds18b20_ok = false;
-    TaskManager<TASK_MGR_TSK_COUNT> &_tm;
-    TaskBinder<TASK_MGR_TSK_COUNT> &_tb;
+    uint8_t _lm75_bus = 0;
+    struct I2cLockCtx
+    {
+        I2CManager *i2c = nullptr;
+        uint8_t bus = 0;
+    } _eeprom_lock_ctx{};
+    TaskBinder &_tb;
     bool _state = false;
 };

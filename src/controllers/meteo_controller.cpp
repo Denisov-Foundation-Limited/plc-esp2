@@ -46,6 +46,7 @@ bool MeteoController::begin(){
     _ds_bus = _ow.busPtrById(OneWireManager::OwBusType::Temp);
     if (_ds_bus)
     {
+        _ds18b20.setBusLockCallbacks(&MeteoController::owLockCb_, &MeteoController::owUnlockCb_, this);
         _ds18b20.begin(*_ds_bus);
         _logs.info(F("METEO"), F("DS18B20 bus ready"));
     }
@@ -54,6 +55,19 @@ bool MeteoController::begin(){
         _logs.warn(F("METEO"), F("DS18B20 bus missing"));
     }
     return true;
+}
+
+bool MeteoController::owLockCb_(void *ctx, uint32_t timeout_ms)
+{
+    auto *self = static_cast<MeteoController *>(ctx);
+    return self ? self->_ow.lockBusById(OneWireManager::OwBusType::Temp, timeout_ms) : false;
+}
+
+void MeteoController::owUnlockCb_(void *ctx)
+{
+    auto *self = static_cast<MeteoController *>(ctx);
+    if (self)
+        self->_ow.unlockBusById(OneWireManager::OwBusType::Temp);
 }
 
 void MeteoController::task(){

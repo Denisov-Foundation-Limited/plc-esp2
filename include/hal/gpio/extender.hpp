@@ -92,7 +92,8 @@ private:
 
     void initState_();
     void scanDevice_(uint8_t dev);
-    bool ensureDev_(uint8_t dev) const;
+    void scanDeviceLocked_(uint8_t dev);
+    bool ensureDevLocked_(uint8_t dev) const;
     Mcp23017 *mcp_(uint8_t dev) const;
     Pcf8574 *pcf_(uint8_t dev) const;
     void logInitFailOnce_(uint8_t dev, const __FlashStringHelper *msg) const;

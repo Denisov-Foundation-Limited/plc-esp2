@@ -19,6 +19,7 @@ RTC::RTC(I2CManager &i2c, Ds3231Mz &rtc) : _i2c(i2c), _rtc(rtc) {}
 bool RTC::begin()
 {
     const uint8_t bus_num = ActiveBoardProfile::RTC.bus_num;
+    _bus_num = bus_num;
     const uint8_t addr = ActiveBoardProfile::RTC.addr;
     if (!busExists_(bus_num))
     {
@@ -45,6 +46,12 @@ bool RTC::begin()
 
 bool RTC::setTime(const Ds3231Mz::DateTime &dt)
 {
+    I2CManager::ScopedBusLock lk(_i2c, _bus_num);
+    if (!lk.locked())
+    {
+        _err = Error::I2c;
+        return false;
+    }
     if (!_rtc.set(dt))
     {
         _err = Error::I2c;
@@ -56,6 +63,12 @@ bool RTC::setTime(const Ds3231Mz::DateTime &dt)
 
 bool RTC::Time(Ds3231Mz::DateTime &out)
 {
+    I2CManager::ScopedBusLock lk(_i2c, _bus_num);
+    if (!lk.locked())
+    {
+        _err = Error::I2c;
+        return false;
+    }
     if (!_rtc.read(out))
     {
         _err = Error::I2c;
@@ -67,6 +80,12 @@ bool RTC::Time(Ds3231Mz::DateTime &out)
 
 bool RTC::readTemp(float &out_c)
 {
+    I2CManager::ScopedBusLock lk(_i2c, _bus_num);
+    if (!lk.locked())
+    {
+        _err = Error::I2c;
+        return false;
+    }
     if (!_rtc.readTempC(out_c))
     {
         _err = Error::I2c;

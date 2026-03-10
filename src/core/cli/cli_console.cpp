@@ -505,6 +505,9 @@ void CliConsole::cmdShowOw_()
         OneWireBus *bus = _ow.busPtrByIndex(i);
         if (!bus)
             continue;
+        OneWireManager::ScopedBusLock lk(_ow, i, 200);
+        if (!lk.locked())
+            continue;
         const auto &cfg = ActiveBoardProfile::ONEWIRES[i];
         uint8_t addr[8] = {};
         bus->reset_search();

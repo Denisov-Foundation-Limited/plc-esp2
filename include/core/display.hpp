@@ -64,6 +64,7 @@ private:
     Lcd1602I2c &_lcd;
     Error _err = Error::Ok;
     bool _ready = false;
+    uint8_t _bus_num = 0;
     String _line0;
     String _line1;
     DisplaySlotConfig _slots[kSlotCount]{};
