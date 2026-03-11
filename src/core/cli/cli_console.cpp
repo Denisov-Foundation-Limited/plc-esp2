@@ -268,7 +268,7 @@ void CliConsole::cmdShowWifi_()
 {
     _io->println(F("Wi-Fi configurations:"));
     const size_t key_w = 11; // ap_password
-    printKeyValue_(F("mode"), _wifi.ap() ? F("AP") : F("STA"), key_w);
+    printKeyValue_(F("mode"), _wifi.modeLabel(), key_w);
     printKeyValue_(F("ssid"), _wifi.ssid(), key_w);
     printKeyValue_(F("password"), _wifi.password(), key_w);
     printKeyValue_(F("ap_ssid"), _wifi.apSsid(), key_w);

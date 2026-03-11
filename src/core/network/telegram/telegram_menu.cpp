@@ -270,7 +270,7 @@ bool TelegramMenu::cmdWifi_(TelegramBot &bot, const TelegramClient::Update &u, S
     if (!_self)
         return false;
     String out = F("Wi-Fi:\n  режим: <b>");
-    out += _self->_wifi.ap() ? F("AP") : F("STA");
+    out += _self->_wifi.modeLabel();
     out += F("</b>\n  ssid: <b>");
     out += _self->escapeHtml_(_self->_wifi.ssid());
     out += F("</b>\n  ap_ssid: <b>");
@@ -369,6 +369,18 @@ bool TelegramMenu::cmdWifiApOff_(TelegramBot &bot, const TelegramClient::Update 
         reply = "Wi-Fi AP выключен";
     else
         reply = "Не удалось выключить Wi-Fi AP";
+    return true;
+}
+bool TelegramMenu::cmdWifiStaAp_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+{
+    (void)bot;
+    if (!_self)
+        return false;
+    _self->_wifi.setMode(WifiManager::Mode::StaAp);
+    if (_self->_wifi.begin())
+        reply = "Wi-Fi STA+AP включен";
+    else
+        reply = "Не удалось включить Wi-Fi STA+AP";
     return true;
 }
 bool TelegramMenu::cmdLogs_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)

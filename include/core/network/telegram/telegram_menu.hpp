@@ -252,6 +252,8 @@ private:
 
     static bool cmdWifiApOff_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
 
+    static bool cmdWifiStaAp_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
+
     static bool cmdLogs_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
 
     static bool cmdConfigSet_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
@@ -375,11 +377,12 @@ private:
         { "Назад", "/back", nullptr, nullptr },
     }};
 
-    static inline const std::array<TelegramBot::MenuItem, 6> kSettingsItems = {{
+    static inline const std::array<TelegramBot::MenuItem, 7> kSettingsItems = {{
         { "Перезапуск Wi-Fi", "/wifi_restart", nullptr, nullptr },
         { "Перезапуск ПЛК", "/plc_restart", nullptr, nullptr },
         { "Wi-Fi AP Вкл", "/wifi_ap_on", nullptr, nullptr },
         { "Wi-Fi AP Выкл", "/wifi_ap_off", nullptr, nullptr },
+        { "Wi-Fi STA+AP", "/wifi_sta_ap", nullptr, nullptr },
         { "Startup-config", "/config_set", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
     }};
@@ -405,7 +408,7 @@ private:
         { "settings", "Настройки", kSettingsItems.data(), kSettingsItems.size(), "admin" },
     }};
 
-    static inline const std::array<TelegramBot::Command, 53> kCommands = {{
+    static inline const std::array<TelegramBot::Command, 54> kCommands = {{
         { "Админка", &TelegramMenu::cmdAdmin_ },
         { "/status", &TelegramMenu::cmdStatus_ },
         { "/wifi", &TelegramMenu::cmdWifi_ },
@@ -414,6 +417,7 @@ private:
         { "/plc_restart", &TelegramMenu::cmdPlcRestart_ },
         { "/wifi_ap_on", &TelegramMenu::cmdWifiApOn_ },
         { "/wifi_ap_off", &TelegramMenu::cmdWifiApOff_ },
+        { "/wifi_sta_ap", &TelegramMenu::cmdWifiStaAp_ },
         { "/config_set", &TelegramMenu::cmdConfigSet_ },
         { "/allow_list", &TelegramMenu::cmdAllowList_ },
         { "/allow_add", &TelegramMenu::cmdAllowAdd_ },

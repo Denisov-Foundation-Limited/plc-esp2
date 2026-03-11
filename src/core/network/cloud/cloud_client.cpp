@@ -1204,11 +1204,11 @@ void CloudClient::fillSystemInfo_(JsonObject out)
     out["fw_version"] = _fw_version;
 
     JsonObject wifi = out["wifi"].to<JsonObject>();
-    wifi["mode"] = _wifi.ap() ? "ap" : "sta";
-    if (_wifi.ap())
-        wifi["ap_ssid"] = _wifi.apSsid();
-    else
+    wifi["mode"] = _wifi.modeName();
+    if (_wifi.staEnabled())
         wifi["ssid"] = _wifi.ssid();
+    if (_wifi.apEnabled())
+        wifi["ap_ssid"] = _wifi.apSsid();
     wifi["ip"] = localIp_();
     wifi["mac"] = WiFi.macAddress();
 
@@ -2187,10 +2187,10 @@ uint32_t CloudClient::deviceId_() const
 }
 String CloudClient::localIp_() const
 {
-    if (_wifi.ap())
-        return WiFi.softAPIP().toString();
-    if (WiFi.status() == WL_CONNECTED)
+    if (_wifi.staEnabled() && WiFi.status() == WL_CONNECTED)
         return WiFi.localIP().toString();
+    if (_wifi.apEnabled())
+        return WiFi.softAPIP().toString();
     return String();
 }
 String CloudClient::stackNodeName_(uint32_t node_id) const

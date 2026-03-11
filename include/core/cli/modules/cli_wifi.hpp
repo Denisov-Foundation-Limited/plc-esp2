@@ -27,9 +27,10 @@ public:
     void printHelpConfigLines() const
     {
         _c._io->println(F("    wifi                     - enter Wi-Fi context"));
+        _c._io->println(F("    wifi mode <sta|ap|sta_ap> - set Wi-Fi mode"));
         _c._io->println(F("    wifi ssid <value>        - set STA SSID"));
         _c._io->println(F("    wifi password <value>    - set STA password"));
-        _c._io->println(F("    wifi ap on|off           - enable/disable AP"));
+        _c._io->println(F("    wifi ap on|off           - set legacy AP/STA mode"));
         _c._io->println(F("    wifi ap_ssid <value>     - set AP SSID"));
         _c._io->println(F("    wifi ap_password <value> - set AP password"));
         _c._io->println(F("    wifi restart             - restart Wi-Fi"));
@@ -37,9 +38,10 @@ public:
 
     void printHelpContextLines() const
     {
+        _c._io->println(F("    mode <sta|ap|sta_ap> - set Wi-Fi mode"));
         _c._io->println(F("    ssid <value>        - set STA SSID"));
         _c._io->println(F("    password <value>    - set STA password"));
-        _c._io->println(F("    ap on|off           - enable/disable AP"));
+        _c._io->println(F("    ap on|off           - set legacy AP/STA mode"));
         _c._io->println(F("    ap_ssid <value>     - set AP SSID"));
         _c._io->println(F("    ap_password <value> - set AP password"));
         _c._io->println(F("    restart             - restart Wi-Fi"));
@@ -50,9 +52,10 @@ public:
     {
         _c._io->println(F("Wi-Fi commands:"));
         _c._io->println(F("  wifi                     - enter Wi-Fi context"));
+        _c._io->println(F("  wifi mode <sta|ap|sta_ap> - set Wi-Fi mode"));
         _c._io->println(F("  wifi ssid <value>        - set STA SSID"));
         _c._io->println(F("  wifi password <value>    - set STA password"));
-        _c._io->println(F("  wifi ap on|off           - enable/disable AP"));
+        _c._io->println(F("  wifi ap on|off           - set legacy AP/STA mode"));
         _c._io->println(F("  wifi ap_ssid <value>     - set AP SSID"));
         _c._io->println(F("  wifi ap_password <value> - set AP password"));
         _c._io->println(F("  wifi restart             - restart Wi-Fi"));
@@ -85,6 +88,20 @@ public:
         String rest_lower = rest;
         rest_lower.toLowerCase();
 
+        if (rest_lower.startsWith("mode "))
+        {
+            String v = rest.substring(5);
+            v.trim();
+            if (!_c._wifi.setModeByName(v))
+            {
+                _c._io->println(F("Invalid mode value"));
+                _c.printPrompt_();
+                return noteHandled_();
+            }
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
         if (rest_lower.startsWith("ssid "))
         {
             String v = rest.substring(5);
@@ -168,6 +185,20 @@ public:
         if (lower == "restart")
         {
             _c.cmdWifiRestart_();
+            _c.printPrompt_();
+            return true;
+        }
+        if (lower.startsWith("mode "))
+        {
+            String v = cmd.substring(5);
+            v.trim();
+            if (!_c._wifi.setModeByName(v))
+            {
+                _c._io->println(F("Invalid mode value"));
+                _c.printPrompt_();
+                return noteHandled_();
+            }
+            _c._io->println(F("OK"));
             _c.printPrompt_();
             return true;
         }

@@ -1990,8 +1990,11 @@ int32_t WebInterface::scaled10_(float value)
 
         if (path == "/wifi")
         {
-            hashAdd_(hash, _wifi.ap() ? "AP" : "STA");
-            hashAdd_(hash, _wifi.ap() ? _wifi.apSsid() : _wifi.ssid());
+            hashAdd_(hash, _wifi.modeLabel());
+            if (_wifi.staEnabled())
+                hashAdd_(hash, _wifi.ssid());
+            if (_wifi.apEnabled())
+                hashAdd_(hash, _wifi.apSsid());
             hashAdd_(hash, wifiIp_());
             if (_gsm)
             {

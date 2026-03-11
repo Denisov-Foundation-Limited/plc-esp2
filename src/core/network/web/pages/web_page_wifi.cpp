@@ -97,6 +97,7 @@ const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
             <label>%WIFI_LABEL_MODE%</label>
             <select name="mode">
               <option value="sta" %WIFI_STA_SEL%>STA</option>
+              <option value="sta_ap" %WIFI_STA_AP_SEL%>STA+AP</option>
               <option value="ap" %WIFI_AP_SEL%>AP</option>
             </select>
           </div>
@@ -156,7 +157,7 @@ const char kWebInterfaceWifiHtml[] PROGMEM = R"HTML(
     const apPass = document.getElementById('ap-pass-field');
     function updateApFields() {
       if (!modeSelect) return;
-      const show = modeSelect.value === 'ap';
+      const show = modeSelect.value === 'ap' || modeSelect.value === 'sta_ap';
       if (apSsid) apSsid.style.display = show ? '' : 'none';
       if (apPass) apPass.style.display = show ? '' : 'none';
     }

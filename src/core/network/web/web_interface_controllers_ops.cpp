@@ -930,11 +930,10 @@ sendRedirect_(request, "/status", _ota_set_cookie);
         if (request->hasParam("mode", true))
         {
             String mode = request->getParam("mode", true)->value();
-            mode.toLowerCase();
-            const bool ap = (mode == "ap");
-            if (ap != _wifi.ap())
+            WifiManager::Mode parsed = _wifi.mode();
+            if (WifiManager::parseMode(mode, parsed) && parsed != _wifi.mode())
             {
-                _wifi.setAp(ap);
+                _wifi.setMode(parsed);
                 changed = true;
             }
         }
@@ -1606,9 +1605,16 @@ sendRedirect_(request, "/", set_cookie);
 
     String WebInterfaceControllersOps::wifiIp_() const
 {
-        if (_wifi.ap())
+        if (_wifi.staEnabled() && _wifi.apEnabled())
+        {
+            const bool sta_connected = WiFi.status() == WL_CONNECTED;
+            const String sta_ip = sta_connected ? WiFi.localIP().toString() : String("disconnected");
+            const String ap_ip = WiFi.softAPIP().toString();
+            return String("STA: ") + sta_ip + " | AP: " + ap_ip;
+        }
+        if (_wifi.apEnabled())
             return WiFi.softAPIP().toString();
-        if (WiFi.status() == WL_CONNECTED)
+        if (_wifi.staEnabled() && WiFi.status() == WL_CONNECTED)
             return WiFi.localIP().toString();
         return "disconnected";
     }
@@ -1617,7 +1623,7 @@ sendRedirect_(request, "/", set_cookie);
 
     String WebInterfaceControllersOps::wifiStaSegment_() const
 {
-        if (_wifi.ap())
+        if (!_wifi.staEnabled())
             return "";
         return String(" | STA: <strong>") + wifiStaStatus_() + "</strong>";
     }

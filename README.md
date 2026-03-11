@@ -172,7 +172,7 @@ flowchart TD
 
 ### Примеры контекстов
 
-- `plc(config-wifi)#`: `ssid`, `password`, `ap on|off`, `ap_ssid`, `ap_password`, `restart`, `show`
+- `plc(config-wifi)#`: `mode <sta|ap|sta_ap>`, `ssid`, `password`, `ap on|off`, `ap_ssid`, `ap_password`, `restart`, `show`
 - `plc(config-cloud)#`: `enable`, `host`, `port`, `path`, `ssl`, `reconnect`, `event`, `api_key`, `show`
 - `plc(config-security)#`: `show`, `enable/disable <id>`, `type <id> <pir|reed>`, `port <id>`, `name <id>`, `silent <id>`, `siren <port|none>`, `keys ...`
 
@@ -213,7 +213,7 @@ Web:
 ```text
 [1329][INFO][TANK] controller: enabled
 [1373][INFO][APP] Configs loaded: /startup-config.json (2492 bytes)
-[1374][INFO][WIFI] Mode: STA (SSID=Denisov_VPN)
+[1374][INFO][WIFI] Mode: STA (SSID: Denisov_VPN)
 [1374][INFO][APP] Initializing HAL
 [1374][INFO][HAL] I2C init
 [1375][INFO][HAL] GPIO init

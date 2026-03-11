@@ -43,10 +43,17 @@ void WifiHandler::handleWifi(WebInterface &web, AsyncWebServerRequest *request) 
         page.replace("%WIFI_GSM_LAST_SMS%", WebUiRu::WifiPage::kLastSms);
         page.replace("%WIFI_GSM_LAST_CALL%", WebUiRu::WifiPage::kLastCall);
         page.replace("%WIFI_GSM_LAST_USSD%", WebUiRu::WifiPage::kLastUssd);
-        page.replace("%WIFI_MODE%", web._wifi.ap() ? "AP" : "STA");
-        page.replace("%WIFI_CUR_SSID%", web._wifi.ap() ? web._wifi.apSsid() : web._wifi.ssid());
+        page.replace("%WIFI_MODE%", web._wifi.modeLabel());
+        String current_ssid;
+        if (web._wifi.staEnabled() && web._wifi.apEnabled())
+            current_ssid = String("STA: ") + web._wifi.ssid() + " | AP: " + web._wifi.apSsid();
+        else if (web._wifi.apEnabled())
+            current_ssid = web._wifi.apSsid();
+        else
+            current_ssid = web._wifi.ssid();
+        page.replace("%WIFI_CUR_SSID%", current_ssid);
         page.replace("%WIFI_IP%", web.wifiIp_());
-        if (web._wifi.ap())
+        if (!web._wifi.staEnabled())
         {
             page.replace("%WIFI_STA_ROW%", "");
         }
@@ -59,8 +66,9 @@ void WifiHandler::handleWifi(WebInterface &web, AsyncWebServerRequest *request) 
             row += "</strong></td></tr>";
             page.replace("%WIFI_STA_ROW%", row);
         }
-        page.replace("%WIFI_STA_SEL%", web._wifi.ap() ? "" : "selected");
-        page.replace("%WIFI_AP_SEL%", web._wifi.ap() ? "selected" : "");
+        page.replace("%WIFI_STA_SEL%", web._wifi.mode() == WifiManager::Mode::Sta ? "selected" : "");
+        page.replace("%WIFI_AP_SEL%", web._wifi.mode() == WifiManager::Mode::Ap ? "selected" : "");
+        page.replace("%WIFI_STA_AP_SEL%", web._wifi.mode() == WifiManager::Mode::StaAp ? "selected" : "");
         page.replace("%WIFI_SSID%", web._wifi.ssid());
         page.replace("%WIFI_AP_SSID%", web._wifi.apSsid());
         page.replace("%SAVE_TEXT%", WebUiRu::kSave);

@@ -20,6 +20,13 @@ class IoStack;
 class WifiManager
 {
 public:
+    enum class Mode : uint8_t
+    {
+        Sta = 0,
+        Ap,
+        StaAp
+    };
+
     explicit WifiManager(Logger &log);
 
     bool begin();
@@ -30,6 +37,8 @@ public:
 
     void setSsid(const String &ssid);
     void setPassword(const String &password);
+    void setMode(Mode mode);
+    bool setModeByName(const String &mode);
     void setAp(bool ap);
     void setApSsid(const String &ssid);
     void setApPassword(const String &password);
@@ -37,17 +46,26 @@ public:
 
     const String &ssid() const;
     const String &password() const;
+    Mode mode() const;
+    bool staEnabled() const;
     bool ap() const;
+    bool apEnabled() const;
     const String &apSsid() const;
     const String &apPassword() const;
     bool isConnected() const;
+
+    static const char *modeName(Mode mode);
+    static const char *modeLabel(Mode mode);
+    static bool parseMode(const String &input, Mode &out);
+    const char *modeName() const;
+    const char *modeLabel() const;
 
 private:
     static const char *statusToString_(wl_status_t st);
 
     String _ssid;
     String _password;
-    bool _ap = true;
+    Mode _mode = Mode::Ap;
     String _ap_ssid = "FCPLC";
     String _ap_password;
 

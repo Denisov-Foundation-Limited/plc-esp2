@@ -502,6 +502,8 @@ void TelegramBot::processOutbox_()
 {
     if (_out_head >= _out_queue.size())
         return;
+    if (!_client.canRequestNow())
+        return;
     OutMsg &msg = _out_queue[_out_head];
     if (msg.ready_tick > _send_tick)
         return;

@@ -308,10 +308,20 @@ bool App::begin()
 
     cfg.configs_manager.setCloudFirmwareVersion(BuildInfo::kFwVersion);
     net.network.setCloudFirmwareVersion(BuildInfo::kFwVersion);
-    if (comms.wifi.ap())
+    switch (comms.wifi.mode())
+    {
+    case WifiManager::Mode::StaAp:
+        core.logs.info(F("WIFI"), F("Mode: STA+AP (STA SSID: %s AP SSID: %s)"),
+                       comms.wifi.ssid().c_str(), comms.wifi.apSsid().c_str());
+        break;
+    case WifiManager::Mode::Ap:
         core.logs.info(F("WIFI"), F("Mode: AP (SSID: %s)"), comms.wifi.apSsid().c_str());
-    else
+        break;
+    case WifiManager::Mode::Sta:
+    default:
         core.logs.info(F("WIFI"), F("Mode: STA (SSID: %s)"), comms.wifi.ssid().c_str());
+        break;
+    }
 
     bool ok = true;
 

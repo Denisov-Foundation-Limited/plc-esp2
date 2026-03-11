@@ -91,6 +91,8 @@ public:
     void setAutoPollIntervalMs(uint32_t interval_ms);
     bool autoPollEnabled() const;
     uint16_t autoPollTimeoutSec() const;
+    bool pollBackoffActive() const;
+    bool canRequestNow() const;
 
     uint32_t lastUpdateId() const;
     int64_t lastIncomingChatId() const;
@@ -156,6 +158,11 @@ private:
     uint32_t _log_next_ms = 0;
     String _last_log_msg;
     bool _reboot_logged = false;
+    uint8_t _poll_fail_streak = 0;
+    uint32_t _poll_backoff_until_ms = 0;
+    uint32_t _poll_resume_ms = 0;
+    uint32_t _poll_next_attempt_ms = 0;
+    bool _poll_online = false;
 
     void initFastBot_(Client &client);
 
@@ -164,6 +171,9 @@ private:
     void onFastBotUpdate_(fb::Update &upd);
 
     void logError_(const String &msg);
+    void registerPollError_(const String &msg);
+    void clearPollBackoff_();
+    static uint32_t pollBackoffMs_(uint8_t streak);
 
     bool sendCommand_(const __FlashStringHelper *cmd, const String &payload);
 
@@ -172,6 +182,7 @@ private:
 #endif
 
     static constexpr uint16_t kSendTimeoutMs = 1500;
+    static constexpr uint32_t kPollFailDecayMs = 30000;
 #if !defined(FB_NO_FILE) && (defined(ESP8266) || defined(ESP32))
     static constexpr uint16_t kSendFileTimeoutMs = 25000;
     static constexpr size_t kUploadBlockSize = 2048;

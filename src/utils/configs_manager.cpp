@@ -308,9 +308,10 @@ bool ConfigsManager::loadConfigs(){
 bool ConfigsManager::save(){
     _doc.clear();
     JsonObject w = _doc["wifi"].to<JsonObject>();
+    w["mode"] = _wifi.modeName();
     w["ssid"] = _wifi.ssid();
     w["password"] = _wifi.password();
-    w["ap"] = _wifi.ap();
+    w["ap"] = _wifi.apEnabled();
     w["ap_ssid"] = _wifi.apSsid();
     w["ap_password"] = _wifi.apPassword();
 
@@ -576,12 +577,14 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
     if (doc["wifi"].is<JsonObjectConst>())
     {
         JsonObjectConst w = doc["wifi"].as<JsonObjectConst>();
+        if (w["mode"].is<const char *>())
+            _wifi.setModeByName(w["mode"].as<const char *>());
+        else if (w["ap"].is<bool>())
+            _wifi.setAp(w["ap"].as<bool>());
         if (w["ssid"].is<const char *>())
             _wifi.setSsid(w["ssid"].as<const char *>());
         if (w["password"].is<const char *>())
             _wifi.setPassword(w["password"].as<const char *>());
-        if (w["ap"].is<bool>())
-            _wifi.setAp(w["ap"].as<bool>());
         if (w["ap_ssid"].is<const char *>())
             _wifi.setApSsid(w["ap_ssid"].as<const char *>());
         if (w["ap_password"].is<const char *>())

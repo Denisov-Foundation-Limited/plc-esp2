@@ -136,6 +136,15 @@ bool TelegramClient::autoPollEnabled() const
 { return _auto_poll; }
 uint16_t TelegramClient::autoPollTimeoutSec() const
 { return _auto_poll_timeout_s; }
+bool TelegramClient::pollBackoffActive() const
+{
+    return _poll_backoff_until_ms != 0 &&
+           (int32_t)(millis() - _poll_backoff_until_ms) < 0;
+}
+bool TelegramClient::canRequestNow() const
+{
+    return !_auto_poll || !pollBackoffActive();
+}
 uint32_t TelegramClient::lastUpdateId() const
 { return _last_update_id; }
 int64_t TelegramClient::lastIncomingChatId() const
@@ -144,8 +153,60 @@ void TelegramClient::task()
 {
     if (!_auto_poll || !_fb)
         return;
+    const uint32_t now = millis();
+    if (pollBackoffActive())
+    {
+        if (_poll_online)
+        {
+            _fb->setOnline(false);
+            _poll_online = false;
+        }
+        return;
+    }
+    const bool was_polling = _fb->isPolling();
+    if (!was_polling && _poll_next_attempt_ms != 0 &&
+        (int32_t)(now - _poll_next_attempt_ms) < 0)
+    {
+        return;
+    }
+    if (!_poll_online)
+    {
+        _fb->setOnline(true);
+        _poll_online = true;
+        _poll_resume_ms = now;
+        _poll_next_attempt_ms = 0;
+    }
     _task_updates_tmp.clear();
     _fb->tick();
+    const bool now_polling = _fb->isPolling();
+    if (!was_polling)
+    {
+        if (now_polling)
+        {
+            _poll_next_attempt_ms = 0;
+        }
+        else if (_task_updates_tmp.empty())
+        {
+            registerPollError_(F("poll start failed"));
+            return;
+        }
+        else
+        {
+            clearPollBackoff_();
+            _poll_next_attempt_ms = now + _auto_poll_interval_ms;
+        }
+    }
+    else if (!now_polling)
+    {
+        clearPollBackoff_();
+        _poll_next_attempt_ms = now + _auto_poll_interval_ms;
+    }
+    if (_poll_fail_streak != 0 && _poll_resume_ms != 0 &&
+        (int32_t)(now - _poll_resume_ms) >= (int32_t)kPollFailDecayMs)
+    {
+        _poll_fail_streak = 0;
+        _poll_resume_ms = 0;
+    }
     if (_fb->canReboot() && !_reboot_logged)
     {
         _reboot_logged = true;
@@ -328,6 +389,7 @@ void TelegramClient::initFastBot_(Client &client)
                          String msg;
                          err.toString(msg);
                          _last_error = msg;
+                         registerPollError_(msg);
                          logError_(String("Poll error: ") + msg);
                      });
     if (_use_proxy && _proxy_host.length())
@@ -343,7 +405,8 @@ void TelegramClient::applyPollConfig_()
     _fb->setPollMode(fb::Poll::Long, prd);
     const uint32_t timeout_ms = _auto_poll_timeout_s ? (_auto_poll_timeout_s * 1000u) : 2000u;
     _fb->setTimeout((uint16_t)min<uint32_t>(timeout_ms, 60000u));
-    _fb->setOnline(_auto_poll);
+    _poll_online = _auto_poll && !pollBackoffActive();
+    _fb->setOnline(_poll_online);
 }
 void TelegramClient::onFastBotUpdate_(fb::Update &upd)
 {
@@ -371,6 +434,7 @@ void TelegramClient::onFastBotUpdate_(fb::Update &upd)
         _last_update_id = out.update_id;
     if (out.chat_id != 0)
         _last_incoming_chat_id = out.chat_id;
+    clearPollBackoff_();
     _task_updates_tmp.push_back(out);
     if (!_updates_handler)
     {
@@ -399,12 +463,53 @@ void TelegramClient::logError_(const String &msg)
     _log_next_ms = now + 5000;
     _log->error(F("TGBOT"), F("%s"), msg.c_str());
 }
+void TelegramClient::registerPollError_(const String &msg)
+{
+    const uint32_t now = millis();
+    if (_poll_fail_streak < 0xFF)
+        ++_poll_fail_streak;
+    const uint32_t wait_ms = pollBackoffMs_(_poll_fail_streak);
+    _poll_backoff_until_ms = now + wait_ms;
+    _poll_resume_ms = 0;
+    _poll_next_attempt_ms = _poll_backoff_until_ms;
+    if (_fb && _poll_online)
+    {
+        _fb->setOnline(false);
+        _poll_online = false;
+    }
+    if (_secure_client)
+        _secure_client->stop();
+    if (_log && _log->ready())
+    {
+        _log->warn(F("TGBOT"), F("Poll backoff: %lu ms fail_streak: %u error: %s"),
+                   (unsigned long)wait_ms, (unsigned)_poll_fail_streak, msg.c_str());
+    }
+}
+void TelegramClient::clearPollBackoff_()
+{
+    _poll_fail_streak = 0;
+    _poll_backoff_until_ms = 0;
+    _poll_resume_ms = 0;
+    _poll_next_attempt_ms = 0;
+}
+uint32_t TelegramClient::pollBackoffMs_(uint8_t streak)
+{
+    const uint8_t clamped = (streak > 6u) ? 6u : streak;
+    const uint8_t shift = clamped ? (uint8_t)(clamped - 1u) : 0u;
+    return 1000u << shift;
+}
 bool TelegramClient::sendCommand_(const __FlashStringHelper *cmd, const String &payload)
 {
     if (!_fb)
     {
         _last_error = F("bot not set");
         logError_(String("Request failed: ") + _last_error);
+        return false;
+    }
+    if (!canRequestNow())
+    {
+        _last_error = F("poll backoff active");
+        logError_(String("Request skipped: ") + _last_error);
         return false;
     }
     // Keep synchronous API calls short to avoid blocking the main control loop.
@@ -427,6 +532,12 @@ bool TelegramClient::sendCommand_(const __FlashStringHelper *cmd, const String &
 #if !defined(FB_NO_FILE) && (defined(ESP8266) || defined(ESP32))
 bool TelegramClient::sendFile_(const fb::File &msg)
 {
+    if (!canRequestNow())
+    {
+        _last_error = F("poll backoff active");
+        logError_(String("Request skipped: ") + _last_error);
+        return false;
+    }
     // File uploads may take significantly longer than simple JSON commands.
     const uint16_t prev_timeout_ms = (uint16_t)min<uint32_t>(_auto_poll_timeout_s ? (_auto_poll_timeout_s * 1000u) : 2000u, 60000u);
     _fb->setTimeout(kSendFileTimeoutMs);
