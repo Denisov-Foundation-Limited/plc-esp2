@@ -121,6 +121,9 @@ private:
     Stream *_out = nullptr;
     UartManager &uart_;
     RTC *_rtc = nullptr;
+    mutable bool _has_last_rtc = false;
+    mutable Ds3231Mz::DateTime _last_rtc = {};
+    mutable uint32_t _last_rtc_ms = 0;
 #if defined(ESP32)
     SemaphoreHandle_t _lock = nullptr;
     portMUX_TYPE _lock_init_mux = portMUX_INITIALIZER_UNLOCKED;

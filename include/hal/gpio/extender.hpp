@@ -86,16 +86,26 @@ private:
     mutable bool _present[MAX_DEVS] = {};
     mutable bool _warned_missing[MAX_DEVS] = {};
     mutable uint8_t _miss_streak[MAX_DEVS] = {};
+    mutable uint8_t _hit_streak[MAX_DEVS] = {};
+    mutable uint16_t _recover_attempts[MAX_DEVS] = {};
+    mutable uint32_t _miss_since_ms[MAX_DEVS] = {};
+    mutable uint32_t _hit_since_ms[MAX_DEVS] = {};
     uint32_t _rescan_interval_ms = 5000;
-    uint32_t _fast_rescan_interval_ms = 2000;
+    uint32_t _fast_rescan_interval_ms = 250;
+    uint8_t _probe_retry_count = 30;
+    uint16_t _probe_retry_delay_ms = 50;
     uint8_t _miss_confirm_count = 3;
+    uint8_t _hit_confirm_count = 1;
+    uint32_t _miss_stable_ms = 1500;
+    uint32_t _hit_stable_ms = 0;
     mutable uint32_t _next_scan_ms = 0;
     mutable uint8_t _scan_index = 0;
     mutable bool _scan_active = false;
+    mutable bool _suppress_first_pass_logs = false;
 
     void initState_();
     void scanDevice_(uint8_t dev);
-    void scanDeviceLocked_(uint8_t dev);
+    bool scanDeviceLocked_(uint8_t dev);
     bool ensureDevLocked_(uint8_t dev) const;
     Mcp23017 *mcp_(uint8_t dev) const;
     Pcf8574 *pcf_(uint8_t dev) const;

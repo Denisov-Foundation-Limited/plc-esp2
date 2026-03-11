@@ -32,6 +32,10 @@ void Extender::initState_()
         _present[i] = false;
         _warned_missing[i] = false;
         _miss_streak[i] = 0;
+        _hit_streak[i] = 0;
+        _recover_attempts[i] = 0;
+        _miss_since_ms[i] = 0;
+        _hit_since_ms[i] = 0;
     }
 }
 
@@ -63,16 +67,17 @@ void Extender::logPresentChange_(uint8_t dev, bool present) const
 {
     if (!_log)
         return;
+    if (_suppress_first_pass_logs)
+        return;
     if (present)
-        _log->info(F("EXT"), F("Extender %u detected"), dev);
-    else
     {
-        _log->warn(F("EXT"), F("Extender %u missing"), dev);
-        _log->warn(F("EXT"), F("mem heap_free: %lu min_heap: %lu psram_free: %lu"),
-                   (unsigned long)ESP.getFreeHeap(),
-                   (unsigned long)ESP.getMinFreeHeap(),
-                   (unsigned long)ESP.getFreePsram());
+        if (_recover_attempts[dev] > 0)
+            _log->info(F("EXT"), F("Extender %u detected attempts: %u"), dev, (unsigned)_recover_attempts[dev]);
+        else
+            _log->info(F("EXT"), F("Extender %u detected"), dev);
     }
+    else
+        _log->warn(F("EXT"), F("Extender %u missing"), dev);
 }
 
 void Extender::setPresent_(uint8_t dev, bool present) const
@@ -85,6 +90,9 @@ void Extender::setPresent_(uint8_t dev, bool present) const
     if (!present)
     {
         _miss_streak[dev] = 0;
+        _hit_streak[dev] = 0;
+        _miss_since_ms[dev] = 0;
+        _hit_since_ms[dev] = 0;
         _mcp_inited[dev] = false;
         _pcf_inited[dev] = false;
         _mcp_cache_valid[dev] = 0;
@@ -95,7 +103,11 @@ void Extender::setPresent_(uint8_t dev, bool present) const
     }
     else
     {
+        _recover_attempts[dev] = 0;
         _miss_streak[dev] = 0;
+        _hit_streak[dev] = 0;
+        _miss_since_ms[dev] = 0;
+        _hit_since_ms[dev] = 0;
         _dev_failed[dev] = false;
         _mcp_cache_valid[dev] = 0;
         _pcf_cache_valid[dev] = 0;
@@ -106,19 +118,37 @@ void Extender::noteProbeResult_(uint8_t dev, bool present) const
 {
     if (dev >= _dev_count)
         return;
+    const uint32_t now = millis();
     if (present)
     {
         _miss_streak[dev] = 0;
+        _miss_since_ms[dev] = 0;
+        if (!_present[dev] && _hit_confirm_count > 1)
+        {
+            if (_hit_since_ms[dev] == 0)
+                _hit_since_ms[dev] = now;
+            if (_hit_streak[dev] < 0xFF)
+                ++_hit_streak[dev];
+            const uint32_t stable_ms = now - _hit_since_ms[dev];
+            if (_hit_streak[dev] < _hit_confirm_count || stable_ms < _hit_stable_ms)
+                return;
+        }
         setPresent_(dev, true);
         return;
     }
 
+    _hit_streak[dev] = 0;
+    _hit_since_ms[dev] = 0;
+
     // Avoid false "missing" flaps on occasional I2C probe timeouts.
     if (_present[dev] && _miss_confirm_count > 1)
     {
+        if (_miss_since_ms[dev] == 0)
+            _miss_since_ms[dev] = now;
         if (_miss_streak[dev] < 0xFF)
             ++_miss_streak[dev];
-        if (_miss_streak[dev] < _miss_confirm_count)
+        const uint32_t stable_ms = now - _miss_since_ms[dev];
+        if (_miss_streak[dev] < _miss_confirm_count || stable_ms < _miss_stable_ms)
             return;
     }
 
@@ -127,6 +157,7 @@ void Extender::noteProbeResult_(uint8_t dev, bool present) const
 
 bool Extender::begin()
 {
+    _suppress_first_pass_logs = true;
     if (_i2c && _dev_count)
     {
         // Do a fast startup probe only for the base bus.
@@ -166,6 +197,7 @@ void Extender::task()
     {
         _scan_active = false;
         _scan_index = 0;
+        _suppress_first_pass_logs = false;
         _next_scan_ms = now + (anyMissing_() ? _fast_rescan_interval_ms : _rescan_interval_ms);
     }
     else
@@ -179,13 +211,17 @@ void Extender::noteRuntimeIoFailure_(uint8_t dev) const
 {
     if (dev >= _dev_count)
         return;
+    const uint32_t now = millis();
     // Runtime I/O can fail transiently (contention/noise). Confirm before
     // dropping device to avoid one-shot detected/missing flaps.
     if (_present[dev] && _miss_confirm_count > 1)
     {
+        if (_miss_since_ms[dev] == 0)
+            _miss_since_ms[dev] = now;
         if (_miss_streak[dev] < 0xFF)
             ++_miss_streak[dev];
-        if (_miss_streak[dev] < _miss_confirm_count)
+        const uint32_t stable_ms = now - _miss_since_ms[dev];
+        if (_miss_streak[dev] < _miss_confirm_count || stable_ms < _miss_stable_ms)
             return;
     }
     setPresent_(dev, false);
@@ -222,27 +258,14 @@ void Extender::rescan()
 
 void Extender::scanDevice_(uint8_t i)
 {
-    if (i >= _dev_count)
-        return;
-    const uint8_t bus = _devs[i].bus_num;
-    I2CManager::ScopedBusLock lk(*_i2c, bus);
-    if (!lk.locked())
-    {
-        setPresent_(i, false);
-        return;
-    }
-    scanDeviceLocked_(i);
-}
-
-void Extender::scanDeviceLocked_(uint8_t i)
-{
-    if (i >= _dev_count)
+    if (i >= _dev_count || !_i2c)
         return;
     if (!isConfigured(i))
     {
         setPresent_(i, false);
         return;
     }
+
     const uint8_t bus = _devs[i].bus_num;
     const uint8_t addr = _devs[i].i2c_addr;
     if (bus >= 3 || addr == 0 || addr >= 127)
@@ -250,7 +273,50 @@ void Extender::scanDeviceLocked_(uint8_t i)
         setPresent_(i, false);
         return;
     }
-    noteProbeResult_(i, _i2c->probeAddressLocked(bus, addr));
+
+    bool present = false;
+    uint16_t attempts_used = 0;
+    for (uint8_t retry = 0; retry <= _probe_retry_count; ++retry)
+    {
+        I2CManager::ScopedBusLock lk(*_i2c, bus);
+        ++attempts_used;
+        if (lk.locked())
+            present = scanDeviceLocked_(i);
+        if (present)
+            break;
+        if (retry < _probe_retry_count)
+            delay(_probe_retry_delay_ms);
+    }
+
+    if (!_present[i])
+    {
+        const uint32_t total = (uint32_t)_recover_attempts[i] + attempts_used;
+        _recover_attempts[i] = (total > 0xFFFFu) ? 0xFFFFu : (uint16_t)total;
+    }
+    else if (present)
+    {
+        _recover_attempts[i] = 0;
+    }
+    noteProbeResult_(i, present);
+}
+
+bool Extender::scanDeviceLocked_(uint8_t i)
+{
+    if (i >= _dev_count)
+        return false;
+    if (!isConfigured(i))
+    {
+        setPresent_(i, false);
+        return false;
+    }
+    const uint8_t bus = _devs[i].bus_num;
+    const uint8_t addr = _devs[i].i2c_addr;
+    if (bus >= 3 || addr == 0 || addr >= 127)
+    {
+        setPresent_(i, false);
+        return false;
+    }
+    return _i2c->probeAddressLocked(bus, addr);
 }
 
 bool Extender::isPresent(uint8_t dev) const

@@ -57,12 +57,6 @@ uint32_t cloudBackoffMs_(uint8_t streak, uint32_t base_ms)
     return out;
 }
 
-void cloudLogMem_(Logger &log, const __FlashStringHelper *prefix)
-{
-    log.warn(F("CLOUD"), F("%S heap_free: %lu min_heap: %lu psram_free: %lu"),
-             prefix ? prefix : F("mem"), (unsigned long)ESP.getFreeHeap(),
-             (unsigned long)ESP.getMinFreeHeap(), (unsigned long)ESP.getFreePsram());
-}
 } // namespace
 
 CloudClient::CloudClient(Logger &log, Controllers &controllers, PlcControl &plc, WifiManager &wifi, RTC &rtc)
@@ -200,7 +194,6 @@ void CloudClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
         _reconnect_backoff_until_ms = millis() + wait_ms;
         _log.warn(F("CLOUD"), F("WS backoff: %lu ms fail_streak: %u"),
                   (unsigned long)wait_ms, (unsigned)_reconnect_fail_streak);
-        cloudLogMem_(_log, F("WS error mem"));
         break;
     }
     case WStype_TEXT:
@@ -221,7 +214,6 @@ void CloudClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
             _log.warn(F("CLOUD"), F("WS disconnected"));
             _disconnect_reported = true;
         }
-        cloudLogMem_(_log, F("WS disconnected mem"));
         break;
     default:
         break;

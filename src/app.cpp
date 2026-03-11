@@ -375,10 +375,6 @@ bool App::begin()
             break;
         }
     }
-    else
-    {
-        core.logs.setRtc(hw.rtc);
-    }
 
     core.logs.info(F("APP"), F("Initializing Display"));
     const uint8_t bl_pin = ActiveBoardProfile::LCD_BACKLIGHT_PIN;
@@ -457,6 +453,11 @@ bool App::begin()
         ok = false;
     }
 
+    control.controllers.restoreFromStorage();
+    hw.io.applyOutputs();
+    hw.portio.setOutputsEnabled(true);
+    control.plc_scan.begin();
+
     if (ok)
         core.logs.info(F("APP"), F("Application init [OK]"));
     else
@@ -465,10 +466,8 @@ bool App::begin()
     control.task_binder.bindFtest(control.ftest);
     control.task_binder.bindAll();
     control.task_binder.bindStack(stack);
-    control.plc_scan.begin();
-    control.controllers.restoreFromStorage();
-    hw.io.applyOutputs();
-    hw.portio.setOutputsEnabled(true);
+    if (rtc_ok)
+        core.logs.setRtc(hw.rtc);
 
     return ok;
 }

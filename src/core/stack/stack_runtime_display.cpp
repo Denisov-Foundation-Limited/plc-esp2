@@ -10,6 +10,68 @@
 /**********************************************************************/
 
 #include "app.hpp"
+
+namespace
+{
+uint8_t displayDaysInMonth_(uint16_t year, uint8_t month)
+{
+    switch (month)
+    {
+    case 1:
+    case 3:
+    case 5:
+    case 7:
+    case 8:
+    case 10:
+    case 12:
+        return 31;
+    case 4:
+    case 6:
+    case 9:
+    case 11:
+        return 30;
+    case 2:
+        return (year % 4u == 0u && (year % 100u != 0u || year % 400u == 0u)) ? 29 : 28;
+    default:
+        return 31;
+    }
+}
+
+void advanceDisplayDateTime_(Ds3231Mz::DateTime &dt, uint32_t delta_sec)
+{
+    uint32_t sec_of_day = (uint32_t)dt.hour * 3600u + (uint32_t)dt.minute * 60u + (uint32_t)dt.second;
+    uint32_t total_sec = sec_of_day + delta_sec;
+    uint32_t day_carry = total_sec / 86400u;
+    total_sec %= 86400u;
+
+    dt.hour = (uint8_t)(total_sec / 3600u);
+    total_sec %= 3600u;
+    dt.minute = (uint8_t)(total_sec / 60u);
+    dt.second = (uint8_t)(total_sec % 60u);
+
+    while (day_carry > 0)
+    {
+        const uint8_t dim = displayDaysInMonth_(dt.year, dt.month);
+        if (dt.day < dim)
+            ++dt.day;
+        else
+        {
+            dt.day = 1;
+            if (dt.month < 12)
+                ++dt.month;
+            else
+            {
+                dt.month = 1;
+                ++dt.year;
+            }
+        }
+        if (dt.day_of_week >= 1 && dt.day_of_week <= 7)
+            dt.day_of_week = (uint8_t)((dt.day_of_week % 7u) + 1u);
+        --day_carry;
+    }
+}
+} // namespace
+
 bool StackRuntime::onDisplaySlot_(void *ctx, const DisplaySlotConfig &slot, char out[5]){
     if (!ctx)
         return false;
@@ -46,7 +108,19 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
     case DisplaySlotKind::Time:
     {
         Ds3231Mz::DateTime dt{};
-        if (!hw.rtc.Time(dt))
+        const uint32_t now_ms = millis();
+        if (hw.rtc.Time(dt))
+        {
+            _display_rtc_cache = dt;
+            _display_rtc_cache_ms = now_ms;
+            _display_rtc_cache_valid = true;
+        }
+        else if (_display_rtc_cache_valid)
+        {
+            dt = _display_rtc_cache;
+            advanceDisplayDateTime_(dt, (uint32_t)((now_ms - _display_rtc_cache_ms) / 1000u));
+        }
+        else
         {
             memcpy(out, "ERR ", 4);
             return true;
