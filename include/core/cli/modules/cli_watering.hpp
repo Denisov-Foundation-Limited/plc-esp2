@@ -111,6 +111,7 @@ public:
     {
         bool any = false;
         printHeader_();
+        auto guard = _watering.lockGuard();
         for (size_t i = 0; i < WateringController::kRuleCount; ++i)
         {
             const auto *cfg = _watering.configByIndex(i);
@@ -126,6 +127,7 @@ public:
 
     void showRule(size_t id)
     {
+        auto guard = _watering.lockGuard();
         const auto *cfg = _watering.config(id);
         const auto *st = _watering.state(id);
         if (!cfg || !st)

@@ -84,6 +84,7 @@ public:
     {
         bool any = false;
         printHeader_();
+        auto guard = _meteo.lockGuard();
         for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
         {
             const auto *cfg = _meteo.configByIndex(i);
@@ -100,6 +101,7 @@ public:
 
     void showSensor(size_t id)
     {
+        auto guard = _meteo.lockGuard();
         const auto *cfg = _meteo.config(id);
         const auto *st = _meteo.state(id);
         if (!cfg || !st)

@@ -29,6 +29,7 @@
 #include "hal/gpio/gpio.hpp"
 #include "controllers/tank_controller.hpp"
 #include "utils/logger.hpp"
+#include "utils/rtos_lock.hpp"
 
 class WateringController
 {
@@ -36,6 +37,7 @@ public:
     static constexpr size_t kRuleCount = 30;
     static constexpr uint8_t kInvalidPort = 0xFF;
     static constexpr uint8_t kTimeSlotCount = 3;
+    using LockGuard = RtosRecursiveLock::Guard;
 
     struct RuleConfig
     {
@@ -82,7 +84,8 @@ public:
     WateringController(Gpio &gpio, TankController &tanks, RTC &rtc, Logger &logs)
         ;bool begin();void setEventHandler(EventHandler cb, void *ctx);void task();void applyConfig(JsonArrayConst rules);void serialize(JsonArray out) const;void applySnapshot(const uint8_t *status_mask, size_t bytes);void buildSnapshot(uint8_t *status_mask, size_t bytes) const;void applyRuntimeSnapshot(const uint8_t *active_mask, const uint8_t *paused_mask, const uint32_t *remaining_ms,
                               const uint32_t *last_start_key, size_t bytes);void buildRuntimeSnapshot(uint8_t *active_mask, uint8_t *paused_mask, uint32_t *remaining_ms,
-                              uint32_t *last_start_key, size_t bytes) const;bool setEnabled(size_t id, bool enabled);bool setName(size_t id, const String &name);bool setPort(size_t id, uint8_t port);bool setStartDate(size_t id, uint16_t year, uint8_t month, uint8_t day);bool setStartTime(size_t id, uint8_t hour, uint8_t minute);bool setStartTimeSlot(size_t id, uint8_t slot, uint8_t hour, uint8_t minute);bool setWeekdaysMask(size_t id, uint8_t mask);bool setDuration(size_t id, uint32_t duration_sec);bool setDurationSlot(size_t id, uint8_t slot, uint32_t duration_sec);bool setStatus(size_t id, bool status);bool controllerEnabled() const;void setControllerEnabled(bool enabled);bool setTankId(size_t id, uint8_t tank_id);bool setResumeAfterRefill(size_t id, bool enable);bool setResumeLevel(size_t id, uint8_t level);bool takeDirty();bool takeRuntimeDirty();const RuleConfig *config(size_t id) const;const RuleState *state(size_t id) const;const RuleConfig *configByIndex(size_t idx) const;const RuleState *stateByIndex(size_t idx) const;private:
+                              uint32_t *last_start_key, size_t bytes) const;bool setEnabled(size_t id, bool enabled);bool setName(size_t id, const String &name);bool setPort(size_t id, uint8_t port);bool setStartDate(size_t id, uint16_t year, uint8_t month, uint8_t day);bool setStartTime(size_t id, uint8_t hour, uint8_t minute);bool setStartTimeSlot(size_t id, uint8_t slot, uint8_t hour, uint8_t minute);bool setWeekdaysMask(size_t id, uint8_t mask);bool setDuration(size_t id, uint32_t duration_sec);bool setDurationSlot(size_t id, uint8_t slot, uint32_t duration_sec);bool setStatus(size_t id, bool status);bool controllerEnabled() const;void setControllerEnabled(bool enabled);bool setTankId(size_t id, uint8_t tank_id);bool setResumeAfterRefill(size_t id, bool enable);bool setResumeLevel(size_t id, uint8_t level);bool takeDirty();bool takeRuntimeDirty();const RuleConfig *config(size_t id) const;const RuleState *state(size_t id) const;const RuleConfig *configByIndex(size_t idx) const;const RuleState *stateByIndex(size_t idx) const;LockGuard lockGuard() const { return _lock.guard(); }
+private:
     Gpio &_gpio;
     TankController &_tanks;
     RTC &_rtc;
@@ -94,5 +97,6 @@ public:
     bool _controller_enabled = false;
     EventHandler _event_cb = nullptr;
     void *_event_ctx = nullptr;
+    mutable RtosRecursiveLock _lock;
 
     void reset_();static bool isStartValid_(const RuleConfig &cfg);static uint32_t makeStartKey_(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t slot);static void getSlot_(const RuleConfig &cfg, uint8_t slot, uint8_t &hour, uint8_t &minute, uint32_t &duration_sec);static void setSlotTime_(uint8_t slot, RuleConfig &cfg, uint8_t hour, uint8_t minute);static void setSlotDuration_(uint8_t slot, RuleConfig &cfg, uint32_t duration_sec);static uint8_t calcDow_(uint16_t y, uint8_t m, uint8_t d);static bool isWeekdayAllowed_(const RuleConfig &cfg, uint8_t day_of_week);static bool timeAfterOrEqual_(uint32_t now, uint32_t target);void stopIfActive_(const RuleConfig &cfg, RuleState &st, Event reason);void stopForEmpty_(const RuleConfig &cfg, RuleState &st);void resumeAfterRefill_(const RuleConfig &cfg, RuleState &st);void writePort_(uint8_t port, bool on);bool isTankEmpty_(const RuleConfig &cfg) const;bool isResumeLevelReached_(const RuleConfig &cfg) const;bool indexById_(size_t id, size_t &out) const;void notifyEvent_(Event ev, const RuleConfig &cfg, const RuleState &st);};

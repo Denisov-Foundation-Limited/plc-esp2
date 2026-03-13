@@ -46,6 +46,7 @@ SecurityController::SecurityController(Gpio &gpio, OneWireManager &ow, Logger &l
 }
 
 bool SecurityController::begin(){
+    auto guard = _lock.guard();
     _runtime_ready = true;
     if (!_controller_enabled)
         return true;
@@ -68,6 +69,7 @@ bool SecurityController::begin(){
 }
 
 void SecurityController::task(){
+    auto guard = _lock.guard();
     handleGsm_();
     processTgNotifyQueue_();
     if (!_controller_enabled)
@@ -113,6 +115,7 @@ void SecurityController::task(){
 }
 
 void SecurityController::applyConfig(JsonArrayConst sensors){
+    auto guard = _lock.guard();
     reset_();
     size_t idx = 0;
     for (JsonVariantConst v : sensors)
@@ -175,6 +178,7 @@ void SecurityController::applyConfig(JsonArrayConst sensors){
 }
 
 void SecurityController::applyKeys(JsonArrayConst keys){
+    auto guard = _lock.guard();
     if (!_users)
         return;
     for (size_t i = 0; i < _users->size(); ++i)
@@ -219,6 +223,7 @@ void SecurityController::applyKeys(JsonArrayConst keys){
 }
 
 void SecurityController::applyRfidKeys(JsonArrayConst keys){
+    auto guard = _lock.guard();
     if (!_users)
         return;
     for (size_t i = 0; i < _users->size(); ++i)
@@ -263,6 +268,7 @@ void SecurityController::applyRfidKeys(JsonArrayConst keys){
 }
 
 void SecurityController::applyPhones(JsonArrayConst phones){
+    auto guard = _lock.guard();
     if (!_users)
         return;
     for (size_t i = 0; i < _users->size(); ++i)
@@ -320,12 +326,14 @@ void SecurityController::applyPhones(JsonArrayConst phones){
 }
 
 void SecurityController::setSirenPort(uint8_t port){
+    auto guard = _lock.guard();
     _siren_port = port;
     if (_controller_enabled)
         setupSiren_();
 }
 
 void SecurityController::serialize(JsonArray out) const{
+    auto guard = _lock.guard();
     for (size_t i = 0; i < kSensorCount; ++i)
     {
         const SensorConfig &cfg = _cfg[i];
@@ -346,6 +354,7 @@ void SecurityController::serialize(JsonArray out) const{
 }
 
 void SecurityController::serializeKeys(JsonArray out) const{
+    auto guard = _lock.guard();
     if (!_users)
         return;
     for (size_t i = 0; i < _users->size(); ++i)
@@ -365,6 +374,7 @@ void SecurityController::serializeKeys(JsonArray out) const{
 }
 
 void SecurityController::serializeRfidKeys(JsonArray out) const{
+    auto guard = _lock.guard();
     if (!_users)
         return;
     for (size_t i = 0; i < _users->size(); ++i)
@@ -384,6 +394,7 @@ void SecurityController::serializeRfidKeys(JsonArray out) const{
 }
 
 void SecurityController::serializePhones(JsonArray out) const{
+    auto guard = _lock.guard();
     if (!_users)
         return;
     for (size_t i = 0; i < _users->size(); ++i)
@@ -404,6 +415,7 @@ void SecurityController::serializePhones(JsonArray out) const{
 }
 
 void SecurityController::buildSnapshot(uint8_t &flags) const{
+    auto guard = _lock.guard();
     flags = 0;
     if (_armed)
         flags |= EepromStorage::kSecurityArmedMask;
@@ -412,59 +424,71 @@ void SecurityController::buildSnapshot(uint8_t &flags) const{
 }
 
 void SecurityController::applySnapshot(uint8_t flags){
+    auto guard = _lock.guard();
     const bool armed = (flags & EepromStorage::kSecurityArmedMask) != 0;
     const bool alarm = armed && ((flags & EepromStorage::kSecurityAlarmMask) != 0);
     applySnapshot_(armed, alarm);
 }
 
 void SecurityController::setArmStateHandler(SecurityController::ArmStateHandler cb, void *ctx){
+    auto guard = _lock.guard();
     _arm_state_cb = cb;
     _arm_state_ctx = ctx;
 }
 
 void SecurityController::setPreArmCheckHandler(SecurityController::PreArmCheckHandler cb, void *ctx){
+    auto guard = _lock.guard();
     _pre_arm_cb = cb;
     _pre_arm_ctx = ctx;
 }
 
 void SecurityController::setAlarmStateHandler(SecurityController::AlarmStateHandler cb, void *ctx){
+    auto guard = _lock.guard();
     _alarm_state_cb = cb;
     _alarm_state_ctx = ctx;
 }
 
 void SecurityController::setClearDetectHandler(SecurityController::ClearDetectHandler cb, void *ctx){
+    auto guard = _lock.guard();
     _clear_detect_cb = cb;
     _clear_detect_ctx = ctx;
 }
 
 void SecurityController::setDetectHandler(SecurityController::DetectHandler cb, void *ctx){
+    auto guard = _lock.guard();
     _detect_cb = cb;
     _detect_ctx = ctx;
 }
 
 void SecurityController::setRfidUidHandler(SecurityController::RfidUidHandler cb, void *ctx){
+    auto guard = _lock.guard();
     _rfid_uid_cb = cb;
     _rfid_uid_ctx = ctx;
 }
 
 void SecurityController::setIButtonSerialHandler(SecurityController::IButtonSerialHandler cb, void *ctx){
+    auto guard = _lock.guard();
     _ibutton_serial_cb = cb;
     _ibutton_serial_ctx = ctx;
 }
 
 void SecurityController::setRfidI2c(I2CManager *i2c){
+    auto guard = _lock.guard();
     _rfid_i2c = i2c;
 }
 
 void SecurityController::setUsersRegistry(UsersRegistry &users){
+    auto guard = _lock.guard();
     _users = &users;
 }
 
 void SecurityController::setPlcControl(PlcControl &plc){
+    auto guard = _lock.guard();
     _plc = &plc;
 }
 
 bool SecurityController::processRfidUid(const PN532::UID &uid, const char *src ){
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return false;
     if (uid.len == 0 || uid.len > sizeof(_last_rfid))
@@ -496,6 +520,7 @@ bool SecurityController::processRfidUid(const PN532::UID &uid, const char *src )
 }
 
 bool SecurityController::processRfidUidString(const char *uid_str, const char *src ){
+    auto guard = _lock.guard();
     PN532::UID uid;
     if (!parseRfidUid_(uid_str, uid))
         return false;
@@ -503,6 +528,7 @@ bool SecurityController::processRfidUidString(const char *uid_str, const char *s
 }
 
 bool SecurityController::processIButtonAddr(const uint8_t addr[8], const char *src ){
+    auto guard = _lock.guard();
     if (!_controller_enabled || !addr)
         return false;
     if (isKeyRepeat_(addr))
@@ -532,6 +558,7 @@ bool SecurityController::processIButtonAddr(const uint8_t addr[8], const char *s
 }
 
 bool SecurityController::processIButtonSerialString(const char *serial, const char *src ){
+    auto guard = _lock.guard();
     uint8_t addr[8] = {};
     if (!parseHexAddr_(serial, addr))
         return false;
@@ -539,10 +566,12 @@ bool SecurityController::processIButtonSerialString(const char *serial, const ch
 }
 
 void SecurityController::setNotifyEnabled(bool enabled){
+    auto guard = _lock.guard();
     _notify_enabled = enabled;
 }
 
 bool SecurityController::takeDirty(){
+    auto guard = _lock.guard();
     if (!_dirty)
         return false;
     _dirty = false;
@@ -550,15 +579,20 @@ bool SecurityController::takeDirty(){
 }
 
 bool SecurityController::takeForceSave(){
+    auto guard = _lock.guard();
     if (!_force_save)
         return false;
     _force_save = false;
     return true;
 }
 
-bool SecurityController::controllerEnabled() const{ return _controller_enabled; }
+bool SecurityController::controllerEnabled() const{
+    auto guard = _lock.guard();
+    return _controller_enabled;
+}
 
 void SecurityController::setControllerEnabled(bool enabled){
+    auto guard = _lock.guard();
     if (_controller_enabled == enabled)
         return;
     _controller_enabled = enabled;
@@ -591,15 +625,28 @@ void SecurityController::setControllerEnabled(bool enabled){
     }
 }
 
-bool SecurityController::armed() const{ return _armed; }
+bool SecurityController::armed() const{
+    auto guard = _lock.guard();
+    return _armed;
+}
 
-bool SecurityController::alarmOn() const{ return _alarm_on; }
+bool SecurityController::alarmOn() const{
+    auto guard = _lock.guard();
+    return _alarm_on;
+}
 
-uint8_t SecurityController::sirenPort() const{ return _siren_port; }
+uint8_t SecurityController::sirenPort() const{
+    auto guard = _lock.guard();
+    return _siren_port;
+}
 
-void SecurityController::setGsmModem(GsmModem &modem){ _gsm = &modem; }
+void SecurityController::setGsmModem(GsmModem &modem){
+    auto guard = _lock.guard();
+    _gsm = &modem;
+}
 
 bool SecurityController::arm(){
+    auto guard = _lock.guard();
     if (_armed)
         return true;
     if (!_controller_enabled)
@@ -609,6 +656,7 @@ bool SecurityController::arm(){
 }
 
 bool SecurityController::disarm(){
+    auto guard = _lock.guard();
     if (!_armed)
         return true;
     disarm_(false);
@@ -616,6 +664,7 @@ bool SecurityController::disarm(){
 }
 
 bool SecurityController::armFrom(const char *src, const String &user){
+    auto guard = _lock.guard();
     if (_armed)
         return true;
     if (!_controller_enabled)
@@ -625,6 +674,7 @@ bool SecurityController::armFrom(const char *src, const String &user){
 }
 
 bool SecurityController::armForcedFrom(const char *src, const String &user){
+    auto guard = _lock.guard();
     if (_armed)
         return true;
     if (!_controller_enabled)
@@ -634,6 +684,7 @@ bool SecurityController::armForcedFrom(const char *src, const String &user){
 }
 
 bool SecurityController::disarmFrom(const char *src, const String &user, bool silent ){
+    auto guard = _lock.guard();
     if (!_armed)
         return true;
     disarm_(silent, src, user);
@@ -641,6 +692,7 @@ bool SecurityController::disarmFrom(const char *src, const String &user, bool si
 }
 
 void SecurityController::toggleFrom(const char *src, const String &user){
+    auto guard = _lock.guard();
     if (_armed)
         disarm_(false, src, user);
     else
@@ -648,11 +700,13 @@ void SecurityController::toggleFrom(const char *src, const String &user){
 }
 
 void SecurityController::clearDetect(){
+    auto guard = _lock.guard();
     clearDetect_();
     notifyClearDetect_();
 }
 
 bool SecurityController::fillPrearmItems(JsonArray &arr, String *plain_out ){
+    auto guard = _lock.guard();
     bool any = false;
     if (plain_out)
         *plain_out = "";
@@ -688,6 +742,7 @@ bool SecurityController::fillPrearmItems(JsonArray &arr, String *plain_out ){
 }
 
 void SecurityController::notifyRemoteDetect(const String &source, uint8_t sensor_id, const String &name, bool silent){
+    auto guard = _lock.guard();
     if (!_notify_enabled)
         return;
     String msg = F("Охрана: тревога ");
@@ -715,6 +770,7 @@ void SecurityController::notifyRemoteDetect(const String &source, uint8_t sensor
 }
 
 void SecurityController::setAlarmState(bool on){
+    auto guard = _lock.guard();
     if (_alarm_on == on)
         return;
     _alarm_on = on;
@@ -726,6 +782,7 @@ void SecurityController::setAlarmState(bool on){
 }
 
 bool SecurityController::setEnabled(size_t id, bool enabled){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return false;
@@ -755,6 +812,7 @@ bool SecurityController::setEnabled(size_t id, bool enabled){
 }
 
 bool SecurityController::setType(size_t id, SecurityController::SensorType type){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return false;
@@ -771,6 +829,7 @@ bool SecurityController::setType(size_t id, SecurityController::SensorType type)
 }
 
 bool SecurityController::setPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return false;
@@ -787,6 +846,7 @@ bool SecurityController::setPort(size_t id, uint8_t port){
 }
 
 bool SecurityController::setName(size_t id, const String &name){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return false;
@@ -795,6 +855,7 @@ bool SecurityController::setName(size_t id, const String &name){
 }
 
 bool SecurityController::setGroupId(size_t id, uint8_t group_id){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return false;
@@ -803,6 +864,7 @@ bool SecurityController::setGroupId(size_t id, uint8_t group_id){
 }
 
 bool SecurityController::setSilent(size_t id, bool silent){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return false;
@@ -811,10 +873,12 @@ bool SecurityController::setSilent(size_t id, bool silent){
 }
 
 bool SecurityController::addKey(const uint8_t addr[8]){
+    auto guard = _lock.guard();
     return addKey(addr, "");
 }
 
 bool SecurityController::addKey(const uint8_t addr[8], const String &name){
+    auto guard = _lock.guard();
     if (!addr || !_users)
         return false;
     char hex[17] = {};
@@ -839,6 +903,7 @@ bool SecurityController::addKey(const uint8_t addr[8], const String &name){
 }
 
 bool SecurityController::removeKey(const uint8_t addr[8]){
+    auto guard = _lock.guard();
     if (!addr || !_users)
         return false;
     char hex[17] = {};
@@ -856,6 +921,7 @@ bool SecurityController::removeKey(const uint8_t addr[8]){
 }
 
 void SecurityController::clearKeys(){
+    auto guard = _lock.guard();
     if (!_users)
         return;
     for (size_t i = 0; i < _users->size(); ++i)
@@ -863,10 +929,12 @@ void SecurityController::clearKeys(){
 }
 
 void SecurityController::clearPhones(){
+    auto guard = _lock.guard();
     clearPhones_();
 }
 
 bool SecurityController::setPhone(size_t idx, const String &number){
+    auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
     _users->user(idx).gsm_phone = UsersRegistry::normalizePhone(number);
@@ -874,6 +942,7 @@ bool SecurityController::setPhone(size_t idx, const String &number){
 }
 
 bool SecurityController::setPhoneName(size_t idx, const String &name){
+    auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
     _users->user(idx).username = name;
@@ -881,6 +950,7 @@ bool SecurityController::setPhoneName(size_t idx, const String &name){
 }
 
 bool SecurityController::setPhoneNotify(size_t idx, bool notify){
+    auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
     _users->user(idx).gsm_sms = notify;
@@ -888,6 +958,7 @@ bool SecurityController::setPhoneNotify(size_t idx, bool notify){
 }
 
 bool SecurityController::setPhoneCall(size_t idx, bool call){
+    auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
     _users->user(idx).gsm_call = call;
@@ -895,6 +966,7 @@ bool SecurityController::setPhoneCall(size_t idx, bool call){
 }
 
 bool SecurityController::setPhoneEnabled(size_t idx, bool enabled){
+    auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
     _users->user(idx).enabled = enabled;
@@ -902,6 +974,7 @@ bool SecurityController::setPhoneEnabled(size_t idx, bool enabled){
 }
 
 bool SecurityController::phoneSlot(size_t idx, String &number, bool &enabled) const{
+    auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
     const auto &u = _users->user(idx);
@@ -911,6 +984,7 @@ bool SecurityController::phoneSlot(size_t idx, String &number, bool &enabled) co
 }
 
 const String &SecurityController::phoneByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     static const String empty;
     if (!_users || idx >= _users->size())
         return empty;
@@ -918,6 +992,7 @@ const String &SecurityController::phoneByIndex(size_t idx) const{
 }
 
 const String &SecurityController::phoneNameByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     static const String empty;
     if (!_users || idx >= _users->size())
         return empty;
@@ -925,18 +1000,21 @@ const String &SecurityController::phoneNameByIndex(size_t idx) const{
 }
 
 bool SecurityController::phoneNotifyByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
     return _users->user(idx).gsm_sms;
 }
 
 bool SecurityController::phoneCallByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
     return _users->user(idx).gsm_call;
 }
 
 size_t SecurityController::keyCount() const{
+    auto guard = _lock.guard();
     size_t count = 0;
     if (!_users)
         return 0;
@@ -952,6 +1030,7 @@ size_t SecurityController::keyCount() const{
 }
 
 bool SecurityController::keyByIndex(size_t idx, uint8_t out[8]) const{
+    auto guard = _lock.guard();
     if (!out || !_users)
         return false;
     size_t seen = 0;
@@ -973,6 +1052,7 @@ bool SecurityController::keyByIndex(size_t idx, uint8_t out[8]) const{
 }
 
 const String &SecurityController::keyNameByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     static const String empty;
     if (!_users)
         return empty;
@@ -993,6 +1073,7 @@ const String &SecurityController::keyNameByIndex(size_t idx) const{
 }
 
 bool SecurityController::setKeyNameByAddr(const uint8_t addr[8], const String &name){
+    auto guard = _lock.guard();
     if (!addr || !_users)
         return false;
     char hex[17] = {};
@@ -1010,6 +1091,7 @@ bool SecurityController::setKeyNameByAddr(const uint8_t addr[8], const String &n
 }
 
 bool SecurityController::keySlot(size_t idx, uint8_t out[8], bool &enabled) const{
+    auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
     const String serial = _users->user(idx).ibutton_key;
@@ -1023,6 +1105,7 @@ bool SecurityController::keySlot(size_t idx, uint8_t out[8], bool &enabled) cons
 }
 
 bool SecurityController::lastKeyHex(char out[17]) const{
+    auto guard = _lock.guard();
     if (!out || _last_key_ms == 0)
         return false;
     IButton::toHex(_last_key, out);
@@ -1030,6 +1113,7 @@ bool SecurityController::lastKeyHex(char out[17]) const{
 }
 
 bool SecurityController::lastRfidSerial(String &out) const{
+    auto guard = _lock.guard();
     if (_last_rfid_ms == 0 || _last_rfid_len == 0)
         return false;
     out = rfidUidToString_(_last_rfid, _last_rfid_len);
@@ -1037,6 +1121,7 @@ bool SecurityController::lastRfidSerial(String &out) const{
 }
 
 bool SecurityController::setKeySlot(size_t idx, const uint8_t addr[8], bool enabled, const String &name){
+    auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
     UsersRegistry::User &u = _users->user(idx);
@@ -1055,6 +1140,7 @@ bool SecurityController::setKeySlot(size_t idx, const uint8_t addr[8], bool enab
 }
 
 bool SecurityController::rfidKeySlot(size_t idx, uint8_t out[10], uint8_t &len, bool &enabled) const{
+    auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
     const String serial = _users->user(idx).rfid_key;
@@ -1078,6 +1164,7 @@ bool SecurityController::rfidKeySlot(size_t idx, uint8_t out[10], uint8_t &len, 
 }
 
 const String &SecurityController::rfidKeyNameByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     static const String empty;
     if (!_users)
         return empty;
@@ -1098,6 +1185,7 @@ const String &SecurityController::rfidKeyNameByIndex(size_t idx) const{
 }
 
 bool SecurityController::setRfidKeySlot(size_t idx, const uint8_t *bytes, uint8_t len, bool enabled, const String &name){
+    auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
     UsersRegistry::User &u = _users->user(idx);
@@ -1123,6 +1211,7 @@ String SecurityController::rfidSerialToString(const uint8_t *bytes, uint8_t len)
 }
 
 const SecurityController::SensorConfig *SecurityController::config(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return nullptr;
@@ -1130,6 +1219,7 @@ const SecurityController::SensorConfig *SecurityController::config(size_t id) co
 }
 
 const SecurityController::SensorState *SecurityController::state(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return nullptr;
@@ -1137,12 +1227,14 @@ const SecurityController::SensorState *SecurityController::state(size_t id) cons
 }
 
 const SecurityController::SensorConfig *SecurityController::configByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kSensorCount)
         return nullptr;
     return &_cfg[idx];
 }
 
 const SecurityController::SensorState *SecurityController::stateByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kSensorCount)
         return nullptr;
     return &_state[idx];

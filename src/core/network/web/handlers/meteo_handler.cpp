@@ -14,6 +14,7 @@
 #include "core/network/web/web_interface.hpp"
 
 void MeteoHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
+        server.on("/meteo/list", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleMeteoList(web, request); });
         server.on("/meteo/remote_sources", HTTP_GET,
                   [&web](AsyncWebServerRequest *request) { handleRemoteSources(web, request); });
         server.on("/meteo/state", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleMeteoState(web, request); });
@@ -153,9 +154,7 @@ void MeteoHandler::handleMeteo(WebInterface &web, AsyncWebServerRequest *request
         }
         page.replace("%METEO_PAGE_TITLE%", WebUiRu::Meteo::kPageTitle);
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%METEO_TILES%", stack_view ? web.listStackMeteoHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size)
-                                                 : web.listMeteoHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
-                                                                      groups_available ? SIZE_MAX : page_size));
+        page.replace("%METEO_TILES%", "<div class=\"tile empty\">Loading...</div>");
         page.replace("%METEO_PAGINATION%", pagination);
         page.replace("%METEO_STATUS%", stack_view ? web.stackMeteoStatusText_(node_id) : web._meteo_status);
         page.replace("%SENSOR_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Sensor)
@@ -194,6 +193,52 @@ void MeteoHandler::handleMeteo(WebInterface &web, AsyncWebServerRequest *request
         page.replace("%METEO_CAN_EDIT%", web.webSessionIsAdmin_() ? "true" : "false");
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
+    }
+
+void MeteoHandler::handleMeteoList(WebInterface &web, AsyncWebServerRequest *request) {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Meteo, node_id))
+            return;
+        const bool stack_view = web.isStackMeteoView_(node_id);
+        const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
+        const uint8_t page_size = 8u;
+        const String page_str = web.paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+        if (stack_view)
+        {
+            if (!groups_available)
+            {
+                const size_t visible = web.stackMeteoVisibleCount_(node_id);
+                const uint8_t max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+                if (page_idx >= max_pages)
+                    page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            }
+            web.sendText_(request, 200, "text/html; charset=utf-8",
+                          web.listStackMeteoHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                  groups_available ? SIZE_MAX : page_size),
+                          set_cookie);
+            return;
+        }
+        if (!groups_available)
+        {
+            const size_t visible = web.meteoLocalRenderCount_();
+            const uint8_t max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+        web.sendText_(request, 200, "text/html; charset=utf-8",
+                      web.listMeteoHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                         groups_available ? SIZE_MAX : page_size),
+                      set_cookie);
     }
 
 void MeteoHandler::handleMeteoState(WebInterface &web, AsyncWebServerRequest *request) {
@@ -247,6 +292,7 @@ void MeteoHandler::handleMeteoState(WebInterface &web, AsyncWebServerRequest *re
                 return;
             }
             MeteoController &meteo = web._controllers->meteo();
+            auto meteo_guard = meteo.lockGuard();
             const uint32_t now = millis();
             for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
             {
@@ -537,6 +583,7 @@ void MeteoHandler::handleMeteoSave(WebInterface &web, AsyncWebServerRequest *req
             return;
         }
         MeteoController &meteo = web._controllers->meteo();
+        auto meteo_guard = meteo.lockGuard();
         bool ok = true;
         bool changed = false;
         for (size_t i = 0; i < MeteoController::kSensorCount; ++i)

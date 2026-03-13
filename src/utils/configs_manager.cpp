@@ -918,42 +918,49 @@ void ConfigsManager::clearGroupRefs_(uint8_t group_id){
         return;
     for (size_t i = 0; i < SocketController::kSocketCount; ++i)
     {
+        auto guard = _controllers.sockets().lockGuard();
         const auto *cfg = _controllers.sockets().configByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.sockets().setGroupId(cfg->id, 0);
     }
     for (size_t i = 0; i < SocketController::kLightCount; ++i)
     {
+        auto guard = _controllers.sockets().lockGuard();
         const auto *cfg = _controllers.sockets().lightConfigByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.sockets().setLightGroupId(cfg->id, 0);
     }
     for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
     {
+        auto guard = _controllers.meteo().lockGuard();
         const auto *cfg = _controllers.meteo().configByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.meteo().setGroupId(cfg->id, 0);
     }
     for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
     {
+        auto guard = _controllers.thermo().lockGuard();
         const auto *cfg = _controllers.thermo().configByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.thermo().setGroupId(cfg->id, 0);
     }
     for (size_t i = 0; i < TankController::kTankCount; ++i)
     {
+        auto guard = _controllers.tanks().lockGuard();
         const auto *cfg = _controllers.tanks().configByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.tanks().setGroupId(cfg->id, 0);
     }
     for (size_t i = 0; i < SepticController::kSepticCount; ++i)
     {
+        auto guard = _controllers.septic().lockGuard();
         const auto *cfg = _controllers.septic().configByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.septic().setGroupId(cfg->id, 0);
     }
     for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
     {
+        auto guard = _controllers.security().lockGuard();
         const auto *cfg = _controllers.security().configByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.security().setGroupId(cfg->id, 0);

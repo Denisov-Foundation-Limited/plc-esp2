@@ -117,6 +117,7 @@ bool MeteoHistory::writeHour_(uint32_t date, uint8_t hour){
 }
 
 bool MeteoHistory::writeEntry_(File &f, size_t index, uint8_t hour){
+    auto guard = _meteo.lockGuard();
     const auto *cfg = _meteo.configByIndex(index);
     const auto *st = _meteo.stateByIndex(index);
     int16_t t10 = kInvalid;

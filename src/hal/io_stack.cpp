@@ -28,21 +28,25 @@ IoStack::IoStack(PortIO &portio)
 
 bool IoStack::begin()
 {
+    auto guard = _lock.guard();
     return _portio.begin();
 }
 
 void IoStack::loop()
 {
+    auto guard = _lock.guard();
     _portio.loop();
 }
 
 void IoStack::pinMode(uint8_t id, PortIO::PortMode mode)
 {
+    auto guard = _lock.guard();
     _portio.pinMode(id, mode);
 }
 
 void IoStack::initImages()
 {
+    auto guard = _lock.guard();
     for (uint8_t i = 0; i < PORT_COUNT; ++i)
     {
         const auto &p = _portio.desc(i);
@@ -70,6 +74,7 @@ void IoStack::initImages()
 
 void IoStack::scanInputs()
 {
+    auto guard = _lock.guard();
     const uint32_t now = millis_();
     for (uint8_t i = 0; i < PORT_COUNT; ++i)
     {
@@ -94,6 +99,7 @@ void IoStack::scanInputs()
 
 void IoStack::applyOutputs()
 {
+    auto guard = _lock.guard();
     for (uint8_t i = 0; i < PORT_COUNT; ++i)
     {
         const auto &p = _portio.desc(i);
@@ -114,6 +120,7 @@ void IoStack::applyOutputs()
 
 bool IoStack::write(uint8_t id, bool logicalLevel)
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _portio.desc(id);
@@ -126,6 +133,7 @@ bool IoStack::write(uint8_t id, bool logicalLevel)
 
 bool IoStack::read(uint8_t id) const
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _portio.desc(id);
@@ -145,6 +153,7 @@ const PortIO::PortDesc &IoStack::desc(uint8_t id) const
 
 bool IoStack::lastState(uint8_t id, bool &outLogical) const
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _portio.desc(id);

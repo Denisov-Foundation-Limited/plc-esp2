@@ -441,6 +441,7 @@ void StackRuntime::logLocalInventory_(){
         return;
     const String node = hw.plc.deviceName().length() ? hw.plc.deviceName() : String("master");
     auto &sockets = control.controllers.sockets();
+    auto sockets_guard = sockets.lockGuard();
     size_t enabled = 0;
     for (size_t i = 0; i < SocketController::kSocketCount; ++i)
     {
@@ -478,6 +479,7 @@ void StackRuntime::logLocalInventory_(){
     }
 
     auto &meteo = control.controllers.meteo();
+    auto meteo_guard = meteo.lockGuard();
     enabled = 0;
     for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
     {
@@ -498,6 +500,7 @@ void StackRuntime::logLocalInventory_(){
     }
 
     auto &thermo = control.controllers.thermo();
+    auto thermo_guard = thermo.lockGuard();
     enabled = 0;
     for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
     {
@@ -518,6 +521,7 @@ void StackRuntime::logLocalInventory_(){
     }
 
     auto &tanks = control.controllers.tanks();
+    auto tanks_guard = tanks.lockGuard();
     enabled = 0;
     for (size_t i = 0; i < TankController::kTankCount; ++i)
     {
@@ -537,6 +541,7 @@ void StackRuntime::logLocalInventory_(){
     }
 
     auto &septic = control.controllers.septic();
+    auto septic_guard = septic.lockGuard();
     enabled = 0;
     for (size_t i = 0; i < SepticController::kSepticCount; ++i)
     {
@@ -555,6 +560,7 @@ void StackRuntime::logLocalInventory_(){
     }
 
     auto &security = control.controllers.security();
+    auto security_guard = security.lockGuard();
     enabled = 0;
     for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
     {
@@ -575,6 +581,7 @@ void StackRuntime::logLocalInventory_(){
     }
 
     auto &watering = control.controllers.watering();
+    auto watering_guard = watering.lockGuard();
     enabled = 0;
     for (size_t i = 0; i < WateringController::kRuleCount; ++i)
     {
@@ -594,6 +601,7 @@ void StackRuntime::logLocalInventory_(){
     }
 
     auto &leak = control.controllers.leak();
+    auto leak_guard = leak.lockGuard();
     enabled = 0;
     for (size_t i = 0; i < LeakController::kZoneCount; ++i)
     {
@@ -612,8 +620,12 @@ void StackRuntime::logLocalInventory_(){
                        node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-");
     }
 
-    core.logs.info(F("STACK"), F("Sync master unit: %s item: avr enabled: %s"), node.c_str(),
-                   control.controllers.avr().controllerEnabled() ? "true" : "false");
+    {
+        auto &avr = control.controllers.avr();
+        auto avr_guard = avr.lockGuard();
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: avr enabled: %s"), node.c_str(),
+                       avr.controllerEnabled() ? "true" : "false");
+    }
     _local_inventory_logged = true;
 }
 

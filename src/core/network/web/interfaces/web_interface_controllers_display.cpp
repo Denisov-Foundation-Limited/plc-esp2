@@ -113,6 +113,7 @@ String WebInterfaceControllersDisplayHelper::displaySocketOptionsJson_(const Web
         if (web._controllers)
         {
             const SocketController &sockets = web._controllers->sockets();
+            auto guard = sockets.lockGuard();
             for (size_t i = 0; i < SocketController::kSocketCount; ++i)
             {
                 const auto *cfg = sockets.configByIndex(i);
@@ -198,6 +199,7 @@ String WebInterfaceControllersDisplayHelper::displayLightOptionsJson_(const WebI
         if (web._controllers)
         {
             const SocketController &sockets = web._controllers->sockets();
+            auto guard = sockets.lockGuard();
             for (size_t i = 0; i < SocketController::kLightCount; ++i)
             {
                 const auto *cfg = sockets.lightConfigByIndex(i);
@@ -283,6 +285,7 @@ String WebInterfaceControllersDisplayHelper::displayMeteoOptionsJson_(const WebI
         if (web._controllers)
         {
             const MeteoController &meteo = web._controllers->meteo();
+            auto guard = meteo.lockGuard();
             for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
             {
                 const auto *cfg = meteo.configByIndex(i);
@@ -368,6 +371,7 @@ String WebInterfaceControllersDisplayHelper::displayThermoOptionsJson_(const Web
         if (web._controllers)
         {
             const ThermoController &thermo = web._controllers->thermo();
+            auto guard = thermo.lockGuard();
             for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
             {
                 const auto *cfg = thermo.configByIndex(i);
@@ -453,6 +457,7 @@ String WebInterfaceControllersDisplayHelper::displayTankOptionsJson_(const WebIn
         if (web._controllers)
         {
             const TankController &tanks = web._controllers->tanks();
+            auto guard = tanks.lockGuard();
             for (size_t i = 0; i < TankController::kTankCount; ++i)
             {
                 const auto *cfg = tanks.configByIndex(i);
@@ -538,6 +543,7 @@ String WebInterfaceControllersDisplayHelper::displaySepticOptionsJson_(const Web
         if (web._controllers)
         {
             const SepticController &septic = web._controllers->septic();
+            auto guard = septic.lockGuard();
             for (size_t i = 0; i < SepticController::kSepticCount; ++i)
             {
                 const auto *cfg = septic.configByIndex(i);
@@ -660,6 +666,7 @@ String WebInterfaceControllersDisplayHelper::displayLeakOptionsJson_(const WebIn
         if (web._controllers)
         {
             const LeakController &leak = web._controllers->leak();
+            auto guard = leak.lockGuard();
             for (size_t i = 0; i < LeakController::kZoneCount; ++i)
             {
                 const auto *cfg = leak.configByIndex(i);

@@ -15,6 +15,7 @@ size_t WebInterfaceControllersLightsHelper::lightsLocalRenderCount_(const WebInt
         if (!web._controllers)
             return 0;
         SocketController &sockets = web._controllers->sockets();
+        auto guard = sockets.lockGuard();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < SocketController::kLightCount; ++i)
         {
@@ -200,6 +201,7 @@ String WebInterfaceControllersLightsHelper::listLightsHtml_(WebInterface &web, u
             reserve = 16384u;
         items.reserve(reserve);
         SocketController &sockets = web._controllers->sockets();
+        auto guard = sockets.lockGuard();
         bool tmp_state = false;
         auto appendRow = [&](const SocketController::LightConfig &cfg, bool enabled) {
             const bool can_edit = web.webSessionIsAdmin_();

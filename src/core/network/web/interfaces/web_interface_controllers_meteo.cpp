@@ -15,6 +15,7 @@ size_t WebInterfaceControllersMeteoHelper::meteoLocalRenderCount_(const WebInter
         if (!web._controllers)
             return 0;
         MeteoController &meteo = web._controllers->meteo();
+        auto guard = meteo.lockGuard();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
         {
@@ -384,6 +385,7 @@ String WebInterfaceControllersMeteoHelper::listMeteoHtml_(WebInterface &web, siz
         String items;
         items.reserve(16384);
         MeteoController &meteo = web._controllers->meteo();
+        auto guard = meteo.lockGuard();
         const uint32_t now = millis();
         static constexpr size_t kDs18Max = 32;
         char ds18_list[kDs18Max][17] = {};
@@ -672,6 +674,7 @@ String WebInterfaceControllersMeteoHelper::meteoUsedPinsJson_(const WebInterface
         if (web._controllers)
         {
             MeteoController &meteo = web._controllers->meteo();
+            auto guard = meteo.lockGuard();
             bool used[PortIO::PORT_COUNT] = {};
             for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
             {
@@ -711,6 +714,7 @@ String WebInterfaceControllersMeteoHelper::meteoSensorOptionsHtml_(const WebInte
         if (!web._controllers)
             return out;
         MeteoController &meteo = web._controllers->meteo();
+        auto guard = meteo.lockGuard();
         for (uint8_t id = 1; id <= MeteoController::kSensorCount; ++id)
         {
             const auto *cfg = meteo.config(id);
@@ -1041,7 +1045,9 @@ bool WebInterfaceControllersMeteoHelper::meteoRemoteType_(const WebInterface &we
 bool WebInterfaceControllersMeteoHelper::isMeteoSensorActive_(const WebInterface &web, uint8_t id) {
         if (!web._controllers)
             return false;
-        const auto *cfg = web._controllers->meteo().config(id);
+        MeteoController &meteo = web._controllers->meteo();
+        auto guard = meteo.lockGuard();
+        const auto *cfg = meteo.config(id);
         return cfg && cfg->enabled;
     }
 

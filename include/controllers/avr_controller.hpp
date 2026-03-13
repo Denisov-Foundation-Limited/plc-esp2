@@ -18,11 +18,13 @@
 #include "core/network/telegram/telegram_bot.hpp"
 #include "hal/gpio/gpio.hpp"
 #include "utils/logger.hpp"
+#include "utils/rtos_lock.hpp"
 
 class AvrController
 {
 public:
     static constexpr uint8_t kInvalidPort = 0xFF;
+    using LockGuard = RtosRecursiveLock::Guard;
 
     enum class Source : uint8_t
     {
@@ -101,7 +103,8 @@ public:
     };
 
     AvrController(Gpio &gpio, Logger &logs, TelegramBot &bot, TelegramAllowedUsersProvider &users)
-        ;bool begin();void task();void applyConfig(JsonObjectConst obj);void serialize(JsonObject out) const;bool setControllerEnabled(bool enabled);bool controllerEnabled() const;bool setAutoMode(bool auto_mode);bool autoMode() const;bool setPreferMain(bool prefer_main);bool preferMain() const;bool setAutoReturnMain(bool auto_return);bool autoReturnMain() const;bool setManualSource(Source src);Source manualSource() const;Source activeSource() const;const Config &config() const;const State &state() const;bool setMainOkPort(uint8_t port);bool setReserveOkPort(uint8_t port);bool setRelayMainPort(uint8_t port);bool setRelayReservePort(uint8_t port);bool setFeedbackMainPort(uint8_t port);bool setFeedbackReservePort(uint8_t port);bool transferInProgress() const;Fault fault() const;void clearFault();static const char *sourceName(Source s);static const char *faultName(Fault f);private:
+        ;bool begin();void task();void applyConfig(JsonObjectConst obj);void serialize(JsonObject out) const;bool setControllerEnabled(bool enabled);bool controllerEnabled() const;bool setAutoMode(bool auto_mode);bool autoMode() const;bool setPreferMain(bool prefer_main);bool preferMain() const;bool setAutoReturnMain(bool auto_return);bool autoReturnMain() const;bool setManualSource(Source src);Source manualSource() const;Source activeSource() const;const Config &config() const;const State &state() const;bool setMainOkPort(uint8_t port);bool setReserveOkPort(uint8_t port);bool setRelayMainPort(uint8_t port);bool setRelayReservePort(uint8_t port);bool setFeedbackMainPort(uint8_t port);bool setFeedbackReservePort(uint8_t port);bool transferInProgress() const;Fault fault() const;void clearFault();static const char *sourceName(Source s);static const char *faultName(Fault f);LockGuard lockGuard() const { return _lock.guard(); }
+private:
     struct InputDebounce
     {
         bool stable = false;
@@ -124,5 +127,6 @@ public:
     uint32_t _main_ok_since_ms = 0;
     bool _main_state_known = false;
     bool _last_main_ok = false;
+    mutable RtosRecursiveLock _lock;
 
     void setupHardware_();void setupInputPort_(uint8_t port);void setupRelayPort_(uint8_t port);static bool parsePort_(JsonVariantConst v, uint8_t &out);static void parseMs_(JsonVariantConst v, uint32_t &out);bool readInput_(uint8_t port, bool active_low, bool &out);bool updateDebounce_(InputDebounce &db, bool value, uint32_t now);void updateInputs_();void setRelays_(bool main_on, bool reserve_on);void setFault_(Fault f);Source decideAutoSource_(uint32_t now);void startTransfer_(Source target, uint32_t now);void processTransfer_(uint32_t now);void notifyMainStateIfChanged_();void notifySourceSwitched_(Source from, Source to);void sendTgNotify_(const String &msg);};

@@ -19,9 +19,9 @@ public:
     static void registerRoutes(WebInterface &web, AsyncWebServer &server);
 
     static void handleSeptic(WebInterface &web, AsyncWebServerRequest *request);
+    static void handleSepticList(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleSepticSave(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleSepticToggle(WebInterface &web, AsyncWebServerRequest *request);
 };
-

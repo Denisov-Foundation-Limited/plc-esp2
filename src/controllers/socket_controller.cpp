@@ -20,6 +20,7 @@ SocketController::SocketController(Gpio &gpio, Logger &logs) : _gpio(gpio), _log
 }
 
 void SocketController::applyConfig(JsonArrayConst sockets, bool legacy_lights ){
+    auto guard = _lock.guard();
     resetSockets_();
     if (legacy_lights)
         resetLights_();
@@ -90,6 +91,7 @@ void SocketController::applyConfig(JsonArrayConst sockets, bool legacy_lights ){
 }
 
 void SocketController::applyLightsConfig(JsonArrayConst lights){
+    auto guard = _lock.guard();
     resetLights_();
     size_t idx = 0;
     for (JsonVariantConst v : lights)
@@ -140,6 +142,7 @@ void SocketController::applyLightsConfig(JsonArrayConst lights){
 }
 
 bool SocketController::begin(){
+    auto guard = _lock.guard();
     if (!_controller_enabled && !_lights_enabled)
         return true;
     if (_controller_enabled)
@@ -173,6 +176,7 @@ bool SocketController::begin(){
 }
 
 void SocketController::task(){
+    auto guard = _lock.guard();
     if (_controller_enabled)
     {
         for (size_t i = 0; i < kSocketCount; ++i)
@@ -240,6 +244,7 @@ void SocketController::task(){
 }
 
 bool SocketController::setRelay(size_t id, bool on){
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return false;
     size_t idx = 0;
@@ -262,6 +267,7 @@ bool SocketController::setRelay(size_t id, bool on){
 }
 
 bool SocketController::toggleRelay(size_t id){
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return false;
     size_t idx = 0;
@@ -282,6 +288,7 @@ bool SocketController::toggleRelay(size_t id){
 }
 
 bool SocketController::relayState(size_t id, bool &out) const{
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return false;
     size_t idx = 0;
@@ -302,6 +309,7 @@ bool SocketController::toggleRelayById(uint8_t id){ return toggleRelay(id); }
 bool SocketController::relayStateById(uint8_t id, bool &out) const{ return relayState(id, out); }
 
 bool SocketController::setLightRelay(size_t id, bool on){
+    auto guard = _lock.guard();
     if (!_lights_enabled)
         return false;
     size_t idx = 0;
@@ -324,6 +332,7 @@ bool SocketController::setLightRelay(size_t id, bool on){
 }
 
 bool SocketController::toggleLightRelay(size_t id){
+    auto guard = _lock.guard();
     if (!_lights_enabled)
         return false;
     size_t idx = 0;
@@ -344,6 +353,7 @@ bool SocketController::toggleLightRelay(size_t id){
 }
 
 bool SocketController::lightRelayState(size_t id, bool &out) const{
+    auto guard = _lock.guard();
     if (!_lights_enabled)
         return false;
     size_t idx = 0;
@@ -364,6 +374,7 @@ bool SocketController::toggleLightRelayById(uint8_t id){ return toggleLightRelay
 bool SocketController::lightRelayStateById(uint8_t id, bool &out) const{ return lightRelayState(id, out); }
 
 bool SocketController::setEnabled(size_t id, bool enable){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -392,6 +403,7 @@ bool SocketController::setEnabled(size_t id, bool enable){
 }
 
 bool SocketController::setButtonPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -406,6 +418,7 @@ bool SocketController::setButtonPort(size_t id, uint8_t port){
 }
 
 bool SocketController::setRelayPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -420,6 +433,7 @@ bool SocketController::setRelayPort(size_t id, uint8_t port){
 }
 
 bool SocketController::setName(size_t id, const String &name){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -429,6 +443,7 @@ bool SocketController::setName(size_t id, const String &name){
 }
 
 bool SocketController::setGroupId(size_t id, uint8_t group_id){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -437,6 +452,7 @@ bool SocketController::setGroupId(size_t id, uint8_t group_id){
 }
 
 bool SocketController::setLightEnabled(size_t id, bool enable){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!lightIndexById_(id, idx))
         return false;
@@ -468,6 +484,7 @@ bool SocketController::setLightEnabled(size_t id, bool enable){
 }
 
 bool SocketController::setLightButtonPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!lightIndexById_(id, idx))
         return false;
@@ -482,6 +499,7 @@ bool SocketController::setLightButtonPort(size_t id, uint8_t port){
 }
 
 bool SocketController::setLightRelayPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!lightIndexById_(id, idx))
         return false;
@@ -496,6 +514,7 @@ bool SocketController::setLightRelayPort(size_t id, uint8_t port){
 }
 
 bool SocketController::setLightName(size_t id, const String &name){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!lightIndexById_(id, idx))
         return false;
@@ -505,6 +524,7 @@ bool SocketController::setLightName(size_t id, const String &name){
 }
 
 bool SocketController::setLightGroupId(size_t id, uint8_t group_id){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!lightIndexById_(id, idx))
         return false;
@@ -513,6 +533,7 @@ bool SocketController::setLightGroupId(size_t id, uint8_t group_id){
 }
 
 const SocketController::SocketConfig *SocketController::config(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return nullptr;
@@ -520,6 +541,7 @@ const SocketController::SocketConfig *SocketController::config(size_t id) const{
 }
 
 const SocketController::SocketState *SocketController::state(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return nullptr;
@@ -527,18 +549,21 @@ const SocketController::SocketState *SocketController::state(size_t id) const{
 }
 
 const SocketController::SocketConfig *SocketController::configByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kSocketCount)
         return nullptr;
     return &_cfg[idx];
 }
 
 const SocketController::SocketState *SocketController::stateByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kSocketCount)
         return nullptr;
     return &_state[idx];
 }
 
 const SocketController::LightConfig *SocketController::lightConfig(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!lightIndexById_(id, idx))
         return nullptr;
@@ -546,6 +571,7 @@ const SocketController::LightConfig *SocketController::lightConfig(size_t id) co
 }
 
 const SocketController::LightState *SocketController::lightState(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!lightIndexById_(id, idx))
         return nullptr;
@@ -553,18 +579,21 @@ const SocketController::LightState *SocketController::lightState(size_t id) cons
 }
 
 const SocketController::LightConfig *SocketController::lightConfigByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kLightCount)
         return nullptr;
     return &_light_cfg[idx];
 }
 
 const SocketController::LightState *SocketController::lightStateByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kLightCount)
         return nullptr;
     return &_light_state[idx];
 }
 
 void SocketController::serialize(JsonArray out) const{
+    auto guard = _lock.guard();
     for (size_t i = 0; i < kSocketCount; ++i)
     {
         const SocketConfig &cfg = _cfg[i];
@@ -585,6 +614,7 @@ void SocketController::serialize(JsonArray out) const{
 }
 
 void SocketController::serializeLights(JsonArray out) const{
+    auto guard = _lock.guard();
     for (size_t i = 0; i < kLightCount; ++i)
     {
         const LightConfig &cfg = _light_cfg[i];
@@ -605,6 +635,7 @@ void SocketController::serializeLights(JsonArray out) const{
 }
 
 void SocketController::buildSnapshot(uint8_t *enabled_mask, uint8_t *state_mask, size_t bytes) const{
+    auto guard = _lock.guard();
     if (!enabled_mask || !state_mask)
         return;
     memset(enabled_mask, 0, bytes);
@@ -626,6 +657,7 @@ void SocketController::buildSnapshot(uint8_t *enabled_mask, uint8_t *state_mask,
 }
 
 void SocketController::applySnapshot(const uint8_t *enabled_mask, const uint8_t *state_mask, size_t bytes){
+    auto guard = _lock.guard();
     if (!enabled_mask || !state_mask)
         return;
     for (size_t i = 0; i < kSocketCount; ++i)
@@ -647,6 +679,7 @@ void SocketController::applySnapshot(const uint8_t *enabled_mask, const uint8_t 
 }
 
 void SocketController::buildLightsSnapshot(uint8_t *enabled_mask, uint8_t *state_mask, size_t bytes) const{
+    auto guard = _lock.guard();
     if (!enabled_mask || !state_mask)
         return;
     memset(enabled_mask, 0, bytes);
@@ -668,6 +701,7 @@ void SocketController::buildLightsSnapshot(uint8_t *enabled_mask, uint8_t *state
 }
 
 void SocketController::applyLightsSnapshot(const uint8_t *enabled_mask, const uint8_t *state_mask, size_t bytes){
+    auto guard = _lock.guard();
     if (!enabled_mask || !state_mask)
         return;
     for (size_t i = 0; i < kLightCount; ++i)
@@ -689,17 +723,25 @@ void SocketController::applyLightsSnapshot(const uint8_t *enabled_mask, const ui
 }
 
 bool SocketController::takeDirty(){
+    auto guard = _lock.guard();
     if (!_dirty_sockets)
         return false;
     _dirty_sockets = false;
     return true;
 }
 
-bool SocketController::controllerEnabled() const{ return _controller_enabled; }
+bool SocketController::controllerEnabled() const{
+    auto guard = _lock.guard();
+    return _controller_enabled;
+}
 
-bool SocketController::lightsEnabled() const{ return _lights_enabled; }
+bool SocketController::lightsEnabled() const{
+    auto guard = _lock.guard();
+    return _lights_enabled;
+}
 
 void SocketController::setControllerEnabled(bool enabled){
+    auto guard = _lock.guard();
     if (_controller_enabled == enabled)
         return;
     _controller_enabled = enabled;
@@ -722,6 +764,7 @@ void SocketController::setControllerEnabled(bool enabled){
 }
 
 void SocketController::setLightsEnabled(bool enabled){
+    auto guard = _lock.guard();
     if (_lights_enabled == enabled)
         return;
     _lights_enabled = enabled;
@@ -744,6 +787,7 @@ void SocketController::setLightsEnabled(bool enabled){
 }
 
 bool SocketController::takeLightsDirty(){
+    auto guard = _lock.guard();
     if (!_dirty_lights)
         return false;
     _dirty_lights = false;

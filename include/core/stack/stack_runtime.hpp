@@ -28,6 +28,7 @@ struct ControlContext;
 struct UiContext;
 struct NetworkContext;
 struct ConfigContext;
+class TaskBinder;
 
 class StackRuntime
 {
@@ -48,6 +49,10 @@ public:
     void bindCallbacks();
     void init();
     void applyLoadedConfig();
+
+private:
+    friend class TaskBinder;
+
     void loopBegin();
     void loopAfterNetwork();
     void flushPending();
@@ -56,7 +61,6 @@ public:
     void taskPost();
     void taskFlush();
 
-private:
     bool stackMasterActive_() const;
 
     bool stackSlaveActive_() const;

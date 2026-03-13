@@ -17,16 +17,19 @@ WateringController::WateringController(Gpio &gpio, TankController &tanks, RTC &r
 }
 
 bool WateringController::begin(){
+    auto guard = _lock.guard();
     _logs.info(F("WATER"), F("Controller init"));
     return true;
 }
 
 void WateringController::setEventHandler(WateringController::EventHandler cb, void *ctx){
+    auto guard = _lock.guard();
     _event_cb = cb;
     _event_ctx = ctx;
 }
 
 void WateringController::task(){
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return;
     Ds3231Mz::DateTime now{};
@@ -116,6 +119,7 @@ void WateringController::task(){
 }
 
 void WateringController::applyConfig(JsonArrayConst rules){
+    auto guard = _lock.guard();
     reset_();
     size_t idx = 0;
     for (JsonVariantConst v : rules)
@@ -266,6 +270,7 @@ void WateringController::applyConfig(JsonArrayConst rules){
 }
 
 void WateringController::serialize(JsonArray out) const{
+    auto guard = _lock.guard();
     for (size_t i = 0; i < kRuleCount; ++i)
     {
         const RuleConfig &cfg = _cfg[i];
@@ -311,6 +316,7 @@ void WateringController::serialize(JsonArray out) const{
 }
 
 void WateringController::applySnapshot(const uint8_t *status_mask, size_t bytes){
+    auto guard = _lock.guard();
     if (!status_mask || bytes == 0)
         return;
     for (size_t i = 0; i < kRuleCount; ++i)
@@ -325,6 +331,7 @@ void WateringController::applySnapshot(const uint8_t *status_mask, size_t bytes)
 }
 
 void WateringController::buildSnapshot(uint8_t *status_mask, size_t bytes) const{
+    auto guard = _lock.guard();
     if (!status_mask || bytes == 0)
         return;
     memset(status_mask, 0, bytes);
@@ -342,6 +349,7 @@ void WateringController::buildSnapshot(uint8_t *status_mask, size_t bytes) const
 
 void WateringController::applyRuntimeSnapshot(const uint8_t *active_mask, const uint8_t *paused_mask, const uint32_t *remaining_ms,
  const uint32_t *last_start_key, size_t bytes){
+    auto guard = _lock.guard();
     if (!active_mask || !paused_mask || !remaining_ms || !last_start_key || bytes == 0)
         return;
     for (size_t i = 0; i < kRuleCount; ++i)
@@ -374,6 +382,7 @@ void WateringController::applyRuntimeSnapshot(const uint8_t *active_mask, const 
 
 void WateringController::buildRuntimeSnapshot(uint8_t *active_mask, uint8_t *paused_mask, uint32_t *remaining_ms,
  uint32_t *last_start_key, size_t bytes) const{
+    auto guard = _lock.guard();
     if (!active_mask || !paused_mask || !remaining_ms || !last_start_key || bytes == 0)
         return;
     memset(active_mask, 0, bytes);
@@ -403,6 +412,7 @@ void WateringController::buildRuntimeSnapshot(uint8_t *active_mask, uint8_t *pau
 }
 
 bool WateringController::setEnabled(size_t id, bool enabled){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -413,6 +423,7 @@ bool WateringController::setEnabled(size_t id, bool enabled){
 }
 
 bool WateringController::setName(size_t id, const String &name){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -421,6 +432,7 @@ bool WateringController::setName(size_t id, const String &name){
 }
 
 bool WateringController::setPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -431,6 +443,7 @@ bool WateringController::setPort(size_t id, uint8_t port){
 }
 
 bool WateringController::setStartDate(size_t id, uint16_t year, uint8_t month, uint8_t day){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -444,10 +457,12 @@ bool WateringController::setStartDate(size_t id, uint16_t year, uint8_t month, u
 }
 
 bool WateringController::setStartTime(size_t id, uint8_t hour, uint8_t minute){
+    auto guard = _lock.guard();
     return setStartTimeSlot(id, 0, hour, minute);
 }
 
 bool WateringController::setStartTimeSlot(size_t id, uint8_t slot, uint8_t hour, uint8_t minute){
+    auto guard = _lock.guard();
     if (slot >= kTimeSlotCount)
         return false;
     size_t idx = 0;
@@ -458,6 +473,7 @@ bool WateringController::setStartTimeSlot(size_t id, uint8_t slot, uint8_t hour,
 }
 
 bool WateringController::setWeekdaysMask(size_t id, uint8_t mask){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -466,10 +482,12 @@ bool WateringController::setWeekdaysMask(size_t id, uint8_t mask){
 }
 
 bool WateringController::setDuration(size_t id, uint32_t duration_sec){
+    auto guard = _lock.guard();
     return setDurationSlot(id, 0, duration_sec);
 }
 
 bool WateringController::setDurationSlot(size_t id, uint8_t slot, uint32_t duration_sec){
+    auto guard = _lock.guard();
     if (slot >= kTimeSlotCount)
         return false;
     size_t idx = 0;
@@ -480,6 +498,7 @@ bool WateringController::setDurationSlot(size_t id, uint8_t slot, uint32_t durat
 }
 
 bool WateringController::setStatus(size_t id, bool status){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -495,9 +514,13 @@ bool WateringController::setStatus(size_t id, bool status){
     return true;
 }
 
-bool WateringController::controllerEnabled() const{ return _controller_enabled; }
+bool WateringController::controllerEnabled() const{
+    auto guard = _lock.guard();
+    return _controller_enabled;
+}
 
 void WateringController::setControllerEnabled(bool enabled){
+    auto guard = _lock.guard();
     if (_controller_enabled == enabled)
         return;
     _controller_enabled = enabled;
@@ -510,6 +533,7 @@ void WateringController::setControllerEnabled(bool enabled){
 }
 
 bool WateringController::setTankId(size_t id, uint8_t tank_id){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -522,6 +546,7 @@ bool WateringController::setTankId(size_t id, uint8_t tank_id){
 }
 
 bool WateringController::setResumeAfterRefill(size_t id, bool enable){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -536,6 +561,7 @@ bool WateringController::setResumeAfterRefill(size_t id, bool enable){
 }
 
 bool WateringController::setResumeLevel(size_t id, uint8_t level){
+    auto guard = _lock.guard();
     if (level > 2)
         return false;
     size_t idx = 0;
@@ -546,18 +572,21 @@ bool WateringController::setResumeLevel(size_t id, uint8_t level){
 }
 
 bool WateringController::takeDirty(){
+    auto guard = _lock.guard();
     const bool v = _dirty;
     _dirty = false;
     return v;
 }
 
 bool WateringController::takeRuntimeDirty(){
+    auto guard = _lock.guard();
     const bool v = _runtime_dirty;
     _runtime_dirty = false;
     return v;
 }
 
 const WateringController::RuleConfig *WateringController::config(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return nullptr;
@@ -565,6 +594,7 @@ const WateringController::RuleConfig *WateringController::config(size_t id) cons
 }
 
 const WateringController::RuleState *WateringController::state(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return nullptr;
@@ -572,12 +602,14 @@ const WateringController::RuleState *WateringController::state(size_t id) const{
 }
 
 const WateringController::RuleConfig *WateringController::configByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kRuleCount)
         return nullptr;
     return &_cfg[idx];
 }
 
 const WateringController::RuleState *WateringController::stateByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kRuleCount)
         return nullptr;
     return &_state[idx];
@@ -751,6 +783,7 @@ void WateringController::writePort_(uint8_t port, bool on){
 bool WateringController::isTankEmpty_(const WateringController::RuleConfig &cfg) const{
     if (cfg.tank_id == 0)
         return false;
+    auto tanks_guard = _tanks.lockGuard();
     const TankController::TankState *st = _tanks.state(cfg.tank_id);
     if (!st)
         return true;
@@ -761,6 +794,7 @@ bool WateringController::isTankEmpty_(const WateringController::RuleConfig &cfg)
 bool WateringController::isResumeLevelReached_(const WateringController::RuleConfig &cfg) const{
     if (cfg.tank_id == 0)
         return true;
+    auto tanks_guard = _tanks.lockGuard();
     const TankController::TankState *st = _tanks.state(cfg.tank_id);
     if (!st || !st->levels_ok)
         return false;

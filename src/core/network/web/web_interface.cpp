@@ -2050,6 +2050,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 MeteoController &meteo = _controllers->meteo();
+                auto guard = meteo.lockGuard();
                 for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
                 {
                     const auto *cfg = meteo.configByIndex(i);
@@ -2112,6 +2113,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 ThermoController &thermo = _controllers->thermo();
+                auto guard = thermo.lockGuard();
                 for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
                 {
                     const auto *cfg = thermo.configByIndex(i);
@@ -2177,6 +2179,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 TankController &tanks = _controllers->tanks();
+                auto guard = tanks.lockGuard();
                 for (size_t i = 0; i < TankController::kTankCount; ++i)
                 {
                     const auto *cfg = tanks.configByIndex(i);
@@ -2248,6 +2251,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 SepticController &septic = _controllers->septic();
+                auto guard = septic.lockGuard();
                 for (size_t i = 0; i < SepticController::kSepticCount; ++i)
                 {
                     const auto *cfg = septic.configByIndex(i);
@@ -2306,6 +2310,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 WateringController &watering = _controllers->watering();
+                auto guard = watering.lockGuard();
                 for (size_t i = 0; i < WateringController::kRuleCount; ++i)
                 {
                     const auto *cfg = watering.configByIndex(i);
@@ -2385,6 +2390,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 SecurityController &sec = _controllers->security();
+                auto guard = sec.lockGuard();
                 hashAdd_(hash, sec.controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, sec.armed() ? 1u : 0u);
                 hashAdd_(hash, sec.alarmOn() ? 1u : 0u);
@@ -2454,6 +2460,7 @@ int32_t WebInterface::scaled10_(float value)
         {
             if (_controllers)
             {
+                auto guard = _controllers->ring().lockGuard();
                 const auto &cfg = _controllers->ring().config();
                 hashAdd_(hash, cfg.enabled ? 1u : 0u);
                 hashAdd_(hash, (uint32_t)cfg.button_port);
@@ -2467,6 +2474,7 @@ int32_t WebInterface::scaled10_(float value)
         {
             if (_controllers)
             {
+                auto guard = _controllers->avr().lockGuard();
                 const auto &cfg = _controllers->avr().config();
                 const auto &st = _controllers->avr().state();
                 hashAdd_(hash, cfg.enabled ? 1u : 0u);
@@ -2542,6 +2550,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 LeakController &leak = _controllers->leak();
+                auto guard = leak.lockGuard();
                 hashAdd_(hash, leak.controllerEnabled() ? 1u : 0u);
                 for (size_t i = 0; i < LeakController::kZoneCount; ++i)
                 {

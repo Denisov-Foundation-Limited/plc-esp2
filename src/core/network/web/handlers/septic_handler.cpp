@@ -14,6 +14,7 @@
 #include "core/network/web/web_interface.hpp"
 
 void SepticHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
+        server.on("/septic/list", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleSepticList(web, request); });
         server.on("/septic/toggle", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleSepticToggle(web, request); });
         server.on("/septic/toggle", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleSepticToggle(web, request); });
         server.on("/septic", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleSepticSave(web, request); });
@@ -144,7 +145,7 @@ void SepticHandler::handleSeptic(WebInterface &web, AsyncWebServerRequest *reque
                      web.webSessionIsAdmin_() ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>") : String(""));
         if (!web._controllers)
         {
-            page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size) : "");
+            page.replace("%SEPTIC_ITEMS%", "<div class=\"tile empty\">Loading...</div>");
             page.replace("%SEPTIC_DINPUT_JSON%", "[]");
             page.replace("%SEPTIC_RELAY_JSON%", "[]");
             page.replace("%SEPTIC_DINPUT_USED_JSON%", "[]");
@@ -163,9 +164,7 @@ void SepticHandler::handleSeptic(WebInterface &web, AsyncWebServerRequest *reque
             web.sendHtml_(request, page, set_cookie);
             return;
         }
-        page.replace("%SEPTIC_ITEMS%", stack_view ? web.listStackSepticHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size)
-                                                  : web.listSepticHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
-                                                                       groups_available ? SIZE_MAX : page_size));
+        page.replace("%SEPTIC_ITEMS%", "<div class=\"tile empty\">Loading...</div>");
         page.replace("%SEPTIC_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
                                                         : web.septicPortOptionsJson_(PortIO::PinType::DInput));
         page.replace("%SEPTIC_RELAY_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay)
@@ -179,6 +178,7 @@ void SepticHandler::handleSeptic(WebInterface &web, AsyncWebServerRequest *reque
         if (!stack_view)
         {
             SepticController &septic = web._controllers->septic();
+            auto septic_guard = septic.lockGuard();
             const auto *cfg = septic.configByIndex(0);
             const auto *st = septic.stateByIndex(0);
             const bool warn = st ? st->warning : false;
@@ -215,6 +215,52 @@ void SepticHandler::handleSeptic(WebInterface &web, AsyncWebServerRequest *reque
                 page.replace("%SEPTIC_STATUS%", WebUiRu::Septic::kDisabledStatus);
         }
         web.sendHtml_(request, page, set_cookie);
+    }
+
+void SepticHandler::handleSepticList(WebInterface &web, AsyncWebServerRequest *request) {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Septic, node_id))
+            return;
+        const bool stack_view = web.isStackSepticView_(node_id);
+        const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
+        const uint8_t page_size = 8u;
+        const String page_str = web.paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+        if (stack_view)
+        {
+            if (!groups_available)
+            {
+                const size_t visible = web.stackSepticVisibleCount_(node_id);
+                const uint8_t max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+                if (page_idx >= max_pages)
+                    page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            }
+            web.sendText_(request, 200, "text/html; charset=utf-8",
+                          web.listStackSepticHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                   groups_available ? SIZE_MAX : page_size),
+                          set_cookie);
+            return;
+        }
+        if (!groups_available)
+        {
+            const size_t visible = web.septicLocalRenderCount_();
+            const uint8_t max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+        web.sendText_(request, 200, "text/html; charset=utf-8",
+                      web.listSepticHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                          groups_available ? SIZE_MAX : page_size),
+                      set_cookie);
     }
 
 void SepticHandler::handleSepticSave(WebInterface &web, AsyncWebServerRequest *request) {
@@ -415,6 +461,7 @@ void SepticHandler::handleSepticSave(WebInterface &web, AsyncWebServerRequest *r
             return;
         }
         SepticController &septic = web._controllers->septic();
+        auto septic_guard = septic.lockGuard();
         bool ok = true;
         bool changed = false;
         for (size_t i = 0; i < SepticController::kSepticCount; ++i)
@@ -655,6 +702,7 @@ void SepticHandler::handleSepticToggle(WebInterface &web, AsyncWebServerRequest 
             return;
         }
         SepticController &septic = web._controllers->septic();
+        auto septic_guard = septic.lockGuard();
         const auto *cfg = septic.configByIndex((size_t)(id - 1));
         const auto *st = septic.stateByIndex((size_t)(id - 1));
         if (!cfg || !st)

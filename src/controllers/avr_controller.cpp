@@ -17,6 +17,7 @@ AvrController::AvrController(Gpio &gpio, Logger &logs, TelegramBot &bot, Telegra
  : _gpio(gpio), _logs(logs), _tgbot(bot), _tgusers(users){}
 
 bool AvrController::begin(){
+    auto guard = _lock.guard();
     if (!_cfg.enabled)
         return true;
     setupHardware_();
@@ -31,6 +32,7 @@ bool AvrController::begin(){
 }
 
 void AvrController::task(){
+    auto guard = _lock.guard();
     updateInputs_();
     if (!_cfg.enabled)
     {
@@ -84,6 +86,7 @@ void AvrController::task(){
 }
 
 void AvrController::applyConfig(JsonObjectConst obj){
+    auto guard = _lock.guard();
     Config next = _cfg;
     if (obj["enabled"].is<bool>())
         next.enabled = obj["enabled"].as<bool>();
@@ -126,6 +129,7 @@ void AvrController::applyConfig(JsonObjectConst obj){
 }
 
 void AvrController::serialize(JsonObject out) const{
+    auto guard = _lock.guard();
     out["enabled"] = _cfg.enabled;
     out["auto_mode"] = _cfg.auto_mode;
     out["prefer_main"] = _cfg.prefer_main;
@@ -159,6 +163,7 @@ void AvrController::serialize(JsonObject out) const{
 }
 
 bool AvrController::setControllerEnabled(bool enabled){
+    auto guard = _lock.guard();
     if (_cfg.enabled == enabled)
         return false;
     _cfg.enabled = enabled;
@@ -187,9 +192,13 @@ bool AvrController::setControllerEnabled(bool enabled){
     return true;
 }
 
-bool AvrController::controllerEnabled() const{ return _cfg.enabled; }
+bool AvrController::controllerEnabled() const{
+    auto guard = _lock.guard();
+    return _cfg.enabled;
+}
 
 bool AvrController::setAutoMode(bool auto_mode){
+    auto guard = _lock.guard();
     if (_cfg.auto_mode == auto_mode)
         return false;
     _cfg.auto_mode = auto_mode;
@@ -198,27 +207,39 @@ bool AvrController::setAutoMode(bool auto_mode){
     return true;
 }
 
-bool AvrController::autoMode() const{ return _cfg.auto_mode; }
+bool AvrController::autoMode() const{
+    auto guard = _lock.guard();
+    return _cfg.auto_mode;
+}
 
 bool AvrController::setPreferMain(bool prefer_main){
+    auto guard = _lock.guard();
     if (_cfg.prefer_main == prefer_main)
         return false;
     _cfg.prefer_main = prefer_main;
     return true;
 }
 
-bool AvrController::preferMain() const{ return _cfg.prefer_main; }
+bool AvrController::preferMain() const{
+    auto guard = _lock.guard();
+    return _cfg.prefer_main;
+}
 
 bool AvrController::setAutoReturnMain(bool auto_return){
+    auto guard = _lock.guard();
     if (_cfg.auto_return_main == auto_return)
         return false;
     _cfg.auto_return_main = auto_return;
     return true;
 }
 
-bool AvrController::autoReturnMain() const{ return _cfg.auto_return_main; }
+bool AvrController::autoReturnMain() const{
+    auto guard = _lock.guard();
+    return _cfg.auto_return_main;
+}
 
 bool AvrController::setManualSource(AvrController::Source src){
+    auto guard = _lock.guard();
     if (_st.manual_source == src)
         return false;
     _st.manual_source = src;
@@ -227,15 +248,28 @@ bool AvrController::setManualSource(AvrController::Source src){
     return true;
 }
 
-AvrController::Source AvrController::manualSource() const{ return _st.manual_source; }
+AvrController::Source AvrController::manualSource() const{
+    auto guard = _lock.guard();
+    return _st.manual_source;
+}
 
-AvrController::Source AvrController::activeSource() const{ return _st.active_source; }
+AvrController::Source AvrController::activeSource() const{
+    auto guard = _lock.guard();
+    return _st.active_source;
+}
 
-const AvrController::Config &AvrController::config() const{ return _cfg; }
+const AvrController::Config &AvrController::config() const{
+    auto guard = _lock.guard();
+    return _cfg;
+}
 
-const AvrController::State &AvrController::state() const{ return _st; }
+const AvrController::State &AvrController::state() const{
+    auto guard = _lock.guard();
+    return _st;
+}
 
 bool AvrController::setMainOkPort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.main_ok_port == port)
         return false;
     _cfg.main_ok_port = port;
@@ -244,6 +278,7 @@ bool AvrController::setMainOkPort(uint8_t port){
 }
 
 bool AvrController::setReserveOkPort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.reserve_ok_port == port)
         return false;
     _cfg.reserve_ok_port = port;
@@ -252,6 +287,7 @@ bool AvrController::setReserveOkPort(uint8_t port){
 }
 
 bool AvrController::setRelayMainPort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.relay_main_port == port)
         return false;
     _cfg.relay_main_port = port;
@@ -262,6 +298,7 @@ bool AvrController::setRelayMainPort(uint8_t port){
 }
 
 bool AvrController::setRelayReservePort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.relay_reserve_port == port)
         return false;
     _cfg.relay_reserve_port = port;
@@ -272,6 +309,7 @@ bool AvrController::setRelayReservePort(uint8_t port){
 }
 
 bool AvrController::setFeedbackMainPort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.feedback_main_port == port)
         return false;
     _cfg.feedback_main_port = port;
@@ -280,6 +318,7 @@ bool AvrController::setFeedbackMainPort(uint8_t port){
 }
 
 bool AvrController::setFeedbackReservePort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.feedback_reserve_port == port)
         return false;
     _cfg.feedback_reserve_port = port;
@@ -287,11 +326,18 @@ bool AvrController::setFeedbackReservePort(uint8_t port){
     return true;
 }
 
-bool AvrController::transferInProgress() const{ return _st.transfer_in_progress; }
+bool AvrController::transferInProgress() const{
+    auto guard = _lock.guard();
+    return _st.transfer_in_progress;
+}
 
-AvrController::Fault AvrController::fault() const{ return _st.fault; }
+AvrController::Fault AvrController::fault() const{
+    auto guard = _lock.guard();
+    return _st.fault;
+}
 
 void AvrController::clearFault(){
+    auto guard = _lock.guard();
     _st.fault = Fault::None;
     _st.fault_ms = 0;
 }

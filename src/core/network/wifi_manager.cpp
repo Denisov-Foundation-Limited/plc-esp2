@@ -27,6 +27,11 @@ bool WifiManager::begin()
 
     WiFi.persistent(false);
     WiFi.setAutoReconnect(true);
+#if defined(ESP32)
+    WiFi.setSleep(false);
+    if (_log.ready())
+        _log.info(F("WIFI"), F("Power save: off"));
+#endif
 
     const bool sta_enabled = staEnabled();
     const bool ap_enabled = apEnabled();

@@ -31,6 +31,7 @@ public:
     static void handleWateringState(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleWatering(WebInterface &web, AsyncWebServerRequest *request);
+    static void handleWateringList(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleWateringSave(WebInterface &web, AsyncWebServerRequest *request);
 
@@ -46,5 +47,4 @@ private:
 
     static bool parseResumeLevel_(const String &s, uint8_t &out);
 };
-
 

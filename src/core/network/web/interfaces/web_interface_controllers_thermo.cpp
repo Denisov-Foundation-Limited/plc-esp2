@@ -15,6 +15,7 @@ size_t WebInterfaceControllersThermoHelper::thermoLocalRenderCount_(const WebInt
         if (!web._controllers)
             return 0;
         ThermoController &thermo = web._controllers->thermo();
+        auto guard = thermo.lockGuard();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
         {
@@ -457,6 +458,8 @@ String WebInterfaceControllersThermoHelper::listThermoHtml_(WebInterface &web, s
         items.reserve(16384);
         ThermoController &thermo = web._controllers->thermo();
         MeteoController &meteo = web._controllers->meteo();
+        auto thermo_guard = thermo.lockGuard();
+        auto meteo_guard = meteo.lockGuard();
         uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
         uint32_t remote_used[ThermoController::kDeviceCount] = {};
         size_t remote_used_count = 0;
@@ -820,6 +823,7 @@ String WebInterfaceControllersThermoHelper::thermoUsedPortsJson_(const WebInterf
         if (web._controllers)
         {
             ThermoController &thermo = web._controllers->thermo();
+            auto guard = thermo.lockGuard();
             bool used[PortIO::PORT_COUNT] = {};
             for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
             {

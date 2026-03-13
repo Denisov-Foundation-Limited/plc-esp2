@@ -17,11 +17,13 @@ RingController::RingController(Gpio &gpio, Logger &logs) : _gpio(gpio), _logs(lo
 }
 
 bool RingController::begin(){
+    auto guard = _lock.guard();
     setupHardware_();
     return true;
 }
 
 void RingController::task(){
+    auto guard = _lock.guard();
     if (!_cfg.enabled)
     {
         ensureRelayOff_();
@@ -32,6 +34,7 @@ void RingController::task(){
 }
 
 void RingController::applyConfig(JsonObjectConst obj){
+    auto guard = _lock.guard();
     Config next = _cfg;
     if (obj["enabled"].is<bool>())
         next.enabled = obj["enabled"].as<bool>();
@@ -42,6 +45,7 @@ void RingController::applyConfig(JsonObjectConst obj){
 }
 
 void RingController::serialize(JsonObject out) const{
+    auto guard = _lock.guard();
     out["enabled"] = _cfg.enabled;
     if (_cfg.button_port != kInvalidPort)
         out["button"] = _cfg.button_port;
@@ -50,6 +54,7 @@ void RingController::serialize(JsonObject out) const{
 }
 
 bool RingController::setControllerEnabled(bool enabled){
+    auto guard = _lock.guard();
     if (_cfg.enabled == enabled)
         return false;
     if (!enabled)
@@ -63,9 +68,13 @@ bool RingController::setControllerEnabled(bool enabled){
     return true;
 }
 
-bool RingController::controllerEnabled() const{ return _cfg.enabled; }
+bool RingController::controllerEnabled() const{
+    auto guard = _lock.guard();
+    return _cfg.enabled;
+}
 
 bool RingController::setButtonPort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.button_port == port)
         return false;
     _cfg.button_port = port;
@@ -74,6 +83,7 @@ bool RingController::setButtonPort(uint8_t port){
 }
 
 bool RingController::setRelayPort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.relay_port == port)
         return false;
     _cfg.relay_port = port;
@@ -82,28 +92,42 @@ bool RingController::setRelayPort(uint8_t port){
 }
 
 bool RingController::setHoldRelay(bool on){
+    auto guard = _lock.guard();
     return setHoldRelay_(on, true, Source::Unknown);
 }
 
 bool RingController::setHoldRelayLocal(bool on){
+    auto guard = _lock.guard();
     return setHoldRelay_(on, false, Source::Unknown);
 }
 
 bool RingController::setHoldRelayWithSource(bool on, RingController::Source source){
+    auto guard = _lock.guard();
     return setHoldRelay_(on, true, source);
 }
 
 bool RingController::setHoldRelayLocalWithSource(bool on, RingController::Source source){
+    auto guard = _lock.guard();
     return setHoldRelay_(on, false, source);
 }
 
-const RingController::Config &RingController::config() const{ return _cfg; }
+const RingController::Config &RingController::config() const{
+    auto guard = _lock.guard();
+    return _cfg;
+}
 
-const RingController::State &RingController::state() const{ return _st; }
+const RingController::State &RingController::state() const{
+    auto guard = _lock.guard();
+    return _st;
+}
 
-RingController::Source RingController::lastSource() const{ return static_cast<Source>(_st.last_source); }
+RingController::Source RingController::lastSource() const{
+    auto guard = _lock.guard();
+    return static_cast<Source>(_st.last_source);
+}
 
 void RingController::setHoldHandler(RingController::HoldHandler cb, void *ctx){
+    auto guard = _lock.guard();
     _hold_cb = cb;
     _hold_ctx = ctx;
 }

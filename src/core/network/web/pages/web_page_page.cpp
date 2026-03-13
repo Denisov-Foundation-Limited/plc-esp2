@@ -159,7 +159,32 @@ const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
         window.location.href = url.toString();
       });
     }
+    let indexPollBusy = false;
+    let indexPollPausedUntil = 0;
+    const indexStateCache = {
+      device_name: null,
+      rtc_date: null,
+      rtc_time: null,
+      rtc_temp: null,
+      board_temp: null,
+      cpu_temp: null,
+      fan_html: null
+    };
+    function rememberIndexState(st) {
+      if (!st || typeof st !== 'object') return;
+      ['device_name', 'rtc_date', 'rtc_time', 'rtc_temp', 'board_temp', 'cpu_temp', 'fan_html'].forEach((key) => {
+        const val = st[key];
+        if (typeof val !== 'string') return;
+        if (!val.length || val === '...' || val === 'n/a') return;
+        indexStateCache[key] = val;
+      });
+    }
     async function pollIndexState() {
+      if (indexPollBusy) return;
+      if (document.hidden) return;
+      const now = Date.now();
+      if (now < indexPollPausedUntil) return;
+      indexPollBusy = true;
       try {
         const url = new URL(window.location.origin + '/index/state');
         const curr = new URL(window.location.href);
@@ -168,25 +193,38 @@ const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
         if (node) url.searchParams.set('node_id', node);
         if (unit) url.searchParams.set('unit', unit);
         const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'same-origin' });
+        if (res.status === 503) {
+          indexPollPausedUntil = Date.now() + 1200;
+          return;
+        }
         if (!res.ok) return;
         const st = await res.json();
+        rememberIndexState(st);
         const setText = (id, val) => {
           const el = document.getElementById(id);
           if (el && typeof val === 'string') el.textContent = val;
         };
-        setText('status-device-name', st.device_name || '');
-        setText('status-rtc-date', st.rtc_date || 'n/a');
-        setText('status-rtc-time', st.rtc_time || 'n/a');
-        setText('status-rtc-temp', st.rtc_temp || 'n/a');
-        setText('status-board-temp', st.board_temp || 'n/a');
-        setText('status-cpu-temp', st.cpu_temp || 'n/a');
+        setText('status-device-name', indexStateCache.device_name || st.device_name || '');
+        setText('status-rtc-date', indexStateCache.rtc_date || st.rtc_date || 'n/a');
+        setText('status-rtc-time', indexStateCache.rtc_time || st.rtc_time || 'n/a');
+        setText('status-rtc-temp', indexStateCache.rtc_temp || st.rtc_temp || 'n/a');
+        setText('status-board-temp', indexStateCache.board_temp || st.board_temp || 'n/a');
+        setText('status-cpu-temp', indexStateCache.cpu_temp || st.cpu_temp || 'n/a');
         const fan = document.getElementById('status-fan');
-        if (fan && typeof st.fan_html === 'string') fan.innerHTML = st.fan_html;
+        const fanHtml = indexStateCache.fan_html || st.fan_html || '';
+        if (fan && typeof fanHtml === 'string' && fanHtml.length && fanHtml !== '...') fan.innerHTML = fanHtml;
       } catch (e) {
+      } finally {
+        indexPollBusy = false;
       }
     }
-    setTimeout(pollIndexState, 500);
-    setInterval(pollIndexState, 2000);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        setTimeout(pollIndexState, 150);
+      }
+    });
+    setTimeout(pollIndexState, 250);
+    setInterval(pollIndexState, 3000);
   </script>
 </body>
 </html>

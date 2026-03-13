@@ -20,6 +20,7 @@ ThermoController::ThermoController(Gpio &gpio, MeteoController &meteo, Logger &l
 }
 
 bool ThermoController::begin(){
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return true;
     for (size_t i = 0; i < kDeviceCount; ++i)
@@ -36,6 +37,7 @@ bool ThermoController::begin(){
 }
 
 void ThermoController::task(){
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return;
     for (size_t i = 0; i < kDeviceCount; ++i)
@@ -51,6 +53,7 @@ void ThermoController::task(){
 }
 
 void ThermoController::applyConfig(JsonArrayConst devices){
+    auto guard = _lock.guard();
     reset_();
     size_t idx = 0;
     for (JsonVariantConst v : devices)
@@ -118,6 +121,7 @@ void ThermoController::applyConfig(JsonArrayConst devices){
 }
 
 void ThermoController::serialize(JsonArray out) const{
+    auto guard = _lock.guard();
     for (size_t i = 0; i < kDeviceCount; ++i)
     {
         const DeviceConfig &cfg = _cfg[i];
@@ -146,14 +150,19 @@ void ThermoController::serialize(JsonArray out) const{
     }
 }
 
-bool ThermoController::controllerEnabled() const{ return _controller_enabled; }
+bool ThermoController::controllerEnabled() const{
+    auto guard = _lock.guard();
+    return _controller_enabled;
+}
 
 void ThermoController::setRemoteMeteoProvider(ThermoController::RemoteMeteoProvider cb, void *ctx){
+    auto guard = _lock.guard();
     _remote_meteo_cb = cb;
     _remote_meteo_ctx = ctx;
 }
 
 void ThermoController::setControllerEnabled(bool enabled){
+    auto guard = _lock.guard();
     if (_controller_enabled == enabled)
         return;
     _controller_enabled = enabled;
@@ -177,6 +186,7 @@ void ThermoController::setControllerEnabled(bool enabled){
 }
 
 const ThermoController::DeviceConfig *ThermoController::config(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return nullptr;
@@ -184,6 +194,7 @@ const ThermoController::DeviceConfig *ThermoController::config(size_t id) const{
 }
 
 const ThermoController::DeviceState *ThermoController::state(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return nullptr;
@@ -191,18 +202,21 @@ const ThermoController::DeviceState *ThermoController::state(size_t id) const{
 }
 
 const ThermoController::DeviceConfig *ThermoController::configByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kDeviceCount)
         return nullptr;
     return &_cfg[idx];
 }
 
 const ThermoController::DeviceState *ThermoController::stateByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kDeviceCount)
         return nullptr;
     return &_state[idx];
 }
 
 void ThermoController::buildSnapshot(uint8_t *power_mask, size_t bytes) const{
+    auto guard = _lock.guard();
     if (!power_mask)
         return;
     memset(power_mask, 0, bytes);
@@ -222,6 +236,7 @@ void ThermoController::buildSnapshot(uint8_t *power_mask, size_t bytes) const{
 }
 
 void ThermoController::buildTargetSnapshot(int16_t *targets, size_t count) const{
+    auto guard = _lock.guard();
     if (!targets)
         return;
     const size_t limit = (count < kDeviceCount) ? count : kDeviceCount;
@@ -236,6 +251,7 @@ void ThermoController::buildTargetSnapshot(int16_t *targets, size_t count) const
 }
 
 void ThermoController::applySnapshot(const uint8_t *power_mask, size_t bytes){
+    auto guard = _lock.guard();
     if (!power_mask)
         return;
     for (size_t i = 0; i < kDeviceCount; ++i)
@@ -259,6 +275,7 @@ void ThermoController::applySnapshot(const uint8_t *power_mask, size_t bytes){
 }
 
 void ThermoController::applyTargetSnapshot(const int16_t *targets, size_t count){
+    auto guard = _lock.guard();
     if (!targets)
         return;
     const size_t limit = (count < kDeviceCount) ? count : kDeviceCount;
@@ -272,6 +289,7 @@ void ThermoController::applyTargetSnapshot(const int16_t *targets, size_t count)
 }
 
 bool ThermoController::takeDirty(){
+    auto guard = _lock.guard();
     if (!_dirty)
         return false;
     _dirty = false;
@@ -279,6 +297,7 @@ bool ThermoController::takeDirty(){
 }
 
 bool ThermoController::setEnabled(size_t id, bool enable){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -306,6 +325,7 @@ bool ThermoController::setEnabled(size_t id, bool enable){
 }
 
 bool ThermoController::setSensor(size_t id, uint8_t sensor_id){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -317,6 +337,7 @@ bool ThermoController::setSensor(size_t id, uint8_t sensor_id){
 }
 
 bool ThermoController::setSensorSource(size_t id, uint32_t node_id, uint8_t sensor_id){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -328,6 +349,7 @@ bool ThermoController::setSensorSource(size_t id, uint32_t node_id, uint8_t sens
 }
 
 bool ThermoController::setMode(size_t id, ThermoController::Mode mode){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -336,6 +358,7 @@ bool ThermoController::setMode(size_t id, ThermoController::Mode mode){
 }
 
 bool ThermoController::setTarget(size_t id, float target_c){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -345,6 +368,7 @@ bool ThermoController::setTarget(size_t id, float target_c){
 }
 
 bool ThermoController::setHysteresis(size_t id, float hyst){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -355,6 +379,7 @@ bool ThermoController::setHysteresis(size_t id, float hyst){
 }
 
 bool ThermoController::setName(size_t id, const String &name){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -363,6 +388,7 @@ bool ThermoController::setName(size_t id, const String &name){
 }
 
 bool ThermoController::setGroupId(size_t id, uint8_t group_id){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -371,6 +397,7 @@ bool ThermoController::setGroupId(size_t id, uint8_t group_id){
 }
 
 bool ThermoController::setPower(size_t id, bool on, const char *src ){
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return false;
     size_t idx = 0;
@@ -398,6 +425,7 @@ bool ThermoController::setPower(size_t id, bool on, const char *src ){
 }
 
 bool ThermoController::togglePower(size_t id, const char *src ){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -406,6 +434,7 @@ bool ThermoController::togglePower(size_t id, const char *src ){
 }
 
 bool ThermoController::setHeatPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -419,6 +448,7 @@ bool ThermoController::setHeatPort(size_t id, uint8_t port){
 }
 
 bool ThermoController::setCoolPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -432,6 +462,7 @@ bool ThermoController::setCoolPort(size_t id, uint8_t port){
 }
 
 bool ThermoController::setButtonPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -617,6 +648,7 @@ void ThermoController::updateControl_(const ThermoController::DeviceConfig &cfg,
     }
     else
     {
+        auto meteo_guard = _meteo.lockGuard();
         const auto *sensor = _meteo.state(cfg.sensor_id);
         if (!sensor || !sensor->has_temp)
         {

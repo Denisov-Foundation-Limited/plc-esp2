@@ -1290,6 +1290,7 @@ void CloudClient::fillGroups_(JsonArray out)
 }
 void CloudClient::fillSockets_(JsonArray out, bool lights)
 {
+    auto guard = _controllers.sockets().lockGuard();
     const size_t count = lights ? SocketController::kLightCount : SocketController::kSocketCount;
     for (size_t i = 0; i < count; ++i)
     {
@@ -1314,6 +1315,7 @@ void CloudClient::fillSockets_(JsonArray out, bool lights)
 }
 void CloudClient::fillMeteo_(JsonArray out)
 {
+    auto guard = _controllers.meteo().lockGuard();
     for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
     {
         const auto *cfg = _controllers.meteo().configByIndex(i);
@@ -1347,6 +1349,7 @@ void CloudClient::fillMeteo_(JsonArray out)
 }
 void CloudClient::fillThermo_(JsonArray out)
 {
+    auto guard = _controllers.thermo().lockGuard();
     for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
     {
         const auto *cfg = _controllers.thermo().configByIndex(i);
@@ -1376,6 +1379,7 @@ void CloudClient::fillThermo_(JsonArray out)
 }
 void CloudClient::fillTanks_(JsonArray out)
 {
+    auto guard = _controllers.tanks().lockGuard();
     for (size_t i = 0; i < TankController::kTankCount; ++i)
     {
         const auto *cfg = _controllers.tanks().configByIndex(i);
@@ -1412,6 +1416,7 @@ void CloudClient::fillTanks_(JsonArray out)
 }
 void CloudClient::fillSeptic_(JsonArray out)
 {
+    auto guard = _controllers.septic().lockGuard();
     for (size_t i = 0; i < SepticController::kSepticCount; ++i)
     {
         const auto *cfg = _controllers.septic().configByIndex(i);
@@ -1439,6 +1444,7 @@ void CloudClient::fillSeptic_(JsonArray out)
 }
 void CloudClient::fillWatering_(JsonArray out)
 {
+    auto guard = _controllers.watering().lockGuard();
     for (size_t i = 0; i < WateringController::kRuleCount; ++i)
     {
         const auto *cfg = _controllers.watering().configByIndex(i);
@@ -1485,6 +1491,7 @@ void CloudClient::fillWatering_(JsonArray out)
 }
 void CloudClient::fillSecurity_(JsonObject out)
 {
+    auto guard = _controllers.security().lockGuard();
     out["enabled"] = _controllers.security().controllerEnabled();
     out["armed"] = _controllers.security().armed();
     out["alarm"] = _controllers.security().alarmOn();
@@ -1513,6 +1520,7 @@ void CloudClient::fillSecurity_(JsonObject out)
 }
 void CloudClient::fillRing_(JsonObject out)
 {
+    auto guard = _controllers.ring().lockGuard();
     const auto &cfg = _controllers.ring().config();
     const auto &st = _controllers.ring().state();
     out["enabled"] = cfg.enabled;
@@ -1524,6 +1532,7 @@ void CloudClient::fillRing_(JsonObject out)
 }
 void CloudClient::fillAvr_(JsonObject out)
 {
+    auto guard = _controllers.avr().lockGuard();
     const auto &cfg = _controllers.avr().config();
     const auto &st = _controllers.avr().state();
     out["enabled"] = cfg.enabled;
@@ -1553,6 +1562,7 @@ void CloudClient::fillAvr_(JsonObject out)
 }
 void CloudClient::fillLeak_(JsonArray out)
 {
+    auto guard = _controllers.leak().lockGuard();
     for (size_t i = 0; i < LeakController::kZoneCount; ++i)
     {
         const auto *cfg = _controllers.leak().configByIndex(i);

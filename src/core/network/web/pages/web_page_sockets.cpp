@@ -278,7 +278,7 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       </div>
       <form method="POST" action="/sockets" id="sockets-form">
         %SOCKETS_FORM_HIDDEN%
-        <div class="grid">
+        <div class="grid" id="sockets-grid">
           %SOCKETS%
         </div>
         <p class="actions">
@@ -301,6 +301,7 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       relay: %RELAY_USED_JSON%
     };
     const portsWarmupKey = 'sockets_ports_warmup_' + String(socketsNodeId);
+    const socketsGrid = document.getElementById('sockets-grid');
     function labelFor(type, val) {
       if (type === 'dinput') return 'in' + val;
       if (type === 'relay') return 'rly' + val;
@@ -362,10 +363,12 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       setTimeout(() => location.reload(), 900);
     }
     warmupStackPorts();
-    async function pollStackPortOptions() {
-      if (socketsUnit !== 'stack' || !socketsNodeId) return;
+    async function pollSocketPortOptions() {
       try {
-        const url = '/sockets/ports_options?unit=stack&node_id=' + encodeURIComponent(String(socketsNodeId));
+        let url = '/sockets/ports_options';
+        if (socketsUnit === 'stack' && socketsNodeId) {
+          url += '?unit=stack&node_id=' + encodeURIComponent(String(socketsNodeId));
+        }
         const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
         if (!res.ok) return;
         const data = await res.json();
@@ -382,12 +385,29 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       } catch (e) {
       }
     }
+    async function loadSocketList() {
+      if (!socketsGrid) return;
+      try {
+        let url = '/sockets/list?page=' + encodeURIComponent(String(socketsPage));
+        if (socketsUnit === 'stack' && socketsNodeId) {
+          url += '&unit=stack&node_id=' + encodeURIComponent(String(socketsNodeId));
+        }
+        const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) {
+          socketsGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+          return;
+        }
+        socketsGrid.innerHTML = await res.text();
+        bindSocketHandlers();
+        refreshSocketSelects();
+      } catch (e) {
+        socketsGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+      }
+    }
     refreshSocketSelects();
-    setTimeout(pollStackPortOptions, 500);
-    setInterval(pollStackPortOptions, 2000);
-    document.querySelectorAll('select.socket-select').forEach((el) => {
-      el.addEventListener('change', refreshSocketSelects);
-    });
+    loadSocketList();
+    setTimeout(pollSocketPortOptions, 50);
+    setInterval(pollSocketPortOptions, 2000);
     const prevBtn = document.getElementById('sockets-prev');
     const nextBtn = document.getElementById('sockets-next');
     const pageSelect = document.getElementById('sockets-page');
@@ -478,11 +498,21 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       toggle.checked = !toggle.checked;
       toggle.dispatchEvent(new Event('change', { bubbles: true }));
     }
-    document.querySelectorAll('.sock-visual').forEach((visual) => {
-      visual.addEventListener('click', () => toggleFromVisual(visual));
-    });
-    document.querySelectorAll('input.socket-toggle').forEach((el) => {
-      el.addEventListener('change', async () => {
+    function bindSocketHandlers() {
+      document.querySelectorAll('select.socket-select').forEach((el) => {
+        if (el.dataset.bound === '1') return;
+        el.dataset.bound = '1';
+        el.addEventListener('change', refreshSocketSelects);
+      });
+      document.querySelectorAll('.sock-visual').forEach((visual) => {
+        if (visual.dataset.bound === '1') return;
+        visual.dataset.bound = '1';
+        visual.addEventListener('click', () => toggleFromVisual(visual));
+      });
+      document.querySelectorAll('input.socket-toggle').forEach((el) => {
+        if (el.dataset.bound === '1') return;
+        el.dataset.bound = '1';
+        el.addEventListener('change', async () => {
         const id = el.dataset.id;
         const tile = el.closest('.tile');
         if (el.dataset.busy === '1') return;
@@ -507,8 +537,10 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
           el.dataset.busy = '0';
         }
       });
-    });
-    document.querySelectorAll('input.socket-enable').forEach((el) => {
+      });
+      document.querySelectorAll('input.socket-enable').forEach((el) => {
+        if (el.dataset.bound === '1') return;
+        el.dataset.bound = '1';
         el.addEventListener('change', async () => {
         const id = el.dataset.id;
         const tile = el.closest('.tile');
@@ -530,6 +562,7 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         }
         });
       });
+    }
       async function fetchState(id) {
         let url = '/sockets/toggle?id=' + encodeURIComponent(id) + '&action=state';
         if (socketsUnit === 'stack' && socketsNodeId) {

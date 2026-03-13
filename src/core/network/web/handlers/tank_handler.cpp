@@ -14,6 +14,7 @@
 #include "core/network/web/web_interface.hpp"
 
 void TankHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
+        server.on("/tanks/list", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleTanksList(web, request); });
         server.on("/tanks/toggle", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleTanksToggle(web, request); });
         server.on("/tanks/toggle", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleTanksToggle(web, request); });
         server.on("/tanks", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleTanksSave(web, request); });
@@ -132,9 +133,7 @@ void TankHandler::handleTanks(WebInterface &web, AsyncWebServerRequest *request)
         page.replace("%NAV%", web.navHtml_());
         page.replace("%TANK_PAGE_TITLE%", WebUiRu::Tanks::kPageTitle);
         page.replace("%TANK_STATUS%", stack_view ? web.stackTanksStatusText_(node_id) : web._tanks_status);
-        page.replace("%TANK_ITEMS%", stack_view ? web.listStackTanksHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size)
-                                                : web.listTanksHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
-                                                                    groups_available ? SIZE_MAX : page_size));
+        page.replace("%TANK_ITEMS%", "<div class=\"tile empty\">Loading...</div>");
         page.replace("%TANK_PAGINATION%", pagination);
         page.replace("%TANK_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
                                                       : web.tankPortOptionsJson_(PortIO::PinType::DInput));
@@ -153,6 +152,52 @@ void TankHandler::handleTanks(WebInterface &web, AsyncWebServerRequest *request)
                      web.webSessionIsAdmin_() ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>") : String(""));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
+    }
+
+void TankHandler::handleTanksList(WebInterface &web, AsyncWebServerRequest *request) {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Tanks, node_id))
+            return;
+        const bool stack_view = web.isStackTanksView_(node_id);
+        const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
+        const uint8_t page_size = 8u;
+        const String page_str = web.paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+        if (stack_view)
+        {
+            if (!groups_available)
+            {
+                const size_t visible = web.stackTanksVisibleCount_(node_id);
+                const uint8_t max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+                if (page_idx >= max_pages)
+                    page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            }
+            web.sendText_(request, 200, "text/html; charset=utf-8",
+                          web.listStackTanksHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                  groups_available ? SIZE_MAX : page_size),
+                          set_cookie);
+            return;
+        }
+        if (!groups_available)
+        {
+            const size_t visible = web.tanksLocalRenderCount_();
+            const uint8_t max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+        web.sendText_(request, 200, "text/html; charset=utf-8",
+                      web.listTanksHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                         groups_available ? SIZE_MAX : page_size),
+                      set_cookie);
     }
 
 void TankHandler::handleTanksSave(WebInterface &web, AsyncWebServerRequest *request) {
@@ -362,6 +407,7 @@ void TankHandler::handleTanksSave(WebInterface &web, AsyncWebServerRequest *requ
             return;
         }
         TankController &tanks = web._controllers->tanks();
+        auto tanks_guard = tanks.lockGuard();
         bool ok = true;
         bool changed = false;
         for (size_t i = 0; i < TankController::kTankCount; ++i)
@@ -631,6 +677,7 @@ void TankHandler::handleTanksToggle(WebInterface &web, AsyncWebServerRequest *re
             return;
         }
         TankController &tanks = web._controllers->tanks();
+        auto tanks_guard = tanks.lockGuard();
         if (!tanks.config(id))
         {
             web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);

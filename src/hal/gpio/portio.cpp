@@ -19,6 +19,7 @@
 
 bool PortIO::begin()
 {
+    auto guard = _lock.guard();
     _err = Error::Ok;
     _outputs_enabled = false;
     for (uint8_t i = 0; i < PORT_COUNT; ++i)
@@ -87,6 +88,7 @@ bool PortIO::begin()
 
 void PortIO::loop()
 {
+    auto guard = _lock.guard();
     if (_ext)
     {
         const uint8_t dev_count = _ext->devCount();
@@ -103,6 +105,7 @@ void PortIO::loop()
 
 void PortIO::setOutputsEnabled(bool enabled)
 {
+    auto guard = _lock.guard();
     if (_outputs_enabled == enabled)
         return;
     _outputs_enabled = enabled;
@@ -114,6 +117,7 @@ PortIO::Error PortIO::lastError() const { return _err; }
 
 bool PortIO::lastState(PortId id, bool &outLogical) const
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return false;
     if (!_hasLast[id])
@@ -126,6 +130,7 @@ const PortIO::PortDesc &PortIO::desc(PortId id) const { return _ports[id]; }
 
 PortIO::PinType PortIO::type(PortId id) const
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return PinType::Unknown;
     return _ports[id].type;
@@ -133,6 +138,7 @@ PortIO::PinType PortIO::type(PortId id) const
 
 void PortIO::pinMode(PortId id, PortMode mode)
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return;
     const auto &p = _ports[id];
@@ -153,6 +159,7 @@ void PortIO::pinMode(PortId id, PortMode mode)
 
 void PortIO::write(PortId id, bool logicalLevel)
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return;
     const auto &p = _ports[id];
@@ -185,6 +192,7 @@ void PortIO::write(PortId id, bool logicalLevel)
 
 bool PortIO::read(PortId id) const
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _ports[id];
@@ -213,6 +221,7 @@ bool PortIO::read(PortId id) const
 
 int PortIO::adcRead(PortId id)
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return 0;
     const auto &p = _ports[id];
@@ -228,6 +237,7 @@ int PortIO::adcRead(PortId id)
 
 void PortIO::pwmWrite(PortId id, uint32_t duty)
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return;
     const auto &p = _ports[id];
@@ -245,6 +255,7 @@ void PortIO::pwmWrite(PortId id, uint32_t duty)
 
 bool PortIO::writeFast(PortId id, bool logicalLevel)
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _ports[id];
@@ -269,6 +280,7 @@ bool PortIO::writeFast(PortId id, bool logicalLevel)
 
 bool PortIO::readFast(PortId id, bool &outLogicalLevel) const
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _ports[id];

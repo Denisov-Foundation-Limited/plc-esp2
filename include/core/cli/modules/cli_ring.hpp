@@ -53,6 +53,7 @@ public:
 
     void showRing()
     {
+        auto guard = _ring.lockGuard();
         const auto &cfg = _ring.config();
         const auto &st = _ring.state();
         _c._io->println(F("Ring:"));

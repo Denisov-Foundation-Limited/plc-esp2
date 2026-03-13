@@ -100,6 +100,7 @@ public:
     {
         bool any = false;
         printHeader_();
+        auto guard = _thermo.lockGuard();
         for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
         {
             const auto *cfg = _thermo.configByIndex(i);
@@ -116,6 +117,7 @@ public:
 
     void showDevice(size_t id)
     {
+        auto guard = _thermo.lockGuard();
         const auto *cfg = _thermo.config(id);
         const auto *st = _thermo.state(id);
         if (!cfg || !st)
@@ -485,6 +487,7 @@ private:
 
     bool isMeteoActive_(uint8_t id) const
     {
+        auto guard = _meteo.lockGuard();
         const auto *cfg = _meteo.config(id);
         return cfg && cfg->enabled;
     }
@@ -510,6 +513,7 @@ private:
 
     bool isPortUsedByOther_(uint16_t id, uint8_t port) const
     {
+        auto guard = _thermo.lockGuard();
         const auto *self = _thermo.config(id);
         if (self && (self->heat_port == port || self->cool_port == port || self->button_port == port))
             return false;

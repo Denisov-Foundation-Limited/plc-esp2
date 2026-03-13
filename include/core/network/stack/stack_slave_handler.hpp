@@ -1061,6 +1061,7 @@ private:
                 offset = (uint16_t)serial_count;
 
             char used_list[MeteoController::kSensorCount][17] = {};
+            auto meteo_guard = _meteo.lockGuard();
             size_t used_count = 0;
             for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
             {
@@ -1555,6 +1556,7 @@ private:
                 chunk = kMaxChunk;
 
             size_t total = 0;
+            auto sockets_guard = _sockets.lockGuard();
             for (size_t i = 0; i < SocketController::kSocketCount; ++i)
             {
                 const auto *cfg = _sockets.configByIndex(i);
@@ -1619,6 +1621,7 @@ private:
                 chunk = kMaxChunk;
 
             size_t total = 0;
+            auto sockets_guard = _sockets.lockGuard();
             for (size_t i = 0; i < SocketController::kLightCount; ++i)
             {
                 const auto *cfg = _sockets.lightConfigByIndex(i);
@@ -1739,6 +1742,7 @@ private:
                 _controllers.invalidateGpioUsageCache();
             DynamicJsonDocument doc(1024);
             JsonArray out_items = doc["items"].to<JsonArray>();
+            auto sockets_guard = _sockets.lockGuard();
             for (JsonVariantConst v : items)
             {
                 if (!v.is<JsonObjectConst>())
@@ -1921,6 +1925,7 @@ private:
             chunk = kMaxChunk;
 
         size_t total = 0;
+        auto meteo_guard = _meteo.lockGuard();
         for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
         {
             const auto *cfg = _meteo.configByIndex(i);
@@ -2003,6 +2008,7 @@ private:
                 chunk = kMaxChunk;
 
             size_t total = 0;
+            auto thermo_guard = _thermo.lockGuard();
             for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
             {
                 const auto *cfg = _thermo.configByIndex(i);
@@ -2189,6 +2195,7 @@ private:
             _tx_doc.clear();
             JsonDocument &doc = _tx_doc;
             JsonArray out_items = doc["items"].to<JsonArray>();
+            auto thermo_guard = _thermo.lockGuard();
             for (size_t i = 0; i < changed_count; ++i)
             {
                 const uint8_t id = changed_ids[i];
@@ -2253,6 +2260,7 @@ private:
                 chunk = kMaxChunk;
 
             size_t total = 0;
+            auto security_guard = _security.lockGuard();
             for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
             {
                 const auto *cfg = _security.configByIndex(i);
@@ -2418,6 +2426,7 @@ private:
                 updateRfidLeds_(_security.armed());
             _tx_doc.clear();
             JsonDocument &doc = _tx_doc;
+            auto security_guard = _security.lockGuard();
             doc["enabled"] = _security.controllerEnabled();
             doc["armed"] = _security.armed();
             doc["alarm"] = _security.alarmOn();
@@ -2527,6 +2536,7 @@ private:
         {
             _tx_doc.clear();
             JsonDocument &doc = _tx_doc;
+            auto septic_guard = _septic.lockGuard();
             doc["enabled"] = _septic.controllerEnabled();
             const auto *cfg = _septic.configByIndex(0);
             const auto *st = _septic.stateByIndex(0);
@@ -2562,6 +2572,7 @@ private:
                 chunk = kMaxChunk;
 
             size_t total = 0;
+            auto septic_guard = _septic.lockGuard();
             for (size_t i = 0; i < SepticController::kSepticCount; ++i)
             {
                 const auto *cfg = _septic.configByIndex(i);
@@ -2711,6 +2722,7 @@ private:
                 _tx_doc.clear();
                 JsonDocument &doc = _tx_doc;
                 JsonArray arr = doc["items"].to<JsonArray>();
+                auto septic_guard = _septic.lockGuard();
                 const auto *cfg = _septic.configByIndex((size_t)(id - 1));
                 const auto *st = _septic.stateByIndex((size_t)(id - 1));
                 if (cfg && st)
@@ -2762,6 +2774,7 @@ private:
                 chunk = kMaxChunk;
 
             size_t total = 0;
+            auto tanks_guard = _tanks.lockGuard();
             for (size_t i = 0; i < TankController::kTankCount; ++i)
             {
                 const auto *cfg = _tanks.configByIndex(i);
@@ -2925,6 +2938,7 @@ private:
                 }
                 if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
                 {
+                    auto tanks_guard = _tanks.lockGuard();
                     const auto *cfg = _tanks.config(id);
                     if (cfg)
                         changed = _tanks.setPower(id, !cfg->power_on);
@@ -2966,6 +2980,7 @@ private:
             _tx_doc.clear();
             JsonDocument &doc = _tx_doc;
             JsonArray arr = doc["items"].to<JsonArray>();
+            auto tanks_guard = _tanks.lockGuard();
             for (size_t i = 0; i < changed_count; ++i)
             {
                 const uint8_t id = changed_ids[i];
@@ -3023,6 +3038,7 @@ private:
             if (page_limit > kWateringMaxPageLimit)
                 page_limit = kWateringMaxPageLimit;
             uint16_t total_rules = 0;
+            auto watering_guard = _watering.lockGuard();
             for (size_t i = 0; i < WateringController::kRuleCount; ++i)
             {
                 const auto *cfg = _watering.configByIndex(i);
@@ -3261,6 +3277,7 @@ private:
         {
             _tx_doc.clear();
             JsonDocument &doc = _tx_doc;
+            auto ring_guard = _ring.lockGuard();
             const auto &cfg = _ring.config();
             const auto &st = _ring.state();
             doc["enabled"] = cfg.enabled;
@@ -3304,6 +3321,7 @@ private:
         {
             _tx_doc.clear();
             JsonDocument &doc = _tx_doc;
+            auto avr_guard = _avr.lockGuard();
             const auto &cfg = _avr.config();
             const auto &st = _avr.state();
             doc["enabled"] = cfg.enabled;
@@ -3428,6 +3446,7 @@ private:
                 chunk = kMaxChunk;
 
             size_t total = 0;
+            auto leak_guard = _leak.lockGuard();
             for (size_t i = 0; i < LeakController::kZoneCount; ++i)
             {
                 const auto *cfg = _leak.configByIndex(i);
@@ -3958,6 +3977,7 @@ private:
             return;
         uint32_t nodes[ThermoController::kDeviceCount] = {};
         size_t node_count = 0;
+        auto thermo_guard = _thermo.lockGuard();
         for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
         {
             const auto *cfg = _thermo.configByIndex(i);

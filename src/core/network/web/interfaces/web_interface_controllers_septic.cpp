@@ -15,6 +15,7 @@ size_t WebInterfaceControllersSepticHelper::septicLocalRenderCount_(const WebInt
         if (!web._controllers)
             return 0;
         SepticController &septic = web._controllers->septic();
+        auto guard = septic.lockGuard();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < SepticController::kSepticCount; ++i)
         {
@@ -292,6 +293,7 @@ String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, s
         String items;
         items.reserve(2048);
         SepticController &septic = web._controllers->septic();
+        auto guard = septic.lockGuard();
         const size_t render_count = web.septicLocalRenderCount_();
         const size_t page_limit = (limit == 0) ? 1u : limit;
         const bool can_view_disabled = web.webSessionIsAdmin_();

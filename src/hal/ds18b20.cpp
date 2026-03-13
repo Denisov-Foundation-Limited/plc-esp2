@@ -248,16 +248,38 @@ bool Ds18b20::readTempByAddr_(const uint8_t addr[8], float &out_c)
     if (OneWireBus::crc8(addr, 7) != addr[7])
         return false;
 
-    bus->reset();
-    bus->select(addr);
-    bus->write(0x44);
-    delay(750);
-    return readScratchpadTemp_(addr, out_c);
+    for (uint8_t attempt = 0; attempt < kReadAttempts; ++attempt)
+    {
+        if (!bus->reset())
+        {
+            if (attempt + 1u < kReadAttempts)
+            {
+                delay(kRetryDelayMs);
+                continue;
+            }
+            return false;
+        }
+        bus->select(addr);
+        bus->write(0x44);
+        delay(_conv_time_ms);
+        if (readScratchpadTemp_(addr, out_c))
+            return true;
+        if (attempt + 1u < kReadAttempts)
+            delay(kRetryDelayMs);
+    }
+    return false;
 }
 
 bool Ds18b20::readTempByAddrNoWait_(const uint8_t addr[8], float &out_c)
 {
-    return readScratchpadTemp_(addr, out_c);
+    for (uint8_t attempt = 0; attempt < kReadAttempts; ++attempt)
+    {
+        if (readScratchpadTemp_(addr, out_c))
+            return true;
+        if (attempt + 1u < kReadAttempts)
+            delay(kRetryDelayMs);
+    }
+    return false;
 }
 
 bool Ds18b20::readScratchpadTemp_(const uint8_t addr[8], float &out_c)
@@ -271,7 +293,8 @@ bool Ds18b20::readScratchpadTemp_(const uint8_t addr[8], float &out_c)
         return false;
 
     uint8_t data[9] = {};
-    bus->reset();
+    if (!bus->reset())
+        return false;
     bus->select(addr);
     bus->write(0xBE);
     for (uint8_t i = 0; i < 9; ++i)

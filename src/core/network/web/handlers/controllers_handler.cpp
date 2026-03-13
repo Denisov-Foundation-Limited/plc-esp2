@@ -11,7 +11,27 @@
 
 #include "core/network/web/handlers/controllers_handler.hpp"
 
+#include <atomic>
+
 #include "core/network/web/web_interface.hpp"
+
+namespace
+{
+constexpr uint32_t kControllersPageCacheMs = 1500u;
+String g_controllers_page_cache;
+uint32_t g_controllers_page_cache_built_ms = 0;
+bool g_controllers_page_cache_can_edit = false;
+bool g_controllers_page_cache_has_config = false;
+
+bool canUseControllersPageCache_(uint32_t now_ms, bool can_edit, bool has_config)
+{
+    if (!g_controllers_page_cache.length())
+        return false;
+    if (g_controllers_page_cache_can_edit != can_edit || g_controllers_page_cache_has_config != has_config)
+        return false;
+    return (uint32_t)(now_ms - g_controllers_page_cache_built_ms) <= kControllersPageCacheMs;
+}
+}
 
 bool ControllersHandler::hasStartupConfig_() {
         return LittleFS.exists(Configs::kPath);
@@ -29,43 +49,56 @@ void ControllersHandler::handleControllers(WebInterface &web, AsyncWebServerRequ
             return;
         const bool can_edit = web.webSessionIsAdmin_();
         const bool has_config = hasStartupConfig_();
-        String page = FPSTR(kWebInterfaceControllersHtml);
-        page.reserve(page.length() + 2048);
-        page.replace("%NAV%", web.navHtml_());
-        page.replace("%CTRL_PAGE_TITLE%", WebUiRu::ControllersPage::kPageTitle);
-        page.replace("%CTRL_SOCKETS_TITLE%", WebUiRu::ControllersPage::kSocketsTitle);
-        page.replace("%CTRL_SOCKETS_DESC%", WebUiRu::ControllersPage::kSocketsDesc);
-        page.replace("%CTRL_SOCKETS_STATUS_LABEL%", String(WebUiRu::ControllersPage::kSocketsStatusLabel) + " ");
-        page.replace("%CTRL_LIGHTS_TITLE%", WebUiRu::ControllersPage::kLightsTitle);
-        page.replace("%CTRL_LIGHTS_DESC%", WebUiRu::ControllersPage::kLightsDesc);
-        page.replace("%CTRL_LIGHTS_STATUS_LABEL%", String(WebUiRu::ControllersPage::kLightsStatusLabel) + " ");
-        page.replace("%CTRL_METEO_TITLE%", WebUiRu::ControllersPage::kMeteoTitle);
-        page.replace("%CTRL_METEO_DESC%", WebUiRu::ControllersPage::kMeteoDesc);
-        page.replace("%CTRL_METEO_STATUS_LABEL%", String(WebUiRu::ControllersPage::kMeteoStatusLabel) + " ");
-        page.replace("%CTRL_THERMO_TITLE%", WebUiRu::ControllersPage::kThermoTitle);
-        page.replace("%CTRL_THERMO_DESC%", WebUiRu::ControllersPage::kThermoDesc);
-        page.replace("%CTRL_THERMO_STATUS_LABEL%", String(WebUiRu::ControllersPage::kThermoStatusLabel) + " ");
-        page.replace("%CTRL_TANKS_TITLE%", WebUiRu::ControllersPage::kTanksTitle);
-        page.replace("%CTRL_TANKS_DESC%", WebUiRu::ControllersPage::kTanksDesc);
-        page.replace("%CTRL_TANKS_STATUS_LABEL%", String(WebUiRu::ControllersPage::kTanksStatusLabel) + " ");
-        page.replace("%CTRL_WATERING_TITLE%", WebUiRu::ControllersPage::kWateringTitle);
-        page.replace("%CTRL_WATERING_DESC%", WebUiRu::ControllersPage::kWateringDesc);
-        page.replace("%CTRL_WATERING_STATUS_LABEL%", String(WebUiRu::ControllersPage::kWateringStatusLabel) + " ");
-        page.replace("%CTRL_SEPTIC_TITLE%", WebUiRu::ControllersPage::kSepticTitle);
-        page.replace("%CTRL_SEPTIC_DESC%", WebUiRu::ControllersPage::kSepticDesc);
-        page.replace("%CTRL_SEPTIC_STATUS_LABEL%", String(WebUiRu::ControllersPage::kSepticStatusLabel) + " ");
-        page.replace("%CTRL_RING_TITLE%", WebUiRu::ControllersPage::kRingTitle);
-        page.replace("%CTRL_RING_DESC%", WebUiRu::ControllersPage::kRingDesc);
-        page.replace("%CTRL_RING_STATUS_LABEL%", String(WebUiRu::ControllersPage::kRingStatusLabel) + " ");
-        page.replace("%CTRL_SECURITY_TITLE%", WebUiRu::ControllersPage::kSecurityTitle);
-        page.replace("%CTRL_SECURITY_DESC%", WebUiRu::ControllersPage::kSecurityDesc);
-        page.replace("%CTRL_SECURITY_STATUS_LABEL%", String(WebUiRu::ControllersPage::kSecurityStatusLabel) + " ");
-        page.replace("%CTRL_AVR_TITLE%", WebUiRu::ControllersPage::kAvrTitle);
-        page.replace("%CTRL_AVR_DESC%", WebUiRu::ControllersPage::kAvrDesc);
-        page.replace("%CTRL_AVR_STATUS_LABEL%", String(WebUiRu::ControllersPage::kAvrStatusLabel) + " ");
-        page.replace("%CTRL_LEAK_TITLE%", WebUiRu::ControllersPage::kLeakTitle);
-        page.replace("%CTRL_LEAK_DESC%", WebUiRu::ControllersPage::kLeakDesc);
-        page.replace("%CTRL_LEAK_STATUS_LABEL%", String(WebUiRu::ControllersPage::kLeakStatusLabel) + " ");
+        const uint32_t now_ms = millis();
+        String page;
+        if (canUseControllersPageCache_(now_ms, can_edit, has_config))
+        {
+            page = g_controllers_page_cache;
+        }
+        else
+        {
+            page = FPSTR(kWebInterfaceControllersHtml);
+            page.reserve(page.length() + 2048);
+            page.replace("%NAV%", web.navHtml_());
+            page.replace("%CTRL_PAGE_TITLE%", WebUiRu::ControllersPage::kPageTitle);
+            page.replace("%CTRL_SOCKETS_TITLE%", WebUiRu::ControllersPage::kSocketsTitle);
+            page.replace("%CTRL_SOCKETS_DESC%", WebUiRu::ControllersPage::kSocketsDesc);
+            page.replace("%CTRL_SOCKETS_STATUS_LABEL%", String(WebUiRu::ControllersPage::kSocketsStatusLabel) + " ");
+            page.replace("%CTRL_LIGHTS_TITLE%", WebUiRu::ControllersPage::kLightsTitle);
+            page.replace("%CTRL_LIGHTS_DESC%", WebUiRu::ControllersPage::kLightsDesc);
+            page.replace("%CTRL_LIGHTS_STATUS_LABEL%", String(WebUiRu::ControllersPage::kLightsStatusLabel) + " ");
+            page.replace("%CTRL_METEO_TITLE%", WebUiRu::ControllersPage::kMeteoTitle);
+            page.replace("%CTRL_METEO_DESC%", WebUiRu::ControllersPage::kMeteoDesc);
+            page.replace("%CTRL_METEO_STATUS_LABEL%", String(WebUiRu::ControllersPage::kMeteoStatusLabel) + " ");
+            page.replace("%CTRL_THERMO_TITLE%", WebUiRu::ControllersPage::kThermoTitle);
+            page.replace("%CTRL_THERMO_DESC%", WebUiRu::ControllersPage::kThermoDesc);
+            page.replace("%CTRL_THERMO_STATUS_LABEL%", String(WebUiRu::ControllersPage::kThermoStatusLabel) + " ");
+            page.replace("%CTRL_TANKS_TITLE%", WebUiRu::ControllersPage::kTanksTitle);
+            page.replace("%CTRL_TANKS_DESC%", WebUiRu::ControllersPage::kTanksDesc);
+            page.replace("%CTRL_TANKS_STATUS_LABEL%", String(WebUiRu::ControllersPage::kTanksStatusLabel) + " ");
+            page.replace("%CTRL_WATERING_TITLE%", WebUiRu::ControllersPage::kWateringTitle);
+            page.replace("%CTRL_WATERING_DESC%", WebUiRu::ControllersPage::kWateringDesc);
+            page.replace("%CTRL_WATERING_STATUS_LABEL%", String(WebUiRu::ControllersPage::kWateringStatusLabel) + " ");
+            page.replace("%CTRL_SEPTIC_TITLE%", WebUiRu::ControllersPage::kSepticTitle);
+            page.replace("%CTRL_SEPTIC_DESC%", WebUiRu::ControllersPage::kSepticDesc);
+            page.replace("%CTRL_SEPTIC_STATUS_LABEL%", String(WebUiRu::ControllersPage::kSepticStatusLabel) + " ");
+            page.replace("%CTRL_RING_TITLE%", WebUiRu::ControllersPage::kRingTitle);
+            page.replace("%CTRL_RING_DESC%", WebUiRu::ControllersPage::kRingDesc);
+            page.replace("%CTRL_RING_STATUS_LABEL%", String(WebUiRu::ControllersPage::kRingStatusLabel) + " ");
+            page.replace("%CTRL_SECURITY_TITLE%", WebUiRu::ControllersPage::kSecurityTitle);
+            page.replace("%CTRL_SECURITY_DESC%", WebUiRu::ControllersPage::kSecurityDesc);
+            page.replace("%CTRL_SECURITY_STATUS_LABEL%", String(WebUiRu::ControllersPage::kSecurityStatusLabel) + " ");
+            page.replace("%CTRL_AVR_TITLE%", WebUiRu::ControllersPage::kAvrTitle);
+            page.replace("%CTRL_AVR_DESC%", WebUiRu::ControllersPage::kAvrDesc);
+            page.replace("%CTRL_AVR_STATUS_LABEL%", String(WebUiRu::ControllersPage::kAvrStatusLabel) + " ");
+            page.replace("%CTRL_LEAK_TITLE%", WebUiRu::ControllersPage::kLeakTitle);
+            page.replace("%CTRL_LEAK_DESC%", WebUiRu::ControllersPage::kLeakDesc);
+            page.replace("%CTRL_LEAK_STATUS_LABEL%", String(WebUiRu::ControllersPage::kLeakStatusLabel) + " ");
+            g_controllers_page_cache = page;
+            g_controllers_page_cache_built_ms = now_ms;
+            g_controllers_page_cache_can_edit = can_edit;
+            g_controllers_page_cache_has_config = has_config;
+        }
         const bool allow_sockets = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Sockets);
         const bool allow_lights = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Lights);
         const bool allow_meteo = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Meteo);

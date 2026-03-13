@@ -11,9 +11,40 @@
 
 #include "core/network/web/handlers/lights_handler.hpp"
 
+#include <atomic>
+
+#if defined(ESP32)
+#include <esp_heap_caps.h>
+#endif
+
 #include "core/network/web/web_interface.hpp"
 
+namespace
+{
+constexpr uint32_t kLightsMinIntervalMs = 250u;
+constexpr uint32_t kLightsPortsMinIntervalMs = 400u;
+constexpr uint32_t kLightsLowHeapBytes = 20u * 1024u;
+
+std::atomic<uint32_t> g_last_lights_request_ms{0};
+std::atomic<uint32_t> g_last_lights_ports_request_ms{0};
+std::atomic<bool> g_lights_request_inflight{false};
+std::atomic<bool> g_lights_ports_request_inflight{false};
+
+bool requestTooFrequentLights_(std::atomic<uint32_t> &stamp, uint32_t now_ms, uint32_t min_interval_ms)
+{
+    const uint32_t prev = stamp.load(std::memory_order_relaxed);
+    if (prev != 0 && (uint32_t)(now_ms - prev) < min_interval_ms)
+        return true;
+    stamp.store(now_ms, std::memory_order_relaxed);
+    return false;
+}
+}
+
 void LightsHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
+        server.on("/lights/list", HTTP_GET,
+                  [&web](AsyncWebServerRequest *request) { handleLightsList(web, request); });
+        server.on("/lights/ports_options", HTTP_GET,
+                  [&web](AsyncWebServerRequest *request) { handleLightsPortsOptions(web, request); });
         server.on("/lights/toggle", HTTP_POST,
                   [&web](AsyncWebServerRequest *request) { handleLightsToggle(web, request); });
         server.on("/lights/toggle", HTTP_GET,
@@ -34,6 +65,20 @@ void LightsHandler::handleLights(WebInterface &web, AsyncWebServerRequest *reque
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Lights, node_id))
             return;
+        const uint32_t started_ms = millis();
+        const uint32_t free_heap0 = ESP.getFreeHeap();
+        if (g_lights_request_inflight.exchange(true, std::memory_order_acq_rel))
+        {
+            web.sendText_(request, 503, "text/plain", "WEB busy", set_cookie);
+            return;
+        }
+        if (free_heap0 < kLightsLowHeapBytes ||
+            requestTooFrequentLights_(g_last_lights_request_ms, started_ms, kLightsMinIntervalMs))
+        {
+            g_lights_request_inflight.store(false, std::memory_order_release);
+            web.sendText_(request, 503, "text/plain", "WEB busy", set_cookie);
+            return;
+        }
         String page = FPSTR(kWebInterfaceLightsHtml);
         const uint8_t page_size = 8u;
         const bool stack_view = web.isStackLightsView_(node_id);
@@ -80,8 +125,7 @@ void LightsHandler::handleLights(WebInterface &web, AsyncWebServerRequest *reque
         const size_t extra = 4096u + (size_t)page_size * 900u;
         page.reserve(page.length() + extra);
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%LIGHTS%", stack_view ? web.listStackLightsHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size)
-                                            : web.listLightsHtml_(start, end));
+        page.replace("%LIGHTS%", "<div class=\"tile empty\">Loading...</div>");
         page.replace("%LIGHTS_PAGE_TITLE%", WebUiRu::Lights::kPageTitle);
         page.replace("%LIGHTS_PAGE_PREV%", WebUiRu::Lights::kPagePrev);
         page.replace("%LIGHTS_PAGE_LABEL%", WebUiRu::Lights::kPagePage);
@@ -92,10 +136,10 @@ void LightsHandler::handleLights(WebInterface &web, AsyncWebServerRequest *reque
         page.replace("%LIGHTS_PAGES%", String((unsigned)max_pages));
         if (stack_view)
         {
-            page.replace("%DINPUT_JSON%", web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput));
-            page.replace("%RELAY_JSON%", web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay));
-            page.replace("%DINPUT_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput));
-            page.replace("%RELAY_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay));
+            page.replace("%DINPUT_JSON%", "[]");
+            page.replace("%RELAY_JSON%", "[]");
+            page.replace("%DINPUT_USED_JSON%", "[]");
+            page.replace("%RELAY_USED_JSON%", "[]");
             page.replace("%LIGHTS_STATUS%", web.stackLightsStatusText_(node_id));
             page.replace("%LIGHTS_PAGINATION_STYLE%", (groups_available || max_pages <= 1) ? "style=\"display:none\"" : "");
             page.replace("%LIGHTS_SAVE_BTN%", web.webSessionIsAdmin_() ? String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>" : String(""));
@@ -114,10 +158,10 @@ void LightsHandler::handleLights(WebInterface &web, AsyncWebServerRequest *reque
         }
         else
         {
-            page.replace("%DINPUT_JSON%", web.socketPortOptionsJson_(PortIO::PinType::DInput));
-            page.replace("%RELAY_JSON%", web.socketPortOptionsJson_(PortIO::PinType::Relay));
-            page.replace("%DINPUT_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::DInput));
-            page.replace("%RELAY_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
+            page.replace("%DINPUT_JSON%", "[]");
+            page.replace("%RELAY_JSON%", "[]");
+            page.replace("%DINPUT_USED_JSON%", "[]");
+            page.replace("%RELAY_USED_JSON%", "[]");
             page.replace("%LIGHTS_STATUS%", web._lights_status);
             page.replace("%LIGHTS_PAGINATION_STYLE%", groups_available ? "style=\"display:none\"" : "");
             page.replace("%LIGHTS_SAVE_BTN%", web.webSessionIsAdmin_() ? String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>" : String(""));
@@ -129,7 +173,113 @@ void LightsHandler::handleLights(WebInterface &web, AsyncWebServerRequest *reque
                      web.composeTopFiltersHtml_(web.lightsDeviceSelectHtml_(node_id, stack_view),
                                                 groups_available ? web.groupFilterHtml_("lights-group-filter", stack_view ? node_id : 0u) : String("")));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        g_lights_request_inflight.store(false, std::memory_order_release);
         web.sendHtml_(request, page, set_cookie);
+    }
+
+void LightsHandler::handleLightsList(WebInterface &web, AsyncWebServerRequest *request) {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Lights, node_id))
+            return;
+
+        const bool stack_view = web.isStackLightsView_(node_id);
+        const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
+        const uint8_t page_size = 8u;
+        const String page_str = web.paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+
+        uint8_t max_pages = 1;
+        uint8_t start = 1;
+        uint8_t end = SocketController::kLightCount;
+        if (!stack_view && !groups_available)
+        {
+            const size_t visible = web.lightsLocalRenderCount_();
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            start = (uint8_t)(page_idx * page_size + 1);
+            end = (uint8_t)(start + page_size - 1);
+        }
+        else if (stack_view)
+        {
+            const size_t visible = web.stackLightsVisibleCount_(node_id);
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+
+        const String html = stack_view
+                                ? web.listStackLightsHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                           groups_available ? SIZE_MAX : page_size)
+                                : web.listLightsHtml_(start, end);
+        web.sendText_(request, 200, "text/html; charset=utf-8", html, set_cookie);
+    }
+
+void LightsHandler::handleLightsPortsOptions(WebInterface &web, AsyncWebServerRequest *request) {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Lights, node_id))
+            return;
+        const uint32_t started_ms = millis();
+        const bool stack_view = web.isStackLightsView_(node_id);
+        const uint32_t free_heap0 = ESP.getFreeHeap();
+        if (g_lights_ports_request_inflight.exchange(true, std::memory_order_acq_rel))
+        {
+            web.sendText_(request, 200, "application/json",
+                          "{\"ready\":false,\"pending\":true,\"dinput\":[],\"relay\":[],\"dinput_used\":[],\"relay_used\":[]}",
+                          set_cookie);
+            return;
+        }
+        if (free_heap0 < kLightsLowHeapBytes ||
+            requestTooFrequentLights_(g_last_lights_ports_request_ms, started_ms, kLightsPortsMinIntervalMs))
+        {
+            g_lights_ports_request_inflight.store(false, std::memory_order_release);
+            web.sendText_(request, 200, "application/json",
+                          "{\"ready\":false,\"pending\":true,\"dinput\":[],\"relay\":[],\"dinput_used\":[],\"relay_used\":[]}",
+                          set_cookie);
+            return;
+        }
+        if (stack_view)
+            web.requestStackPorts_(node_id);
+        const String djson = stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
+                                        : web.socketPortOptionsJson_(PortIO::PinType::DInput);
+        const String rjson = stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay)
+                                        : web.socketPortOptionsJson_(PortIO::PinType::Relay);
+        const String duse = stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput)
+                                       : web.globalUsedPortsJson_(PortIO::PinType::DInput);
+        const String ruse = stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
+                                       : web.globalUsedPortsJson_(PortIO::PinType::Relay);
+        const auto *pcache = stack_view && web._stack_cache ? web._stack_cache->portsCache(node_id) : nullptr;
+        const bool ready = !stack_view || (pcache && pcache->has_data);
+        const bool pending = stack_view && pcache && pcache->pending;
+        String body;
+        body.reserve(djson.length() + rjson.length() + duse.length() + ruse.length() + 128);
+        body += "{\"ready\":";
+        body += ready ? "true" : "false";
+        body += ",\"pending\":";
+        body += pending ? "true" : "false";
+        body += ",\"dinput\":";
+        body += djson;
+        body += ",\"relay\":";
+        body += rjson;
+        body += ",\"dinput_used\":";
+        body += duse;
+        body += ",\"relay_used\":";
+        body += ruse;
+        body += "}";
+        g_lights_ports_request_inflight.store(false, std::memory_order_release);
+        web.sendText_(request, 200, "application/json", body, set_cookie);
     }
 
 void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *request, const char *redirect) {
@@ -326,6 +476,7 @@ void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *r
             return;
         }
         SocketController &sockets = web._controllers->sockets();
+        auto sockets_guard = sockets.lockGuard();
         bool ok = true;
         bool changed = false;
         for (size_t i = 0; i < SocketController::kLightCount; ++i)
@@ -453,6 +604,7 @@ void LightsHandler::handleLightsToggle(WebInterface &web, AsyncWebServerRequest 
             return;
         }
         SocketController &sockets = web._controllers->sockets();
+        auto sockets_guard = sockets.lockGuard();
         if (id == 0 || !sockets.lightConfig(id))
         {
             web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
@@ -538,6 +690,7 @@ void LightsHandler::handleLightsEnable(WebInterface &web, AsyncWebServerRequest 
             return;
         }
         SocketController &sockets = web._controllers->sockets();
+        auto sockets_guard = sockets.lockGuard();
         if (id == 0 || !sockets.lightConfig(id))
         {
             String dbg = String("{\"ok\":false,\"err\":\"invalid id\"");

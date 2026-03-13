@@ -135,7 +135,9 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
     {
         if (local)
         {
-            const bool armed = control.controllers.security().armed();
+            auto &sec = control.controllers.security();
+            auto sec_guard = sec.lockGuard();
+            const bool armed = sec.armed();
             const char *txt = armed ? "ARM " : "DIS ";
             memcpy(out, txt, 4);
             return true;
@@ -188,7 +190,9 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
             return false;
         if (local)
         {
-            const SocketController::SocketState *st = control.controllers.sockets().state(slot.index);
+            auto &sockets = control.controllers.sockets();
+            auto sockets_guard = sockets.lockGuard();
+            const SocketController::SocketState *st = sockets.state(slot.index);
             if (!st)
                 return false;
             const char *txt = st->relay_on ? "ON  " : "OFF ";
@@ -257,7 +261,9 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
             return false;
         if (local)
         {
-            const SocketController::LightState *st = control.controllers.sockets().lightState(slot.index);
+            auto &sockets = control.controllers.sockets();
+            auto sockets_guard = sockets.lockGuard();
+            const SocketController::LightState *st = sockets.lightState(slot.index);
             if (!st)
                 return false;
             const char *txt = st->relay_on ? "ON  " : "OFF ";
@@ -326,7 +332,9 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
             return false;
         if (local)
         {
-            const MeteoController::SensorState *st = control.controllers.meteo().state(slot.index);
+            auto &meteo = control.controllers.meteo();
+            auto meteo_guard = meteo.lockGuard();
+            const MeteoController::SensorState *st = meteo.state(slot.index);
             if (!st || !st->ok)
                 return false;
             if (slot.field == DisplaySlotField::MeteoHum)
@@ -445,7 +453,9 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
             return false;
         if (local)
         {
-            const ThermoController::DeviceState *st = control.controllers.thermo().state(slot.index);
+            auto &thermo = control.controllers.thermo();
+            auto thermo_guard = thermo.lockGuard();
+            const ThermoController::DeviceState *st = thermo.state(slot.index);
             if (!st)
                 return false;
             if (!st->power_on)
@@ -532,7 +542,9 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
             return false;
         if (local)
         {
-            const TankController::TankState *st = control.controllers.tanks().state(slot.index);
+            auto &tanks = control.controllers.tanks();
+            auto tanks_guard = tanks.lockGuard();
+            const TankController::TankState *st = tanks.state(slot.index);
             if (!st || !st->levels_ok)
                 return false;
             if (st->level_full)
@@ -658,7 +670,9 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
         if (local)
         {
             const size_t idx = (size_t)(slot.index - 1);
-            const SepticController::SepticState *st = control.controllers.septic().stateByIndex(idx);
+            auto &septic = control.controllers.septic();
+            auto septic_guard = septic.lockGuard();
+            const SepticController::SepticState *st = septic.stateByIndex(idx);
             if (!st)
                 return false;
             if (st->alarm)
@@ -737,7 +751,9 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
     {
         if (local)
         {
-            const auto &st = control.controllers.avr().state();
+            auto &avr = control.controllers.avr();
+            auto avr_guard = avr.lockGuard();
+            const auto &st = avr.state();
             if (slot.field == DisplaySlotField::AvrMainOk)
                 memcpy(out, st.main_ok ? "ON  " : "OFF ", 4);
             else if (slot.field == DisplaySlotField::AvrReserveOk)
@@ -786,7 +802,9 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
             return false;
         if (local)
         {
-            const auto *st = control.controllers.leak().state(slot.index);
+            auto &leak = control.controllers.leak();
+            auto leak_guard = leak.lockGuard();
+            const auto *st = leak.state(slot.index);
             if (!st)
                 return false;
             if (st->wet || st->alarm_latched)

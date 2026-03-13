@@ -19,6 +19,7 @@ TankController::TankController(Gpio &gpio, Logger &logs, TelegramBot &bot, Teleg
 }
 
 bool TankController::begin(){
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return true;
     for (size_t i = 0; i < kTankCount; ++i)
@@ -42,6 +43,7 @@ bool TankController::begin(){
 }
 
 void TankController::task(){
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return;
     for (size_t i = 0; i < kTankCount; ++i)
@@ -87,6 +89,7 @@ void TankController::task(){
 }
 
 void TankController::applyConfig(JsonArrayConst tanks){
+    auto guard = _lock.guard();
     reset_();
     size_t idx = 0;
     for (JsonVariantConst v : tanks)
@@ -143,6 +146,7 @@ void TankController::applyConfig(JsonArrayConst tanks){
 }
 
 void TankController::serialize(JsonArray out) const{
+    auto guard = _lock.guard();
     for (size_t i = 0; i < kTankCount; ++i)
     {
         const TankConfig &cfg = _cfg[i];
@@ -172,6 +176,7 @@ void TankController::serialize(JsonArray out) const{
 }
 
 void TankController::buildSnapshot(uint8_t *power_mask, size_t bytes) const{
+    auto guard = _lock.guard();
     if (!power_mask)
         return;
     memset(power_mask, 0, bytes);
@@ -190,6 +195,7 @@ void TankController::buildSnapshot(uint8_t *power_mask, size_t bytes) const{
 }
 
 void TankController::applySnapshot(const uint8_t *power_mask, size_t bytes){
+    auto guard = _lock.guard();
     if (!power_mask)
         return;
     for (size_t i = 0; i < kTankCount; ++i)
@@ -234,15 +240,20 @@ void TankController::applySnapshot(const uint8_t *power_mask, size_t bytes){
 }
 
 bool TankController::takeDirty(){
+    auto guard = _lock.guard();
     if (!_dirty)
         return false;
     _dirty = false;
     return true;
 }
 
-bool TankController::controllerEnabled() const{ return _controller_enabled; }
+bool TankController::controllerEnabled() const{
+    auto guard = _lock.guard();
+    return _controller_enabled;
+}
 
 void TankController::setControllerEnabled(bool enabled){
+    auto guard = _lock.guard();
     if (_controller_enabled == enabled)
         return;
     _controller_enabled = enabled;
@@ -280,6 +291,7 @@ void TankController::setControllerEnabled(bool enabled){
 }
 
 bool TankController::setEnabled(size_t id, bool enabled){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -317,6 +329,7 @@ bool TankController::setEnabled(size_t id, bool enabled){
 }
 
 bool TankController::setPower(size_t id, bool on){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -350,6 +363,7 @@ bool TankController::setPower(size_t id, bool on){
 }
 
 bool TankController::setName(size_t id, const String &name){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -358,6 +372,7 @@ bool TankController::setName(size_t id, const String &name){
 }
 
 bool TankController::setGroupId(size_t id, uint8_t group_id){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return false;
@@ -366,39 +381,48 @@ bool TankController::setGroupId(size_t id, uint8_t group_id){
 }
 
 bool TankController::setLevelLow(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     return setLevelPort_(id, port, &TankConfig::level_low);
 }
 
 bool TankController::setLevelMid(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     return setLevelPort_(id, port, &TankConfig::level_mid);
 }
 
 bool TankController::setLevelFull(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     return setLevelPort_(id, port, &TankConfig::level_full);
 }
 
 bool TankController::setValveRelay(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     return setRelayPort_(id, port, &TankConfig::relay_valve, 0);
 }
 
 bool TankController::setPumpRelay(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     return setRelayPort_(id, port, &TankConfig::relay_pump, 1);
 }
 
 bool TankController::setAlarmRelay(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     return setRelayPort_(id, port, &TankConfig::relay_alarm, 2);
 }
 
 void TankController::setDetectHandler(TankController::DetectHandler cb, void *ctx){
+    auto guard = _lock.guard();
     _detect_cb = cb;
     _detect_ctx = ctx;
 }
 
 void TankController::setNotifyEnabled(bool enabled){
+    auto guard = _lock.guard();
     _notify_enabled = enabled;
 }
 
 void TankController::notifyRemoteEmpty(const String &source, uint8_t tank_id, const String &name){
+    auto guard = _lock.guard();
     if (!_notify_enabled)
         return;
     String msg = F("Бак пустой");
@@ -423,6 +447,7 @@ void TankController::notifyRemoteEmpty(const String &source, uint8_t tank_id, co
 }
 
 const TankController::TankConfig *TankController::config(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return nullptr;
@@ -430,6 +455,7 @@ const TankController::TankConfig *TankController::config(size_t id) const{
 }
 
 const TankController::TankState *TankController::state(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return nullptr;
@@ -437,12 +463,14 @@ const TankController::TankState *TankController::state(size_t id) const{
 }
 
 const TankController::TankConfig *TankController::configByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kTankCount)
         return nullptr;
     return &_cfg[idx];
 }
 
 const TankController::TankState *TankController::stateByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kTankCount)
         return nullptr;
     return &_state[idx];

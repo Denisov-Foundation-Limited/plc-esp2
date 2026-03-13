@@ -14,6 +14,7 @@
 #include "core/network/web/web_interface.hpp"
 
 void WifiHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
+        server.on("/wifi", HTTP_POST, [&web](AsyncWebServerRequest *request) { web.handleWifiSave_(request); });
         server.on("/wifi", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleWifi(web, request); });
     }
 

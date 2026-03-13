@@ -87,6 +87,7 @@ public:
         _c._io->println(F("  ID  En  Type  Port  Silent  Detect  Name"));
         _c._io->println(F("  --  --  ----  ----  ------  ------  ----------------"));
         bool any = false;
+        auto guard = _security.lockGuard();
         for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
         {
             const auto *cfg = _security.configByIndex(i);
@@ -102,6 +103,7 @@ public:
 
     void showSensor(size_t id)
     {
+        auto guard = _security.lockGuard();
         const auto *cfg = _security.config(id);
         const auto *st = _security.state(id);
         if (!cfg || !st)

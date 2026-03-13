@@ -140,6 +140,7 @@ void AvrHandler::handleAvr(WebInterface &web, AsyncWebServerRequest *request) {
         else
         {
             AvrController &avr = web._controllers->avr();
+            auto avr_guard = avr.lockGuard();
             const AvrController::Config &cfg = avr.config();
             const AvrController::State &st = avr.state();
 
@@ -231,6 +232,7 @@ void AvrHandler::handleAvrSave(WebInterface &web, AsyncWebServerRequest *request
             return;
         }
 
+        auto avr_guard = avr.lockGuard();
         const AvrController::Config &cfg = avr.config();
         bool ok = true;
         String err;

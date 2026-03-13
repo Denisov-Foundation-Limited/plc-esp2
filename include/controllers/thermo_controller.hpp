@@ -17,6 +17,7 @@
 #include "controllers/meteo_controller.hpp"
 #include "hal/gpio/gpio.hpp"
 #include "utils/logger.hpp"
+#include "utils/rtos_lock.hpp"
 
 class ThermoController
 {
@@ -26,6 +27,7 @@ public:
     static constexpr uint8_t kInvalidSensor = 0;
     static constexpr size_t kMaskBytes = (kDeviceCount + 7) / 8;
     static constexpr int16_t kInvalidTarget = 0x7FFF;
+    using LockGuard = RtosRecursiveLock::Guard;
 
     enum class Mode : uint8_t
     {
@@ -62,7 +64,8 @@ public:
 
     ThermoController(Gpio &gpio, MeteoController &meteo, Logger &logs)
         ;bool begin();void task();void applyConfig(JsonArrayConst devices);void serialize(JsonArray out) const;bool controllerEnabled() const;using RemoteMeteoProvider = bool (*)(void *ctx, uint32_t node_id, uint8_t sensor_id, float &temp_c, bool &has_temp);
-    void setRemoteMeteoProvider(RemoteMeteoProvider cb, void *ctx);void setControllerEnabled(bool enabled);const DeviceConfig *config(size_t id) const;const DeviceState *state(size_t id) const;const DeviceConfig *configByIndex(size_t idx) const;const DeviceState *stateByIndex(size_t idx) const;void buildSnapshot(uint8_t *power_mask, size_t bytes) const;void buildTargetSnapshot(int16_t *targets, size_t count) const;void applySnapshot(const uint8_t *power_mask, size_t bytes);void applyTargetSnapshot(const int16_t *targets, size_t count);bool takeDirty();bool setEnabled(size_t id, bool enable);bool setSensor(size_t id, uint8_t sensor_id);bool setSensorSource(size_t id, uint32_t node_id, uint8_t sensor_id);bool setMode(size_t id, Mode mode);bool setTarget(size_t id, float target_c);bool setHysteresis(size_t id, float hyst);bool setName(size_t id, const String &name);bool setGroupId(size_t id, uint8_t group_id);bool setPower(size_t id, bool on, const char *src = nullptr);bool togglePower(size_t id, const char *src = nullptr);bool setHeatPort(size_t id, uint8_t port);bool setCoolPort(size_t id, uint8_t port);bool setButtonPort(size_t id, uint8_t port);static const char *modeName(Mode mode);private:
+    void setRemoteMeteoProvider(RemoteMeteoProvider cb, void *ctx);void setControllerEnabled(bool enabled);const DeviceConfig *config(size_t id) const;const DeviceState *state(size_t id) const;const DeviceConfig *configByIndex(size_t idx) const;const DeviceState *stateByIndex(size_t idx) const;void buildSnapshot(uint8_t *power_mask, size_t bytes) const;void buildTargetSnapshot(int16_t *targets, size_t count) const;void applySnapshot(const uint8_t *power_mask, size_t bytes);void applyTargetSnapshot(const int16_t *targets, size_t count);bool takeDirty();bool setEnabled(size_t id, bool enable);bool setSensor(size_t id, uint8_t sensor_id);bool setSensorSource(size_t id, uint32_t node_id, uint8_t sensor_id);bool setMode(size_t id, Mode mode);bool setTarget(size_t id, float target_c);bool setHysteresis(size_t id, float hyst);bool setName(size_t id, const String &name);bool setGroupId(size_t id, uint8_t group_id);bool setPower(size_t id, bool on, const char *src = nullptr);bool togglePower(size_t id, const char *src = nullptr);bool setHeatPort(size_t id, uint8_t port);bool setCoolPort(size_t id, uint8_t port);bool setButtonPort(size_t id, uint8_t port);static const char *modeName(Mode mode);LockGuard lockGuard() const { return _lock.guard(); }
+private:
     Gpio &_gpio;
     MeteoController &_meteo;
     Logger &_logs;
@@ -72,6 +75,7 @@ public:
     DeviceState _state[kDeviceCount];
     bool _controller_enabled = false;
     bool _dirty = false;
+    mutable RtosRecursiveLock _lock;
 
     static constexpr bool kButtonInvert = true;
     static constexpr bool kButtonPullup = true;

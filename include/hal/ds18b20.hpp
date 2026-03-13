@@ -42,7 +42,9 @@ public:
 
 private:
     static constexpr uint8_t kFamily = 0x28;
-    static constexpr uint16_t kDefaultConvMs = 750;
+    static constexpr uint16_t kDefaultConvMs = 1000;
+    static constexpr uint8_t kReadAttempts = 2;
+    static constexpr uint16_t kRetryDelayMs = 25;
 
     OneWireBus *bus_();
     bool findFirst_();

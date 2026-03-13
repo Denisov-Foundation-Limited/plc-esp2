@@ -19,6 +19,7 @@ LeakController::LeakController(Gpio &gpio, Logger &logs, TelegramBot &bot, Teleg
 }
 
 bool LeakController::begin(){
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return true;
     for (size_t i = 0; i < kZoneCount; ++i)
@@ -28,6 +29,7 @@ bool LeakController::begin(){
 }
 
 void LeakController::task(){
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return;
     for (size_t i = 0; i < kZoneCount; ++i)
@@ -67,6 +69,7 @@ void LeakController::task(){
 }
 
 void LeakController::applyConfig(JsonArrayConst zones){
+    auto guard = _lock.guard();
     reset_();
     size_t idx = 0;
     for (JsonVariantConst v : zones)
@@ -117,6 +120,7 @@ void LeakController::applyConfig(JsonArrayConst zones){
 }
 
 void LeakController::serialize(JsonArray out) const{
+    auto guard = _lock.guard();
     for (size_t i = 0; i < kZoneCount; ++i)
     {
         const ZoneConfig &cfg = _cfg[i];
@@ -139,9 +143,13 @@ void LeakController::serialize(JsonArray out) const{
     }
 }
 
-bool LeakController::controllerEnabled() const{ return _controller_enabled; }
+bool LeakController::controllerEnabled() const{
+    auto guard = _lock.guard();
+    return _controller_enabled;
+}
 
 bool LeakController::setControllerEnabled(bool enabled){
+    auto guard = _lock.guard();
     if (_controller_enabled == enabled)
         return false;
     _controller_enabled = enabled;
@@ -164,6 +172,7 @@ bool LeakController::setControllerEnabled(bool enabled){
 }
 
 bool LeakController::takeDirty(){
+    auto guard = _lock.guard();
     if (!_dirty)
         return false;
     _dirty = false;
@@ -171,6 +180,7 @@ bool LeakController::takeDirty(){
 }
 
 bool LeakController::setEnabled(size_t id, bool enabled){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -189,6 +199,7 @@ bool LeakController::setEnabled(size_t id, bool enabled){
 }
 
 bool LeakController::setPower(size_t id, bool on){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -209,6 +220,7 @@ bool LeakController::setPower(size_t id, bool on){
 }
 
 bool LeakController::setSensorActiveLow(size_t id, bool active_low){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -221,6 +233,7 @@ bool LeakController::setSensorActiveLow(size_t id, bool active_low){
 }
 
 bool LeakController::setValveOpenOnPower(size_t id, bool open_on_power){
+    auto guard = _lock.guard();
     (void)open_on_power;
     size_t idx = 0;
     if (!indexById_(id, idx))
@@ -236,6 +249,7 @@ bool LeakController::setValveOpenOnPower(size_t id, bool open_on_power){
 }
 
 bool LeakController::setName(size_t id, const String &name){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -246,13 +260,23 @@ bool LeakController::setName(size_t id, const String &name){
     return true;
 }
 
-bool LeakController::setSensorPort(size_t id, uint8_t port){ return setPort_(id, port, &ZoneConfig::sensor_port, true); }
+bool LeakController::setSensorPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
+    return setPort_(id, port, &ZoneConfig::sensor_port, true);
+}
 
-bool LeakController::setValvePort(size_t id, uint8_t port){ return setPort_(id, port, &ZoneConfig::valve_port, false); }
+bool LeakController::setValvePort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
+    return setPort_(id, port, &ZoneConfig::valve_port, false);
+}
 
-bool LeakController::setAlarmPort(size_t id, uint8_t port){ return setPort_(id, port, &ZoneConfig::alarm_port, false); }
+bool LeakController::setAlarmPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
+    return setPort_(id, port, &ZoneConfig::alarm_port, false);
+}
 
 bool LeakController::ack(size_t id){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -265,6 +289,7 @@ bool LeakController::ack(size_t id){
 }
 
 bool LeakController::ackAll(){
+    auto guard = _lock.guard();
     bool changed = false;
     for (size_t i = 0; i < kZoneCount; ++i)
         changed = ack(i + 1) || changed;
@@ -272,6 +297,7 @@ bool LeakController::ackAll(){
 }
 
 const LeakController::ZoneConfig *LeakController::config(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return nullptr;
@@ -279,6 +305,7 @@ const LeakController::ZoneConfig *LeakController::config(size_t id) const{
 }
 
 const LeakController::ZoneState *LeakController::state(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return nullptr;
@@ -286,12 +313,14 @@ const LeakController::ZoneState *LeakController::state(size_t id) const{
 }
 
 const LeakController::ZoneConfig *LeakController::configByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kZoneCount)
         return nullptr;
     return &_cfg[idx];
 }
 
 const LeakController::ZoneState *LeakController::stateByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kZoneCount)
         return nullptr;
     return &_state[idx];

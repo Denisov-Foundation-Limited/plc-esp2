@@ -79,6 +79,7 @@ public:
     {
         bool any = false;
         printHeader_();
+        auto guard = _septic.lockGuard();
         for (size_t i = 0; i < SepticController::kSepticCount; ++i)
         {
             const auto *cfg = _septic.configByIndex(i);
@@ -94,6 +95,7 @@ public:
 
     void showSeptic(size_t id)
     {
+        auto guard = _septic.lockGuard();
         const auto *cfg = _septic.configByIndex(id - 1);
         const auto *st = _septic.stateByIndex(id - 1);
         if (!cfg || !st)

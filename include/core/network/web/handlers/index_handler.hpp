@@ -33,5 +33,7 @@ private:
         String fan_html;
     };
 
+    static String buildIndexPage_(WebInterface &web, uint32_t node_id, bool stack_view, bool can_edit_device);
+
     static IndexState collectIndexState_(WebInterface &web, uint32_t node_id, bool stack_view);
 };
