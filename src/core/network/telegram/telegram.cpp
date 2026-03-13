@@ -141,6 +141,8 @@ bool TelegramClient::pollBackoffActive() const
     return _poll_backoff_until_ms != 0 &&
            (int32_t)(millis() - _poll_backoff_until_ms) < 0;
 }
+uint8_t TelegramClient::pollFailStreak() const
+{ return _poll_fail_streak; }
 bool TelegramClient::canRequestNow() const
 {
     return !_auto_poll || !pollBackoffActive();
@@ -402,11 +404,29 @@ void TelegramClient::applyPollConfig_()
     if (!_fb)
         return;
     const uint16_t prd = (uint16_t)min<uint32_t>(_auto_poll_interval_ms, 60000u);
-    _fb->setPollMode(fb::Poll::Long, prd);
+    _fb->setPollMode(fb::Poll::Sync, prd);
     const uint32_t timeout_ms = _auto_poll_timeout_s ? (_auto_poll_timeout_s * 1000u) : 2000u;
-    _fb->setTimeout((uint16_t)min<uint32_t>(timeout_ms, 60000u));
+    _fb->setTimeout((uint16_t)min<uint32_t>(timeout_ms, 5000u));
     _poll_online = _auto_poll && !pollBackoffActive();
     _fb->setOnline(_poll_online);
+}
+void TelegramClient::restartPollingClient_()
+{
+    Client *client = _fb_client;
+    if (!client)
+        return;
+    if (_secure_client)
+        _secure_client->stop();
+    if (_fb)
+    {
+        _fb->setOnline(false);
+        _fb->~FastBot2Client();
+        _fb = nullptr;
+    }
+    _fb_client = nullptr;
+    _poll_online = false;
+    _reboot_logged = false;
+    initFastBot_(*client);
 }
 void TelegramClient::onFastBotUpdate_(fb::Update &upd)
 {
@@ -479,6 +499,12 @@ void TelegramClient::registerPollError_(const String &msg)
     }
     if (_secure_client)
         _secure_client->stop();
+    if (_poll_fail_streak >= kPollClientRestartStreak)
+    {
+        if (_log && _log->ready())
+            _log->warn(F("TGBOT"), F("Poll client restart: fail_streak: %u"), (unsigned)_poll_fail_streak);
+        restartPollingClient_();
+    }
     if (_log && _log->ready())
     {
         _log->warn(F("TGBOT"), F("Poll backoff: %lu ms fail_streak: %u error: %s"),

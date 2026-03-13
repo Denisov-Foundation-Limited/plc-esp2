@@ -47,6 +47,18 @@
 #define TASK_BINDER_CONSOLE_LOOP_TICK_MS 10
 #endif
 
+#ifndef TASK_BINDER_TG_WIFI_RECOVER_STALL_MS
+#define TASK_BINDER_TG_WIFI_RECOVER_STALL_MS 30000u
+#endif
+
+#ifndef TASK_BINDER_TG_WIFI_RECOVER_COOLDOWN_MS
+#define TASK_BINDER_TG_WIFI_RECOVER_COOLDOWN_MS 120000u
+#endif
+
+#ifndef TASK_BINDER_TG_WIFI_RECOVER_FAIL_STREAK
+#define TASK_BINDER_TG_WIFI_RECOVER_FAIL_STREAK 4u
+#endif
+
 class TaskBinder
 {
 public:
@@ -661,6 +673,8 @@ private:
     FtestCallback _ftest_cb = nullptr;
     void *_ftest_ctx = nullptr;
     volatile bool _ftest_enabled = false;
+    uint32_t _tg_poll_stall_since_ms = 0;
+    uint32_t _tg_wifi_recover_cooldown_until_ms = 0;
 
     TaskHandle_t _wifi_task = nullptr;
     TaskHandle_t _tgbot_task = nullptr;

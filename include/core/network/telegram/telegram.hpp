@@ -92,6 +92,7 @@ public:
     bool autoPollEnabled() const;
     uint16_t autoPollTimeoutSec() const;
     bool pollBackoffActive() const;
+    uint8_t pollFailStreak() const;
     bool canRequestNow() const;
 
     uint32_t lastUpdateId() const;
@@ -167,6 +168,7 @@ private:
     void initFastBot_(Client &client);
 
     void applyPollConfig_();
+    void restartPollingClient_();
 
     void onFastBotUpdate_(fb::Update &upd);
 
@@ -183,6 +185,7 @@ private:
 
     static constexpr uint16_t kSendTimeoutMs = 1500;
     static constexpr uint32_t kPollFailDecayMs = 30000;
+    static constexpr uint8_t kPollClientRestartStreak = 4;
 #if !defined(FB_NO_FILE) && (defined(ESP8266) || defined(ESP32))
     static constexpr uint16_t kSendFileTimeoutMs = 25000;
     static constexpr size_t kUploadBlockSize = 2048;

@@ -122,9 +122,9 @@ bool Network::begin()
     _logs.info(F("NET"), F("Configure Telegram network"));
     if (!configureTelegram_(ActiveBoardProfile::TELEGRAM_NET))
         return false;
-    _logs.info(F("NET"), F("Enable Telegram auto poll"));
+    _logs.info(F("NET"), F("Telegram auto poll disabled"));
     _tgbot.setAutoPollIntervalMs(kTelegramPollIntervalMs);
-    _tgbot.enableAutoPoll(true, kTelegramPollTimeoutSec);
+    _tgbot.enableAutoPoll(false, 2);
     _logs.info(F("NET"), F("Init Stack"));
     beginStack_();
     _started = true;

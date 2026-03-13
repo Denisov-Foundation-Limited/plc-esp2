@@ -363,14 +363,25 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       setTimeout(() => location.reload(), 900);
     }
     warmupStackPorts();
+    let socketPortsPollInflight = false;
+    let socketPortsPollBackoffUntil = 0;
     async function pollSocketPortOptions() {
+      const now = Date.now();
+      if (socketPortsPollInflight) return;
+      if (socketPortsPollBackoffUntil && now < socketPortsPollBackoffUntil) return;
+      socketPortsPollInflight = true;
       try {
         let url = '/sockets/ports_options';
         if (socketsUnit === 'stack' && socketsNodeId) {
           url += '?unit=stack&node_id=' + encodeURIComponent(String(socketsNodeId));
         }
         const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+        if (res.status === 503) {
+          socketPortsPollBackoffUntil = Date.now() + 3000;
+          return;
+        }
         if (!res.ok) return;
+        socketPortsPollBackoffUntil = 0;
         const data = await res.json();
         if (!data || typeof data !== 'object') return;
         socketOptions = {
@@ -383,6 +394,27 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         };
         refreshSocketSelects();
       } catch (e) {
+      } finally {
+        socketPortsPollInflight = false;
+      }
+    }
+    async function loadSocketList() {
+      if (!socketsGrid) return;
+      try {
+        let url = '/sockets/list?page=' + encodeURIComponent(String(socketsPage));
+        if (socketsUnit === 'stack' && socketsNodeId) {
+          url += '&unit=stack&node_id=' + encodeURIComponent(String(socketsNodeId));
+        }
+        const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) {
+          socketsGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+          return;
+        }
+        socketsGrid.innerHTML = await res.text();
+        bindSocketHandlers();
+        refreshSocketSelects();
+      } catch (e) {
+        socketsGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
       }
     }
     async function loadSocketList() {
@@ -407,7 +439,9 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
     refreshSocketSelects();
     loadSocketList();
     setTimeout(pollSocketPortOptions, 50);
-    setInterval(pollSocketPortOptions, 2000);
+    if (socketsUnit === 'stack') {
+      setInterval(pollSocketPortOptions, 2000);
+    }
     const prevBtn = document.getElementById('sockets-prev');
     const nextBtn = document.getElementById('sockets-next');
     const pageSelect = document.getElementById('sockets-page');

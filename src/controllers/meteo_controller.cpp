@@ -523,9 +523,37 @@ bool MeteoController::readDs18b20IfDue_(const MeteoController::SensorConfig &cfg
     uint8_t addr[kAddrLen] = {};
     for (uint8_t i = 0; i < kAddrLen; ++i)
         addr[i] = cfg.ds18_addr[i];
-    const bool ok = _ds18b20.readTempCNoWait(addr, t);
+    const bool prev_ok = st.ok;
+    bool ok = _ds18b20.readTempCNoWait(addr, t);
+    if (!ok)
+    {
+        // Fallback to an addressed blocking read for a single sensor when the
+        // shared conversion/scratchpad cycle glitches. This helps one flaky
+        // device recover without waiting for multiple global scan passes.
+        ok = _ds18b20.readTempC(addr, t);
+    }
+    if (!ok && prev_ok)
+    {
+        char hex[17] = {};
+        formatHexAddr(addr, hex);
+        String name = cfg.name.length() ? cfg.name : String((unsigned)cfg.id);
+        _logs.warn(F("METEO"), F("DS18 read failed: id: %u name: %s addr: %s"),
+                   (unsigned)cfg.id, name.c_str(), hex);
+    }
     applyReadResult_(cfg, st, ok, ok, t, false, 0.0f);
-    st.last_read_ms = now;
+    if (ok)
+    {
+        st.last_read_ms = now;
+    }
+    else
+    {
+        st.last_read_ms = now;
+        // Force a fresh shared conversion cycle soon instead of postponing
+        // this sensor for a full interval after one transient scratchpad read failure.
+        _ds_conv_ready = false;
+        _ds_conv_pending = false;
+        _ds_last_conv_ms = 0;
+    }
     return true;
 }
 
@@ -719,6 +747,7 @@ void MeteoController::logMeteoStateChange_(const MeteoController::SensorConfig &
 
 void MeteoController::applyReadResult_(const MeteoController::SensorConfig &cfg, MeteoController::SensorState &st, bool ok, bool has_temp, float temp_c, bool has_hum,
  float hum){
+    const bool prev_ok = st.ok;
     const bool was_error = (st.fail_count >= kFailThreshold);
     if (ok)
     {
@@ -732,15 +761,33 @@ void MeteoController::applyReadResult_(const MeteoController::SensorConfig &cfg,
         st.fail_count = 0;
         st.ok = true;
         st.had_success = true;
-        if (was_error || first_remote_success)
+        if (!prev_ok || was_error || first_remote_success)
             logMeteoStateChange_(cfg, st, false);
         return;
     }
 
     if (st.fail_count < 0xFF)
         ++st.fail_count;
+    const bool is_remote = (cfg.type == SensorType::None) && (cfg.source_node_id != 0) && (cfg.source_sensor_id != 0);
+    if (!is_remote)
+    {
+        const uint8_t local_fail_threshold =
+            (cfg.type == SensorType::Dht22) ? kDht22LocalFailThreshold : kLocalFailThreshold;
+        if (st.fail_count < local_fail_threshold)
+            return;
+        st.temp_c = 0.0f;
+        st.humidity = 0.0f;
+        st.ok = false;
+        st.has_temp = false;
+        st.has_humidity = false;
+        if (prev_ok || st.fail_count == local_fail_threshold)
+            logMeteoStateChange_(cfg, st, true);
+        return;
+    }
     if (st.fail_count >= kFailThreshold)
     {
+        st.temp_c = 0.0f;
+        st.humidity = 0.0f;
         st.ok = false;
         st.has_temp = false;
         st.has_humidity = false;

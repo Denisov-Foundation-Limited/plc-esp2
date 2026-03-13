@@ -24,11 +24,15 @@ namespace
 constexpr uint32_t kSocketsMinIntervalMs = 250u;
 constexpr uint32_t kSocketsPortsMinIntervalMs = 400u;
 constexpr uint32_t kSocketsLowHeapBytes = 20u * 1024u;
+constexpr uint32_t kSocketsLocalPortsCacheMs = 3000u;
 
 std::atomic<uint32_t> g_last_sockets_request_ms{0};
 std::atomic<uint32_t> g_last_sockets_ports_request_ms{0};
 std::atomic<bool> g_sockets_request_inflight{false};
 std::atomic<bool> g_sockets_ports_request_inflight{false};
+String g_sockets_local_ports_cache_body;
+uint32_t g_sockets_local_ports_cache_built_ms = 0;
+bool g_sockets_local_ports_cache_valid = false;
 
 bool requestTooFrequent_(std::atomic<uint32_t> &stamp, uint32_t now_ms, uint32_t min_interval_ms)
 {
@@ -37,6 +41,20 @@ bool requestTooFrequent_(std::atomic<uint32_t> &stamp, uint32_t now_ms, uint32_t
         return true;
     stamp.store(now_ms, std::memory_order_relaxed);
     return false;
+}
+
+bool localSocketsPortsCacheFresh_(uint32_t now_ms)
+{
+    return g_sockets_local_ports_cache_valid &&
+           g_sockets_local_ports_cache_body.length() != 0 &&
+           (uint32_t)(now_ms - g_sockets_local_ports_cache_built_ms) < kSocketsLocalPortsCacheMs;
+}
+
+void invalidateLocalSocketsPortsCache_()
+{
+    g_sockets_local_ports_cache_valid = false;
+    g_sockets_local_ports_cache_built_ms = 0;
+    g_sockets_local_ports_cache_body = "";
 }
 }
 
@@ -517,6 +535,10 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
         if (changed && web._controllers)
             web._controllers->invalidateGpioUsageCache();
         if (ok)
+            invalidateLocalSocketsPortsCache_();
+        if (changed && web._controllers)
+            web._controllers->invalidateGpioUsageCache();
+        if (ok)
             web._sockets_status = changed ? "Updated" : "Saved";
         web.sendRedirect_(request, redirect ? redirect : "/sockets", set_cookie);
     }
@@ -621,14 +643,22 @@ void SocketsHandler::handleSocketsPortsOptions(WebInterface &web, AsyncWebServer
         const uint32_t started_ms = millis();
         const bool stack_view = web.isStackSocketsView_(node_id);
         const uint32_t free_heap0 = ESP.getFreeHeap();
+        if (!stack_view && localSocketsPortsCacheFresh_(started_ms))
+        {
+            web.sendText_(request, 200, "application/json", g_sockets_local_ports_cache_body, set_cookie);
+            return;
+        }
         if (g_sockets_ports_request_inflight.exchange(true, std::memory_order_acq_rel))
         {
             if (web._log)
                 web._log->warn(F("WEB"), F("/sockets/ports_options inflight shed: node: %lu heap: %lu"),
                                (unsigned long)node_id, (unsigned long)free_heap0);
-            web.sendText_(request, 200, "application/json",
-                          "{\"ready\":false,\"pending\":true,\"dinput\":[],\"relay\":[],\"dinput_used\":[],\"relay_used\":[]}",
-                          set_cookie);
+            if (!stack_view && g_sockets_local_ports_cache_valid && g_sockets_local_ports_cache_body.length())
+            {
+                web.sendText_(request, 200, "application/json", g_sockets_local_ports_cache_body, set_cookie);
+                return;
+            }
+            web.sendText_(request, 503, "text/plain", "WEB busy", set_cookie);
             return;
         }
         if (free_heap0 < kSocketsLowHeapBytes ||
@@ -638,9 +668,12 @@ void SocketsHandler::handleSocketsPortsOptions(WebInterface &web, AsyncWebServer
                 web._log->warn(F("WEB"), F("/sockets/ports_options shed: node: %lu heap: %lu"),
                                (unsigned long)node_id, (unsigned long)free_heap0);
             g_sockets_ports_request_inflight.store(false, std::memory_order_release);
-            web.sendText_(request, 200, "application/json",
-                          "{\"ready\":false,\"pending\":true,\"dinput\":[],\"relay\":[],\"dinput_used\":[],\"relay_used\":[]}",
-                          set_cookie);
+            if (!stack_view && g_sockets_local_ports_cache_valid && g_sockets_local_ports_cache_body.length())
+            {
+                web.sendText_(request, 200, "application/json", g_sockets_local_ports_cache_body, set_cookie);
+                return;
+            }
+            web.sendText_(request, 503, "text/plain", "WEB busy", set_cookie);
             return;
         }
         if (stack_view)
@@ -672,6 +705,12 @@ void SocketsHandler::handleSocketsPortsOptions(WebInterface &web, AsyncWebServer
         body += ",\"relay_used\":";
         body += ruse;
         body += "}";
+        if (!stack_view)
+        {
+            g_sockets_local_ports_cache_body = body;
+            g_sockets_local_ports_cache_built_ms = started_ms;
+            g_sockets_local_ports_cache_valid = true;
+        }
         g_sockets_ports_request_inflight.store(false, std::memory_order_release);
         web.sendText_(request, 200, "application/json", body, set_cookie);
     }
@@ -728,6 +767,7 @@ void SocketsHandler::handleSocketsEnable(WebInterface &web, AsyncWebServerReques
             web.sendText_(request, 400, "application/json", dbg, set_cookie);
             return;
         }
+        invalidateLocalSocketsPortsCache_();
         web._controllers->invalidateGpioUsageCache();
         if (!web._configs_manager)
         {

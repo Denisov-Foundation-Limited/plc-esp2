@@ -336,22 +336,31 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
             auto meteo_guard = meteo.lockGuard();
             const MeteoController::SensorState *st = meteo.state(slot.index);
             if (!st || !st->ok)
-                return false;
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
             if (slot.field == DisplaySlotField::MeteoHum)
             {
                 if (!st->has_humidity)
-                    return false;
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
                 const int h = (int)roundf(st->humidity);
                 snprintf(out, 5, "%2d%%", h);
             }
             else
             {
-            if (!st->has_temp)
-                return false;
-            const int t = (int)roundf(st->temp_c);
-            formatTemp3_(out, t);
+                if (!st->has_temp)
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                const int t = (int)roundf(st->temp_c);
+                formatTemp3_(out, t);
+            }
         }
-    }
         else if (is_master)
         {
             const auto *cache = _stack_cache.meteoCache(node_id);
