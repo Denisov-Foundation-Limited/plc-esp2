@@ -32,57 +32,76 @@ bool AvrController::begin(){
 }
 
 void AvrController::task(){
-    auto guard = _lock.guard();
-    updateInputs_();
-    if (!_cfg.enabled)
+    String main_notify;
+    String source_notify;
+    bool flush_notify = false;
     {
-        if (_st.active_source != Source::Off || _st.relay_main_on || _st.relay_reserve_on)
+        auto guard = _lock.guard();
+        updateInputs_();
+        if (!_cfg.enabled)
         {
+            if (_st.active_source != Source::Off || _st.relay_main_on || _st.relay_reserve_on)
+            {
+                setRelays_(false, false);
+                _st.active_source = Source::Off;
+                _st.target_source = Source::Off;
+                _st.transfer_state = TransferState::Idle;
+                _st.transfer_in_progress = false;
+            }
+            return;
+        }
+
+        const uint32_t now = millis();
+        if (_st.relay_main_on && _st.relay_reserve_on)
+        {
+            setFault_(Fault::Interlock);
             setRelays_(false, false);
             _st.active_source = Source::Off;
-            _st.target_source = Source::Off;
-            _st.transfer_state = TransferState::Idle;
             _st.transfer_in_progress = false;
-        }
-        return;
-    }
-
-    const uint32_t now = millis();
-    if (_st.relay_main_on && _st.relay_reserve_on)
-    {
-        setFault_(Fault::Interlock);
-        setRelays_(false, false);
-        _st.active_source = Source::Off;
-        _st.transfer_in_progress = false;
-        _st.transfer_state = TransferState::Idle;
-        return;
-    }
-
-    if (_st.transfer_in_progress)
-    {
-        processTransfer_(now);
-        return;
-    }
-
-    if (_st.fault != Fault::None)
-    {
-        if (_cfg.auto_mode && (_st.main_ok || _st.reserve_ok))
-            clearFault();
-        else
+            _st.transfer_state = TransferState::Idle;
             return;
-    }
+        }
 
-    if (!_cfg.auto_mode)
-    {
-        const Source desired = _st.manual_source;
-        if (desired != _st.active_source)
-            startTransfer_(desired, now);
-        return;
+        if (_st.transfer_in_progress)
+        {
+            processTransfer_(now);
+            main_notify = _pending_main_notify;
+            source_notify = _pending_source_notify;
+            _pending_main_notify = "";
+            _pending_source_notify = "";
+            flush_notify = true;
+        }
+        else if (_st.fault != Fault::None)
+        {
+            if (_cfg.auto_mode && (_st.main_ok || _st.reserve_ok))
+                clearFault();
+            else
+                return;
+        }
+        else if (!_cfg.auto_mode)
+        {
+            const Source desired = _st.manual_source;
+            if (desired != _st.active_source)
+                startTransfer_(desired, now);
+        }
+        else
+        {
+            const Source desired = decideAutoSource_(now);
+            if (desired != _st.active_source)
+                startTransfer_(desired, now);
+        }
+        if (!flush_notify)
+        {
+            main_notify = _pending_main_notify;
+            source_notify = _pending_source_notify;
+            _pending_main_notify = "";
+            _pending_source_notify = "";
+        }
     }
-
-    const Source desired = decideAutoSource_(now);
-    if (desired != _st.active_source)
-        startTransfer_(desired, now);
+    if (main_notify.length())
+        sendTgNotify_(main_notify);
+    if (source_notify.length())
+        sendTgNotify_(source_notify);
 }
 
 void AvrController::applyConfig(JsonObjectConst obj){
@@ -648,12 +667,12 @@ void AvrController::notifyMainStateIfChanged_(){
     if (_st.main_ok)
     {
         _logs.info(F("AVR"), F("main: restored"));
-        sendTgNotify_(F("AVR: main power restored"));
+        _pending_main_notify = F("AVR: main power restored");
     }
     else
     {
         _logs.warn(F("AVR"), F("main: lost"));
-        sendTgNotify_(F("AVR: main power lost"));
+        _pending_main_notify = F("AVR: main power lost");
     }
 }
 
@@ -663,12 +682,12 @@ void AvrController::notifySourceSwitched_(AvrController::Source from, AvrControl
     if (to == Source::Reserve)
     {
         _logs.warn(F("AVR"), F("source switched: reserve"));
-        sendTgNotify_(F("AVR: power switched to reserve"));
+        _pending_source_notify = F("AVR: power switched to reserve");
     }
     else if (to == Source::Main)
     {
         _logs.info(F("AVR"), F("source switched: main"));
-        sendTgNotify_(F("AVR: power switched to main"));
+        _pending_source_notify = F("AVR: power switched to main");
     }
 }
 

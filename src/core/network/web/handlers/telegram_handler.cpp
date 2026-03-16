@@ -31,10 +31,19 @@ void TelegramHandler::handleTelegram(WebInterface &web, AsyncWebServerRequest *r
                                        ? WebInterface::maskSecretValue_(web._tgbot->token())
                                        : String("");
         page.replace("%TGBOT_TOKEN%", token_value);
+        page.replace("%TGBOT_CHAT_ID%", web._tgbot ? String((long long)web._tgbot->chatId()) : String("0"));
         page.replace("%TGBOT_LAST_CHAT_ID%",
                      web._tgbot ? String((long long)web._tgbot->lastIncomingChatId()) : String("0"));
         page.replace("%TGBOT_INSECURE_CHECKED%", web._tgbot && web._tgbot->insecure() ? "checked" : "");
         page.replace("%TGBOT_CLIENT%", web._tgbot ? web._tgbot->clientKindName() : "none");
+        page.replace("%TGBOT_CLIENT_WIFI_SELECTED%",
+                     web._tgbot && web._tgbot->clientKind() == TelegramClient::ClientKind::WifiSecure ? "selected" : "");
+        page.replace("%TGBOT_CLIENT_GSM_SELECTED%",
+                     web._tgbot && web._tgbot->clientKind() == TelegramClient::ClientKind::TinyGsm ? "selected" : "");
+        page.replace("%TGBOT_POLL_MODE_LONG_SELECTED%",
+                     web._tgbot && web._tgbot->pollMode() == TelegramClient::PollMode::Long ? "selected" : "");
+        page.replace("%TGBOT_POLL_MODE_SHORT_SELECTED%",
+                     web._tgbot && web._tgbot->pollMode() == TelegramClient::PollMode::Short ? "selected" : "");
         page.replace("%TGBOT_USE_PROXY_CHECKED%", web._tgbot && web._tgbot->useProxy() ? "checked" : "");
         page.replace("%TGBOT_PROXY_HOST%", web._tgbot ? web._tgbot->proxyHost() : String(""));
         page.replace("%TGBOT_PROXY_PORT%", web._tgbot ? String((unsigned)web._tgbot->proxyPort()) : String("0"));
@@ -71,10 +80,45 @@ void TelegramHandler::handleTelegramSave(WebInterface &web, AsyncWebServerReques
         }
         if (web._tgbot)
         {
+            if (request->hasParam("chat_id", true))
+            {
+                String chat_str = request->getParam("chat_id", true)->value();
+                chat_str.trim();
+                const int64_t chat_id = (int64_t)strtoll(chat_str.c_str(), nullptr, 10);
+                if (chat_id != web._tgbot->chatId())
+                {
+                    web._tgbot->setChatId(chat_id);
+                    changed = true;
+                }
+            }
+            if (request->hasParam("client", true))
+            {
+                String client = request->getParam("client", true)->value();
+                client.trim();
+                client.toLowerCase();
+                const TelegramClient::ClientKind new_kind =
+                    (client == "gsm" || client == "tinygsm") ? TelegramClient::ClientKind::TinyGsm
+                                                              : TelegramClient::ClientKind::WifiSecure;
+                if (new_kind != web._tgbot->clientKind())
+                {
+                    web._tgbot->setClientKindHint(new_kind);
+                    changed = true;
+                }
+            }
             const bool insecure = request->hasParam("insecure", true);
             if (insecure != web._tgbot->insecure())
             {
                 web._tgbot->setInsecure(insecure);
+                changed = true;
+            }
+            String poll_mode = request->hasParam("poll_mode", true) ? request->getParam("poll_mode", true)->value() : "long";
+            poll_mode.trim();
+            poll_mode.toLowerCase();
+            const TelegramClient::PollMode new_mode =
+                (poll_mode == "short") ? TelegramClient::PollMode::Short : TelegramClient::PollMode::Long;
+            if (new_mode != web._tgbot->pollMode())
+            {
+                web._tgbot->setPollMode(new_mode);
                 changed = true;
             }
         }

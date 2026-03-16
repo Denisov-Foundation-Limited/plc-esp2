@@ -43,48 +43,62 @@ bool TankController::begin(){
 }
 
 void TankController::task(){
-    auto guard = _lock.guard();
-    if (!_controller_enabled)
-        return;
-    for (size_t i = 0; i < kTankCount; ++i)
+    TankConfig pending_cfg[kTankCount]{};
+    bool pending_empty[kTankCount]{};
+    size_t pending_count = 0;
     {
-        TankConfig &cfg = _cfg[i];
-        TankState &st = _state[i];
-        if (!cfg.enabled)
-            continue;
-        if (!cfg.power_on)
+        auto guard = _lock.guard();
+        if (!_controller_enabled)
+            return;
+        for (size_t i = 0; i < kTankCount; ++i)
         {
-            const TankState prev = st;
-            writeAllOff_(cfg, st);
-            logRelayChange_(cfg, prev, st);
-            continue;
-        }
-        const TankState prev = st;
-        readLevels_(cfg, st);
-        if (!st.levels_ok)
-        {
-            const TankState prev_relays = st;
-            writeAllOff_(cfg, st);
-            logRelayChange_(cfg, prev_relays, st);
-            continue;
-        }
-        updateControl_(cfg, st);
-        logLevelChange_(cfg, prev, st);
-        logRelayChange_(cfg, prev, st);
-        const bool empty = isEmpty_(st);
-        if (empty && !st.last_empty)
-        {
-            const uint32_t now = millis();
-            const bool allow_event = (st.last_empty_event_ms == 0) ||
-                                     ((uint32_t)(now - st.last_empty_event_ms) >= kEmptyEventDebounceMs);
-            if (allow_event)
+            TankConfig &cfg = _cfg[i];
+            TankState &st = _state[i];
+            if (!cfg.enabled)
+                continue;
+            if (!cfg.power_on)
             {
-                notifyDetectEvent_(cfg, true);
-                notifyEmpty_(cfg);
-                st.last_empty_event_ms = now;
+                const TankState prev = st;
+                writeAllOff_(cfg, st);
+                logRelayChange_(cfg, prev, st);
+                continue;
             }
+            const TankState prev = st;
+            readLevels_(cfg, st);
+            if (!st.levels_ok)
+            {
+                const TankState prev_relays = st;
+                writeAllOff_(cfg, st);
+                logRelayChange_(cfg, prev_relays, st);
+                continue;
+            }
+            updateControl_(cfg, st);
+            logLevelChange_(cfg, prev, st);
+            logRelayChange_(cfg, prev, st);
+            const bool empty = isEmpty_(st);
+            if (empty && !st.last_empty)
+            {
+                const uint32_t now = millis();
+                const bool allow_event = (st.last_empty_event_ms == 0) ||
+                                         ((uint32_t)(now - st.last_empty_event_ms) >= kEmptyEventDebounceMs);
+                if (allow_event)
+                {
+                    if (pending_count < kTankCount)
+                    {
+                        pending_cfg[pending_count] = cfg;
+                        pending_empty[pending_count] = true;
+                        ++pending_count;
+                    }
+                    st.last_empty_event_ms = now;
+                }
+            }
+            st.last_empty = empty;
         }
-        st.last_empty = empty;
+    }
+    for (size_t i = 0; i < pending_count; ++i)
+    {
+        notifyDetectEvent_(pending_cfg[i], pending_empty[i]);
+        notifyEmpty_(pending_cfg[i]);
     }
 }
 
@@ -422,8 +436,12 @@ void TankController::setNotifyEnabled(bool enabled){
 }
 
 void TankController::notifyRemoteEmpty(const String &source, uint8_t tank_id, const String &name){
-    auto guard = _lock.guard();
-    if (!_notify_enabled)
+    bool notify_enabled = false;
+    {
+        auto guard = _lock.guard();
+        notify_enabled = _notify_enabled;
+    }
+    if (!notify_enabled)
         return;
     String msg = F("Бак пустой");
     if (source.length())

@@ -23,14 +23,22 @@ bool RingController::begin(){
 }
 
 void RingController::task(){
-    auto guard = _lock.guard();
-    if (!_cfg.enabled)
     {
-        ensureRelayOff_();
-        return;
+        auto guard = _lock.guard();
+        if (!_cfg.enabled)
+        {
+            ensureRelayOff_();
+            return;
+        }
+        handleButton_();
+        pollStackHoldTimeout_();
     }
-    handleButton_();
-    pollStackHoldTimeout_();
+    if (_pending_hold_notify && _hold_cb)
+    {
+        const bool on = _pending_hold_on;
+        _pending_hold_notify = false;
+        _hold_cb(_hold_ctx, on);
+    }
 }
 
 void RingController::applyConfig(JsonObjectConst obj){
@@ -185,7 +193,10 @@ void RingController::setHoldActive_(bool on, bool notify){
     _st.relay_on = on;
     writeRelay_(on);
     if (notify && _hold_cb)
-        _hold_cb(_hold_ctx, on);
+    {
+        _pending_hold_notify = true;
+        _pending_hold_on = on;
+    }
 }
 
 bool RingController::setHoldRelay_(bool on, bool notify, RingController::Source source){

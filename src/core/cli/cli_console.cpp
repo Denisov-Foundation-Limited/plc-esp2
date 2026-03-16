@@ -301,6 +301,7 @@ void CliConsole::cmdShowTelegram_()
     printKeyValue_(F("chat_id"), String((long long)_tgbot.chatId()), key_w);
     printKeyValue_(F("insecure"), _tgbot.insecure() ? F("true") : F("false"), key_w);
     printKeyValue_(F("client"), _tgbot.clientKindName(), key_w);
+    printKeyValue_(F("poll_mode"), _tgbot.pollMode() == TelegramClient::PollMode::Long ? F("long") : F("short"), key_w);
     printKeyValue_(F("proxy"), _tgbot.useProxy() ? F("true") : F("false"), key_w);
     printKeyValue_(F("proxy_host"), _tgbot.proxyHost(), key_w);
     printKeyValue_(F("proxy_port"), String((unsigned)_tgbot.proxyPort()), key_w);

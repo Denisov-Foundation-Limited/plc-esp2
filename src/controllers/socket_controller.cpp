@@ -176,119 +176,343 @@ bool SocketController::begin(){
 }
 
 void SocketController::task(){
-    auto guard = _lock.guard();
-    if (_controller_enabled)
+    PendingAction pending;
+    while (dequeueRelayAction_(pending, 0))
+    {
+        if (pending.lights)
+        {
+            if (pending.action == 1)
+            {
+                LightConfig cfg;
+                bool has_button = false;
+                bool valid = false;
+                {
+                    auto guard = _lock.guard();
+                    if (_lights_enabled)
+                    {
+                        size_t idx = 0;
+                        if (lightIndexById_(pending.id, idx))
+                        {
+                            LightState &st = _light_state[idx];
+                            cfg = _light_cfg[idx];
+                            if (cfg.enabled && cfg.relay_port != kInvalidPort)
+                            {
+                                if (st.relay_on != pending.on)
+                                {
+                                    st.relay_on = pending.on;
+                                    _dirty_lights = true;
+                                    ++_light_change_seq;
+                                }
+                                has_button = st.has_button;
+                                valid = true;
+                            }
+                        }
+                    }
+                }
+                if (valid)
+                {
+                    writeRelay_(cfg, pending.on);
+                    if (has_button && cfg.button_port != kInvalidPort)
+                    {
+                        bool raw = false;
+                        if (_gpio.readDyn(cfg.button_port, raw))
+                        {
+                            const bool last = kButtonInvert ? !raw : raw;
+                            auto guard = _lock.guard();
+                            size_t idx = 0;
+                            if (guard.locked() && lightIndexById_(cfg.id, idx))
+                            {
+                                _light_state[idx].last_button = last;
+                                _light_state[idx].button_idle = last;
+                            }
+                        }
+                    }
+                    const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
+                    _logs.info(F("LIGHT"), F("id: %u name: %s state: %s src: queue"),
+                               (unsigned)cfg.id, name, pending.on ? "on" : "off");
+                }
+            }
+        }
+        else
+        {
+            if (pending.action == 1)
+            {
+                SocketConfig cfg;
+                bool has_button = false;
+                bool valid = false;
+                {
+                    auto guard = _lock.guard();
+                    if (_controller_enabled)
+                    {
+                        size_t idx = 0;
+                        if (indexById_(pending.id, idx))
+                        {
+                            SocketState &st = _state[idx];
+                            cfg = _cfg[idx];
+                            if (cfg.enabled && cfg.relay_port != kInvalidPort)
+                            {
+                                if (st.relay_on != pending.on)
+                                {
+                                    st.relay_on = pending.on;
+                                    _dirty_sockets = true;
+                                    ++_socket_change_seq;
+                                }
+                                has_button = st.has_button;
+                                valid = true;
+                            }
+                        }
+                    }
+                }
+                if (valid)
+                {
+                    writeRelay_(cfg, pending.on);
+                    if (has_button && cfg.button_port != kInvalidPort)
+                    {
+                        bool raw = false;
+                        if (_gpio.readDyn(cfg.button_port, raw))
+                        {
+                            const bool last = kButtonInvert ? !raw : raw;
+                            auto guard = _lock.guard();
+                            size_t idx = 0;
+                            if (guard.locked() && indexById_(cfg.id, idx))
+                            {
+                                _state[idx].last_button = last;
+                                _state[idx].button_idle = last;
+                            }
+                        }
+                    }
+                    const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
+                    _logs.info(F("SOCKET"), F("Id: %u name: %s state: %s src: queue"),
+                               (unsigned)cfg.id, name, pending.on ? "on" : "off");
+                }
+            }
+        }
+    }
+
+    bool sockets_enabled = false;
+    bool lights_enabled = false;
+    {
+        auto guard = _lock.guard();
+        sockets_enabled = _controller_enabled;
+        lights_enabled = _lights_enabled;
+    }
+
+    if (sockets_enabled)
     {
         for (size_t i = 0; i < kSocketCount; ++i)
         {
-            SocketConfig &cfg = _cfg[i];
-            SocketState &st = _state[i];
-            if (!cfg.enabled || !st.has_button || cfg.relay_port == kInvalidPort)
+            SocketConfig cfg;
+            SocketState snap;
+            {
+                auto guard = _lock.guard();
+                cfg = _cfg[i];
+                snap = _state[i];
+            }
+            if (!cfg.enabled || !snap.has_button || cfg.relay_port == kInvalidPort)
                 continue;
 
             const uint32_t now = millis();
             bool raw = false;
             if (!_gpio.readDyn(cfg.button_port, raw))
                 continue;
-            bool pressed = kButtonInvert ? !raw : raw;
-            if (st.cooldown_until_ms != 0 && (int32_t)(now - st.cooldown_until_ms) < 0)
+            const bool pressed = kButtonInvert ? !raw : raw;
+
             {
+                auto guard = _lock.guard();
+                SocketState &st = _state[i];
+                if (st.cooldown_until_ms != 0 && (int32_t)(now - st.cooldown_until_ms) < 0)
+                {
+                    st.last_button = pressed;
+                    continue;
+                }
+                if (pressed != st.button_idle && st.last_button == st.button_idle)
+                {
+                    st.relay_on = !st.relay_on;
+                    writeRelay_(cfg, st.relay_on);
+                    _dirty_sockets = true;
+                    ++_socket_change_seq;
+                    st.cooldown_until_ms = now + kButtonCooldownMs;
+                    const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
+                    _logs.info(F("SOCKET"), F("Id: %u name: %s state: %s src: button"),
+                               (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
+                }
                 st.last_button = pressed;
-                continue;
             }
-            if (pressed != st.button_idle && st.last_button == st.button_idle)
-            {
-                st.relay_on = !st.relay_on;
-                writeRelay_(cfg, st.relay_on);
-                _dirty_sockets = true;
-                st.cooldown_until_ms = now + kButtonCooldownMs;
-                const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
-                _logs.info(F("SOCKET"), F("Id: %u name: %s state: %s src: button"),
-                           (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
-            }
-            st.last_button = pressed;
         }
     }
-    if (_lights_enabled)
+    if (lights_enabled)
     {
         for (size_t i = 0; i < kLightCount; ++i)
         {
-            LightConfig &cfg = _light_cfg[i];
-            LightState &st = _light_state[i];
-            if (!cfg.enabled || !st.has_button || cfg.relay_port == kInvalidPort)
+            LightConfig cfg;
+            LightState snap;
+            {
+                auto guard = _lock.guard();
+                cfg = _light_cfg[i];
+                snap = _light_state[i];
+            }
+            if (!cfg.enabled || !snap.has_button || cfg.relay_port == kInvalidPort)
                 continue;
 
             const uint32_t now = millis();
             bool raw = false;
             if (!_gpio.readDyn(cfg.button_port, raw))
                 continue;
-            bool pressed = kButtonInvert ? !raw : raw;
-            if (st.cooldown_until_ms != 0 && (int32_t)(now - st.cooldown_until_ms) < 0)
+            const bool pressed = kButtonInvert ? !raw : raw;
+
             {
+                auto guard = _lock.guard();
+                LightState &st = _light_state[i];
+                if (st.cooldown_until_ms != 0 && (int32_t)(now - st.cooldown_until_ms) < 0)
+                {
+                    st.last_button = pressed;
+                    continue;
+                }
+                if (pressed != st.button_idle && st.last_button == st.button_idle)
+                {
+                    st.relay_on = !st.relay_on;
+                    writeRelay_(cfg, st.relay_on);
+                    _dirty_lights = true;
+                    ++_light_change_seq;
+                    st.cooldown_until_ms = now + kButtonCooldownMs;
+                    const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
+                    _logs.info(F("LIGHT"), F("id: %u name: %s state: %s src: button"),
+                               (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
+                }
                 st.last_button = pressed;
-                continue;
             }
-            if (pressed != st.button_idle && st.last_button == st.button_idle)
-            {
-                st.relay_on = !st.relay_on;
-                writeRelay_(cfg, st.relay_on);
-                _dirty_lights = true;
-                st.cooldown_until_ms = now + kButtonCooldownMs;
-                const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
-                _logs.info(F("LIGHT"), F("id: %u name: %s state: %s src: button"),
-                           (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
-            }
-            st.last_button = pressed;
         }
     }
 }
 
-bool SocketController::setRelay(size_t id, bool on){
-    auto guard = _lock.guard();
-    if (!_controller_enabled)
+bool SocketController::setRelay(size_t id, bool on, uint32_t timeout_ms){
+    SocketConfig cfg;
+    bool has_button = false;
+    {
+        auto guard = _lock.guard(timeout_ms);
+        if (!guard.locked())
+            return false;
+        if (!_controller_enabled)
+            return false;
+        size_t idx = 0;
+        if (!indexById_(id, idx))
+            return false;
+        SocketState &st = _state[idx];
+        cfg = _cfg[idx];
+        if (!cfg.enabled || cfg.relay_port == kInvalidPort)
+            return false;
+        if (st.relay_on == on)
+            return true;
+        st.relay_on = on;
+        has_button = st.has_button;
+        _dirty_sockets = true;
+        ++_socket_change_seq;
+    }
+    if (!writeRelay_(cfg, on, timeout_ms))
+    {
+        auto guard = _lock.guard(timeout_ms);
+        if (guard.locked())
+        {
+            size_t idx = 0;
+            if (indexById_(cfg.id, idx))
+            {
+                _state[idx].relay_on = !on;
+                _dirty_sockets = true;
+                ++_socket_change_seq;
+            }
+        }
         return false;
-    size_t idx = 0;
-    if (!indexById_(id, idx))
-        return false;
-    SocketConfig &cfg = _cfg[idx];
-    SocketState &st = _state[idx];
-    if (!cfg.enabled || cfg.relay_port == kInvalidPort)
-        return false;
-    if (st.relay_on == on)
-        return true;
-    st.relay_on = on;
-    writeRelay_(cfg, st.relay_on);
-    syncButtonState_(cfg, st);
-    _dirty_sockets = true;
+    }
+    if (has_button && cfg.button_port != kInvalidPort)
+    {
+        bool raw = false;
+        if (_gpio.readDyn(cfg.button_port, raw, timeout_ms))
+        {
+            const bool last = kButtonInvert ? !raw : raw;
+            auto guard = _lock.guard(timeout_ms);
+            if (guard.locked())
+            {
+                size_t idx = 0;
+                if (indexById_(cfg.id, idx))
+                {
+                    _state[idx].last_button = last;
+                    _state[idx].button_idle = last;
+                }
+            }
+        }
+    }
     const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
     _logs.info(F("SOCKET"), F("Id: %u name: %s state: %s"),
-               (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
+               (unsigned)cfg.id, name, on ? "on" : "off");
     return true;
 }
 
-bool SocketController::toggleRelay(size_t id){
-    auto guard = _lock.guard();
-    if (!_controller_enabled)
+bool SocketController::toggleRelay(size_t id, uint32_t timeout_ms){
+    SocketConfig cfg;
+    bool next_on = false;
+    bool has_button = false;
+    {
+        auto guard = _lock.guard(timeout_ms);
+        if (!guard.locked())
+            return false;
+        if (!_controller_enabled)
+            return false;
+        size_t idx = 0;
+        if (!indexById_(id, idx))
+            return false;
+        SocketState &st = _state[idx];
+        cfg = _cfg[idx];
+        if (!cfg.enabled || cfg.relay_port == kInvalidPort)
+            return false;
+        st.relay_on = !st.relay_on;
+        next_on = st.relay_on;
+        has_button = st.has_button;
+        _dirty_sockets = true;
+        ++_socket_change_seq;
+    }
+    if (!writeRelay_(cfg, next_on, timeout_ms))
+    {
+        auto guard = _lock.guard(timeout_ms);
+        if (guard.locked())
+        {
+            size_t idx = 0;
+            if (indexById_(cfg.id, idx))
+            {
+                _state[idx].relay_on = !next_on;
+                _dirty_sockets = true;
+                ++_socket_change_seq;
+            }
+        }
         return false;
-    size_t idx = 0;
-    if (!indexById_(id, idx))
-        return false;
-    SocketConfig &cfg = _cfg[idx];
-    SocketState &st = _state[idx];
-    if (!cfg.enabled || cfg.relay_port == kInvalidPort)
-        return false;
-    st.relay_on = !st.relay_on;
-    writeRelay_(cfg, st.relay_on);
-    syncButtonState_(cfg, st);
-    _dirty_sockets = true;
+    }
+    if (has_button && cfg.button_port != kInvalidPort)
+    {
+        bool raw = false;
+        if (_gpio.readDyn(cfg.button_port, raw, timeout_ms))
+        {
+            const bool last = kButtonInvert ? !raw : raw;
+            auto guard = _lock.guard(timeout_ms);
+            if (guard.locked())
+            {
+                size_t idx = 0;
+                if (indexById_(cfg.id, idx))
+                {
+                    _state[idx].last_button = last;
+                    _state[idx].button_idle = last;
+                }
+            }
+        }
+    }
     const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
     _logs.info(F("SOCKET"), F("Id: %u name: %s state: %s src: toggle"),
-               (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
+               (unsigned)cfg.id, name, next_on ? "on" : "off");
     return true;
 }
 
-bool SocketController::relayState(size_t id, bool &out) const{
-    auto guard = _lock.guard();
+bool SocketController::relayState(size_t id, bool &out, uint32_t timeout_ms) const{
+    auto guard = _lock.guard(timeout_ms);
+    if (!guard.locked())
+        return false;
     if (!_controller_enabled)
         return false;
     size_t idx = 0;
@@ -302,58 +526,140 @@ bool SocketController::relayState(size_t id, bool &out) const{
     return true;
 }
 
-bool SocketController::setRelayById(uint8_t id, bool on){ return setRelay(id, on); }
+bool SocketController::setRelayById(uint8_t id, bool on, uint32_t timeout_ms){ return setRelay(id, on, timeout_ms); }
 
-bool SocketController::toggleRelayById(uint8_t id){ return toggleRelay(id); }
+bool SocketController::toggleRelayById(uint8_t id, uint32_t timeout_ms){ return toggleRelay(id, timeout_ms); }
 
-bool SocketController::relayStateById(uint8_t id, bool &out) const{ return relayState(id, out); }
+bool SocketController::relayStateById(uint8_t id, bool &out, uint32_t timeout_ms) const{ return relayState(id, out, timeout_ms); }
 
-bool SocketController::setLightRelay(size_t id, bool on){
-    auto guard = _lock.guard();
-    if (!_lights_enabled)
+bool SocketController::setLightRelay(size_t id, bool on, uint32_t timeout_ms){
+    LightConfig cfg;
+    bool has_button = false;
+    {
+        auto guard = _lock.guard(timeout_ms);
+        if (!guard.locked())
+            return false;
+        if (!_lights_enabled)
+            return false;
+        size_t idx = 0;
+        if (!lightIndexById_(id, idx))
+            return false;
+        LightState &st = _light_state[idx];
+        cfg = _light_cfg[idx];
+        if (!cfg.enabled || cfg.relay_port == kInvalidPort)
+            return false;
+        if (st.relay_on == on)
+            return true;
+        st.relay_on = on;
+        has_button = st.has_button;
+        _dirty_lights = true;
+        ++_light_change_seq;
+    }
+    if (!writeRelay_(cfg, on, timeout_ms))
+    {
+        auto guard = _lock.guard(timeout_ms);
+        if (guard.locked())
+        {
+            size_t idx = 0;
+            if (lightIndexById_(cfg.id, idx))
+            {
+                _light_state[idx].relay_on = !on;
+                _dirty_lights = true;
+                ++_light_change_seq;
+            }
+        }
         return false;
-    size_t idx = 0;
-    if (!lightIndexById_(id, idx))
-        return false;
-    LightConfig &cfg = _light_cfg[idx];
-    LightState &st = _light_state[idx];
-    if (!cfg.enabled || cfg.relay_port == kInvalidPort)
-        return false;
-    if (st.relay_on == on)
-        return true;
-    st.relay_on = on;
-    writeRelay_(cfg, st.relay_on);
-    syncButtonState_(cfg, st);
-    _dirty_lights = true;
+    }
+    if (has_button && cfg.button_port != kInvalidPort)
+    {
+        bool raw = false;
+        if (_gpio.readDyn(cfg.button_port, raw, timeout_ms))
+        {
+            const bool last = kButtonInvert ? !raw : raw;
+            auto guard = _lock.guard(timeout_ms);
+            if (guard.locked())
+            {
+                size_t idx = 0;
+                if (lightIndexById_(cfg.id, idx))
+                {
+                    _light_state[idx].last_button = last;
+                    _light_state[idx].button_idle = last;
+                }
+            }
+        }
+    }
     const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
     _logs.info(F("LIGHT"), F("id: %u name: %s state: %s"),
-               (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
+               (unsigned)cfg.id, name, on ? "on" : "off");
     return true;
 }
 
-bool SocketController::toggleLightRelay(size_t id){
-    auto guard = _lock.guard();
-    if (!_lights_enabled)
+bool SocketController::toggleLightRelay(size_t id, uint32_t timeout_ms){
+    LightConfig cfg;
+    bool next_on = false;
+    bool has_button = false;
+    {
+        auto guard = _lock.guard(timeout_ms);
+        if (!guard.locked())
+            return false;
+        if (!_lights_enabled)
+            return false;
+        size_t idx = 0;
+        if (!lightIndexById_(id, idx))
+            return false;
+        LightState &st = _light_state[idx];
+        cfg = _light_cfg[idx];
+        if (!cfg.enabled || cfg.relay_port == kInvalidPort)
+            return false;
+        st.relay_on = !st.relay_on;
+        next_on = st.relay_on;
+        has_button = st.has_button;
+        _dirty_lights = true;
+        ++_light_change_seq;
+    }
+    if (!writeRelay_(cfg, next_on, timeout_ms))
+    {
+        auto guard = _lock.guard(timeout_ms);
+        if (guard.locked())
+        {
+            size_t idx = 0;
+            if (lightIndexById_(cfg.id, idx))
+            {
+                _light_state[idx].relay_on = !next_on;
+                _dirty_lights = true;
+                ++_light_change_seq;
+            }
+        }
         return false;
-    size_t idx = 0;
-    if (!lightIndexById_(id, idx))
-        return false;
-    LightConfig &cfg = _light_cfg[idx];
-    LightState &st = _light_state[idx];
-    if (!cfg.enabled || cfg.relay_port == kInvalidPort)
-        return false;
-    st.relay_on = !st.relay_on;
-    writeRelay_(cfg, st.relay_on);
-    syncButtonState_(cfg, st);
-    _dirty_lights = true;
+    }
+    if (has_button && cfg.button_port != kInvalidPort)
+    {
+        bool raw = false;
+        if (_gpio.readDyn(cfg.button_port, raw, timeout_ms))
+        {
+            const bool last = kButtonInvert ? !raw : raw;
+            auto guard = _lock.guard(timeout_ms);
+            if (guard.locked())
+            {
+                size_t idx = 0;
+                if (lightIndexById_(cfg.id, idx))
+                {
+                    _light_state[idx].last_button = last;
+                    _light_state[idx].button_idle = last;
+                }
+            }
+        }
+    }
     const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
     _logs.info(F("LIGHT"), F("id: %u name: %s state: %s src: toggle"),
-               (unsigned)cfg.id, name, st.relay_on ? "on" : "off");
+               (unsigned)cfg.id, name, next_on ? "on" : "off");
     return true;
 }
 
-bool SocketController::lightRelayState(size_t id, bool &out) const{
-    auto guard = _lock.guard();
+bool SocketController::lightRelayState(size_t id, bool &out, uint32_t timeout_ms) const{
+    auto guard = _lock.guard(timeout_ms);
+    if (!guard.locked())
+        return false;
     if (!_lights_enabled)
         return false;
     size_t idx = 0;
@@ -367,11 +673,54 @@ bool SocketController::lightRelayState(size_t id, bool &out) const{
     return true;
 }
 
-bool SocketController::setLightRelayById(uint8_t id, bool on){ return setLightRelay(id, on); }
+bool SocketController::setLightRelayById(uint8_t id, bool on, uint32_t timeout_ms){ return setLightRelay(id, on, timeout_ms); }
 
-bool SocketController::toggleLightRelayById(uint8_t id){ return toggleLightRelay(id); }
+bool SocketController::toggleLightRelayById(uint8_t id, uint32_t timeout_ms){ return toggleLightRelay(id, timeout_ms); }
 
-bool SocketController::lightRelayStateById(uint8_t id, bool &out) const{ return lightRelayState(id, out); }
+bool SocketController::lightRelayStateById(uint8_t id, bool &out, uint32_t timeout_ms) const{ return lightRelayState(id, out, timeout_ms); }
+
+bool SocketController::enqueueRelayActionById(uint8_t id, uint8_t action, bool lights, bool on, uint32_t timeout_ms){
+    auto guard = _lock.guard(timeout_ms);
+    if (!guard.locked())
+        return false;
+    if (_pending_action_count >= kPendingActionCount)
+        return false;
+    bool next_on = on;
+    if (lights)
+    {
+        if (!_lights_enabled)
+            return false;
+        size_t idx = 0;
+        if (!lightIndexById_(id, idx))
+            return false;
+        const LightConfig &cfg = _light_cfg[idx];
+        const LightState &st = _light_state[idx];
+        if (!cfg.enabled || cfg.relay_port == kInvalidPort)
+            return false;
+        if (action == 2u)
+            next_on = !st.relay_on;
+    }
+    else
+    {
+        if (!_controller_enabled)
+            return false;
+        size_t idx = 0;
+        if (!indexById_(id, idx))
+            return false;
+        const SocketConfig &cfg = _cfg[idx];
+        const SocketState &st = _state[idx];
+        if (!cfg.enabled || cfg.relay_port == kInvalidPort)
+            return false;
+        if (action == 2u)
+            next_on = !st.relay_on;
+    }
+    PendingAction &slot = _pending_actions[_pending_action_count++];
+    slot.id = id;
+    slot.action = 1u;
+    slot.lights = lights;
+    slot.on = next_on;
+    return true;
+}
 
 bool SocketController::setEnabled(size_t id, bool enable){
     auto guard = _lock.guard();
@@ -730,6 +1079,13 @@ bool SocketController::takeDirty(){
     return true;
 }
 
+uint32_t SocketController::socketChangeSeq(uint32_t timeout_ms) const{
+    auto guard = _lock.guard(timeout_ms);
+    if (!guard.locked())
+        return 0;
+    return _socket_change_seq;
+}
+
 bool SocketController::controllerEnabled() const{
     auto guard = _lock.guard();
     return _controller_enabled;
@@ -738,6 +1094,13 @@ bool SocketController::controllerEnabled() const{
 bool SocketController::lightsEnabled() const{
     auto guard = _lock.guard();
     return _lights_enabled;
+}
+
+uint32_t SocketController::lightChangeSeq(uint32_t timeout_ms) const{
+    auto guard = _lock.guard(timeout_ms);
+    if (!guard.locked())
+        return 0;
+    return _light_change_seq;
 }
 
 void SocketController::setControllerEnabled(bool enabled){
@@ -791,6 +1154,18 @@ bool SocketController::takeLightsDirty(){
     if (!_dirty_lights)
         return false;
     _dirty_lights = false;
+    return true;
+}
+
+bool SocketController::dequeueRelayAction_(PendingAction &out, uint32_t timeout_ms){
+    auto guard = _lock.guard(timeout_ms);
+    if (!guard.locked() || _pending_action_count == 0)
+        return false;
+    out = _pending_actions[0];
+    for (size_t i = 1; i < _pending_action_count; ++i)
+        _pending_actions[i - 1] = _pending_actions[i];
+    _pending_actions[_pending_action_count - 1] = PendingAction{};
+    --_pending_action_count;
     return true;
 }
 
@@ -900,7 +1275,7 @@ bool SocketController::syncButtonState_(const SocketController::SocketConfig &cf
     return true;
 }
 
-void SocketController::writeRelay_(const SocketController::SocketConfig &cfg, bool on){
+bool SocketController::writeRelay_(const SocketController::SocketConfig &cfg, bool on, uint32_t timeout_ms){
     const bool out = kRelayInvert ? !on : on;
-    _gpio.writeDyn(cfg.relay_port, out);
+    return _gpio.writeDyn(cfg.relay_port, out, timeout_ms);
 }

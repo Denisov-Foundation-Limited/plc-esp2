@@ -2637,6 +2637,7 @@ int32_t WebInterface::scaled10_(float value)
                 hashAdd_(hash, _tgbot->token());
                 hashAdd_(hash, String((long long)_tgbot->chatId()));
                 hashAdd_(hash, _tgbot->clientKindName());
+                hashAdd_(hash, _tgbot->pollMode() == TelegramClient::PollMode::Long ? "long" : "short");
                 hashAdd_(hash, _tgbot->useProxy() ? "1" : "0");
                 hashAdd_(hash, _tgbot->proxyHost());
                 hashAdd_(hash, String((unsigned)_tgbot->proxyPort()));

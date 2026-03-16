@@ -177,11 +177,11 @@ void WebInterfaceControllersLightsHelper::handleStackLightsToggle_(WebInterface 
             return;
         }
 
-        // Immediately request a fresh snapshot; keep response pending to avoid stale cache flicker.
+        // Immediately request a fresh snapshot; the switch request itself returns simple ack.
         web.requestStackLights_(node_id);
         (void)desired_known;
         (void)desired;
-        web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+        web.sendText_(request, 200, "text/plain", "OK", set_cookie);
     }
 
 bool WebInterfaceControllersLightsHelper::requestStackLights_(WebInterface &web, uint32_t node_id) {

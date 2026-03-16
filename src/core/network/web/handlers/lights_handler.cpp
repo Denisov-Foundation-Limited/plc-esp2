@@ -604,7 +604,12 @@ void LightsHandler::handleLightsToggle(WebInterface &web, AsyncWebServerRequest 
             return;
         }
         SocketController &sockets = web._controllers->sockets();
-        auto sockets_guard = sockets.lockGuard();
+        auto sockets_guard = sockets.lockGuard(300);
+        if (!sockets_guard.locked())
+        {
+            web.sendText_(request, 503, "text/plain", "Controller busy", set_cookie);
+            return;
+        }
         if (id == 0 || !sockets.lightConfig(id))
         {
             web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
@@ -620,25 +625,19 @@ void LightsHandler::handleLightsToggle(WebInterface &web, AsyncWebServerRequest 
         const bool state_poll = (action == "state");
         if (action == "state")
         {
-            ok = sockets.lightRelayStateById(id, state);
+            ok = sockets.lightRelayStateById(id, state, 300);
         }
         else if (action.length() == 0 || action == "toggle")
         {
-            ok = sockets.toggleLightRelayById(id);
-            if (ok)
-                ok = sockets.lightRelayStateById(id, state);
+            ok = sockets.toggleLightRelayById(id, 300);
         }
         else if (action == "on")
         {
-            ok = sockets.setLightRelayById(id, true);
-            if (ok)
-                ok = sockets.lightRelayStateById(id, state);
+            ok = sockets.setLightRelayById(id, true, 300);
         }
         else if (action == "off")
         {
-            ok = sockets.setLightRelayById(id, false);
-            if (ok)
-                ok = sockets.lightRelayStateById(id, state);
+            ok = sockets.setLightRelayById(id, false, 300);
         }
         if (!ok)
         {
@@ -657,7 +656,7 @@ void LightsHandler::handleLightsToggle(WebInterface &web, AsyncWebServerRequest 
                 web._log->info(F("WEB"), F("Lights toggle ok: id: %u name: %s action: %s"),
                                (unsigned)id, name, action.c_str());
         }
-        web.sendText_(request, 200, "text/plain", state ? "on" : "off", set_cookie);
+        web.sendText_(request, 200, "text/plain", state_poll ? (state ? "on" : "off") : "OK", set_cookie);
     }
 
 void LightsHandler::handleLightsEnable(WebInterface &web, AsyncWebServerRequest *request) {

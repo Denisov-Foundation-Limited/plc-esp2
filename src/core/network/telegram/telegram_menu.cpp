@@ -13,6 +13,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <LittleFS.h>
+#include <Update.h>
 
 #include "controllers/avr_controller.hpp"
 #include "controllers/leak_controller.hpp"
@@ -25,10 +27,62 @@
 #include "core/network/stack/stack_cache.hpp"
 #include "core/network/stack/stack_master.hpp"
 #include "core/network/wifi_manager.hpp"
+#include "core/network/telegram/menu/telegram_menu_sockets.hpp"
 #include "core/rtc.hpp"
 #include "plc/plc_control.hpp"
 #include "utils/configs.hpp"
 #include "utils/logger.hpp"
+
+namespace
+{
+static constexpr uint32_t kTelegramSocketLockTimeoutMs = 300;
+static constexpr uint32_t kTelegramSocketMenuRefreshDelayMs = 400;
+static constexpr uint32_t kTelegramSocketMenuVerifyDelayMs = 120;
+static constexpr uint8_t kTelegramSocketMenuVerifyRetries = 8;
+
+bool flashFirmwareFromFs(const String &fs_path, String &err)
+{
+#if !defined(ESP32)
+    err = F("OTA not supported");
+    return false;
+#else
+    File file = LittleFS.open(fs_path, "r");
+    if (!file)
+    {
+        err = F("LittleFS open failed");
+        return false;
+    }
+    const size_t fw_size = (size_t)file.size();
+    if (fw_size == 0)
+    {
+        file.close();
+        err = F("Firmware file is empty");
+        return false;
+    }
+    if (!Update.begin(fw_size))
+    {
+        err = Update.errorString();
+        file.close();
+        return false;
+    }
+    const size_t written = Update.writeStream(file);
+    file.close();
+    if (written != fw_size)
+    {
+        Update.abort();
+        err = F("Firmware read incomplete");
+        return false;
+    }
+    if (!Update.end(true))
+    {
+        err = Update.errorString();
+        return false;
+    }
+    err = "";
+    return true;
+#endif
+}
+}
 
 TelegramMenu::TelegramMenu(PlcControl &plc, WifiManager &wifi, RTC &rtc, TelegramBot &bot,
              Configs &configs, Logger &logs, UsersRegistry &users)
@@ -49,6 +103,7 @@ void TelegramMenu::begin()
     _bot->setMenus(kMenus.data(), kMenus.size(), "root");
     _bot->setCommands(kCommands.data(), kCommands.size());
     _bot->setTextHandler(&TelegramMenu::onText_, this);
+    _bot->setBackgroundHandler(&TelegramMenu::backgroundTask_, this);
     _bot->setMenuPrefixProvider(&TelegramMenu::menuPrefix_, this);
     _bot->setMenuMarkupProvider(&TelegramMenu::menuMarkup_, this);
 }
@@ -436,6 +491,23 @@ bool TelegramMenu::cmdConfigSet_(TelegramBot &bot, const TelegramClient::Update 
     bot.sendText(u.chat_id, F("Отправьте JSON для сохранения startup-config. /back - отмена."));
     return true;
 }
+bool TelegramMenu::cmdConfigGet_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
+{
+    if (!_self)
+        return false;
+    if (!requireAdmin_(*_self, bot, u, reply))
+        return true;
+    PendingJob job;
+    job.type = JobType::SendConfig;
+    job.chat_id = u.chat_id;
+    if (!_self->enqueueJob_(job))
+    {
+        reply = "Очередь занята";
+        return true;
+    }
+    reply = "Подготовка startup-config начата";
+    return true;
+}
 bool TelegramMenu::cmdAllowList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
 {
     if (!_self)
@@ -562,7 +634,8 @@ bool TelegramMenu::handleDocument_(TelegramMenu &self, const TelegramClient::Upd
     if (!u.hasDocument())
         return false;
     const bool is_config = (u.document_file_name == "startup-config.json");
-    if (!is_config)
+    const bool is_firmware = u.document_file_name.endsWith(".bin");
+    if (!is_config && !is_firmware)
         return false;
 
     ChatAuth *st = self.ensureAuth_(u.chat_id);
@@ -576,6 +649,23 @@ bool TelegramMenu::handleDocument_(TelegramMenu &self, const TelegramClient::Upd
     }
     st->awaiting_config = false;
     st->awaiting = false;
+    if (is_firmware)
+    {
+        if (!self._bot)
+            return true;
+        PendingJob job;
+        job.type = JobType::ApplyFirmwareFile;
+        job.chat_id = u.chat_id;
+        job.file_id = u.document_file_id;
+        job.file_name = u.document_file_name;
+        if (!self.enqueueJob_(job))
+        {
+            self._bot->sendText(u.chat_id, F("Очередь занята"));
+            return true;
+        }
+        self._bot->sendText(u.chat_id, F("Прошивка принята, обновление поставлено в очередь."));
+        return true;
+    }
     if (is_config && u.document_size > 0 && u.document_size > kMaxConfigBytes)
     {
         if (self._bot)
@@ -584,95 +674,246 @@ bool TelegramMenu::handleDocument_(TelegramMenu &self, const TelegramClient::Upd
     }
     if (!self._bot)
         return true;
-
-    TelegramClient &client = self._bot->client();
-    FastBot2Client *fb = client.fastBot();
-    if (!fb)
+    PendingJob job;
+    job.type = JobType::ApplyConfigFile;
+    job.chat_id = u.chat_id;
+    job.file_id = u.document_file_id;
+    job.file_name = u.document_file_name;
+    if (!self.enqueueJob_(job))
     {
-        self._bot->sendText(u.chat_id, F("Telegram client not ready"));
+        self._bot->sendText(u.chat_id, F("Очередь занята"));
         return true;
     }
-    fb::Fetcher fetch = fb->downloadFile(u.document_file_id);
-    if (!fetch)
-    {
-        String err = client.lastError();
-        if (err.length() == 0)
-            err = F("downloadFile failed");
-        self._bot->sendText(u.chat_id, err);
-        return true;
-    }
-
-    String json;
-    if (u.document_size > 0)
-        json.reserve((size_t)u.document_size + 16);
-    struct StringWriter : public Print
-    {
-        explicit StringWriter(String &out) : _out(out) {}
-        size_t write(uint8_t b) override
-        {
-            _out += static_cast<char>(b);
-            return 1;
-        }
-        size_t write(const uint8_t *data, size_t len) override
-        {
-            if (!data || len == 0)
-                return 0;
-            if (!_out.concat(reinterpret_cast<const char *>(data), len))
-                return 0;
-            return len;
-        }
-        String &_out;
-    };
-    StringWriter writer(json);
-    if (!fetch.writeTo(writer))
-    {
-        String err = client.lastError();
-        if (err.length() == 0)
-            err = F("download failed");
-        self._bot->sendText(u.chat_id, err);
-        return true;
-    }
-    self._cfg_doc.clear();
-    DeserializationError err = deserializeJson(self._cfg_doc, json);
-    if (err)
-    {
-        self._bot->sendText(u.chat_id, F("Ошибка разбора JSON."));
-        return true;
-    }
-    const bool saved = self._configs_manager ? self._configs_manager->save(self._cfg_doc)
-                                             : self._configs.save(self._cfg_doc);
-    if (!saved)
-    {
-        self._bot->sendText(u.chat_id, F("Не удалось сохранить конфиг."));
-        return true;
-    }
-    self._bot->sendText(u.chat_id, F("Startup-config сохранен. Перезагрузите контроллер для применения."));
+    self._bot->sendText(u.chat_id, F("Startup-config принят, применение поставлено в очередь."));
     return true;
+}
+void TelegramMenu::backgroundTask_(void *ctx)
+{
+    TelegramMenu *self = static_cast<TelegramMenu *>(ctx);
+    if (!self)
+        return;
+    self->processBackground_();
+}
+bool TelegramMenu::enqueueJob_(const PendingJob &job)
+{
+    if (_job_count >= _jobs.size())
+        return false;
+    _jobs[_job_count++] = job;
+    return true;
+}
+bool TelegramMenu::dequeueJob_(PendingJob &job)
+{
+    if (_job_count == 0)
+        return false;
+    job = _jobs[0];
+    for (size_t i = 1; i < _job_count; ++i)
+        _jobs[i - 1] = _jobs[i];
+    _jobs[_job_count - 1] = PendingJob{};
+    --_job_count;
+    return true;
+}
+void TelegramMenu::processBackground_()
+{
+    if (!_bot || _job_count == 0)
+        return;
+
+    TelegramClient &client = _bot->client();
+    static constexpr size_t kMaxJobsPerPass = 3;
+    size_t processed = 0;
+    while (_job_count > 0 && processed < kMaxJobsPerPass)
+    {
+        PendingJob job;
+        if (!dequeueJob_(job))
+            return;
+        ++processed;
+
+        if (job.due_ms != 0 && (int32_t)(millis() - job.due_ms) < 0)
+        {
+            enqueueJob_(job);
+            break;
+        }
+
+        if (job.type == JobType::SendConfig)
+        {
+            if (_configs_manager && !_configs_manager->save())
+            {
+                _bot->sendText(job.chat_id, F("Не удалось сохранить текущий config"));
+                continue;
+            }
+            if (!client.sendDocumentFromFs(Configs::kPath, String("startup-config.json"),
+                                           String("Текущий startup-config"), job.chat_id))
+            {
+                String err = client.lastError();
+                _bot->sendText(job.chat_id, err.length() ? err : String("Не удалось отправить startup-config"));
+                continue;
+            }
+            _bot->sendText(job.chat_id, F("Startup-config отправлен"));
+            continue;
+        }
+
+        if (job.type == JobType::SendSocketMenu)
+        {
+            if (_sockets && job.change_seq != 0 && job.verify_retries > 0)
+            {
+                const uint32_t current_seq = job.lights_only
+                                                 ? _sockets->lightChangeSeq(kTelegramSocketLockTimeoutMs)
+                                                 : _sockets->socketChangeSeq(kTelegramSocketLockTimeoutMs);
+                if (current_seq == job.change_seq)
+                {
+                    --job.verify_retries;
+                    job.due_ms = millis() + kTelegramSocketMenuVerifyDelayMs;
+                    enqueueJob_(job);
+                    continue;
+                }
+            }
+            TelegramMenuSockets::sendSocketMenu_(*this, job.chat_id, job.lights_only);
+            continue;
+        }
+
+        if (job.type == JobType::SocketAction)
+        {
+            if (!_sockets)
+            {
+                _bot->sendText(job.chat_id, job.lights_only ? F("Свет недоступен") : F("Розетки недоступны"));
+                continue;
+            }
+            const bool is_set = (job.socket_action == 1 || job.socket_action == 2);
+            const bool set_on = (job.socket_action == 1);
+            bool ok = false;
+            if (job.lights_only)
+                ok = is_set ? _sockets->setLightRelayById(job.socket_id, set_on, kTelegramSocketLockTimeoutMs)
+                            : _sockets->toggleLightRelayById(job.socket_id, kTelegramSocketLockTimeoutMs);
+            else
+                ok = is_set ? _sockets->setRelayById(job.socket_id, set_on, kTelegramSocketLockTimeoutMs)
+                            : _sockets->toggleRelayById(job.socket_id, kTelegramSocketLockTimeoutMs);
+            if (!ok)
+            {
+                _bot->sendText(job.chat_id, F("Контроллер занят, повторите"));
+                continue;
+            }
+            _bot->sendText(job.chat_id, F("OK"));
+            break;
+        }
+
+        if (job.type == JobType::ApplyConfigFile)
+        {
+            String json;
+            if (!client.downloadFileToString(job.file_id, json, kMaxConfigBytes + 512))
+            {
+                String err = client.lastError();
+                _bot->sendText(job.chat_id, err.length() ? err : String("download failed"));
+                continue;
+            }
+            _cfg_doc.clear();
+            DeserializationError err = deserializeJson(_cfg_doc, json);
+            if (err)
+            {
+                _bot->sendText(job.chat_id, F("Ошибка разбора JSON."));
+                continue;
+            }
+            const bool saved = _configs_manager ? _configs_manager->save(_cfg_doc)
+                                                : _configs.save(_cfg_doc);
+            if (!saved)
+            {
+                _bot->sendText(job.chat_id, F("Не удалось сохранить конфиг."));
+                continue;
+            }
+            _bot->sendText(job.chat_id, F("Startup-config сохранен. Перезагрузка для применения."));
+            delay(500);
+            ESP.restart();
+            return;
+        }
+
+        if (job.type == JobType::ApplyFirmwareFile)
+        {
+            const String fw_path = F("/firmware.bin");
+            if (!client.downloadFileToFs(job.file_id, fw_path, true))
+            {
+                String err = client.lastError();
+                _bot->sendText(job.chat_id, err.length() ? err : String("download failed"));
+                continue;
+            }
+            _bot->sendText(job.chat_id, F("Прошивка загружена, начато обновление."));
+            String err;
+            if (!flashFirmwareFromFs(fw_path, err))
+            {
+                _bot->sendText(job.chat_id, err.length() ? err : String("Firmware update failed"));
+                continue;
+            }
+            if (_logs)
+                _logs->warn(F("TGBOT"), F("Firmware update applied from Telegram"));
+            _bot->sendText(job.chat_id, F("Firmware updated. Rebooting."));
+            delay(500);
+            ESP.restart();
+            return;
+        }
+
+        if (job.type == JobType::RunQuickRule)
+        {
+            const bool ok = runQuickRule_(job.chat_id, job.rule_id);
+            if (!ok)
+            {
+                if (job.rule_id == 1)
+                    _bot->sendText(job.chat_id, F("Правило Я дома отключено или недоступно"));
+                else if (job.rule_id == 2)
+                    _bot->sendText(job.chat_id, F("Правило Собираюсь отключено или недоступно"));
+                else if (job.rule_id == 3)
+                    _bot->sendText(job.chat_id, F("Правило Ушёл отключено или недоступно"));
+                else
+                    _bot->sendText(job.chat_id, F("Быстрое действие недоступно"));
+            }
+            continue;
+        }
+    }
 }
 bool TelegramMenu::onText_(void *ctx, const TelegramClient::Update &u)
 {
     TelegramMenu *self = static_cast<TelegramMenu *>(ctx);
     if (!self)
         return false;
+    auto log_slow = [&](const __FlashStringHelper *phase, uint32_t started) {
+        if (!self->_logs || !self->_logs->ready())
+            return;
+        const uint32_t elapsed = millis() - started;
+        if (elapsed < 200)
+            return;
+        self->_logs->warn(F("TGBOT"), F("Menu phase slow: phase: %S ms: %lu chat: %lld text_len: %u"),
+                          phase, (unsigned long)elapsed, (long long)u.chat_id, (unsigned)u.text.length());
+    };
+
+    uint32_t phase_started = millis();
     ChatAuth *st = self->ensureAuth_(u.chat_id);
+    log_slow(F("ensure_auth"), phase_started);
     if (st)
         st->user_id = normalizeUsername_(u.from);
+    phase_started = millis();
     if (!self->isAllowedUser_(u))
     {
+        log_slow(F("acl_denied"), phase_started);
         if (self->_bot)
             self->_bot->sendText(u.chat_id, F("Доступ запрещен"));
         return true;
     }
-    if (handleDocument_(*self, u))
+    log_slow(F("acl_check"), phase_started);
+    phase_started = millis();
+    if (u.hasDocument() && handleDocument_(*self, u))
+    {
+        log_slow(F("document"), phase_started);
         return true;
+    }
+    log_slow(F("document_pass"), phase_started);
     if (u.text == "/start")
     {
+        phase_started = millis();
         self->resetAuth_(u.chat_id);
+        log_slow(F("start"), phase_started);
         return false;
     }
     if (u.text == "/back")
     {
+        phase_started = millis();
         self->resetAwaiting_(u.chat_id);
+        log_slow(F("back"), phase_started);
         return false;
     }
     st = self->findAuth_(u.chat_id);
@@ -704,12 +945,10 @@ bool TelegramMenu::onText_(void *ctx, const TelegramClient::Update &u)
         bool ok = false;
         if (self->isLocalSelected_(u.chat_id))
         {
-            if (st->socket_action == 1)
-                ok = self->_sockets->setRelayById(id, true);
-            else if (st->socket_action == 2)
-                ok = self->_sockets->setRelayById(id, false);
-            else if (st->socket_action == 3)
-                ok = self->_sockets->toggleRelayById(id);
+            const bool is_set = (st->socket_action == 1 || st->socket_action == 2);
+            const bool set_on = (st->socket_action == 1);
+            ok = is_set ? self->_sockets->setRelayById(id, set_on, kTelegramSocketLockTimeoutMs)
+                        : self->_sockets->toggleRelayById(id, kTelegramSocketLockTimeoutMs);
         }
         else
         {
@@ -739,41 +978,125 @@ bool TelegramMenu::onText_(void *ctx, const TelegramClient::Update &u)
         st->awaiting_socket = false;
         st->socket_action = 0;
         if (!ok)
-            self->_bot->sendText(u.chat_id, F("Не удалось"));
+            self->_bot->sendText(u.chat_id,
+                                 self->isLocalSelected_(u.chat_id) ? F("Контроллер занят, повторите")
+                                                                   : F("Не удалось"));
         else
-            self->sendSocketMenu_(u.chat_id);
+        {
+            if (self->isLocalSelected_(u.chat_id))
+            {
+                self->_bot->sendText(u.chat_id, F("OK"));
+            }
+            else
+                self->_bot->sendText(u.chat_id, F("OK"));
+        }
         return true;
     }
+    phase_started = millis();
     if (self->handleThermoAction_(u))
+    {
+        log_slow(F("thermo_action"), phase_started);
         return true;
+    }
+    log_slow(F("thermo_action_pass"), phase_started);
+    phase_started = millis();
     if (self->handleTankAction_(u))
+    {
+        log_slow(F("tank_action"), phase_started);
         return true;
+    }
+    log_slow(F("tank_action_pass"), phase_started);
+    phase_started = millis();
     if (self->handleLeakAction_(u))
+    {
+        log_slow(F("leak_action"), phase_started);
         return true;
+    }
+    log_slow(F("leak_action_pass"), phase_started);
+    phase_started = millis();
     if (self->handleWateringAction_(u))
+    {
+        log_slow(F("watering_action"), phase_started);
         return true;
+    }
+    log_slow(F("watering_action_pass"), phase_started);
+    phase_started = millis();
     if (self->handleSocketToggleSelection_(u))
+    {
+        log_slow(F("socket_toggle"), phase_started);
         return true;
+    }
+    log_slow(F("socket_toggle_pass"), phase_started);
+    phase_started = millis();
     if (self->handleMeteoSelection_(u))
+    {
+        log_slow(F("meteo_select"), phase_started);
         return true;
+    }
+    log_slow(F("meteo_select_pass"), phase_started);
+    phase_started = millis();
     if (self->handleThermoSelection_(u))
+    {
+        log_slow(F("thermo_select"), phase_started);
         return true;
+    }
+    log_slow(F("thermo_select_pass"), phase_started);
+    phase_started = millis();
     if (self->handleTankSelection_(u))
+    {
+        log_slow(F("tank_select"), phase_started);
         return true;
+    }
+    log_slow(F("tank_select_pass"), phase_started);
+    phase_started = millis();
     if (self->handleSepticSelection_(u))
+    {
+        log_slow(F("septic_select"), phase_started);
         return true;
+    }
+    log_slow(F("septic_select_pass"), phase_started);
+    phase_started = millis();
     if (self->handleSecuritySelection_(u))
+    {
+        log_slow(F("security_select"), phase_started);
         return true;
+    }
+    log_slow(F("security_select_pass"), phase_started);
+    phase_started = millis();
     if (self->handleAvrSelection_(u))
+    {
+        log_slow(F("avr_select"), phase_started);
         return true;
+    }
+    log_slow(F("avr_select_pass"), phase_started);
+    phase_started = millis();
     if (self->handleLeakSelection_(u))
+    {
+        log_slow(F("leak_select"), phase_started);
         return true;
+    }
+    log_slow(F("leak_select_pass"), phase_started);
+    phase_started = millis();
     if (self->handleRingSelection_(u))
+    {
+        log_slow(F("ring_select"), phase_started);
         return true;
+    }
+    log_slow(F("ring_select_pass"), phase_started);
+    phase_started = millis();
     if (self->handleWateringSelection_(u))
+    {
+        log_slow(F("watering_select"), phase_started);
         return true;
+    }
+    log_slow(F("watering_select_pass"), phase_started);
+    phase_started = millis();
     if (self->handleRootDeviceSelection_(u))
+    {
+        log_slow(F("root_select"), phase_started);
         return true;
+    }
+    log_slow(F("root_select_pass"), phase_started);
     if (st && st->awaiting_config)
     {
         if (self->_admin_password.length() > 0 && !st->authorized)
@@ -1781,192 +2104,64 @@ String TelegramMenu::menuMarkup_(void *ctx, int64_t chat_id, const TelegramBot::
             labels.push_back(F("Админка"));
         if (self->isLocalSelected_(chat_id))
         {
-            if (self->_sockets && self->_sockets->controllerEnabled() &&
+            if (self->_sockets &&
                 self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Sockets))
                 labels.push_back(F("Розетки"));
-            if (self->_sockets && self->_sockets->controllerEnabled() &&
+            if (self->_sockets &&
                 self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Lights))
                 labels.push_back(F("Свет"));
-            if (self->_meteo && self->_meteo->controllerEnabled() &&
+            if (self->_meteo &&
                 self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Meteo))
                 labels.push_back(F("Метео"));
-            if (self->_thermo && self->_thermo->controllerEnabled() &&
+            if (self->_thermo &&
                 self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Thermo))
                 labels.push_back(F("Термо"));
-            if (self->_tanks && self->_tanks->controllerEnabled() &&
+            if (self->_tanks &&
                 self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Tanks))
                 labels.push_back(F("Баки"));
-            if (self->_septic && self->_septic->controllerEnabled() &&
+            if (self->_septic &&
                 self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Septic))
                 labels.push_back(F("Септик"));
-            if (self->_security && self->_security->controllerEnabled() &&
+            if (self->_security &&
                 self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Security))
                 labels.push_back(F("Охрана"));
-            if (self->_avr && self->_avr->controllerEnabled() &&
+            if (self->_avr &&
                 self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Avr))
                 labels.push_back(F("АВР"));
-            if (self->_leak && self->_leak->controllerEnabled() &&
+            if (self->_leak &&
                 self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Leak))
                 labels.push_back(F("Leak"));
-            if (self->_ring && self->_ring->controllerEnabled() &&
+            if (self->_ring &&
                 self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Ring))
                 labels.push_back(F("Звонок"));
-            if (self->_watering && self->_watering->controllerEnabled() &&
+            if (self->_watering &&
                 self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Watering))
                 labels.push_back(F("Полив"));
         }
         else
         {
-            const ChatAuth *st = self->findAuth_(chat_id);
-            const uint32_t node_id = st ? st->selected_node_id : 0;
-            if (node_id != 0 && self->_stack_cache)
-            {
-                bool sockets_enabled = false;
-                bool lights_enabled = false;
-                bool meteo_enabled = false;
-                bool thermo_enabled = false;
-                bool tanks_enabled = false;
-                bool septic_enabled = false;
-                bool security_enabled = false;
-                bool avr_enabled = false;
-                bool leak_enabled = false;
-                bool ring_enabled = true;
-                bool watering_enabled = false;
-
-                const auto *sc = self->_stack_cache->socketsCache(node_id);
-                if (!sc || !sc->has_data)
-                    self->_stack_cache->requestSockets(node_id);
-                else
-                    for (size_t i = 0; i < sc->item_count; ++i)
-                        if (sc->items[i].enabled)
-                        {
-                            sockets_enabled = true;
-                            break;
-                        }
-
-                const auto *lc = self->_stack_cache->lightsCache(node_id);
-                if (!lc || !lc->has_data)
-                    self->_stack_cache->requestLights(node_id);
-                else
-                    for (size_t i = 0; i < lc->item_count; ++i)
-                        if (lc->items[i].enabled)
-                        {
-                            lights_enabled = true;
-                            break;
-                        }
-
-                const auto *mc = self->_stack_cache->meteoCache(node_id);
-                if (!mc || !mc->has_data)
-                    self->_stack_cache->requestMeteo(node_id);
-                else
-                    for (size_t i = 0; i < mc->item_count; ++i)
-                        if (mc->items[i].enabled)
-                        {
-                            meteo_enabled = true;
-                            break;
-                        }
-
-                const auto *tc = self->_stack_cache->thermoCache(node_id);
-                if (!tc || !tc->has_data)
-                    self->_stack_cache->requestThermo(node_id);
-                else
-                    for (size_t i = 0; i < tc->item_count; ++i)
-                        if (tc->items[i].enabled)
-                        {
-                            thermo_enabled = true;
-                            break;
-                        }
-
-                const auto *tac = self->_stack_cache->tanksCache(node_id);
-                if (!tac || !tac->has_data)
-                    self->_stack_cache->requestTanks(node_id);
-                else
-                    for (size_t i = 0; i < tac->item_count; ++i)
-                        if (tac->items[i].enabled)
-                        {
-                            tanks_enabled = true;
-                            break;
-                        }
-
-                const auto *sec = self->_stack_cache->septicCache(node_id);
-                if (!sec || !sec->has_data)
-                    self->_stack_cache->requestSeptic(node_id);
-                else
-                    for (size_t i = 0; i < sec->item_count; ++i)
-                        if (sec->items[i].enabled)
-                        {
-                            septic_enabled = true;
-                            break;
-                        }
-
-                const auto *sg = self->_stack_cache->securityCache(node_id);
-                if (!sg || !sg->has_data)
-                    self->_stack_cache->requestSecurity(node_id);
-                else
-                    security_enabled = sg->enabled;
-
-                const auto *ac = self->_stack_cache->avrCache(node_id);
-                if (!ac || !ac->has_data)
-                    self->_stack_cache->requestAvr(node_id);
-                else
-                    avr_enabled = ac->enabled;
-
-                const auto *lk = self->_stack_cache->leakCache(node_id);
-                if (!lk || !lk->has_data)
-                    self->_stack_cache->requestLeak(node_id);
-                else
-                    for (size_t i = 0; i < lk->item_count; ++i)
-                        if (lk->items[i].enabled)
-                        {
-                            leak_enabled = true;
-                            break;
-                        }
-
-                const auto *wc = self->_stack_cache->wateringCache(node_id);
-                if (!wc || !wc->has_data)
-                    self->_stack_cache->requestWatering(node_id);
-                else
-                    for (size_t i = 0; i < wc->item_count; ++i)
-                        if (wc->items[i].enabled)
-                        {
-                            watering_enabled = true;
-                            break;
-                        }
-
-                if (sockets_enabled &&
-                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Sockets))
-                    labels.push_back(F("Розетки"));
-                if (lights_enabled &&
-                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Lights))
-                    labels.push_back(F("Свет"));
-                if (meteo_enabled &&
-                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Meteo))
-                    labels.push_back(F("Метео"));
-                if (thermo_enabled &&
-                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Thermo))
-                    labels.push_back(F("Термо"));
-                if (tanks_enabled &&
-                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Tanks))
-                    labels.push_back(F("Баки"));
-                if (septic_enabled &&
-                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Septic))
-                    labels.push_back(F("Септик"));
-                if (security_enabled &&
-                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Security))
-                    labels.push_back(F("Охрана"));
-                if (avr_enabled &&
-                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Avr))
-                    labels.push_back(F("АВР"));
-                if (leak_enabled &&
-                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Leak))
-                    labels.push_back(F("Leak"));
-                if (ring_enabled &&
-                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Ring))
-                    labels.push_back(F("Звонок"));
-                if (watering_enabled &&
-                    self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Watering))
-                    labels.push_back(F("Полив"));
-            }
+            if (self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Sockets))
+                labels.push_back(F("Розетки"));
+            if (self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Lights))
+                labels.push_back(F("Свет"));
+            if (self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Meteo))
+                labels.push_back(F("Метео"));
+            if (self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Thermo))
+                labels.push_back(F("Термо"));
+            if (self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Tanks))
+                labels.push_back(F("Баки"));
+            if (self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Septic))
+                labels.push_back(F("Септик"));
+            if (self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Security))
+                labels.push_back(F("Охрана"));
+            if (self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Avr))
+                labels.push_back(F("АВР"));
+            if (self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Leak))
+                labels.push_back(F("Leak"));
+            if (self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Ring))
+                labels.push_back(F("Звонок"));
+            if (self->aclControllerAllowedForChat_(chat_id, UsersRegistry::AclController::Watering))
+                labels.push_back(F("Полив"));
         }
         labels.push_back(F("Назад"));
         return buildKeyboardMarkup_(labels);
@@ -2611,7 +2806,8 @@ bool TelegramMenu::runControllerRuleAction_(int64_t chat_id, const RulesControll
             uint8_t id = 0;
             if (!parseRuleId_(value, id))
                 return false;
-            return (controller == "lights") ? _sockets->toggleLightRelayById(id) : _sockets->toggleRelayById(id);
+            return (controller == "lights") ? _sockets->toggleLightRelayById(id, kTelegramSocketLockTimeoutMs)
+                                            : _sockets->toggleRelayById(id, kTelegramSocketLockTimeoutMs);
         }
         if (param == "set")
         {
@@ -2626,7 +2822,8 @@ bool TelegramMenu::runControllerRuleAction_(int64_t chat_id, const RulesControll
             bool on = false;
             if (!parseRuleOnOff_(st, on))
                 return false;
-            return (controller == "lights") ? _sockets->setLightRelayById(id, on) : _sockets->setRelayById(id, on);
+            return (controller == "lights") ? _sockets->setLightRelayById(id, on, kTelegramSocketLockTimeoutMs)
+                                            : _sockets->setRelayById(id, on, kTelegramSocketLockTimeoutMs);
         }
         return false;
     }
@@ -2686,9 +2883,14 @@ bool TelegramMenu::handleRootDeviceSelection_(const TelegramClient::Update &u)
             _bot->sendText(u.chat_id, F("Быстрые действия недоступны"));
             return true;
         }
-        const bool ok = runQuickRule_(u.chat_id, 1);
-        if (!ok)
-            _bot->sendText(u.chat_id, F("Правило Я дома отключено или недоступно"));
+        PendingJob job;
+        job.type = JobType::RunQuickRule;
+        job.chat_id = u.chat_id;
+        job.rule_id = 1;
+        if (!enqueueJob_(job))
+            _bot->sendText(u.chat_id, F("Очередь занята"));
+        else
+            _bot->sendText(u.chat_id, F("Быстрое действие Я дома поставлено в очередь"));
         return true;
     }
     if (u.text == F("Собираюсь"))
@@ -2698,9 +2900,14 @@ bool TelegramMenu::handleRootDeviceSelection_(const TelegramClient::Update &u)
             _bot->sendText(u.chat_id, F("Быстрые действия недоступны"));
             return true;
         }
-        const bool ok = runQuickRule_(u.chat_id, 2);
-        if (!ok)
-            _bot->sendText(u.chat_id, F("Правило Собираюсь отключено или недоступно"));
+        PendingJob job;
+        job.type = JobType::RunQuickRule;
+        job.chat_id = u.chat_id;
+        job.rule_id = 2;
+        if (!enqueueJob_(job))
+            _bot->sendText(u.chat_id, F("Очередь занята"));
+        else
+            _bot->sendText(u.chat_id, F("Быстрое действие Собираюсь поставлено в очередь"));
         return true;
     }
     if (u.text == F("Ушёл") || u.text == F("Ушел"))
@@ -2710,9 +2917,14 @@ bool TelegramMenu::handleRootDeviceSelection_(const TelegramClient::Update &u)
             _bot->sendText(u.chat_id, F("Быстрые действия недоступны"));
             return true;
         }
-        const bool ok = runQuickRule_(u.chat_id, 3);
-        if (!ok)
-            _bot->sendText(u.chat_id, F("Правило Ушёл отключено или недоступно"));
+        PendingJob job;
+        job.type = JobType::RunQuickRule;
+        job.chat_id = u.chat_id;
+        job.rule_id = 3;
+        if (!enqueueJob_(job))
+            _bot->sendText(u.chat_id, F("Очередь занята"));
+        else
+            _bot->sendText(u.chat_id, F("Быстрое действие Ушёл поставлено в очередь"));
         return true;
     }
     if (!selectDevice_(u.chat_id, u.text))

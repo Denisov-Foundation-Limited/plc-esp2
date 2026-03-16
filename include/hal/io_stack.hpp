@@ -32,8 +32,8 @@ public:
     void initImages();
     void scanInputs();
     void applyOutputs();
-    bool write(uint8_t id, bool logicalLevel);
-    bool read(uint8_t id) const;
+    bool write(uint8_t id, bool logicalLevel, uint32_t timeout_ms = 0xFFFFFFFFu);
+    bool read(uint8_t id, uint32_t timeout_ms = 0xFFFFFFFFu) const;
     const PortIO::PortDesc &desc(uint8_t id) const;
     bool lastState(uint8_t id, bool &outLogical) const;
 

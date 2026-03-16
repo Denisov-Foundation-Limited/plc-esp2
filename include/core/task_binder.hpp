@@ -463,6 +463,7 @@ private:
         for (;;)
         {
             const uint32_t t0 = micros();
+            self->_controllers.sockets().task();
             self->_controllers.task();
             self->_controllers.meteo().task();
             self->_controllers.tanks().task();
@@ -471,7 +472,6 @@ private:
             self->_controllers.watering().task();
             self->_controllers.avr().task();
             self->_controllers.leak().task();
-            self->_controllers.sockets().task();
             self->_controllers.thermo().task();
             self->_controllers.ring().task();
 #if TASK_BINDER_RTOS_DEBUG

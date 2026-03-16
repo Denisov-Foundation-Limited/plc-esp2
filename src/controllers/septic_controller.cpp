@@ -40,39 +40,51 @@ bool SepticController::begin(){
 }
 
 void SepticController::task(){
-    auto guard = _lock.guard();
-    if (!_controller_enabled)
-        return;
-    for (size_t i = 0; i < kSepticCount; ++i)
+    SepticConfig pending_cfg[kSepticCount]{};
+    bool pending_alarm[kSepticCount]{};
+    size_t pending_count = 0;
     {
-        SepticConfig &cfg = _cfg[i];
-        SepticState &st = _state[i];
-        if (!cfg.enabled)
-            continue;
-        if (!cfg.monitoring_on)
+        auto guard = _lock.guard();
+        if (!_controller_enabled)
+            return;
+        for (size_t i = 0; i < kSepticCount; ++i)
         {
-            writeRelay_(cfg.relay_warning, false);
-            writeRelay_(cfg.relay_alarm, false);
-            st = SepticState{};
-            continue;
+            SepticConfig &cfg = _cfg[i];
+            SepticState &st = _state[i];
+            if (!cfg.enabled)
+                continue;
+            if (!cfg.monitoring_on)
+            {
+                writeRelay_(cfg.relay_warning, false);
+                writeRelay_(cfg.relay_alarm, false);
+                st = SepticState{};
+                continue;
+            }
+            const SepticState prev = st;
+            readLevels_(cfg, st);
+            updateRelays_(cfg, st);
+            logLevelChange_(cfg, prev, st);
+            logRelayChange_(cfg, prev, st);
+            if (!prev.warning && st.warning && pending_count < kSepticCount)
+            {
+                pending_cfg[pending_count] = cfg;
+                pending_alarm[pending_count] = false;
+                ++pending_count;
+            }
+            if (!prev.alarm && st.alarm && pending_count < kSepticCount)
+            {
+                pending_cfg[pending_count] = cfg;
+                pending_alarm[pending_count] = true;
+                ++pending_count;
+            }
+            st.last_warning = st.warning;
+            st.last_alarm = st.alarm;
         }
-        const SepticState prev = st;
-        readLevels_(cfg, st);
-        updateRelays_(cfg, st);
-        logLevelChange_(cfg, prev, st);
-        logRelayChange_(cfg, prev, st);
-        if (!prev.warning && st.warning)
-        {
-            notifyDetectEvent_(cfg, false);
-            notifyLevel_(cfg, false);
-        }
-        if (!prev.alarm && st.alarm)
-        {
-            notifyDetectEvent_(cfg, true);
-            notifyLevel_(cfg, true);
-        }
-        st.last_warning = st.warning;
-        st.last_alarm = st.alarm;
+    }
+    for (size_t i = 0; i < pending_count; ++i)
+    {
+        notifyDetectEvent_(pending_cfg[i], pending_alarm[i]);
+        notifyLevel_(pending_cfg[i], pending_alarm[i]);
     }
 }
 
@@ -297,8 +309,12 @@ void SepticController::setNotifyEnabled(bool enabled){
 }
 
 void SepticController::notifyRemoteLevel(const String &source, uint8_t septic_id, const String &name, bool is_alarm){
-    auto guard = _lock.guard();
-    if (!_notify_enabled)
+    bool notify_enabled = false;
+    {
+        auto guard = _lock.guard();
+        notify_enabled = _notify_enabled;
+    }
+    if (!notify_enabled)
         return;
     String msg = F("Септик: уровень ");
     msg += is_alarm ? F("ALARM") : F("WARNING");

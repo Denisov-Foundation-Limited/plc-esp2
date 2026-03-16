@@ -11,6 +11,8 @@
 
 #include "core/network/telegram/telegram_bot.hpp"
 
+#include "utils/logger.hpp"
+
 TelegramBot::TelegramBot(TelegramClient &client)
     : _client(client)
 {
@@ -35,6 +37,11 @@ void TelegramBot::setTextHandler(TextHandler handler, void *ctx)
     _text_handler = handler;
     _text_ctx = ctx;
 }
+void TelegramBot::setBackgroundHandler(BackgroundHandler handler, void *ctx)
+{
+    _bg_handler = handler;
+    _bg_ctx = ctx;
+}
 void TelegramBot::setMenuPrefixProvider(MenuPrefixProvider handler, void *ctx)
 {
     _menu_prefix_handler = handler;
@@ -57,14 +64,23 @@ bool TelegramBot::processUpdates(const std::vector<TelegramClient::Update> &upda
     {
         if (u.text.length() == 0 && !u.hasDocument())
             continue;
+        const uint32_t started = millis();
         if (handleUpdate_(u))
             handled = true;
+        const uint32_t elapsed = millis() - started;
+        Logger *log = _client.logger();
+        if (log && log->ready() && elapsed >= kTraceSlowMs)
+        {
+            log->warn(F("TGBOT"), F("Handle update slow: ms: %lu chat: %lld text_len: %u doc: %u"),
+                      (unsigned long)elapsed, (long long)u.chat_id,
+                      (unsigned)u.text.length(), u.hasDocument() ? 1u : 0u);
+        }
     }
     return handled;
 }
 void TelegramBot::bind(TelegramClient &client)
 {
-    client.setUpdateHandler(&TelegramBot::onUpdates_, this);
+    (void)client;
 }
 bool TelegramBot::sendText(int64_t chat_id, const String &text, const String &reply_markup)
 {
@@ -76,8 +92,21 @@ bool TelegramBot::sendText(int64_t chat_id, const String &text, const String &re
 }
 void TelegramBot::task()
 {
-    _client.task();
+    if (_bg_handler)
+        _bg_handler(_bg_ctx);
+
+    const uint32_t out_started_pre = millis();
     processOutbox_();
+    const uint32_t out_elapsed_pre = millis() - out_started_pre;
+    Logger *log = _client.logger();
+    if (log && log->ready() && out_elapsed_pre >= kTraceSlowMs)
+        log->warn(F("TGBOT"), F("Outbox slow: ms: %lu"), (unsigned long)out_elapsed_pre);
+
+    const uint32_t out_started = millis();
+    processOutbox_();
+    const uint32_t out_elapsed = millis() - out_started;
+    if (log && log->ready() && out_elapsed >= kTraceSlowMs)
+        log->warn(F("TGBOT"), F("Outbox slow: ms: %lu"), (unsigned long)out_elapsed);
     ++_send_tick;
 }
 bool TelegramBot::showMenu(int64_t chat_id, const TelegramBot::Menu *menu, const String &prefix)
@@ -134,19 +163,73 @@ const char *TelegramBot::currentMenuId(int64_t chat_id) const
 bool TelegramBot::handleUpdate_(const TelegramClient::Update &u)
 {
     const String text = u.text;
-    if (_text_handler && _text_handler(_text_ctx, u))
-        return true;
+    Logger *log = _client.logger();
+    if (_text_handler)
+    {
+        const uint32_t started = millis();
+        if (_text_handler(_text_ctx, u))
+        {
+            const uint32_t elapsed = millis() - started;
+            if (log && log->ready() && elapsed >= kTraceSlowMs)
+            {
+                log->warn(F("TGBOT"), F("Update phase slow: phase: text_handler ms: %lu chat: %lld text_len: %u"),
+                          (unsigned long)elapsed, (long long)u.chat_id, (unsigned)u.text.length());
+            }
+            return true;
+        }
+        const uint32_t elapsed = millis() - started;
+        if (log && log->ready() && elapsed >= kTraceSlowMs)
+        {
+            log->warn(F("TGBOT"), F("Update phase slow: phase: text_handler_pass ms: %lu chat: %lld text_len: %u"),
+                      (unsigned long)elapsed, (long long)u.chat_id, (unsigned)u.text.length());
+        }
+    }
     if (text == "/start")
         return goRoot(u.chat_id);
     if (text == "/back")
         return goParent_(u.chat_id);
 
-    if (handleCommand_(u))
-        return true;
+    {
+        const uint32_t started = millis();
+        if (handleCommand_(u))
+        {
+            const uint32_t elapsed = millis() - started;
+            if (log && log->ready() && elapsed >= kTraceSlowMs)
+            {
+                log->warn(F("TGBOT"), F("Update phase slow: phase: command ms: %lu chat: %lld text_len: %u"),
+                          (unsigned long)elapsed, (long long)u.chat_id, (unsigned)u.text.length());
+            }
+            return true;
+        }
+        const uint32_t elapsed = millis() - started;
+        if (log && log->ready() && elapsed >= kTraceSlowMs)
+        {
+            log->warn(F("TGBOT"), F("Update phase slow: phase: command_pass ms: %lu chat: %lld text_len: %u"),
+                      (unsigned long)elapsed, (long long)u.chat_id, (unsigned)u.text.length());
+        }
+    }
 
     const Menu *menu = currentMenu_(u.chat_id);
-    if (menu && handleMenu_(u, *menu))
-        return true;
+    if (menu)
+    {
+        const uint32_t started = millis();
+        if (handleMenu_(u, *menu))
+        {
+            const uint32_t elapsed = millis() - started;
+            if (log && log->ready() && elapsed >= kTraceSlowMs)
+            {
+                log->warn(F("TGBOT"), F("Update phase slow: phase: menu ms: %lu chat: %lld text_len: %u"),
+                          (unsigned long)elapsed, (long long)u.chat_id, (unsigned)u.text.length());
+            }
+            return true;
+        }
+        const uint32_t elapsed = millis() - started;
+        if (log && log->ready() && elapsed >= kTraceSlowMs)
+        {
+            log->warn(F("TGBOT"), F("Update phase slow: phase: menu_pass ms: %lu chat: %lld text_len: %u"),
+                      (unsigned long)elapsed, (long long)u.chat_id, (unsigned)u.text.length());
+        }
+    }
 
     if (menu)
         return showMenu(u.chat_id, menu, F("Unknown command"));
@@ -494,7 +577,7 @@ bool TelegramBot::enqueueText_(int64_t chat_id, const String &text, const String
     msg.text = text;
     msg.reply_markup = reply_markup;
     msg.parse_mode = parse_mode;
-    msg.ready_tick = _send_tick + 1;
+    msg.ready_tick = _send_tick;
     _out_queue.push_back(msg);
     return true;
 }
@@ -502,14 +585,31 @@ void TelegramBot::processOutbox_()
 {
     if (_out_head >= _out_queue.size())
         return;
-    if (!_client.canRequestNow())
-        return;
-    OutMsg &msg = _out_queue[_out_head];
-    if (msg.ready_tick > _send_tick)
-        return;
-    String payload = buildMessagePayload_(msg.chat_id, msg.text, msg.reply_markup, msg.parse_mode);
-    _client.sendMessageRaw(payload);
-    ++_out_head;
+
+    static constexpr size_t kMaxMessagesPerPass = 3;
+    size_t sent = 0;
+    Logger *log = _client.logger();
+    while (_out_head < _out_queue.size() && sent < kMaxMessagesPerPass)
+    {
+        if (!_client.canRequestNow())
+            break;
+        OutMsg &msg = _out_queue[_out_head];
+        if (msg.ready_tick > _send_tick)
+            break;
+        String payload = buildMessagePayload_(msg.chat_id, msg.text, msg.reply_markup, msg.parse_mode);
+        const uint32_t started = millis();
+        const bool ok = _client.sendMessageRaw(payload);
+        const uint32_t elapsed = millis() - started;
+        if (log && log->ready() && (elapsed >= kTraceSlowMs || !ok))
+        {
+            log->warn(F("TGBOT"), F("Send reply: ms: %lu ok: %u chat: %lld text_len: %u err: %s"),
+                      (unsigned long)elapsed, ok ? 1u : 0u, (long long)msg.chat_id,
+                      (unsigned)msg.text.length(), _client.lastError().c_str());
+        }
+        ++_out_head;
+        ++sent;
+    }
+
     if (_out_head >= _out_queue.size())
     {
         _out_queue.clear();

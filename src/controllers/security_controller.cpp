@@ -69,49 +69,61 @@ bool SecurityController::begin(){
 }
 
 void SecurityController::task(){
-    auto guard = _lock.guard();
     handleGsm_();
     processTgNotifyQueue_();
-    if (!_controller_enabled)
-        return;
-    handleIButton_();
-    handleRfid_();
-    if (!_armed)
+    SensorConfig pending_detect[kSensorCount]{};
+    size_t pending_detect_count = 0;
+    bool notify_alarm_on = false;
     {
-        updateBuzzer_();
-        return;
-    }
-    for (size_t i = 0; i < kSensorCount; ++i)
-    {
-        SensorConfig &cfg = _cfg[i];
-        SensorState &st = _state[i];
-        if (!cfg.enabled)
-            continue;
-        const bool raw = readRaw_(cfg);
-        st.raw = raw;
-        const bool triggered = isTriggered_(cfg, raw);
-        if (triggered && !st.is_detect)
+        auto guard = _lock.guard();
+        if (!_controller_enabled)
+            return;
+        handleIButton_();
+        handleRfid_();
+        if (!_armed)
         {
-            st.is_detect = true;
-            if (!cfg.silent)
-            {
-                const bool was_alarm = _alarm_on;
-                _alarm_on = true;
-                if (!was_alarm)
-                {
-                    _dirty = true;
-                    _force_save = true;
-                }
-                resetAlarmBuzzer_();
-                updateSiren_();
-                if (!was_alarm)
-                    notifyAlarmState_(true);
-            }
-            logDetect_(cfg);
-            notifyDetect_(cfg);
+            updateBuzzer_();
+            return;
         }
+        for (size_t i = 0; i < kSensorCount; ++i)
+        {
+            SensorConfig &cfg = _cfg[i];
+            SensorState &st = _state[i];
+            if (!cfg.enabled)
+                continue;
+            const bool raw = readRaw_(cfg);
+            st.raw = raw;
+            const bool triggered = isTriggered_(cfg, raw);
+            if (triggered && !st.is_detect)
+            {
+                st.is_detect = true;
+                if (!cfg.silent)
+                {
+                    const bool was_alarm = _alarm_on;
+                    _alarm_on = true;
+                    if (!was_alarm)
+                    {
+                        _dirty = true;
+                        _force_save = true;
+                    }
+                    resetAlarmBuzzer_();
+                    updateSiren_();
+                    if (!was_alarm)
+                        notify_alarm_on = true;
+                }
+                if (pending_detect_count < kSensorCount)
+                    pending_detect[pending_detect_count++] = cfg;
+            }
+        }
+        updateBuzzer_();
     }
-    updateBuzzer_();
+    if (notify_alarm_on)
+        notifyAlarmState_(true);
+    for (size_t i = 0; i < pending_detect_count; ++i)
+    {
+        logDetect_(pending_detect[i]);
+        notifyDetect_(pending_detect[i]);
+    }
 }
 
 void SecurityController::applyConfig(JsonArrayConst sensors){
@@ -742,8 +754,12 @@ bool SecurityController::fillPrearmItems(JsonArray &arr, String *plain_out ){
 }
 
 void SecurityController::notifyRemoteDetect(const String &source, uint8_t sensor_id, const String &name, bool silent){
-    auto guard = _lock.guard();
-    if (!_notify_enabled)
+    bool notify_enabled = false;
+    {
+        auto guard = _lock.guard();
+        notify_enabled = _notify_enabled;
+    }
+    if (!notify_enabled)
         return;
     String msg = F("Охрана: тревога ");
     if (source.length())
@@ -1615,6 +1631,7 @@ void SecurityController::handleGsm_(){
         return;
     _gsm->hangup();
     String user;
+    auto guard = _lock.guard();
     if (!matchPhone_(number, user))
     {
         _logs.warn(F("SECURITY"), F("GSM call ignored, unknown number: %s"), number.c_str());
@@ -2040,31 +2057,44 @@ void SecurityController::popTgNotify_(){
 }
 
 void SecurityController::processTgNotifyQueue_(){
-    if (_tg_q_size == 0)
-        return;
-    const uint32_t now = millis();
-    const int32_t delta = (int32_t)(now - _tg_last_send_ms);
-    if (_tg_last_send_ms != 0 && delta < (int32_t)kTgSendGapMs)
-        return;
-
-    const auto users = _tgusers.allowedUsers();
-    while (_tg_q_size > 0)
+    String msg;
+    String parse_mode;
+    int64_t chat_id = 0;
     {
-        TgNotifyItem &item = _tg_queue[_tg_q_head];
-        while (item.next_user < users.size)
-        {
-            const auto &u = users[item.next_user++];
-            if (!u.enabled || !u.is_notify || u.chat_id == 0)
-                continue;
-            if (item.parse_mode.length())
-                _tgbot.sendText(u.chat_id, item.msg, "", item.parse_mode);
-            else
-                _tgbot.sendText(u.chat_id, item.msg);
-            _tg_last_send_ms = millis();
+        auto guard = _lock.guard();
+        if (_tg_q_size == 0)
             return;
+        const uint32_t now = millis();
+        const int32_t delta = (int32_t)(now - _tg_last_send_ms);
+        if (_tg_last_send_ms != 0 && delta < (int32_t)kTgSendGapMs)
+            return;
+
+        const auto users = _tgusers.allowedUsers();
+        while (_tg_q_size > 0)
+        {
+            TgNotifyItem &item = _tg_queue[_tg_q_head];
+            while (item.next_user < users.size)
+            {
+                const auto &u = users[item.next_user++];
+                if (!u.enabled || !u.is_notify || u.chat_id == 0)
+                    continue;
+                chat_id = u.chat_id;
+                msg = item.msg;
+                parse_mode = item.parse_mode;
+                _tg_last_send_ms = now;
+                break;
+            }
+            if (chat_id != 0)
+                break;
+            popTgNotify_();
         }
-        popTgNotify_();
     }
+    if (chat_id == 0)
+        return;
+    if (parse_mode.length())
+        _tgbot.sendText(chat_id, msg, "", parse_mode);
+    else
+        _tgbot.sendText(chat_id, msg);
 }
 
 bool SecurityController::isAllowedPhone_(const String &number) const{

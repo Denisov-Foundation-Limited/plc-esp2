@@ -528,11 +528,11 @@ void WebInterfaceControllersSocketsHelper::handleStackSocketsToggle_(WebInterfac
             return;
         }
 
-        // Immediately schedule a fresh stack snapshot so UI poll does not read stale state.
+        // Immediately schedule a fresh stack snapshot; the switch request itself returns simple ack.
         web.requestStackSockets_(node_id);
         (void)desired_known;
         (void)desired;
-        web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+        web.sendText_(request, 200, "text/plain", "OK", set_cookie);
     }
 
 void WebInterfaceControllersSocketsHelper::handleStackSocketsEnable_(WebInterface &web, AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie) {

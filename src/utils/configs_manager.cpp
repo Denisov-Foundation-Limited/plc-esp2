@@ -319,6 +319,7 @@ bool ConfigsManager::save(){
     t["token"] = _telegram.token();
     t["insecure"] = _telegram.insecure();
     t["client"] = _telegram.clientKindName();
+    t["poll_mode"] = (_telegram.pollMode() == TelegramClient::PollMode::Long) ? "long" : "short";
     t["use_proxy"] = _telegram.useProxy();
     t["proxy_host"] = _telegram.proxyHost();
     t["proxy_port"] = (unsigned)_telegram.proxyPort();
@@ -607,6 +608,13 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
                 _network.setTelegramClientKind(TelegramNetCfg::ClientKind::TinyGsm);
             else if (c == "wifi" || c == "wifi_secure")
                 _network.setTelegramClientKind(TelegramNetCfg::ClientKind::WifiSecure);
+        }
+        if (t["poll_mode"].is<const char *>())
+        {
+            String mode = t["poll_mode"].as<const char *>();
+            mode.toLowerCase();
+            _telegram.setPollMode(mode == "short" ? TelegramClient::PollMode::Short
+                                                  : TelegramClient::PollMode::Long);
         }
 
         bool proxy_override = false;

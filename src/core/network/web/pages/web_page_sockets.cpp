@@ -556,7 +556,7 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         try {
           const action = el.checked ? 'on' : 'off';
           const state = await postForm('/sockets/toggle', 'id=' + encodeURIComponent(id) + '&action=' + action);
-          if (state === 'pending') {
+          if (state === 'pending' || state === 'OK') {
             updateSocketVisual(tile, desired);
             return;
           }

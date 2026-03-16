@@ -95,6 +95,24 @@ const char kWebInterfaceTelegramHtml[] PROGMEM = R"HTML(
               <label>Token</label>
               <input type="password" name="token" value="%TGBOT_TOKEN%" placeholder="bot_token">
             </div>
+            <div>
+              <label>Chat ID</label>
+              <input type="text" name="chat_id" value="%TGBOT_CHAT_ID%" placeholder="0">
+            </div>
+            <div>
+              <label>Client</label>
+              <select name="client">
+                <option value="wifi" %TGBOT_CLIENT_WIFI_SELECTED%>wifi</option>
+                <option value="gsm" %TGBOT_CLIENT_GSM_SELECTED%>gsm</option>
+              </select>
+            </div>
+            <div>
+              <label>Poll mode</label>
+              <select name="poll_mode">
+                <option value="long" %TGBOT_POLL_MODE_LONG_SELECTED%>long</option>
+                <option value="short" %TGBOT_POLL_MODE_SHORT_SELECTED%>short</option>
+              </select>
+            </div>
             <div class="checkbox" style="margin-top:22px;">
               <input type="checkbox" id="insecure" name="insecure" %TGBOT_INSECURE_CHECKED%>
               <label for="insecure">Insecure TLS</label>

@@ -199,6 +199,7 @@ ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContex
     net.fw_upgrade.setGsmModem(comms.gsm);
     net.fw_upgrade.setCloudClient(net.network.cloudClient());
     net.network.cloudClient().setStackCache(&stack.stackCache());
+    net.network.cloudClient().setUsersRegistry(&control.users);
     net.fw_upgrade.setUsersRegistry(control.users);
     net.fw_upgrade.setRules(control.rules);
 

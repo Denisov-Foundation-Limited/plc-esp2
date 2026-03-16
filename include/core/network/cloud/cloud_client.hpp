@@ -18,6 +18,7 @@
 #include "controllers/thermo_controller.hpp"
 #include "core/network/stack/stack_features.hpp"
 #include "core/network/stack/stack_protocol.hpp"
+#include "utils/users_registry.hpp"
 
 class Logger;
 class Controllers;
@@ -29,7 +30,6 @@ class GsmModem;
 class StackMaster;
 class StackCache;
 class ConfigsManagerIface;
-
 class CloudClient
 {
 public:
@@ -39,7 +39,7 @@ public:
         uint16_t port = 0;
         String path = "/";
         bool use_ssl = false;
-        uint32_t reconnect_ms = 15000;
+        uint32_t reconnect_ms = 2000;
     };
 
     CloudClient(Logger &log, Controllers &controllers, PlcControl &plc, WifiManager &wifi, RTC &rtc);
@@ -48,6 +48,7 @@ public:
     void setStackMaster(StackMaster *master);
     void setStackCache(StackCache *cache);
     void setConfigsManager(ConfigsManagerIface *cfg);
+    void setUsersRegistry(UsersRegistry *users);
 
     void setEnabled(bool enabled);
     bool enabled() const;
@@ -74,6 +75,8 @@ private:
     static constexpr uint32_t kHelloSessionTimeoutMs = 60000;
     static constexpr uint32_t kWsSilentTimeoutMs = 180000;
     static constexpr uint32_t kWsReinitDisconnectedMs = 60000;
+    static constexpr uint32_t kSnapshotLockTimeoutMs = 50;
+    static constexpr uint32_t kFastReconnectMs = 2000;
 
     enum class StackPart : uint8_t
     {
@@ -118,6 +121,18 @@ private:
         DynamicJsonDocument *doc = nullptr;
     };
 
+    struct ActorInfo
+    {
+        String uid;
+        String username;
+        String plc_username;
+        String source;
+        String session_id;
+        String resolved_user;
+        uint8_t resolved_idx = 0xFF;
+        bool is_admin = false;
+    };
+
     Logger &_log;
     Controllers &_controllers;
     PlcControl &_plc;
@@ -127,6 +142,7 @@ private:
     StackMaster *_stack_master = nullptr;
     StackCache *_stack_cache = nullptr;
     ConfigsManagerIface *_configs = nullptr;
+    UsersRegistry *_users = nullptr;
 
     Config _cfg;
     WebSocketsClient _ws;
@@ -143,7 +159,6 @@ private:
     bool _disconnect_reported = false;
     uint32_t _reconnect_backoff_until_ms = 0;
     uint8_t _reconnect_fail_streak = 0;
-
     PendingRequest _pending[kMaxPending] = {};
     PendingStackCmd _stack_cmds[kMaxStackCmds] = {};
     uint16_t _next_stack_cmd_id = kStackCmdIdBase;
@@ -166,12 +181,14 @@ private:
 
     void handleCmd_(const String &req_id, JsonDocument &doc);
 
-    void handleCmdLocal_(const String &req_id, const String &ctrl, const String &action, JsonObjectConst args);
+    void handleCmdLocal_(const String &req_id, const String &ctrl, const String &action,
+                         JsonObjectConst args, const ActorInfo &actor);
 
     void handleCmdStack_(const String &req_id, uint32_t node_id,
-                         const String &ctrl, const String &action, JsonObjectConst args);
+                         const String &ctrl, const String &action, JsonObjectConst args, const ActorInfo &actor);
 
-    bool handleCmdSockets_(SocketController &s, const String &action, JsonObjectConst args, bool lights);
+    bool handleCmdSockets_(SocketController &s, const String &action, JsonObjectConst args, bool lights,
+                           const ActorInfo &actor);
 
     bool handleCmdThermo_(const String &action, JsonObjectConst args);
 
@@ -181,7 +198,7 @@ private:
 
     bool handleCmdWatering_(const String &action, JsonObjectConst args);
 
-    bool handleCmdSecurity_(const String &action, JsonObjectConst args);
+    bool handleCmdSecurity_(const String &action, JsonObjectConst args, const ActorInfo &actor);
 
     bool handleCmdRing_(const String &action, JsonObjectConst args);
 
@@ -257,6 +274,14 @@ private:
     PendingRequest *allocPending_(const String &ws_id, uint32_t node_id);
 
     void freePending_(PendingRequest *p);
+
+    bool parseActor_(JsonObjectConst payload, ActorInfo &out) const;
+    bool resolveActor_(ActorInfo &actor) const;
+    uint8_t aclUnitByNodeId_(uint32_t node_id) const;
+    static bool aclControllerByName_(const String &ctrl, UsersRegistry::AclController &out);
+    static uint16_t aclItemIdForCmd_(const String &ctrl, const String &action, JsonObjectConst args);
+    bool aclCanControl_(const ActorInfo &actor, const String &ctrl, const String &action,
+                        JsonObjectConst args, uint32_t node_id) const;
 
     void clearPending_();
 

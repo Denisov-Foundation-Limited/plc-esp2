@@ -118,9 +118,11 @@ void IoStack::applyOutputs()
     _portio.loop();
 }
 
-bool IoStack::write(uint8_t id, bool logicalLevel)
+bool IoStack::write(uint8_t id, bool logicalLevel, uint32_t timeout_ms)
 {
-    auto guard = _lock.guard();
+    auto guard = _lock.guard(timeout_ms);
+    if (!guard.locked())
+        return false;
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _portio.desc(id);
@@ -131,9 +133,11 @@ bool IoStack::write(uint8_t id, bool logicalLevel)
     return true;
 }
 
-bool IoStack::read(uint8_t id) const
+bool IoStack::read(uint8_t id, uint32_t timeout_ms) const
 {
-    auto guard = _lock.guard();
+    auto guard = _lock.guard(timeout_ms);
+    if (!guard.locked())
+        return false;
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _portio.desc(id);

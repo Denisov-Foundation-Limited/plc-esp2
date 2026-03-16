@@ -577,7 +577,12 @@ void SocketsHandler::handleSocketsToggle(WebInterface &web, AsyncWebServerReques
             return;
         }
         SocketController &sockets = web._controllers->sockets();
-        auto sockets_guard = sockets.lockGuard();
+        auto sockets_guard = sockets.lockGuard(300);
+        if (!sockets_guard.locked())
+        {
+            web.sendText_(request, 503, "text/plain", "Controller busy", set_cookie);
+            return;
+        }
         if (id == 0 || !sockets.config(id))
         {
             web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
@@ -593,25 +598,19 @@ void SocketsHandler::handleSocketsToggle(WebInterface &web, AsyncWebServerReques
         const bool state_poll = (action == "state");
         if (action == "state")
         {
-            ok = sockets.relayStateById(id, state);
+            ok = sockets.relayStateById(id, state, 300);
         }
         else if (action.length() == 0 || action == "toggle")
         {
-            ok = sockets.toggleRelayById(id);
-            if (ok)
-                ok = sockets.relayStateById(id, state);
+            ok = sockets.toggleRelayById(id, 300);
         }
         else if (action == "on")
         {
-            ok = sockets.setRelayById(id, true);
-            if (ok)
-                ok = sockets.relayStateById(id, state);
+            ok = sockets.setRelayById(id, true, 300);
         }
         else if (action == "off")
         {
-            ok = sockets.setRelayById(id, false);
-            if (ok)
-                ok = sockets.relayStateById(id, state);
+            ok = sockets.setRelayById(id, false, 300);
         }
         if (!ok)
         {
@@ -630,7 +629,7 @@ void SocketsHandler::handleSocketsToggle(WebInterface &web, AsyncWebServerReques
                 web._log->info(F("WEB"), F("Sockets toggle ok: id: %u name: %s action: %s"),
                                (unsigned)id, name, action.c_str());
         }
-        web.sendText_(request, 200, "text/plain", state ? "on" : "off", set_cookie);
+        web.sendText_(request, 200, "text/plain", state_poll ? (state ? "on" : "off") : "OK", set_cookie);
     }
 
 void SocketsHandler::handleSocketsPortsOptions(WebInterface &web, AsyncWebServerRequest *request) {

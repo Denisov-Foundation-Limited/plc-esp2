@@ -29,42 +29,51 @@ bool LeakController::begin(){
 }
 
 void LeakController::task(){
-    auto guard = _lock.guard();
-    if (!_controller_enabled)
-        return;
-    for (size_t i = 0; i < kZoneCount; ++i)
+    ZoneConfig pending_cfg[kZoneCount]{};
+    size_t pending_count = 0;
     {
-        ZoneConfig &cfg = _cfg[i];
-        ZoneState &st = _state[i];
-        if (!cfg.enabled)
-            continue;
-        if (!cfg.power_on)
+        auto guard = _lock.guard();
+        if (!_controller_enabled)
+            return;
+        for (size_t i = 0; i < kZoneCount; ++i)
         {
-            writeOutputs_(cfg, st, false);
-            st.last_wet = false;
-            continue;
-        }
-        bool wet = false;
-        if (!readSensor_(cfg, wet))
-        {
-            writeOutputs_(cfg, st, true);
-            continue;
-        }
-        st.wet = wet;
-        if (wet && !st.last_wet)
-        {
-            const uint32_t now = millis();
-            if (st.last_detect_event_ms == 0 ||
-                (uint32_t)(now - st.last_detect_event_ms) >= kDetectEventDebounceMs)
+            ZoneConfig &cfg = _cfg[i];
+            ZoneState &st = _state[i];
+            if (!cfg.enabled)
+                continue;
+            if (!cfg.power_on)
             {
-                notifyLeak_(cfg);
-                st.last_detect_event_ms = now;
+                writeOutputs_(cfg, st, false);
+                st.last_wet = false;
+                continue;
             }
+            bool wet = false;
+            if (!readSensor_(cfg, wet))
+            {
+                writeOutputs_(cfg, st, true);
+                continue;
+            }
+            st.wet = wet;
+            if (wet && !st.last_wet)
+            {
+                const uint32_t now = millis();
+                if (st.last_detect_event_ms == 0 ||
+                    (uint32_t)(now - st.last_detect_event_ms) >= kDetectEventDebounceMs)
+                {
+                    if (pending_count < kZoneCount)
+                        pending_cfg[pending_count++] = cfg;
+                    st.last_detect_event_ms = now;
+                }
+            }
+            if (wet)
+                st.alarm_latched = true;
+            writeOutputs_(cfg, st, st.alarm_latched);
+            st.last_wet = wet;
         }
-        if (wet)
-            st.alarm_latched = true;
-        writeOutputs_(cfg, st, st.alarm_latched);
-        st.last_wet = wet;
+    }
+    for (size_t i = 0; i < pending_count; ++i)
+    {
+        notifyLeak_(pending_cfg[i]);
     }
 }
 

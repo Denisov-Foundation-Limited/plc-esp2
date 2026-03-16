@@ -150,9 +150,38 @@ private:
         uint8_t selected_watering_id = 0;
     };
 
+    enum class JobType : uint8_t
+    {
+        None = 0,
+        SendConfig,
+        SendSocketMenu,
+        SocketAction,
+        ApplyConfigFile,
+        ApplyFirmwareFile,
+        RunQuickRule
+    };
+
+    struct PendingJob
+    {
+        JobType type = JobType::None;
+        int64_t chat_id = 0;
+        uint32_t due_ms = 0;
+        uint32_t change_seq = 0;
+        String file_id;
+        String file_name;
+        uint8_t rule_id = 0;
+        uint8_t socket_id = 0;
+        uint8_t socket_action = 0;
+        uint8_t verify_retries = 0;
+        bool lights_only = false;
+    };
+
     static constexpr size_t kMaxAuth = 16;
     std::array<ChatAuth, kMaxAuth> _auth{};
     size_t _auth_count = 0;
+    static constexpr size_t kMaxPendingJobs = 4;
+    std::array<PendingJob, kMaxPendingJobs> _jobs{};
+    size_t _job_count = 0;
     static constexpr size_t kMaxConfigBytes = 8192;
     static constexpr size_t kConfigDocCapacity = 12288;
     DynamicJsonDocument _cfg_doc{kConfigDocCapacity};
@@ -257,6 +286,7 @@ private:
     static bool cmdLogs_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
 
     static bool cmdConfigSet_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
+    static bool cmdConfigGet_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
 
     static bool cmdAllowList_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
 
@@ -269,6 +299,10 @@ private:
     static bool cmdTime_(TelegramBot &bot, const TelegramClient::Update &u, String &reply);
 
     static bool handleDocument_(TelegramMenu &self, const TelegramClient::Update &u);
+    static void backgroundTask_(void *ctx);
+    void processBackground_();
+    bool enqueueJob_(const PendingJob &job);
+    bool dequeueJob_(PendingJob &job);
 
     static bool onText_(void *ctx, const TelegramClient::Update &u);
 
@@ -377,12 +411,13 @@ private:
         { "Назад", "/back", nullptr, nullptr },
     }};
 
-    static inline const std::array<TelegramBot::MenuItem, 7> kSettingsItems = {{
+    static inline const std::array<TelegramBot::MenuItem, 8> kSettingsItems = {{
         { "Перезапуск Wi-Fi", "/wifi_restart", nullptr, nullptr },
         { "Перезапуск ПЛК", "/plc_restart", nullptr, nullptr },
         { "Wi-Fi AP Вкл", "/wifi_ap_on", nullptr, nullptr },
         { "Wi-Fi AP Выкл", "/wifi_ap_off", nullptr, nullptr },
         { "Wi-Fi STA+AP", "/wifi_sta_ap", nullptr, nullptr },
+        { "Скачать config", "/config_get", nullptr, nullptr },
         { "Startup-config", "/config_set", nullptr, nullptr },
         { "Назад", "/back", nullptr, nullptr },
     }};
@@ -408,7 +443,7 @@ private:
         { "settings", "Настройки", kSettingsItems.data(), kSettingsItems.size(), "admin" },
     }};
 
-    static inline const std::array<TelegramBot::Command, 54> kCommands = {{
+    static inline const std::array<TelegramBot::Command, 55> kCommands = {{
         { "Админка", &TelegramMenu::cmdAdmin_ },
         { "/status", &TelegramMenu::cmdStatus_ },
         { "/wifi", &TelegramMenu::cmdWifi_ },
@@ -418,6 +453,7 @@ private:
         { "/wifi_ap_on", &TelegramMenu::cmdWifiApOn_ },
         { "/wifi_ap_off", &TelegramMenu::cmdWifiApOff_ },
         { "/wifi_sta_ap", &TelegramMenu::cmdWifiStaAp_ },
+        { "/config_get", &TelegramMenu::cmdConfigGet_ },
         { "/config_set", &TelegramMenu::cmdConfigSet_ },
         { "/allow_list", &TelegramMenu::cmdAllowList_ },
         { "/allow_add", &TelegramMenu::cmdAllowAdd_ },
