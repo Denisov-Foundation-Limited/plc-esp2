@@ -13,9 +13,10 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <WebSocketsClient.h>
 
 #include "controllers/thermo_controller.hpp"
+#include "core/network/cloud/cloud_transport.hpp"
+#include "core/network/cloud/cloud_ws_transport.hpp"
 #include "core/network/stack/stack_features.hpp"
 #include "core/network/stack/stack_protocol.hpp"
 #include "utils/users_registry.hpp"
@@ -49,6 +50,7 @@ public:
     void setStackCache(StackCache *cache);
     void setConfigsManager(ConfigsManagerIface *cfg);
     void setUsersRegistry(UsersRegistry *users);
+    void setTransport(CloudTransport &transport);
 
     void setEnabled(bool enabled);
     bool enabled() const;
@@ -75,7 +77,8 @@ private:
     static constexpr uint32_t kHelloSessionTimeoutMs = 60000;
     static constexpr uint32_t kWsSilentTimeoutMs = 180000;
     static constexpr uint32_t kWsReinitDisconnectedMs = 60000;
-    static constexpr uint32_t kSnapshotLockTimeoutMs = 50;
+    static constexpr uint32_t kSnapshotLockTimeoutMs = 250;
+    static constexpr uint32_t kSnapshotWarnIntervalMs = 5000;
     static constexpr uint32_t kFastReconnectMs = 2000;
 
     enum class StackPart : uint8_t
@@ -145,7 +148,8 @@ private:
     UsersRegistry *_users = nullptr;
 
     Config _cfg;
-    WebSocketsClient _ws;
+    CloudWsTransport _default_transport;
+    CloudTransport *_transport = nullptr;
     String _api_key;
     String _fw_version;
     String _session_id;
@@ -163,9 +167,11 @@ private:
     PendingStackCmd _stack_cmds[kMaxStackCmds] = {};
     uint16_t _next_stack_cmd_id = kStackCmdIdBase;
 
-    void onWsEvent_(WStype_t type, uint8_t *payload, size_t len);
-
     void handleMessage_(const uint8_t *payload, size_t len);
+
+    static void onTransportMessage_(void *ctx, const uint8_t *payload, size_t len);
+    static void onTransportEvent_(void *ctx, CloudTransport::Event event, const uint8_t *payload, size_t len);
+    void handleTransportEvent_(CloudTransport::Event event, const uint8_t *payload, size_t len);
 
     void sendHello_();
 

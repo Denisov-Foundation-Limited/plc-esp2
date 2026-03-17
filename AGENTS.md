@@ -359,6 +359,12 @@
   - структуры данных (features/parts/actions);
   - совместимости версии протокола.
 - Любые изменения в протоколе должны синхронно отражаться в прошивке и в облаке.
+- `CloudClient` не должен зависеть напрямую от `WebSocketsClient` или `HTTPClient`; transport-специфика выносится в `CloudTransport`.
+- Текущая реализация транспорта: `CloudWsTransport`; `CloudHttpTransport` пока каркасный и предназначен как точка будущего расширения.
+- При доработке облака разделять слои жёстко:
+  - `CloudClient` — protocol/session/business logic;
+  - `CloudTransport` — connect/disconnect/send/poll и события транспорта.
+- При смене транспорта нельзя дублировать или форкать cloud-протокол; transport меняется под `CloudClient`, а не наоборот.
 
 ## Кейс: рассинхрон Thermo (stack web tile) и шаблон для будущих контроллеров
 

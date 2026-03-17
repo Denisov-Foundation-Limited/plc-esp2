@@ -67,6 +67,7 @@ CloudClient::CloudClient(Logger &log, Controllers &controllers, PlcControl &plc,
       _wifi(wifi),
       _rtc(rtc)
 {
+    setTransport(_default_transport);
 }
 void CloudClient::setGsm(GsmModem *gsm)
 { _gsm = gsm; }
@@ -78,6 +79,12 @@ void CloudClient::setConfigsManager(ConfigsManagerIface *cfg)
 { _configs = cfg; }
 void CloudClient::setUsersRegistry(UsersRegistry *users)
 { _users = users; }
+void CloudClient::setTransport(CloudTransport &transport)
+{
+    _transport = &transport;
+    _transport->setMessageHandler(&CloudClient::onTransportMessage_, this);
+    _transport->setEventHandler(&CloudClient::onTransportEvent_, this);
+}
 void CloudClient::setEnabled(bool enabled)
 {
     if (enabled == _enabled)
@@ -86,7 +93,8 @@ void CloudClient::setEnabled(bool enabled)
     if (!_enabled)
     {
         _log.info(F("CLOUD"), F("Disabled"));
-        _ws.disconnect();
+        if (_transport)
+            _transport->disconnect();
         _session_id = "";
         clearPending_();
     }
@@ -98,10 +106,11 @@ void CloudClient::setEnabled(bool enabled)
 bool CloudClient::enabled() const
 { return _enabled; }
 bool CloudClient::isConnected() const
-{ return const_cast<WebSocketsClient &>(_ws).isConnected(); }
+{ return _transport ? _transport->isConnected() : false; }
 void CloudClient::disconnect()
 {
-    _ws.disconnect();
+    if (_transport)
+        _transport->disconnect();
     _session_id = "";
     clearPending_();
 }
@@ -115,7 +124,9 @@ void CloudClient::begin(const CloudClient::Config &cfg)
 {
     if (!_enabled)
         return;
-    _ws.disconnect();
+    if (!_transport)
+        return;
+    _transport->disconnect();
     _session_id = "";
     _last_connect_ms = 0;
     _last_rx_ms = 0;
@@ -130,13 +141,13 @@ void CloudClient::begin(const CloudClient::Config &cfg)
               _cfg.host.c_str(), _cfg.port,
               _cfg.use_ssl ? " ssl " : " ",
               _cfg.path.c_str());
-    _ws.onEvent([this](WStype_t t, uint8_t *p, size_t l) { onWsEvent_(t, p, l); });
-    _ws.setReconnectInterval(_cfg.reconnect_ms);
-    _ws.setExtraHeaders("");
-    if (_cfg.use_ssl)
-        _ws.beginSSL(_cfg.host.c_str(), _cfg.port, _cfg.path.c_str(), nullptr, "arduino");
-    else
-        _ws.begin(_cfg.host.c_str(), _cfg.port, _cfg.path.c_str(), "arduino");
+    CloudTransport::Config transport_cfg;
+    transport_cfg.host = _cfg.host;
+    transport_cfg.port = _cfg.port;
+    transport_cfg.path = _cfg.path;
+    transport_cfg.use_ssl = _cfg.use_ssl;
+    transport_cfg.reconnect_ms = _cfg.reconnect_ms;
+    _transport->begin(transport_cfg);
     if (_stack_master)
         _stack_master->setFrameHandlerSecondary(&CloudClient::onStackFrame_, this);
 }
@@ -149,7 +160,7 @@ void CloudClient::loop()
     if (!_wifi.isConnected())
     {
         if (isConnected())
-            _ws.disconnect();
+            _transport->disconnect();
         handlePendingTimeouts_();
         return;
     }
@@ -160,17 +171,33 @@ void CloudClient::loop()
         handlePendingTimeouts_();
         return;
     }
-    _ws.loop();
+    _transport->loop();
     maintainConnectionHealth_();
     handlePendingTimeouts_();
     if (_event_interval_ms)
         maybeSendPeriodicEvent_();
 }
-void CloudClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
+void CloudClient::onTransportMessage_(void *ctx, const uint8_t *payload, size_t len)
 {
-    switch (type)
+    if (!ctx || !payload || len == 0)
+        return;
+    auto *self = static_cast<CloudClient *>(ctx);
+    self->_last_rx_ms = millis();
+    self->handleMessage_(payload, len);
+}
+
+void CloudClient::onTransportEvent_(void *ctx, CloudTransport::Event event, const uint8_t *payload, size_t len)
+{
+    if (!ctx)
+        return;
+    static_cast<CloudClient *>(ctx)->handleTransportEvent_(event, payload, len);
+}
+
+void CloudClient::handleTransportEvent_(CloudTransport::Event event, const uint8_t *payload, size_t len)
+{
+    switch (event)
     {
-    case WStype_CONNECTED:
+    case CloudTransport::Event::Connected:
         _session_id = "";
         _last_connect_ms = millis();
         _last_rx_ms = _last_connect_ms;
@@ -181,7 +208,7 @@ void CloudClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
         _log.info(F("CLOUD"), F("WS connected: path: %s"), _cfg.path.c_str());
         sendHello_();
         break;
-    case WStype_ERROR:
+    case CloudTransport::Event::Error:
     {
         // WebSocketsClient doesn't expose structured error details here,
         // but payload sometimes contains a textual hint.
@@ -202,14 +229,7 @@ void CloudClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
         _reconnect_backoff_until_ms = millis() + wait_ms;
         break;
     }
-    case WStype_TEXT:
-        if (payload && len)
-        {
-            _last_rx_ms = millis();
-            handleMessage_(payload, len);
-        }
-        break;
-    case WStype_DISCONNECTED:
+    case CloudTransport::Event::Disconnected:
     {
         const String session = _session_id;
         _last_disconnect_ms = millis();
@@ -378,7 +398,7 @@ void CloudClient::maintainConnectionHealth_()
             (int32_t)(now - _last_connect_ms) >= (int32_t)kHelloSessionTimeoutMs)
         {
             _log.warn(F("CLOUD"), F("Session timeout, reconnect"));
-            _ws.disconnect();
+            _transport->disconnect();
             return;
         }
     }
@@ -387,7 +407,7 @@ void CloudClient::maintainConnectionHealth_()
         (int32_t)(now - _last_rx_ms) >= (int32_t)kWsSilentTimeoutMs)
     {
         _log.warn(F("CLOUD"), F("WS silent timeout, reconnect"));
-        _ws.disconnect();
+        _transport->disconnect();
     }
 }
 void CloudClient::sendPong_(const String &reply_to, JsonVariantConst payload)
@@ -1403,7 +1423,13 @@ void CloudClient::fillMeteo_(JsonArray out)
     auto guard = _controllers.meteo().lockGuard(kSnapshotLockTimeoutMs);
     if (!guard.locked())
     {
-        _log.warn(F("CLOUD"), F("Snapshot lock timeout: meteo"));
+        static uint32_t last_warn_ms = 0;
+        const uint32_t now = millis();
+        if (last_warn_ms == 0 || (uint32_t)(now - last_warn_ms) >= kSnapshotWarnIntervalMs)
+        {
+            last_warn_ms = now;
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: meteo"));
+        }
         return;
     }
     for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
@@ -1655,7 +1681,20 @@ void CloudClient::fillAvr_(JsonObject out)
     auto guard = _controllers.avr().lockGuard(kSnapshotLockTimeoutMs);
     if (!guard.locked())
     {
-        _log.warn(F("CLOUD"), F("Snapshot lock timeout: avr"));
+        static uint32_t last_warn_ms = 0;
+        const uint32_t now = millis();
+        if (last_warn_ms == 0 || (uint32_t)(now - last_warn_ms) >= kSnapshotWarnIntervalMs)
+        {
+            last_warn_ms = now;
+#if RTOS_LOCK_DIAG
+            const char *owner = _controllers.avr().lockOwnerName();
+            const uint32_t held_ms = _controllers.avr().lockHeldMs();
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: avr owner: %s held_ms: %lu"),
+                      owner ? owner : "-", (unsigned long)held_ms);
+#else
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: avr"));
+#endif
+        }
         return;
     }
     const auto &cfg = _controllers.avr().config();
@@ -2365,7 +2404,10 @@ void CloudClient::sendJson_(JsonDocument &doc)
     String out;
     serializeJson(doc, out);
     if (out.length())
-        _ws.sendTXT(out);
+    {
+        if (!_transport || !_transport->sendText(out))
+            _log.warn(F("CLOUD"), F("Transport tx failed"));
+    }
     else
     {
         _log.warn(F("CLOUD"), F("WS tx skipped: empty json"));

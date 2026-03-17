@@ -15,6 +15,18 @@
 
 #include "boards/board_profile.hpp"
 
+namespace
+{
+bool sameMeteoSensorConfig_(const MeteoController::SensorConfig &a, const MeteoController::SensorConfig &b)
+{
+    if (a.id != b.id || a.enabled != b.enabled || a.type != b.type ||
+        a.dht_pin != b.dht_pin || a.ds18_addr_set != b.ds18_addr_set ||
+        a.source_node_id != b.source_node_id || a.source_sensor_id != b.source_sensor_id)
+        return false;
+    return memcmp(a.ds18_addr, b.ds18_addr, MeteoController::kAddrLen) == 0;
+}
+}
+
 MeteoController::MeteoController(OneWireManager &ow, Logger &logs) : _ow(ow), _logs(logs){ reset_(); }
 
 void MeteoController::setRemoteMeteoProvider(MeteoController::RemoteMeteoProvider cb, void *ctx){
@@ -77,19 +89,114 @@ void MeteoController::owUnlockCb_(void *ctx)
 }
 
 void MeteoController::task(){
+    const uint32_t now = millis();
+    size_t selected_idx = kSensorCount;
+    SensorConfig selected_cfg{};
+    RemoteMeteoProvider remote_cb = nullptr;
+    void *remote_ctx = nullptr;
+
+    {
+        auto guard = _lock.guard();
+        if (!_controller_enabled)
+            return;
+        for (size_t i = 0; i < kSensorCount; ++i)
+        {
+            const size_t idx = (_scan_index + i) % kSensorCount;
+            const SensorConfig &cfg = _cfg[idx];
+            const SensorState &st = _state[idx];
+            if (!cfg.enabled)
+                continue;
+            if (cfg.source_node_id && cfg.source_sensor_id)
+            {
+                if (st.last_read_ms && (uint32_t)(now - st.last_read_ms) < kRemoteIntervalMs)
+                    continue;
+            }
+            else
+            {
+                if (cfg.type == SensorType::None)
+                    continue;
+                const uint32_t interval = (cfg.type == SensorType::Dht22) ? kDht22IntervalMs : kDs18b20IntervalMs;
+                if (st.last_read_ms && (uint32_t)(now - st.last_read_ms) < interval)
+                    continue;
+                if (cfg.type == SensorType::Ds18b20)
+                {
+                    updateDs18Conversion_(now);
+                    if (_ds_conv_pending || !_ds_conv_ready)
+                        continue;
+                }
+            }
+            selected_idx = idx;
+            selected_cfg = cfg;
+            remote_cb = _remote_cb;
+            remote_ctx = _remote_ctx;
+            break;
+        }
+    }
+
+    if (selected_idx >= kSensorCount)
+        return;
+
+    bool ok = false;
+    bool has_temp = false;
+    bool has_hum = false;
+    float temp_c = 0.0f;
+    float hum = 0.0f;
+    bool reset_ds_cycle = false;
+
+    if (selected_cfg.source_node_id && selected_cfg.source_sensor_id)
+    {
+        if (remote_cb)
+            remote_cb(remote_ctx, selected_cfg.source_node_id, selected_cfg.source_sensor_id,
+                      temp_c, has_temp, hum, has_hum, ok);
+    }
+    else if (selected_cfg.type == SensorType::Ds18b20)
+    {
+        if (_ds_bus && selected_cfg.ds18_addr_set)
+        {
+            uint8_t addr[kAddrLen] = {};
+            for (uint8_t i = 0; i < kAddrLen; ++i)
+                addr[i] = selected_cfg.ds18_addr[i];
+            bool read_ok = _ds18b20.readTempCNoWait(addr, temp_c);
+            if (!read_ok)
+                read_ok = _ds18b20.readTempC(addr, temp_c);
+            ok = read_ok;
+            has_temp = read_ok;
+            if (!read_ok)
+                reset_ds_cycle = true;
+        }
+    }
+    else if (selected_cfg.type == SensorType::Dht22)
+    {
+        ok = readDht22_(selected_cfg, temp_c, has_temp, hum, has_hum);
+    }
+
     auto guard = _lock.guard();
     if (!_controller_enabled)
         return;
-    const uint32_t now = millis();
-    for (size_t i = 0; i < kSensorCount; ++i)
+    _scan_index = (selected_idx + 1) % kSensorCount;
+    if (!sameMeteoSensorConfig_(_cfg[selected_idx], selected_cfg))
+        return;
+
+    if (selected_cfg.type == SensorType::Ds18b20 && !ok)
     {
-        const size_t idx = (_scan_index + i) % kSensorCount;
-        if (readIfDue_(idx, now))
+        const bool prev_ok = _state[selected_idx].ok;
+        if (prev_ok && _ds_bus && selected_cfg.ds18_addr_set)
         {
-            _scan_index = (idx + 1) % kSensorCount;
-            return;
+            char hex[17] = {};
+            formatHexAddr(selected_cfg.ds18_addr, hex);
+            String name = selected_cfg.name.length() ? selected_cfg.name : String((unsigned)selected_cfg.id);
+            _logs.warn(F("METEO"), F("DS18 read failed: id: %u name: %s addr: %s"),
+                       (unsigned)selected_cfg.id, name.c_str(), hex);
+        }
+        if (reset_ds_cycle)
+        {
+            _ds_conv_ready = false;
+            _ds_conv_pending = false;
+            _ds_last_conv_ms = 0;
         }
     }
+    applyReadResult_(selected_cfg, _state[selected_idx], ok, has_temp, temp_c, has_hum, hum);
+    _state[selected_idx].last_read_ms = now;
 }
 
 void MeteoController::applyConfig(JsonArrayConst sensors){

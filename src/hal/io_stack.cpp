@@ -74,7 +74,6 @@ void IoStack::initImages()
 
 void IoStack::scanInputs()
 {
-    auto guard = _lock.guard();
     const uint32_t now = millis_();
     for (uint8_t i = 0; i < PORT_COUNT; ++i)
     {
@@ -84,6 +83,7 @@ void IoStack::scanInputs()
         if (has(p.caps, Cap::Input))
         {
             const bool raw = _portio.read(i);
+            auto guard = _lock.guard();
             if (raw != _raw_inputs[i])
             {
                 _raw_inputs[i] = raw;
@@ -99,7 +99,6 @@ void IoStack::scanInputs()
 
 void IoStack::applyOutputs()
 {
-    auto guard = _lock.guard();
     for (uint8_t i = 0; i < PORT_COUNT; ++i)
     {
         const auto &p = _portio.desc(i);
@@ -107,12 +106,26 @@ void IoStack::applyOutputs()
             continue;
         if (!has(p.caps, Cap::Output) || has(p.caps, Cap::InputOnly))
             continue;
-        const bool v = _outputs[i];
-        if (_dirty[i] || _applied[i] != v)
+        bool should_apply = false;
+        bool v = false;
+        {
+            auto guard = _lock.guard();
+            v = _outputs[i];
+            should_apply = _dirty[i] || _applied[i] != v;
+        }
+        if (should_apply)
         {
             _portio.write(i, v);
-            _applied[i] = v;
-            _dirty[i] = false;
+            auto guard = _lock.guard();
+            if (_outputs[i] == v)
+            {
+                _applied[i] = v;
+                _dirty[i] = false;
+            }
+            else
+            {
+                _dirty[i] = true;
+            }
         }
     }
     _portio.loop();

@@ -13,6 +13,35 @@
 
 #include "hal/gpio/gpio_caps.hpp"
 
+namespace
+{
+bool sameAvrConfig_(const AvrController::Config &a, const AvrController::Config &b)
+{
+    return a.enabled == b.enabled &&
+           a.auto_mode == b.auto_mode &&
+           a.prefer_main == b.prefer_main &&
+           a.auto_return_main == b.auto_return_main &&
+           a.main_ok_port == b.main_ok_port &&
+           a.reserve_ok_port == b.reserve_ok_port &&
+           a.relay_main_port == b.relay_main_port &&
+           a.relay_reserve_port == b.relay_reserve_port &&
+           a.feedback_main_port == b.feedback_main_port &&
+           a.feedback_reserve_port == b.feedback_reserve_port &&
+           a.main_ok_active_low == b.main_ok_active_low &&
+           a.reserve_ok_active_low == b.reserve_ok_active_low &&
+           a.feedback_main_active_low == b.feedback_main_active_low &&
+           a.feedback_reserve_active_low == b.feedback_reserve_active_low &&
+           a.relay_main_invert == b.relay_main_invert &&
+           a.relay_reserve_invert == b.relay_reserve_invert &&
+           a.debounce_ms == b.debounce_ms &&
+           a.loss_delay_ms == b.loss_delay_ms &&
+           a.return_delay_ms == b.return_delay_ms &&
+           a.break_ms == b.break_ms &&
+           a.warmup_ms == b.warmup_ms &&
+           a.transfer_timeout_ms == b.transfer_timeout_ms;
+}
+}
+
 AvrController::AvrController(Gpio &gpio, Logger &logs, TelegramBot &bot, TelegramAllowedUsersProvider &users)
  : _gpio(gpio), _logs(logs), _tgbot(bot), _tgusers(users){}
 
@@ -35,9 +64,18 @@ void AvrController::task(){
     String main_notify;
     String source_notify;
     bool flush_notify = false;
+    Config cfg_snapshot{};
+    InputSample sample{};
     {
         auto guard = _lock.guard();
-        updateInputs_();
+        cfg_snapshot = _cfg;
+    }
+    sampleInputs_(cfg_snapshot, sample);
+    {
+        auto guard = _lock.guard();
+        if (!sameAvrConfig_(_cfg, cfg_snapshot))
+            return;
+        applyInputSample_(sample, millis());
         if (!_cfg.enabled)
         {
             if (_st.active_source != Source::Off || _st.relay_main_on || _st.relay_reserve_on)
@@ -434,7 +472,7 @@ void AvrController::parseMs_(JsonVariantConst v, uint32_t &out){
     out = (uint32_t)v.as<unsigned>();
 }
 
-bool AvrController::readInput_(uint8_t port, bool active_low, bool &out){
+bool AvrController::readInput_(uint8_t port, bool active_low, bool &out) const{
     if (port == kInvalidPort)
         return false;
     bool raw = false;
@@ -467,18 +505,22 @@ bool AvrController::updateDebounce_(AvrController::InputDebounce &db, bool value
     return false;
 }
 
-void AvrController::updateInputs_(){
-    const uint32_t now = millis();
-    bool val = false;
-    if (readInput_(_cfg.main_ok_port, _cfg.main_ok_active_low, val))
-        updateDebounce_(_main_ok_db, val, now);
-    if (readInput_(_cfg.reserve_ok_port, _cfg.reserve_ok_active_low, val))
-        updateDebounce_(_reserve_ok_db, val, now);
-    if (readInput_(_cfg.feedback_main_port, _cfg.feedback_main_active_low, val))
-        updateDebounce_(_fb_main_db, val, now);
-    if (readInput_(_cfg.feedback_reserve_port, _cfg.feedback_reserve_active_low, val))
-        updateDebounce_(_fb_reserve_db, val, now);
+void AvrController::sampleInputs_(const AvrController::Config &cfg, AvrController::InputSample &sample) const{
+    sample.has_main_ok = readInput_(cfg.main_ok_port, cfg.main_ok_active_low, sample.main_ok);
+    sample.has_reserve_ok = readInput_(cfg.reserve_ok_port, cfg.reserve_ok_active_low, sample.reserve_ok);
+    sample.has_fb_main = readInput_(cfg.feedback_main_port, cfg.feedback_main_active_low, sample.fb_main);
+    sample.has_fb_reserve = readInput_(cfg.feedback_reserve_port, cfg.feedback_reserve_active_low, sample.fb_reserve);
+}
 
+void AvrController::applyInputSample_(const AvrController::InputSample &sample, uint32_t now){
+    if (sample.has_main_ok)
+        updateDebounce_(_main_ok_db, sample.main_ok, now);
+    if (sample.has_reserve_ok)
+        updateDebounce_(_reserve_ok_db, sample.reserve_ok, now);
+    if (sample.has_fb_main)
+        updateDebounce_(_fb_main_db, sample.fb_main, now);
+    if (sample.has_fb_reserve)
+        updateDebounce_(_fb_reserve_db, sample.fb_reserve, now);
     _st.main_ok = _main_ok_db.stable;
     _st.reserve_ok = _reserve_ok_db.stable;
     _st.fb_main_on = _fb_main_db.stable;
