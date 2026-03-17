@@ -15,6 +15,7 @@ size_t WebInterfaceControllersLightsHelper::lightsLocalRenderCount_(const WebInt
         if (!web._controllers)
             return 0;
         SocketController &sockets = web._controllers->sockets();
+        auto guard = sockets.lockGuard();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < SocketController::kLightCount; ++i)
         {
@@ -176,11 +177,11 @@ void WebInterfaceControllersLightsHelper::handleStackLightsToggle_(WebInterface 
             return;
         }
 
-        // Immediately request a fresh snapshot; keep response pending to avoid stale cache flicker.
+        // Immediately request a fresh snapshot; the switch request itself returns simple ack.
         web.requestStackLights_(node_id);
         (void)desired_known;
         (void)desired;
-        web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+        web.sendText_(request, 200, "text/plain", "OK", set_cookie);
     }
 
 bool WebInterfaceControllersLightsHelper::requestStackLights_(WebInterface &web, uint32_t node_id) {
@@ -200,6 +201,7 @@ String WebInterfaceControllersLightsHelper::listLightsHtml_(WebInterface &web, u
             reserve = 16384u;
         items.reserve(reserve);
         SocketController &sockets = web._controllers->sockets();
+        auto guard = sockets.lockGuard();
         bool tmp_state = false;
         auto appendRow = [&](const SocketController::LightConfig &cfg, bool enabled) {
             const bool can_edit = web.webSessionIsAdmin_();

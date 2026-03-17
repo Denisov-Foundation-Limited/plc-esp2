@@ -111,10 +111,6 @@ bool Network::begin()
         _logs.warn(F("NET"), F("Web interface FS init failed"));
         return false;
     }
-    _logs.info(F("NET"), F("Bind Telegram bot"));
-    _bot.bind(_tgbot);
-    _logs.info(F("NET"), F("Init Telegram menu"));
-    _menu.begin();
     _logs.info(F("NET"), F("Register Web routes"));
     _fw_upgrade.registerRoutes();
     _logs.info(F("NET"), F("Start Web server"));
@@ -122,9 +118,7 @@ bool Network::begin()
     _logs.info(F("NET"), F("Configure Telegram network"));
     if (!configureTelegram_(ActiveBoardProfile::TELEGRAM_NET))
         return false;
-    _logs.info(F("NET"), F("Enable Telegram auto poll"));
-    _tgbot.setAutoPollIntervalMs(kTelegramPollIntervalMs);
-    _tgbot.enableAutoPoll(true, kTelegramPollTimeoutSec);
+    _logs.info(F("NET"), F("Telegram polling disabled, notifications only"));
     _logs.info(F("NET"), F("Init Stack"));
     beginStack_();
     _started = true;

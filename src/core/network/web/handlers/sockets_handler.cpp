@@ -11,9 +11,56 @@
 
 #include "core/network/web/handlers/sockets_handler.hpp"
 
+#include <atomic>
+
+#if defined(ESP32)
+#include <esp_heap_caps.h>
+#endif
+
 #include "core/network/web/web_interface.hpp"
 
+namespace
+{
+constexpr uint32_t kSocketsMinIntervalMs = 250u;
+constexpr uint32_t kSocketsPortsMinIntervalMs = 400u;
+constexpr uint32_t kSocketsLowHeapBytes = 20u * 1024u;
+constexpr uint32_t kSocketsLocalPortsCacheMs = 3000u;
+
+std::atomic<uint32_t> g_last_sockets_request_ms{0};
+std::atomic<uint32_t> g_last_sockets_ports_request_ms{0};
+std::atomic<bool> g_sockets_request_inflight{false};
+std::atomic<bool> g_sockets_ports_request_inflight{false};
+String g_sockets_local_ports_cache_body;
+uint32_t g_sockets_local_ports_cache_built_ms = 0;
+bool g_sockets_local_ports_cache_valid = false;
+
+bool requestTooFrequent_(std::atomic<uint32_t> &stamp, uint32_t now_ms, uint32_t min_interval_ms)
+{
+    const uint32_t prev = stamp.load(std::memory_order_relaxed);
+    if (prev != 0 && (uint32_t)(now_ms - prev) < min_interval_ms)
+        return true;
+    stamp.store(now_ms, std::memory_order_relaxed);
+    return false;
+}
+
+bool localSocketsPortsCacheFresh_(uint32_t now_ms)
+{
+    return g_sockets_local_ports_cache_valid &&
+           g_sockets_local_ports_cache_body.length() != 0 &&
+           (uint32_t)(now_ms - g_sockets_local_ports_cache_built_ms) < kSocketsLocalPortsCacheMs;
+}
+
+void invalidateLocalSocketsPortsCache_()
+{
+    g_sockets_local_ports_cache_valid = false;
+    g_sockets_local_ports_cache_built_ms = 0;
+    g_sockets_local_ports_cache_body = "";
+}
+}
+
 void SocketsHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
+        server.on("/sockets/list", HTTP_GET,
+                  [&web](AsyncWebServerRequest *request) { handleSocketsList(web, request); });
         server.on("/sockets/ports_options", HTTP_GET,
                   [&web](AsyncWebServerRequest *request) { handleSocketsPortsOptions(web, request); });
         server.on("/sockets/toggle", HTTP_POST,
@@ -36,6 +83,26 @@ void SocketsHandler::handleSockets(WebInterface &web, AsyncWebServerRequest *req
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Sockets, node_id))
             return;
+        const uint32_t started_ms = millis();
+        const uint32_t free_heap0 = ESP.getFreeHeap();
+        if (g_sockets_request_inflight.exchange(true, std::memory_order_acq_rel))
+        {
+            if (web._log)
+                web._log->warn(F("WEB"), F("/sockets inflight shed: node: %lu heap: %lu"),
+                               (unsigned long)node_id, (unsigned long)free_heap0);
+            web.sendText_(request, 503, "text/plain", "WEB busy", set_cookie);
+            return;
+        }
+        if (free_heap0 < kSocketsLowHeapBytes ||
+            requestTooFrequent_(g_last_sockets_request_ms, started_ms, kSocketsMinIntervalMs))
+        {
+            if (web._log)
+                web._log->warn(F("WEB"), F("/sockets shed: node: %lu heap: %lu"),
+                               (unsigned long)node_id, (unsigned long)free_heap0);
+            g_sockets_request_inflight.store(false, std::memory_order_release);
+            web.sendText_(request, 503, "text/plain", "WEB busy", set_cookie);
+            return;
+        }
         String page = FPSTR(kWebInterfaceSocketsHtml);
         page.replace("%NAV%", web.navHtml_());
         const uint8_t page_size = 8u;
@@ -82,8 +149,7 @@ void SocketsHandler::handleSockets(WebInterface &web, AsyncWebServerRequest *req
         }
         const size_t extra = 4096u + (size_t)page_size * 900u;
         page.reserve(page.length() + extra);
-        page.replace("%SOCKETS%", stack_view ? web.listStackSocketsHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size)
-                                             : web.listSocketsHtml_(start, end));
+        page.replace("%SOCKETS%", "<div class=\"tile empty\">Loading...</div>");
         page.replace("%SOCKETS_PAGE_TITLE%", WebUiRu::Sockets::kPageTitle);
         page.replace("%SOCKETS_PAGE_PREV%", WebUiRu::Sockets::kPagePrev);
         page.replace("%SOCKETS_PAGE_LABEL%", WebUiRu::Sockets::kPagePage);
@@ -95,13 +161,11 @@ void SocketsHandler::handleSockets(WebInterface &web, AsyncWebServerRequest *req
         if (stack_view)
         {
             const auto *pcache = web._stack_cache ? web._stack_cache->portsCache(node_id) : nullptr;
-            const String djson = web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput);
-            const String rjson = web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay);
             (void)pcache;
-            page.replace("%DINPUT_JSON%", djson);
-            page.replace("%RELAY_JSON%", rjson);
-            page.replace("%DINPUT_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput));
-            page.replace("%RELAY_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay));
+            page.replace("%DINPUT_JSON%", "[]");
+            page.replace("%RELAY_JSON%", "[]");
+            page.replace("%DINPUT_USED_JSON%", "[]");
+            page.replace("%RELAY_USED_JSON%", "[]");
             page.replace("%SOCKETS_STATUS%", web.stackSocketsStatusText_(node_id));
             page.replace("%SOCKETS_PAGINATION_STYLE%", (groups_available || max_pages <= 1) ? "style=\"display:none\"" : "");
             page.replace("%SOCKETS_SAVE_BTN%", web.webSessionIsAdmin_() ? String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>" : "");
@@ -120,10 +184,10 @@ void SocketsHandler::handleSockets(WebInterface &web, AsyncWebServerRequest *req
         }
         else
         {
-            page.replace("%DINPUT_JSON%", web.socketPortOptionsJson_(PortIO::PinType::DInput));
-            page.replace("%RELAY_JSON%", web.socketPortOptionsJson_(PortIO::PinType::Relay));
-            page.replace("%DINPUT_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::DInput));
-            page.replace("%RELAY_USED_JSON%", web.globalUsedPortsJson_(PortIO::PinType::Relay));
+            page.replace("%DINPUT_JSON%", "[]");
+            page.replace("%RELAY_JSON%", "[]");
+            page.replace("%DINPUT_USED_JSON%", "[]");
+            page.replace("%RELAY_USED_JSON%", "[]");
             page.replace("%SOCKETS_STATUS%", web._sockets_status);
             page.replace("%SOCKETS_PAGINATION_STYLE%", groups_available ? "style=\"display:none\"" : "");
             page.replace("%SOCKETS_SAVE_BTN%", web.webSessionIsAdmin_() ? String("<button class=\"btn\" type=\"submit\">") + WebUiRu::kSave + "</button>" : "");
@@ -135,7 +199,55 @@ void SocketsHandler::handleSockets(WebInterface &web, AsyncWebServerRequest *req
                      web.composeTopFiltersHtml_(web.socketsDeviceSelectHtml_(node_id, stack_view),
                                                 groups_available ? web.groupFilterHtml_("sockets-group-filter", stack_view ? node_id : 0u) : String("")));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
+        g_sockets_request_inflight.store(false, std::memory_order_release);
         web.sendHtmlRaw_(request, page, set_cookie);
+    }
+
+void SocketsHandler::handleSocketsList(WebInterface &web, AsyncWebServerRequest *request) {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Sockets, node_id))
+            return;
+
+        const bool stack_view = web.isStackSocketsView_(node_id);
+        const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
+        const uint8_t page_size = 8u;
+        const String page_str = web.paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+
+        uint8_t max_pages = 1;
+        uint8_t start = 1;
+        uint8_t end = SocketController::kSocketCount;
+        if (!stack_view && !groups_available)
+        {
+            const size_t visible = web.socketsLocalRenderCount_();
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            start = (uint8_t)(page_idx * page_size + 1);
+            end = (uint8_t)(start + page_size - 1);
+        }
+        else if (stack_view)
+        {
+            const size_t visible = web.stackSocketsVisibleCount_(node_id);
+            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+
+        const String html = stack_view
+                                ? web.listStackSocketsHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                            groups_available ? SIZE_MAX : page_size)
+                                : web.listSocketsHtml_(start, end);
+        web.sendText_(request, 200, "text/html; charset=utf-8", html, set_cookie);
     }
 
 void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest *request, const char *redirect) {
@@ -331,6 +443,7 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
             return;
         }
         SocketController &sockets = web._controllers->sockets();
+        auto sockets_guard = sockets.lockGuard();
         bool ok = true;
         bool changed = false;
         for (size_t i = 0; i < SocketController::kSocketCount; ++i)
@@ -419,6 +532,12 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
                 web._sockets_status = "Save failed";
             }
         }
+        if (changed && web._controllers)
+            web._controllers->invalidateGpioUsageCache();
+        if (ok)
+            invalidateLocalSocketsPortsCache_();
+        if (changed && web._controllers)
+            web._controllers->invalidateGpioUsageCache();
         if (ok)
             web._sockets_status = changed ? "Updated" : "Saved";
         web.sendRedirect_(request, redirect ? redirect : "/sockets", set_cookie);
@@ -458,6 +577,12 @@ void SocketsHandler::handleSocketsToggle(WebInterface &web, AsyncWebServerReques
             return;
         }
         SocketController &sockets = web._controllers->sockets();
+        auto sockets_guard = sockets.lockGuard(300);
+        if (!sockets_guard.locked())
+        {
+            web.sendText_(request, 503, "text/plain", "Controller busy", set_cookie);
+            return;
+        }
         if (id == 0 || !sockets.config(id))
         {
             web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
@@ -473,25 +598,19 @@ void SocketsHandler::handleSocketsToggle(WebInterface &web, AsyncWebServerReques
         const bool state_poll = (action == "state");
         if (action == "state")
         {
-            ok = sockets.relayStateById(id, state);
+            ok = sockets.relayStateById(id, state, 300);
         }
         else if (action.length() == 0 || action == "toggle")
         {
-            ok = sockets.toggleRelayById(id);
-            if (ok)
-                ok = sockets.relayStateById(id, state);
+            ok = sockets.toggleRelayById(id, 300);
         }
         else if (action == "on")
         {
-            ok = sockets.setRelayById(id, true);
-            if (ok)
-                ok = sockets.relayStateById(id, state);
+            ok = sockets.setRelayById(id, true, 300);
         }
         else if (action == "off")
         {
-            ok = sockets.setRelayById(id, false);
-            if (ok)
-                ok = sockets.relayStateById(id, state);
+            ok = sockets.setRelayById(id, false, 300);
         }
         if (!ok)
         {
@@ -510,7 +629,7 @@ void SocketsHandler::handleSocketsToggle(WebInterface &web, AsyncWebServerReques
                 web._log->info(F("WEB"), F("Sockets toggle ok: id: %u name: %s action: %s"),
                                (unsigned)id, name, action.c_str());
         }
-        web.sendText_(request, 200, "text/plain", state ? "on" : "off", set_cookie);
+        web.sendText_(request, 200, "text/plain", state_poll ? (state ? "on" : "off") : "OK", set_cookie);
     }
 
 void SocketsHandler::handleSocketsPortsOptions(WebInterface &web, AsyncWebServerRequest *request) {
@@ -520,7 +639,42 @@ void SocketsHandler::handleSocketsPortsOptions(WebInterface &web, AsyncWebServer
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Sockets, node_id))
             return;
+        const uint32_t started_ms = millis();
         const bool stack_view = web.isStackSocketsView_(node_id);
+        const uint32_t free_heap0 = ESP.getFreeHeap();
+        if (!stack_view && localSocketsPortsCacheFresh_(started_ms))
+        {
+            web.sendText_(request, 200, "application/json", g_sockets_local_ports_cache_body, set_cookie);
+            return;
+        }
+        if (g_sockets_ports_request_inflight.exchange(true, std::memory_order_acq_rel))
+        {
+            if (web._log)
+                web._log->warn(F("WEB"), F("/sockets/ports_options inflight shed: node: %lu heap: %lu"),
+                               (unsigned long)node_id, (unsigned long)free_heap0);
+            if (!stack_view && g_sockets_local_ports_cache_valid && g_sockets_local_ports_cache_body.length())
+            {
+                web.sendText_(request, 200, "application/json", g_sockets_local_ports_cache_body, set_cookie);
+                return;
+            }
+            web.sendText_(request, 503, "text/plain", "WEB busy", set_cookie);
+            return;
+        }
+        if (free_heap0 < kSocketsLowHeapBytes ||
+            requestTooFrequent_(g_last_sockets_ports_request_ms, started_ms, kSocketsPortsMinIntervalMs))
+        {
+            if (web._log)
+                web._log->warn(F("WEB"), F("/sockets/ports_options shed: node: %lu heap: %lu"),
+                               (unsigned long)node_id, (unsigned long)free_heap0);
+            g_sockets_ports_request_inflight.store(false, std::memory_order_release);
+            if (!stack_view && g_sockets_local_ports_cache_valid && g_sockets_local_ports_cache_body.length())
+            {
+                web.sendText_(request, 200, "application/json", g_sockets_local_ports_cache_body, set_cookie);
+                return;
+            }
+            web.sendText_(request, 503, "text/plain", "WEB busy", set_cookie);
+            return;
+        }
         if (stack_view)
             web.requestStackPorts_(node_id);
 
@@ -550,6 +704,13 @@ void SocketsHandler::handleSocketsPortsOptions(WebInterface &web, AsyncWebServer
         body += ",\"relay_used\":";
         body += ruse;
         body += "}";
+        if (!stack_view)
+        {
+            g_sockets_local_ports_cache_body = body;
+            g_sockets_local_ports_cache_built_ms = started_ms;
+            g_sockets_local_ports_cache_valid = true;
+        }
+        g_sockets_ports_request_inflight.store(false, std::memory_order_release);
         web.sendText_(request, 200, "application/json", body, set_cookie);
     }
 
@@ -583,6 +744,7 @@ void SocketsHandler::handleSocketsEnable(WebInterface &web, AsyncWebServerReques
             return;
         }
         SocketController &sockets = web._controllers->sockets();
+        auto sockets_guard = sockets.lockGuard();
         if (id == 0 || !sockets.config(id))
         {
             String dbg = String("{\"ok\":false,\"err\":\"invalid id\"");
@@ -604,6 +766,8 @@ void SocketsHandler::handleSocketsEnable(WebInterface &web, AsyncWebServerReques
             web.sendText_(request, 400, "application/json", dbg, set_cookie);
             return;
         }
+        invalidateLocalSocketsPortsCache_();
+        web._controllers->invalidateGpioUsageCache();
         if (!web._configs_manager)
         {
             web._sockets_status = "Config manager missing";

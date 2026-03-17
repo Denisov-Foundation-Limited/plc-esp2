@@ -14,6 +14,7 @@
 #include "core/network/web/web_interface.hpp"
 
 void WateringHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
+        server.on("/watering/list", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleWateringList(web, request); });
         server.on("/watering/state", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleWateringState(web, request); });
         server.on("/watering", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleWateringSave(web, request); });
         server.on("/watering", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleWatering(web, request); });
@@ -65,6 +66,7 @@ void WateringHandler::handleWateringState(WebInterface &web, AsyncWebServerReque
                 return;
             }
             WateringController &watering = web._controllers->watering();
+            auto watering_guard = watering.lockGuard();
             for (size_t i = 0; i < WateringController::kRuleCount; ++i)
             {
                 const auto *cfg = watering.configByIndex(i);
@@ -126,9 +128,6 @@ void WateringHandler::handleWatering(WebInterface &web, AsyncWebServerRequest *r
         }
         String page = FPSTR(kWebInterfaceWateringHtml);
         page.reserve(page.length() + 32768);
-        String rows = stack_view ? web.listStackWateringHtml_(node_id, page_offset, page_size) : web.listWateringHtml_(page_offset, page_size);
-        if (stack_view && rows.length() == 0)
-            rows = WebUiRu::Watering::kText;
         String pagination = "";
         if (max_pages > 1u)
         {
@@ -183,7 +182,7 @@ void WateringHandler::handleWatering(WebInterface &web, AsyncWebServerRequest *r
         }
         page.replace("%NAV%", web.navHtml_());
         page.replace("%WATERING_PAGE_TITLE%", WebUiRu::Watering::kPageTitle);
-        page.replace("%WATERING_ROWS%", rows);
+        page.replace("%WATERING_ROWS%", "<div class=\"tile empty\">Loading...</div>");
         page.replace("%WATERING_PAGINATION%", pagination);
         page.replace("%WATERING_FORM_ACTION%", form_action);
         page.replace("%WATERING_STATUS%", stack_view ? web.stackWateringStatusText_(node_id) : web._watering_status);
@@ -224,6 +223,7 @@ void WateringHandler::handleWatering(WebInterface &web, AsyncWebServerRequest *r
             else if (web._controllers)
             {
                 WateringController &watering = web._controllers->watering();
+                auto watering_guard = watering.lockGuard();
                 for (size_t i = 0; i < WateringController::kRuleCount; ++i)
                 {
                     const auto *cfg = watering.configByIndex(i);
@@ -243,6 +243,43 @@ void WateringHandler::handleWatering(WebInterface &web, AsyncWebServerRequest *r
                      can_save ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>") : String(""));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
+    }
+
+void WateringHandler::handleWateringList(WebInterface &web, AsyncWebServerRequest *request) {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Watering, node_id))
+            return;
+        const bool stack_view = web.isStackWateringView_(node_id);
+        size_t page_idx = 0;
+        const size_t page_size = 8u;
+        const String page_str = web.paramValueAny_(request, "page");
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (size_t)(v - 1);
+        }
+        if (stack_view)
+        {
+            const size_t visible = web.stackWateringVisibleCount_(node_id);
+            const size_t max_pages = (visible == 0) ? 1u : ((visible + page_size - 1u) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (max_pages - 1u) : 0u;
+            String rows = web.listStackWateringHtml_(node_id, page_idx * page_size, page_size);
+            if (rows.length() == 0)
+                rows = WebUiRu::Watering::kText;
+            web.sendText_(request, 200, "text/html; charset=utf-8", rows, set_cookie);
+            return;
+        }
+        const size_t visible = web.wateringLocalRenderCount_();
+        const size_t max_pages = (visible == 0) ? 1u : ((visible + page_size - 1u) / page_size);
+        if (page_idx >= max_pages)
+            page_idx = max_pages ? (max_pages - 1u) : 0u;
+        web.sendText_(request, 200, "text/html; charset=utf-8",
+                      web.listWateringHtml_(page_idx * page_size, page_size), set_cookie);
     }
 
 void WateringHandler::handleWateringSave(WebInterface &web, AsyncWebServerRequest *request) {
@@ -470,6 +507,7 @@ void WateringHandler::handleWateringSave(WebInterface &web, AsyncWebServerReques
             return;
         }
         WateringController &watering = web._controllers->watering();
+        auto watering_guard = watering.lockGuard();
         bool changed = false;
         for (size_t i = 0; i < WateringController::kRuleCount; ++i)
         {

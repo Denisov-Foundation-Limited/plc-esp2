@@ -76,8 +76,8 @@ public:
 
   // ---- runtime loop layer ----
   Cap capsDyn(uint8_t port) const;
-  bool writeDyn(uint8_t port, bool v);
-  bool readDyn(uint8_t port, bool& out) const;
+  bool writeDyn(uint8_t port, bool v, uint32_t timeout_ms = 0xFFFFFFFFu);
+  bool readDyn(uint8_t port, bool& out, uint32_t timeout_ms = 0xFFFFFFFFu) const;
   bool pinModeDyn(uint8_t port, PortIO::PortMode mode);
   bool lastStateDyn(uint8_t port, bool& out) const;
 

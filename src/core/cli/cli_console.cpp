@@ -268,7 +268,7 @@ void CliConsole::cmdShowWifi_()
 {
     _io->println(F("Wi-Fi configurations:"));
     const size_t key_w = 11; // ap_password
-    printKeyValue_(F("mode"), _wifi.ap() ? F("AP") : F("STA"), key_w);
+    printKeyValue_(F("mode"), _wifi.modeLabel(), key_w);
     printKeyValue_(F("ssid"), _wifi.ssid(), key_w);
     printKeyValue_(F("password"), _wifi.password(), key_w);
     printKeyValue_(F("ap_ssid"), _wifi.apSsid(), key_w);
@@ -301,6 +301,7 @@ void CliConsole::cmdShowTelegram_()
     printKeyValue_(F("chat_id"), String((long long)_tgbot.chatId()), key_w);
     printKeyValue_(F("insecure"), _tgbot.insecure() ? F("true") : F("false"), key_w);
     printKeyValue_(F("client"), _tgbot.clientKindName(), key_w);
+    printKeyValue_(F("poll_mode"), _tgbot.pollMode() == TelegramClient::PollMode::Long ? F("long") : F("short"), key_w);
     printKeyValue_(F("proxy"), _tgbot.useProxy() ? F("true") : F("false"), key_w);
     printKeyValue_(F("proxy_host"), _tgbot.proxyHost(), key_w);
     printKeyValue_(F("proxy_port"), String((unsigned)_tgbot.proxyPort()), key_w);
@@ -504,6 +505,9 @@ void CliConsole::cmdShowOw_()
     {
         OneWireBus *bus = _ow.busPtrByIndex(i);
         if (!bus)
+            continue;
+        OneWireManager::ScopedBusLock lk(_ow, i, 200);
+        if (!lk.locked())
             continue;
         const auto &cfg = ActiveBoardProfile::ONEWIRES[i];
         uint8_t addr[8] = {};
@@ -761,6 +765,14 @@ void CliConsole::showHelpTopic_(const String &topic)
         _io->println(F("  admin password <pass>   - set admin password"));
         return;
     }
+    if (t == "eeprom")
+    {
+        _io->println(F("EEPROM commands:"));
+        _io->println(F("  eeprom show             - show EEPROM save/load flags"));
+        _io->println(F("  eeprom save <on|off>    - enable/disable EEPROM periodic save"));
+        _io->println(F("  eeprom load <on|off>    - enable/disable EEPROM load on boot"));
+        return;
+    }
     if (t == "tgbot")
     {
         _tgbot_cli.printHelpTopic();
@@ -922,9 +934,12 @@ void CliConsole::handleTab_()
         "help avr",
         "help leak"}};
 
-    static const std::array<const char *, 43> kConfigCmds = {{
+    static const std::array<const char *, 47> kConfigCmds = {{
         "password <pass>",
         "admin password <pass>",
+        "eeprom show",
+        "eeprom save <on|off>",
+        "eeprom load <on|off>",
         "stack role <master|slave>",
         "stack master <host>",
         "stack fallback <on|off>",
@@ -953,6 +968,7 @@ void CliConsole::handleTab_()
         "help show",
         "help wifi",
         "help user",
+        "help eeprom",
         "help system",
         "help tgbot",
         "help cloud",

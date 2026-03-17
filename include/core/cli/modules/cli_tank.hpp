@@ -85,6 +85,7 @@ public:
     {
         bool any = false;
         printHeader_();
+        auto guard = _tanks.lockGuard();
         for (size_t i = 0; i < TankController::kTankCount; ++i)
         {
             const auto *cfg = _tanks.configByIndex(i);
@@ -100,6 +101,7 @@ public:
 
     void showTank(size_t id)
     {
+        auto guard = _tanks.lockGuard();
         const auto *cfg = _tanks.config(id);
         const auto *st = _tanks.state(id);
         if (!cfg || !st)

@@ -34,7 +34,8 @@ public:
     Error lastError() const;
 
 private:
-    static constexpr uint32_t kTimeoutUs = 100;
+    // 100us is too tight under RTOS jitter; keep some margin for stable reads.
+    static constexpr uint32_t kTimeoutUs = 180;
 
     uint32_t expectPulse_(bool level);
     bool readRaw_(uint8_t data[5]);

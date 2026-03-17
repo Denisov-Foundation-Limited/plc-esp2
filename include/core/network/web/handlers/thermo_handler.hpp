@@ -19,6 +19,7 @@ public:
     static void registerRoutes(WebInterface &web, AsyncWebServer &server);
 
     static void handleThermo(WebInterface &web, AsyncWebServerRequest *request);
+    static void handleThermoList(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleThermoSave(WebInterface &web, AsyncWebServerRequest *request);
 

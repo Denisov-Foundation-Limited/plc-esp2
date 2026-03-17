@@ -69,6 +69,7 @@ public:
 
     void showZone(size_t id) const
     {
+        auto guard = _leak.lockGuard();
         const auto *cfg = _leak.config(id);
         const auto *st = _leak.state(id);
         if (!cfg || !st)
@@ -361,6 +362,7 @@ private:
 
     void showZoneRow_(size_t id) const
     {
+        auto guard = _leak.lockGuard();
         const auto *cfg = _leak.config(id);
         const auto *st = _leak.state(id);
         if (!cfg || !st || !_c._io)

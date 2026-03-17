@@ -8,29 +8,45 @@
 - интеграции (`Telegram`, `Cloud`, `GSM`),
 - набор прикладных контроллеров (розетки, метео, термо, баки, септик, охрана, полив, звонок, АВР, протечки).
 
-## Карта документации
+## 🗺️ Карта документации
 
 - Подробно про стек, протокол, кэши и синхронизацию: [STACK.md](./STACK.md)
 - Полный справочник по CLI-командам: [CLI.md](./CLI.md)
 - Окружение сборки: `platformio.ini`, `build.ps1`
 - Профили плат и аппаратные маппинги: `include/boards/*`
 
-## System Overview
+## 🛠️ Build Profile (fcplc)
+
+- Платформа PlatformIO: `espressif32@6.13.0`
+- Framework: `arduino`
+- Плата: `4d_systems_esp32s3_gen4_r8n16`
+- Включено: `board_build.psram = enabled`
+- Ключевые `build_flags`:
+  - `TASK_BINDER_RTOS_DEBUG=0`
+  - `TASK_BINDER_PLC_SCAN_TICK_MS=5`
+
+## 🧩 System Overview
 
 ```mermaid
 flowchart TD
   UI[Пользовательские интерфейсы\nWeb UI / CLI / LCD / Telegram]
-  APP[Ядро приложения\nApp / TaskManager / Configs / Rules]
+  APP[Ядро приложения\nApp / Configs / Rules / StackRuntime]
+  RTOS[RTOS workers\nTaskBinder + FreeRTOS tasks]
   NET[Сеть\nWi-Fi / GSM / Cloud / Stack]
   CTRL[Контроллеры\nSockets/Lights/Meteo/Thermo/Tanks/Septic/Security/Watering/AVR/Leak/Ring]
+  IO[I/O\nExtender / Display / PLC]
 
   UI --> APP
+  APP --> RTOS
   APP --> NET
   APP --> CTRL
+  RTOS --> NET
+  RTOS --> CTRL
+  RTOS --> IO
   NET --> CTRL
 ```
 
-## Архитектура runtime
+## ⚙️ Архитектура runtime
 
 ```mermaid
 flowchart TD
@@ -38,28 +54,68 @@ flowchart TD
   INIT --> BIND[TaskBinder::bindAll + bindStack]
   BIND --> LOOP[App::loop]
 
-  LOOP --> PRE[Stack taskPre]
-  PRE --> CONSOLE[CLI console loop]
-  CONSOLE --> NETLOOP[Network loop]
-  NETLOOP --> TMLOOP[TaskManager loop]
-  TMLOOP --> POST[Stack taskPost/taskFlush]
-  POST --> LOOP
+  LOOP --> PRE[runStackPre stack]
+  PRE --> LOOP
+
+  RTOSNET[RTOS\nnetwork_loop / console_loop / wifi / telegram / gsm / cloud / meteo_history] --> SIG[notifyStackPostNetwork]
+  SIG --> STACKEVT[RTOS\nstack_evt post/flush]
+  STACKEVT --> LOOP
+  RTOSCTRL[RTOS\ncontrol_loop] --> LOOP
+  RTOSIO[RTOS\nextender / display / plc / plc_scan] --> LOOP
 ```
 
-## Основные возможности
+### 🔄 Runtime после внедрения RTOS
 
-- Контроллеры автоматизации:
+- `App::loop()` теперь в основном оркестрирует фазы, а не выполняет весь тяжёлый runtime сам.
+- В отдельные FreeRTOS-задачи вынесены:
+  - `network_loop`
+  - `console_loop`
+  - `wifi`
+  - `telegram`
+  - `gsm`
+  - `cloud`
+  - `meteo_history`
+  - `stack_evt` (`taskPost/taskFlush`)
+  - `control_loop` для контроллеров
+- В отдельные RTOS-задачи также вынесены:
+  - `extender`
+  - `display`
+  - `plc`
+  - `plc_scan`
+- `TaskManager` полностью удалён из runtime.
+- Основной `App::loop()` сейчас выполняет только `runStackPre(stack)` (плюс опциональные GPIO-метрики по compile-time флагу).
+- `notifyStackPostNetwork()` теперь вызывается из RTOS-задачи `network_loop`; защита pending в `stack_evt` реализована через `std::atomic`.
+
+### 📝 Логирование в многозадачном runtime
+
+- После выноса части подсистем в FreeRTOS лог считается многопоточным.
+- `Logger` сериализует вывод через mutex и пишет строку логa одним вызовом, чтобы уменьшить риск разрыва строк в UART.
+- Если в логах всё ещё появляются артефакты, проверять нужно не только `Logger`, но и прямые `Serial.print`/`printf` в стороннем коде.
+
+### 🔌 Надёжность I2C/extender (последние изменения)
+
+- В `I2CManager` добавлено мягкое восстановление шины при `probeAddress`-ошибке (clock pulses + STOP), а также timeout на `Wire`.
+- На старте `App` логируется карта I2C-проб (`mcp0/mcp1/lcd/eeprom/rtc`) для быстрой диагностики.
+- `RTC` и `Display` усилены проверками доступности I2C-устройства; при runtime-сбое `RTC` повторно инициируется при следующем обращении.
+- `Extender` теперь при runtime I/O-ошибках помечается как missing и уходит в fast-rescan (ускоренный повторный поиск).
+- В `PortIO` включено отложенное применение выходов:
+  - до завершения восстановления состояний физические выходы не включаются;
+  - после `restoreFromStorage()` выполняются `applyOutputs()` и `setOutputsEnabled(true)`.
+## ✨ Основные возможности
+
+- Автоматизация 🧠:
   - `Sockets`, `Lights`, `Meteo`, `Thermo`, `Tanks`, `Septic`, `Security`, `Ring`, `Watering`, `AVR`, `Leak`
-- Распределённая работа Stack:
+- Stack 🌐:
   - роли `master/slave`, fallback-режим, синхронизация кэшей по фичам
-- GSM-подсистема:
+- GSM 📞:
   - входящие вызовы, SMS/дозвон уведомления, статус регистрации/оператора/сигнала
-- Web UI:
+- Web UI 🖥️:
   - ACL, локальный и stack-режимы страниц, быстрые действия и формы настройки
-- CLI:
+  - Admin (`/admin`): RTC, buzzer и флаги EEPROM (`Сохранять`, `Загружать`)
+- CLI ⌨️:
   - иерархические контексты конфигурации, диагностика, управление контроллерами и стеком
 
-## Структура проекта
+## 📁 Структура проекта
 
 - `src/app.cpp` — оркестрация приложения, init, главный цикл
 - `include/core/task_binder.hpp` — регистрация задач и интервалы выполнения
@@ -69,7 +125,7 @@ flowchart TD
 - `include/boards/*` — профили плат, порты, шины, аппаратные ограничения
 - `include/utils/*`, `src/utils/*` — конфиги, реестры, вспомогательные утилиты
 
-## Режимы Stack
+## 🌐 Режимы Stack
 
 Устройство может работать как:
 - `master` — агрегирует данные slave-узлов в `StackCache`, отдаёт их в Web/Display/Telegram;
@@ -78,12 +134,26 @@ flowchart TD
 
 Детали протокола и диаграммы обмена см. в [STACK.md](./STACK.md).
 
-## CLI (кратко)
+## ☁️ Архитектура Cloud
+
+- `CloudClient` отвечает за протокол, сессию, обработку `hello/get/cmd/result/error` и интеграцию с контроллерами/Stack.
+- `CloudTransport` — абстракция транспорта облака; `CloudClient` работает только через события подключения и входящие текстовые сообщения.
+- Текущая рабочая реализация транспорта: `CloudWsTransport` поверх `WebSocketsClient`.
+- Подготовлен каркас `CloudHttpTransport` для будущего перехода на HTTP poll/long-poll без переписывания протокольной логики `CloudClient`.
+- `proto.json` остаётся источником правды для формата JSON-сообщений и не должен зависеть от выбранного транспорта.
+
+### 🚀 Что это даёт
+
+- Переключение `WebSocket` -> `HTTP` должно происходить заменой транспорта, а не переписыванием `CloudClient`.
+- Transport-слой отвечает только за доставку и события `Connected/Disconnected/Error`.
+- Protocol/business logic остаётся в одном месте, что упрощает поддержку совместимости с облаком.
+
+## ⌨️ CLI (кратко)
 
 Подсказка: `help`, `?`, `help <topic>`.
 Подробный справочник всех команд: [CLI.md](./CLI.md).
 
-### Enable (`plc#`)
+### ▶️ Enable (`plc#`)
 
 - Диагностика:
   - `show board`, `show plc`, `show wifi`, `show time`, `show i2c`, `show ow`, `show ports`, `show config`
@@ -104,7 +174,7 @@ flowchart TD
   - `copy tftp://<ip>/firmware.bin firmware`
   - `copy http://<ip>/firmware.bin firmware`
 
-### Config (`plc(config)#`)
+### ⚙️ Config (`plc(config)#`)
 
 - Глобально:
   - `password <pass>` / `admin password <pass>`
@@ -114,13 +184,13 @@ flowchart TD
   - `wifi`, `tgbot`, `cloud`, `time`
   - `socket`, `meteo`, `thermo`, `tank`, `watering`, `septic`, `security`
 
-### Примеры контекстов
+### 📌 Примеры контекстов
 
-- `plc(config-wifi)#`: `ssid`, `password`, `ap on|off`, `ap_ssid`, `ap_password`, `restart`, `show`
+- `plc(config-wifi)#`: `mode <sta|ap|sta_ap>`, `ssid`, `password`, `ap on|off`, `ap_ssid`, `ap_password`, `restart`, `show`
 - `plc(config-cloud)#`: `enable`, `host`, `port`, `path`, `ssl`, `reconnect`, `event`, `api_key`, `show`
 - `plc(config-security)#`: `show`, `enable/disable <id>`, `type <id> <pir|reed>`, `port <id>`, `name <id>`, `silent <id>`, `siren <port|none>`, `keys ...`
 
-## Скриншоты
+## 🖼️ Скриншоты
 
 Telegram:
 
@@ -157,7 +227,7 @@ Web:
 ```text
 [1329][INFO][TANK] controller: enabled
 [1373][INFO][APP] Configs loaded: /startup-config.json (2492 bytes)
-[1374][INFO][WIFI] Mode: STA (SSID=Denisov_VPN)
+[1374][INFO][WIFI] Mode: STA (SSID: Denisov_VPN)
 [1374][INFO][APP] Initializing HAL
 [1374][INFO][HAL] I2C init
 [1375][INFO][HAL] GPIO init

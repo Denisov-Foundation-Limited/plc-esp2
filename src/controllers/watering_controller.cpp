@@ -17,105 +17,137 @@ WateringController::WateringController(Gpio &gpio, TankController &tanks, RTC &r
 }
 
 bool WateringController::begin(){
+    auto guard = _lock.guard();
     _logs.info(F("WATER"), F("Controller init"));
     return true;
 }
 
 void WateringController::setEventHandler(WateringController::EventHandler cb, void *ctx){
+    auto guard = _lock.guard();
     _event_cb = cb;
     _event_ctx = ctx;
 }
 
 void WateringController::task(){
-    if (!_controller_enabled)
-        return;
+    struct PendingEvent
+    {
+        Event ev;
+        RuleConfig cfg;
+        RuleState st;
+    };
+    PendingEvent pending[kRuleCount]{};
+    size_t pending_count = 0;
+    auto push_event = [&](Event ev, const RuleConfig &cfg, const RuleState &st){
+        if (pending_count >= kRuleCount)
+            return;
+        pending[pending_count].ev = ev;
+        pending[pending_count].cfg = cfg;
+        pending[pending_count].st = st;
+        ++pending_count;
+    };
     Ds3231Mz::DateTime now{};
     bool have_time = false;
-
-    for (size_t i = 0; i < kRuleCount; ++i)
     {
-        RuleConfig &cfg = _cfg[i];
-        RuleState &st = _state[i];
-
-        if (!cfg.enabled || !st.status)
+        auto guard = _lock.guard();
+        if (!_controller_enabled)
+            return;
+        for (size_t i = 0; i < kRuleCount; ++i)
         {
-            stopIfActive_(cfg, st, Event::Stop);
-            st.paused = false;
-            st.remaining_ms = 0;
-            continue;
-        }
+            RuleConfig &cfg = _cfg[i];
+            RuleState &st = _state[i];
 
-        const bool tank_empty = isTankEmpty_(cfg);
-        if (tank_empty && st.active)
-        {
-            stopForEmpty_(cfg, st);
-            continue;
-        }
-
-        if (st.paused)
-        {
-            if (!tank_empty && cfg.resume_after_refill && isResumeLevelReached_(cfg))
-                resumeAfterRefill_(cfg, st);
-            continue;
-        }
-
-        if (st.active)
-        {
-            if (timeAfterOrEqual_(millis(), st.end_ms))
+            if (!cfg.enabled || !st.status)
             {
-                stopIfActive_(cfg, st, Event::StopDone);
+                const bool was_active = st.active;
+                stopIfActive_(cfg, st, Event::Stop, false);
+                if (was_active)
+                    push_event(Event::Stop, cfg, st);
+                st.paused = false;
+                st.remaining_ms = 0;
+                continue;
             }
-            continue;
-        }
 
-        if (!isStartValid_(cfg) || cfg.port == kInvalidPort)
-            continue;
-        if (tank_empty)
-            continue;
-
-        if (!have_time)
-        {
-            if (!_rtc.Time(now))
-                return;
-            have_time = true;
-        }
-
-        if (!isWeekdayAllowed_(cfg, now.day_of_week))
-            continue;
-        for (uint8_t slot = 0; slot < kTimeSlotCount; ++slot)
-        {
-            uint8_t slot_hour = 0;
-            uint8_t slot_minute = 0;
-            uint32_t slot_duration_sec = 0;
-            getSlot_(cfg, slot, slot_hour, slot_minute, slot_duration_sec);
-            if (slot_duration_sec == 0)
+            const bool tank_empty = isTankEmpty_(cfg);
+            if (tank_empty && st.active)
+            {
+                const Event ev = (cfg.resume_after_refill && timeAfterOrEqual_(st.end_ms, millis())) ? Event::PauseEmpty : Event::StopEmpty;
+                stopForEmpty_(cfg, st, false);
+                push_event(ev, cfg, st);
                 continue;
-            if (slot_hour > 23 || slot_minute > 59)
+            }
+
+            if (st.paused)
+            {
+                if (!tank_empty && cfg.resume_after_refill && isResumeLevelReached_(cfg))
+                {
+                    resumeAfterRefill_(cfg, st, false);
+                    push_event(Event::Resume, cfg, st);
+                }
                 continue;
-            if (now.hour != slot_hour || now.minute != slot_minute)
+            }
+
+            if (st.active)
+            {
+                if (timeAfterOrEqual_(millis(), st.end_ms))
+                {
+                    stopIfActive_(cfg, st, Event::StopDone, false);
+                    push_event(Event::StopDone, cfg, st);
+                }
+                continue;
+            }
+
+            if (!isStartValid_(cfg) || cfg.port == kInvalidPort)
+                continue;
+            if (tank_empty)
                 continue;
 
-            const uint32_t key = makeStartKey_(now.year, now.month, now.day, slot_hour, slot_minute, slot);
-            if (st.last_start_key == key)
-                continue;
+            if (!have_time)
+            {
+                if (!_rtc.Time(now))
+                    return;
+                have_time = true;
+            }
 
-            st.last_start_key = key;
-            st.active = true;
-            st.paused = false;
-            st.remaining_ms = 0;
-            st.end_ms = millis() + slot_duration_sec * 1000u;
-            writePort_(cfg.port, true);
-            _logs.info(F("WATER"), F("start: rule: %u slot: %u port: %u tank: %u duration_s: %lu"),
-                       (unsigned)cfg.id, (unsigned)(slot + 1u), (unsigned)cfg.port, (unsigned)cfg.tank_id,
-                       (unsigned long)slot_duration_sec);
-            notifyEvent_(Event::Start, cfg, st);
-            _runtime_dirty = true;
-            break;
+            if (!isWeekdayAllowed_(cfg, now.day_of_week))
+                continue;
+            for (uint8_t slot = 0; slot < kTimeSlotCount; ++slot)
+            {
+                uint8_t slot_hour = 0;
+                uint8_t slot_minute = 0;
+                uint32_t slot_duration_sec = 0;
+                getSlot_(cfg, slot, slot_hour, slot_minute, slot_duration_sec);
+                if (slot_duration_sec == 0)
+                    continue;
+                if (slot_hour > 23 || slot_minute > 59)
+                    continue;
+                if (now.hour != slot_hour || now.minute != slot_minute)
+                    continue;
+
+                const uint32_t key = makeStartKey_(now.year, now.month, now.day, slot_hour, slot_minute, slot);
+                if (st.last_start_key == key)
+                    continue;
+
+                st.last_start_key = key;
+                st.active = true;
+                st.paused = false;
+                st.remaining_ms = 0;
+                st.end_ms = millis() + slot_duration_sec * 1000u;
+                writePort_(cfg.port, true);
+                _logs.info(F("WATER"), F("start: rule: %u slot: %u port: %u tank: %u duration_s: %lu"),
+                           (unsigned)cfg.id, (unsigned)(slot + 1u), (unsigned)cfg.port, (unsigned)cfg.tank_id,
+                           (unsigned long)slot_duration_sec);
+                push_event(Event::Start, cfg, st);
+                _runtime_dirty = true;
+                break;
+            }
         }
     }
+    for (size_t i = 0; i < pending_count; ++i)
+        notifyEvent_(pending[i].ev, pending[i].cfg, pending[i].st);
 }
 
 void WateringController::applyConfig(JsonArrayConst rules){
+    auto guard = _lock.guard();
     reset_();
     size_t idx = 0;
     for (JsonVariantConst v : rules)
@@ -266,6 +298,7 @@ void WateringController::applyConfig(JsonArrayConst rules){
 }
 
 void WateringController::serialize(JsonArray out) const{
+    auto guard = _lock.guard();
     for (size_t i = 0; i < kRuleCount; ++i)
     {
         const RuleConfig &cfg = _cfg[i];
@@ -311,6 +344,7 @@ void WateringController::serialize(JsonArray out) const{
 }
 
 void WateringController::applySnapshot(const uint8_t *status_mask, size_t bytes){
+    auto guard = _lock.guard();
     if (!status_mask || bytes == 0)
         return;
     for (size_t i = 0; i < kRuleCount; ++i)
@@ -325,6 +359,7 @@ void WateringController::applySnapshot(const uint8_t *status_mask, size_t bytes)
 }
 
 void WateringController::buildSnapshot(uint8_t *status_mask, size_t bytes) const{
+    auto guard = _lock.guard();
     if (!status_mask || bytes == 0)
         return;
     memset(status_mask, 0, bytes);
@@ -342,6 +377,7 @@ void WateringController::buildSnapshot(uint8_t *status_mask, size_t bytes) const
 
 void WateringController::applyRuntimeSnapshot(const uint8_t *active_mask, const uint8_t *paused_mask, const uint32_t *remaining_ms,
  const uint32_t *last_start_key, size_t bytes){
+    auto guard = _lock.guard();
     if (!active_mask || !paused_mask || !remaining_ms || !last_start_key || bytes == 0)
         return;
     for (size_t i = 0; i < kRuleCount; ++i)
@@ -374,6 +410,7 @@ void WateringController::applyRuntimeSnapshot(const uint8_t *active_mask, const 
 
 void WateringController::buildRuntimeSnapshot(uint8_t *active_mask, uint8_t *paused_mask, uint32_t *remaining_ms,
  uint32_t *last_start_key, size_t bytes) const{
+    auto guard = _lock.guard();
     if (!active_mask || !paused_mask || !remaining_ms || !last_start_key || bytes == 0)
         return;
     memset(active_mask, 0, bytes);
@@ -403,6 +440,7 @@ void WateringController::buildRuntimeSnapshot(uint8_t *active_mask, uint8_t *pau
 }
 
 bool WateringController::setEnabled(size_t id, bool enabled){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -413,6 +451,7 @@ bool WateringController::setEnabled(size_t id, bool enabled){
 }
 
 bool WateringController::setName(size_t id, const String &name){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -421,6 +460,7 @@ bool WateringController::setName(size_t id, const String &name){
 }
 
 bool WateringController::setPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -431,6 +471,7 @@ bool WateringController::setPort(size_t id, uint8_t port){
 }
 
 bool WateringController::setStartDate(size_t id, uint16_t year, uint8_t month, uint8_t day){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -444,10 +485,12 @@ bool WateringController::setStartDate(size_t id, uint16_t year, uint8_t month, u
 }
 
 bool WateringController::setStartTime(size_t id, uint8_t hour, uint8_t minute){
+    auto guard = _lock.guard();
     return setStartTimeSlot(id, 0, hour, minute);
 }
 
 bool WateringController::setStartTimeSlot(size_t id, uint8_t slot, uint8_t hour, uint8_t minute){
+    auto guard = _lock.guard();
     if (slot >= kTimeSlotCount)
         return false;
     size_t idx = 0;
@@ -458,6 +501,7 @@ bool WateringController::setStartTimeSlot(size_t id, uint8_t slot, uint8_t hour,
 }
 
 bool WateringController::setWeekdaysMask(size_t id, uint8_t mask){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -466,10 +510,12 @@ bool WateringController::setWeekdaysMask(size_t id, uint8_t mask){
 }
 
 bool WateringController::setDuration(size_t id, uint32_t duration_sec){
+    auto guard = _lock.guard();
     return setDurationSlot(id, 0, duration_sec);
 }
 
 bool WateringController::setDurationSlot(size_t id, uint8_t slot, uint32_t duration_sec){
+    auto guard = _lock.guard();
     if (slot >= kTimeSlotCount)
         return false;
     size_t idx = 0;
@@ -480,6 +526,7 @@ bool WateringController::setDurationSlot(size_t id, uint8_t slot, uint32_t durat
 }
 
 bool WateringController::setStatus(size_t id, bool status){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -495,9 +542,13 @@ bool WateringController::setStatus(size_t id, bool status){
     return true;
 }
 
-bool WateringController::controllerEnabled() const{ return _controller_enabled; }
+bool WateringController::controllerEnabled() const{
+    auto guard = _lock.guard();
+    return _controller_enabled;
+}
 
 void WateringController::setControllerEnabled(bool enabled){
+    auto guard = _lock.guard();
     if (_controller_enabled == enabled)
         return;
     _controller_enabled = enabled;
@@ -510,6 +561,7 @@ void WateringController::setControllerEnabled(bool enabled){
 }
 
 bool WateringController::setTankId(size_t id, uint8_t tank_id){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -522,6 +574,7 @@ bool WateringController::setTankId(size_t id, uint8_t tank_id){
 }
 
 bool WateringController::setResumeAfterRefill(size_t id, bool enable){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return false;
@@ -536,6 +589,7 @@ bool WateringController::setResumeAfterRefill(size_t id, bool enable){
 }
 
 bool WateringController::setResumeLevel(size_t id, uint8_t level){
+    auto guard = _lock.guard();
     if (level > 2)
         return false;
     size_t idx = 0;
@@ -546,18 +600,21 @@ bool WateringController::setResumeLevel(size_t id, uint8_t level){
 }
 
 bool WateringController::takeDirty(){
+    auto guard = _lock.guard();
     const bool v = _dirty;
     _dirty = false;
     return v;
 }
 
 bool WateringController::takeRuntimeDirty(){
+    auto guard = _lock.guard();
     const bool v = _runtime_dirty;
     _runtime_dirty = false;
     return v;
 }
 
 const WateringController::RuleConfig *WateringController::config(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return nullptr;
@@ -565,6 +622,7 @@ const WateringController::RuleConfig *WateringController::config(size_t id) cons
 }
 
 const WateringController::RuleState *WateringController::state(size_t id) const{
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
         return nullptr;
@@ -572,12 +630,14 @@ const WateringController::RuleState *WateringController::state(size_t id) const{
 }
 
 const WateringController::RuleConfig *WateringController::configByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kRuleCount)
         return nullptr;
     return &_cfg[idx];
 }
 
 const WateringController::RuleState *WateringController::stateByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kRuleCount)
         return nullptr;
     return &_state[idx];
@@ -686,7 +746,7 @@ bool WateringController::timeAfterOrEqual_(uint32_t now, uint32_t target){
     return (uint32_t)(now - target) < 0x80000000u;
 }
 
-void WateringController::stopIfActive_(const WateringController::RuleConfig &cfg, WateringController::RuleState &st, WateringController::Event reason){
+void WateringController::stopIfActive_(const WateringController::RuleConfig &cfg, WateringController::RuleState &st, WateringController::Event reason, bool notify){
     if (!st.active)
         return;
     st.active = false;
@@ -695,11 +755,12 @@ void WateringController::stopIfActive_(const WateringController::RuleConfig &cfg
     writePort_(cfg.port, false);
     _logs.info(F("WATER"), F("stop: rule: %u port: %u tank: %u"),
                (unsigned)cfg.id, (unsigned)cfg.port, (unsigned)cfg.tank_id);
-    notifyEvent_(reason, cfg, st);
+    if (notify)
+        notifyEvent_(reason, cfg, st);
     _runtime_dirty = true;
 }
 
-void WateringController::stopForEmpty_(const WateringController::RuleConfig &cfg, WateringController::RuleState &st){
+void WateringController::stopForEmpty_(const WateringController::RuleConfig &cfg, WateringController::RuleState &st, bool notify){
     if (!st.active)
         return;
     Event ev = Event::StopEmpty;
@@ -724,11 +785,12 @@ void WateringController::stopForEmpty_(const WateringController::RuleConfig &cfg
     st.active = false;
     st.end_ms = 0;
     writePort_(cfg.port, false);
-    notifyEvent_(ev, cfg, st);
+    if (notify)
+        notifyEvent_(ev, cfg, st);
     _runtime_dirty = true;
 }
 
-void WateringController::resumeAfterRefill_(const WateringController::RuleConfig &cfg, WateringController::RuleState &st){
+void WateringController::resumeAfterRefill_(const WateringController::RuleConfig &cfg, WateringController::RuleState &st, bool notify){
     if (!st.paused || st.remaining_ms == 0)
         return;
     st.paused = false;
@@ -738,7 +800,8 @@ void WateringController::resumeAfterRefill_(const WateringController::RuleConfig
     writePort_(cfg.port, true);
     _logs.info(F("WATER"), F("resume: rule: %u port: %u tank: %u"),
                (unsigned)cfg.id, (unsigned)cfg.port, (unsigned)cfg.tank_id);
-    notifyEvent_(Event::Resume, cfg, st);
+    if (notify)
+        notifyEvent_(Event::Resume, cfg, st);
     _runtime_dirty = true;
 }
 
@@ -751,6 +814,7 @@ void WateringController::writePort_(uint8_t port, bool on){
 bool WateringController::isTankEmpty_(const WateringController::RuleConfig &cfg) const{
     if (cfg.tank_id == 0)
         return false;
+    auto tanks_guard = _tanks.lockGuard();
     const TankController::TankState *st = _tanks.state(cfg.tank_id);
     if (!st)
         return true;
@@ -761,6 +825,7 @@ bool WateringController::isTankEmpty_(const WateringController::RuleConfig &cfg)
 bool WateringController::isResumeLevelReached_(const WateringController::RuleConfig &cfg) const{
     if (cfg.tank_id == 0)
         return true;
+    auto tanks_guard = _tanks.lockGuard();
     const TankController::TankState *st = _tanks.state(cfg.tank_id);
     if (!st || !st->levels_ok)
         return false;

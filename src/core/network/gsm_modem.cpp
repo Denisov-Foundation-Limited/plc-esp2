@@ -15,6 +15,10 @@
 #include "hal/sim800l.hpp"
 #include "utils/logger.hpp"
 
+#if defined(ESP32)
+#include <freertos/task.h>
+#endif
+
 namespace
 {
 bool isRegisteredRegState(uint8_t state)
@@ -76,9 +80,12 @@ bool GsmModem::begin(uint8_t uart_index, uint32_t config)
 {
     if (!_enabled)
         return false;
+    if (!lockModem_())
+        return false;
     HardwareSerial *ser = _uart.beginSerialForIndex(uart_index, config);
     if (!ser)
     {
+        unlockModem_();
         if (_log.ready())
             _log.error(F("GSM"), F("UART init failed (idx=%u)"), uart_index);
         return false;
@@ -90,22 +97,22 @@ bool GsmModem::begin(uint8_t uart_index, uint32_t config)
         _log.info(F("GSM"), F("UART ready: idx: %u"), uart_index);
     initSequence_();
     _started = true;
+    unlockModem_();
     return true;
 }
 void GsmModem::loop()
 {
     if (!_enabled)
         return;
+    if (!lockModem_())
+        return;
     _modem.tick();
     checkInitWatchdog_();
     checkInitRetry_();
     pollNetworkState_();
     ensureCallerId_();
+    unlockModem_();
 }
-Sim800l &GsmModem::driver()
-{ return _modem; }
-const Sim800l &GsmModem::driver() const
-{ return _modem; }
 const String &GsmModem::lastUrc() const
 { return _last_urc; }
 uint16_t GsmModem::lastSmsIndex() const
@@ -147,7 +154,31 @@ bool GsmModem::sendSms(const String &number, const String &text)
 {
     if (number.length() == 0)
         return false;
-    return _modem.sendSms(number, text, &GsmModem::onCmdLog_, nullptr);
+    if (!lockModem_())
+        return false;
+    const bool ok = _modem.sendSms(number, text, &GsmModem::onCmdLog_, nullptr);
+    unlockModem_();
+    return ok;
+}
+
+bool GsmModem::dial(const String &number)
+{
+    if (number.length() == 0)
+        return false;
+    if (!lockModem_())
+        return false;
+    const bool ok = _modem.dial(number, &GsmModem::onCmdLog_, nullptr);
+    unlockModem_();
+    return ok;
+}
+
+bool GsmModem::hangup()
+{
+    if (!lockModem_())
+        return false;
+    const bool ok = _modem.hangup(&GsmModem::onCmdLog_, nullptr);
+    unlockModem_();
+    return ok;
 }
 bool GsmModem::takeLastCall(String &out)
 {
@@ -741,4 +772,33 @@ void GsmModem::logInitSummary_()
     }
     if (_imsi.length())
         _log.info(F("GSM"), F("IMSI: %s"), _imsi.c_str());
+}
+
+void GsmModem::ensureModemLock_()
+{
+#if defined(ESP32)
+    if (_modem_mtx == nullptr)
+        _modem_mtx = xSemaphoreCreateRecursiveMutex();
+#endif
+}
+
+bool GsmModem::lockModem_(uint32_t timeout_ms)
+{
+#if defined(ESP32)
+    ensureModemLock_();
+    if (_modem_mtx == nullptr)
+        return false;
+    return xSemaphoreTakeRecursive(_modem_mtx, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+#else
+    (void)timeout_ms;
+    return true;
+#endif
+}
+
+void GsmModem::unlockModem_()
+{
+#if defined(ESP32)
+    if (_modem_mtx)
+        xSemaphoreGiveRecursive(_modem_mtx);
+#endif
 }

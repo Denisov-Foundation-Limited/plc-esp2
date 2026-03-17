@@ -48,6 +48,8 @@ public:
     virtual uint32_t cloudEventIntervalMs() const = 0;
     virtual String cloudApiKey() const = 0;
     virtual String cloudFirmwareVersion() const = 0;
+    virtual bool eepromSaveEnabled() const = 0;
+    virtual bool eepromLoadEnabled() const = 0;
     virtual size_t groupCount() const = 0;
     virtual bool groupByIndex(size_t idx, GroupConfig &out) const = 0;
     virtual bool setGroup(uint8_t id, const String &name, uint16_t sort) = 0;
@@ -70,6 +72,8 @@ public:
     virtual void setCloudEventIntervalMs(uint32_t ms) = 0;
     virtual void setCloudApiKey(const String &key) = 0;
     virtual void setCloudFirmwareVersion(const String &ver) = 0;
+    virtual void setEepromSaveEnabled(bool enabled) = 0;
+    virtual void setEepromLoadEnabled(bool enabled) = 0;
     virtual void setDisplaySlot(size_t idx, const DisplaySlotConfig &slot) = 0;
     virtual bool save() = 0;
     virtual bool save(const JsonDocument &doc) = 0;

@@ -25,6 +25,7 @@
 #include "plc/plc_control.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/logger.hpp"
+#include "utils/users_registry.hpp"
 
 namespace
 {
@@ -44,6 +45,19 @@ uint32_t parseNodeId_(JsonVariantConst v)
     }
     return 0;
 }
+
+uint32_t cloudBackoffMs_(uint8_t streak, uint32_t base_ms)
+{
+    const uint32_t base = (base_ms < 2000u) ? 2000u : base_ms;
+    if (streak == 0)
+        return base;
+    const uint8_t shift = (streak > 3) ? 3 : streak;
+    uint32_t out = base << shift;
+    if (out > 120000u)
+        out = 120000u;
+    return out;
+}
+
 } // namespace
 
 CloudClient::CloudClient(Logger &log, Controllers &controllers, PlcControl &plc, WifiManager &wifi, RTC &rtc)
@@ -53,6 +67,7 @@ CloudClient::CloudClient(Logger &log, Controllers &controllers, PlcControl &plc,
       _wifi(wifi),
       _rtc(rtc)
 {
+    setTransport(_default_transport);
 }
 void CloudClient::setGsm(GsmModem *gsm)
 { _gsm = gsm; }
@@ -62,6 +77,14 @@ void CloudClient::setStackCache(StackCache *cache)
 { _stack_cache = cache; }
 void CloudClient::setConfigsManager(ConfigsManagerIface *cfg)
 { _configs = cfg; }
+void CloudClient::setUsersRegistry(UsersRegistry *users)
+{ _users = users; }
+void CloudClient::setTransport(CloudTransport &transport)
+{
+    _transport = &transport;
+    _transport->setMessageHandler(&CloudClient::onTransportMessage_, this);
+    _transport->setEventHandler(&CloudClient::onTransportEvent_, this);
+}
 void CloudClient::setEnabled(bool enabled)
 {
     if (enabled == _enabled)
@@ -70,7 +93,8 @@ void CloudClient::setEnabled(bool enabled)
     if (!_enabled)
     {
         _log.info(F("CLOUD"), F("Disabled"));
-        _ws.disconnect();
+        if (_transport)
+            _transport->disconnect();
         _session_id = "";
         clearPending_();
     }
@@ -82,10 +106,11 @@ void CloudClient::setEnabled(bool enabled)
 bool CloudClient::enabled() const
 { return _enabled; }
 bool CloudClient::isConnected() const
-{ return const_cast<WebSocketsClient &>(_ws).isConnected(); }
+{ return _transport ? _transport->isConnected() : false; }
 void CloudClient::disconnect()
 {
-    _ws.disconnect();
+    if (_transport)
+        _transport->disconnect();
     _session_id = "";
     clearPending_();
 }
@@ -99,19 +124,30 @@ void CloudClient::begin(const CloudClient::Config &cfg)
 {
     if (!_enabled)
         return;
+    if (!_transport)
+        return;
+    _transport->disconnect();
+    _session_id = "";
+    _last_connect_ms = 0;
+    _last_rx_ms = 0;
+    _last_hello_ms = 0;
+    clearPending_();
     _cfg = cfg;
     if (_cfg.path.length() == 0)
         _cfg.path = "/";
+    if (_cfg.reconnect_ms < CloudClient::kFastReconnectMs)
+        _cfg.reconnect_ms = CloudClient::kFastReconnectMs;
     _log.info(F("CLOUD"), F("WS begin: %s:%u%s%s"),
               _cfg.host.c_str(), _cfg.port,
               _cfg.use_ssl ? " ssl " : " ",
               _cfg.path.c_str());
-    if (_cfg.use_ssl)
-        _ws.beginSSL(_cfg.host.c_str(), _cfg.port, _cfg.path.c_str());
-    else
-        _ws.begin(_cfg.host.c_str(), _cfg.port, _cfg.path.c_str());
-    _ws.onEvent([this](WStype_t t, uint8_t *p, size_t l) { onWsEvent_(t, p, l); });
-    _ws.setReconnectInterval(_cfg.reconnect_ms);
+    CloudTransport::Config transport_cfg;
+    transport_cfg.host = _cfg.host;
+    transport_cfg.port = _cfg.port;
+    transport_cfg.path = _cfg.path;
+    transport_cfg.use_ssl = _cfg.use_ssl;
+    transport_cfg.reconnect_ms = _cfg.reconnect_ms;
+    _transport->begin(transport_cfg);
     if (_stack_master)
         _stack_master->setFrameHandlerSecondary(&CloudClient::onStackFrame_, this);
 }
@@ -124,32 +160,55 @@ void CloudClient::loop()
     if (!_wifi.isConnected())
     {
         if (isConnected())
-            _ws.disconnect();
+            _transport->disconnect();
         handlePendingTimeouts_();
         return;
     }
-    _ws.loop();
+    const uint32_t now = millis();
+    if (!isConnected() && _reconnect_backoff_until_ms != 0 &&
+        (int32_t)(now - _reconnect_backoff_until_ms) < 0)
+    {
+        handlePendingTimeouts_();
+        return;
+    }
+    _transport->loop();
     maintainConnectionHealth_();
     handlePendingTimeouts_();
     if (_event_interval_ms)
         maybeSendPeriodicEvent_();
 }
-void CloudClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
+void CloudClient::onTransportMessage_(void *ctx, const uint8_t *payload, size_t len)
 {
-    switch (type)
+    if (!ctx || !payload || len == 0)
+        return;
+    auto *self = static_cast<CloudClient *>(ctx);
+    self->_last_rx_ms = millis();
+    self->handleMessage_(payload, len);
+}
+
+void CloudClient::onTransportEvent_(void *ctx, CloudTransport::Event event, const uint8_t *payload, size_t len)
+{
+    if (!ctx)
+        return;
+    static_cast<CloudClient *>(ctx)->handleTransportEvent_(event, payload, len);
+}
+
+void CloudClient::handleTransportEvent_(CloudTransport::Event event, const uint8_t *payload, size_t len)
+{
+    switch (event)
     {
-    case WStype_CONNECTED:
+    case CloudTransport::Event::Connected:
         _session_id = "";
         _last_connect_ms = millis();
         _last_rx_ms = _last_connect_ms;
         _last_disconnect_ms = 0;
-        if (_disconnect_reported)
-            _log.info(F("CLOUD"), F("WS connection restored"));
+        _reconnect_backoff_until_ms = 0;
+        _reconnect_fail_streak = 0;
         _disconnect_reported = false;
-        _log.info(F("CLOUD"), F("WS connected"));
+        _log.info(F("CLOUD"), F("WS connected: path: %s"), _cfg.path.c_str());
         sendHello_();
         break;
-    case WStype_ERROR:
+    case CloudTransport::Event::Error:
     {
         // WebSocketsClient doesn't expose structured error details here,
         // but payload sometimes contains a textual hint.
@@ -165,25 +224,40 @@ void CloudClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
         {
             _log.warn(F("CLOUD"), F("WS error"));
         }
+        ++_reconnect_fail_streak;
+        const uint32_t wait_ms = cloudBackoffMs_(_reconnect_fail_streak, _cfg.reconnect_ms);
+        _reconnect_backoff_until_ms = millis() + wait_ms;
         break;
     }
-    case WStype_TEXT:
-        if (payload && len)
-        {
-            _last_rx_ms = millis();
-            handleMessage_(payload, len);
-        }
-        break;
-    case WStype_DISCONNECTED:
-        _session_id = "";
+    case CloudTransport::Event::Disconnected:
+    {
+        const String session = _session_id;
         _last_disconnect_ms = millis();
+        const uint32_t connected_ms = _last_connect_ms ? (_last_disconnect_ms - _last_connect_ms) : 0u;
+        const bool had_session = session.length() != 0;
+        const bool was_established = had_session || connected_ms >= 5000u;
+        if (was_established)
+        {
+            // A live session dropped: retry quickly without long exponential backoff.
+            _reconnect_fail_streak = 0;
+            _reconnect_backoff_until_ms = _last_disconnect_ms + CloudClient::kFastReconnectMs;
+        }
+        else
+        {
+            ++_reconnect_fail_streak;
+            _reconnect_backoff_until_ms = _last_disconnect_ms + cloudBackoffMs_(_reconnect_fail_streak, _cfg.reconnect_ms);
+        }
         clearPending_();
         if (!_disconnect_reported)
         {
-            _log.warn(F("CLOUD"), F("WS disconnected"));
+            _log.warn(F("CLOUD"), F("WS disconnected: connected_ms: %lu session: %s"),
+                      (unsigned long)connected_ms,
+                      session.length() ? session.c_str() : "-");
             _disconnect_reported = true;
         }
+        _session_id = "";
         break;
+    }
     default:
         break;
     }
@@ -212,6 +286,26 @@ void CloudClient::handleMessage_(const uint8_t *payload, size_t len)
             _session_id = sid;
             _log.info(F("CLOUD"), F("Session: %s"), _session_id.c_str());
         }
+        else
+        {
+            _log.warn(F("CLOUD"), F("hello_ack without session_id"));
+        }
+        return;
+    }
+    if (type == "error")
+    {
+        const String reply_to = doc["reply_to"] | "";
+        const String code = doc["payload"]["code"] | "";
+        const String message = doc["payload"]["message"] | "";
+        String details_str;
+        JsonVariantConst details = doc["payload"]["details"];
+        if (!details.isNull())
+            serializeJson(details, details_str);
+        _log.warn(F("CLOUD"), F("WS error rx: reply_to: %s code: %s message: %s details: %s"),
+                  reply_to.length() ? reply_to.c_str() : "-",
+                  code.length() ? code.c_str() : "-",
+                  message.length() ? message.c_str() : "-",
+                  details_str.length() ? details_str.c_str() : "-");
         return;
     }
     if (type == "ping")
@@ -271,8 +365,6 @@ void CloudClient::sendHello_()
         }
     }
 
-    String dbg;
-    serializeJson(doc, dbg);
     sendJson_(doc);
 }
 void CloudClient::maintainConnectionHealth_()
@@ -281,6 +373,8 @@ void CloudClient::maintainConnectionHealth_()
     const bool connected = isConnected();
     if (!connected)
     {
+        if (_reconnect_backoff_until_ms != 0 && (int32_t)(now - _reconnect_backoff_until_ms) < 0)
+            return;
         if (_last_disconnect_ms == 0)
             _last_disconnect_ms = now;
         if (_cfg.host.length() &&
@@ -304,7 +398,7 @@ void CloudClient::maintainConnectionHealth_()
             (int32_t)(now - _last_connect_ms) >= (int32_t)kHelloSessionTimeoutMs)
         {
             _log.warn(F("CLOUD"), F("Session timeout, reconnect"));
-            _ws.disconnect();
+            _transport->disconnect();
             return;
         }
     }
@@ -313,7 +407,7 @@ void CloudClient::maintainConnectionHealth_()
         (int32_t)(now - _last_rx_ms) >= (int32_t)kWsSilentTimeoutMs)
     {
         _log.warn(F("CLOUD"), F("WS silent timeout, reconnect"));
-        _ws.disconnect();
+        _transport->disconnect();
     }
 }
 void CloudClient::sendPong_(const String &reply_to, JsonVariantConst payload)
@@ -421,7 +515,15 @@ void CloudClient::handleCmd_(const String &req_id, JsonDocument &doc)
     const String ctrl = payload["controller"] | "";
     const String action = payload["action"] | "";
     JsonObjectConst args = payload["args"].as<JsonObjectConst>();
+    ActorInfo actor;
 
+    if (!parseActor_(payload, actor) || !resolveActor_(actor))
+    {
+        _log.warn(F("CLOUD"), F("Cmd rejected: ctrl: %s action: %s actor invalid"),
+                  ctrl.c_str(), action.c_str());
+        sendError_(req_id, "invalid actor");
+        return;
+    }
     if (unit == "stack")
     {
         const uint32_t node_id = parseNodeId_(doc["node_id"]);
@@ -430,18 +532,35 @@ void CloudClient::handleCmd_(const String &req_id, JsonDocument &doc)
             sendError_(req_id, "missing node_id");
             return;
         }
-        handleCmdStack_(req_id, node_id, ctrl, action, args);
+        if (!aclCanControl_(actor, ctrl, action, args, node_id))
+        {
+            _log.warn(F("CLOUD"), F("Cmd rejected: ctrl: %s action: %s user: %s acl deny"),
+                      ctrl.c_str(), action.c_str(),
+                      actor.resolved_user.length() ? actor.resolved_user.c_str() : "-");
+            sendError_(req_id, "acl deny");
+            return;
+        }
+        handleCmdStack_(req_id, node_id, ctrl, action, args, actor);
         return;
     }
-    handleCmdLocal_(req_id, ctrl, action, args);
+    if (!aclCanControl_(actor, ctrl, action, args, 0))
+    {
+        _log.warn(F("CLOUD"), F("Cmd rejected: ctrl: %s action: %s user: %s acl deny"),
+                  ctrl.c_str(), action.c_str(),
+                  actor.resolved_user.length() ? actor.resolved_user.c_str() : "-");
+        sendError_(req_id, "acl deny");
+        return;
+    }
+    handleCmdLocal_(req_id, ctrl, action, args, actor);
 }
-void CloudClient::handleCmdLocal_(const String &req_id, const String &ctrl, const String &action, JsonObjectConst args)
+void CloudClient::handleCmdLocal_(const String &req_id, const String &ctrl, const String &action,
+                                  JsonObjectConst args, const ActorInfo &actor)
 {
     bool ok = false;
     if (ctrl == "sockets")
-        ok = handleCmdSockets_(_controllers.sockets(), action, args, false);
+        ok = handleCmdSockets_(_controllers.sockets(), action, args, false, actor);
     else if (ctrl == "lights")
-        ok = handleCmdSockets_(_controllers.sockets(), action, args, true);
+        ok = handleCmdSockets_(_controllers.sockets(), action, args, true, actor);
     else if (ctrl == "thermo")
         ok = handleCmdThermo_(action, args);
     else if (ctrl == "tanks")
@@ -451,7 +570,7 @@ void CloudClient::handleCmdLocal_(const String &req_id, const String &ctrl, cons
     else if (ctrl == "watering")
         ok = handleCmdWatering_(action, args);
     else if (ctrl == "security")
-        ok = handleCmdSecurity_(action, args);
+        ok = handleCmdSecurity_(action, args, actor);
     else if (ctrl == "ring")
         ok = handleCmdRing_(action, args);
     else if (ctrl == "avr")
@@ -462,7 +581,7 @@ void CloudClient::handleCmdLocal_(const String &req_id, const String &ctrl, cons
     sendAck_(req_id, ok, ok ? "" : "failed");
 }
 void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
-                     const String &ctrl, const String &action, JsonObjectConst args)
+                     const String &ctrl, const String &action, JsonObjectConst args, const ActorInfo &actor)
 {
     if (!_stack_master || !isStackMaster_())
     {
@@ -566,7 +685,8 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
                 sendError_(req_id, "missing uid");
                 return;
             }
-            const String src = args["name"] | stackNodeName_(node_id);
+            const String src = actor.resolved_user.length() ? actor.resolved_user
+                                                            : String(args["name"] | stackNodeName_(node_id));
             const bool ok = _controllers.security().processRfidUidString(uid.c_str(), src.c_str());
             sendAck_(req_id, ok, ok ? "" : "failed");
             return;
@@ -579,7 +699,8 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
                 sendError_(req_id, "missing serial");
                 return;
             }
-            const String src = args["name"] | stackNodeName_(node_id);
+            const String src = actor.resolved_user.length() ? actor.resolved_user
+                                                            : String(args["name"] | stackNodeName_(node_id));
             const bool ok = _controllers.security().processIButtonSerialString(serial.c_str(), src.c_str());
             sendAck_(req_id, ok, ok ? "" : "failed");
             return;
@@ -587,9 +708,15 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
         feature = StackFeature::Security;
         stack_action = "set";
         if (action == "arm")
+        {
             params["armed"] = true;
+            params["user"] = actor.resolved_user;
+        }
         else if (action == "disarm")
+        {
             params["armed"] = false;
+            params["user"] = actor.resolved_user;
+        }
         else if (action == "clear")
             params["clear"] = true;
     }
@@ -668,23 +795,28 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
             _stack_cache->requestLights(node_id);
     }
 }
-bool CloudClient::handleCmdSockets_(SocketController &s, const String &action, JsonObjectConst args, bool lights)
+bool CloudClient::handleCmdSockets_(SocketController &s, const String &action, JsonObjectConst args, bool lights,
+                                    const ActorInfo &actor)
 {
     const uint8_t id = (uint8_t)(args["id"] | 0);
     if (id == 0)
         return false;
     const char *ctrl_name = lights ? "lights" : "sockets";
+    const char *user_name = actor.username.length()
+        ? actor.username.c_str()
+        : (actor.plc_username.length() ? actor.plc_username.c_str() : "-");
     if (action == "toggle")
     {
-        _log.info(F("CLOUD"), F("Cmd: %s id: %u action: toggle"), ctrl_name, (unsigned)id);
+        _log.info(F("CLOUD"), F("Cmd: %s id: %u action: toggle user: %s"),
+                  ctrl_name, (unsigned)id, user_name);
         return lights ? s.toggleLightRelayById(id) : s.toggleRelayById(id);
     }
     if (action == "set")
     {
         const String st = args["state"] | "";
         const bool on = (st == "on");
-        _log.info(F("CLOUD"), F("Cmd: %s id: %u action: set state: %s"),
-                  ctrl_name, (unsigned)id, on ? "on" : "off");
+        _log.info(F("CLOUD"), F("Cmd: %s id: %u action: set state: %s user: %s"),
+                  ctrl_name, (unsigned)id, on ? "on" : "off", user_name);
         return lights ? s.setLightRelayById(id, on) : s.setRelayById(id, on);
     }
     return false;
@@ -727,12 +859,13 @@ bool CloudClient::handleCmdWatering_(const String &action, JsonObjectConst args)
         return false;
     return _controllers.watering().setStatus(id, (String(args["state"] | "") == "on"));
 }
-bool CloudClient::handleCmdSecurity_(const String &action, JsonObjectConst args)
+bool CloudClient::handleCmdSecurity_(const String &action, JsonObjectConst args, const ActorInfo &actor)
 {
+    const String src_user = actor.resolved_user.length() ? actor.resolved_user : String("cloud");
     if (action == "arm")
-        return _controllers.security().armFrom("cloud", "");
+        return _controllers.security().armFrom("cloud", src_user);
     if (action == "disarm")
-        return _controllers.security().disarmFrom("cloud", "");
+        return _controllers.security().disarmFrom("cloud", src_user);
     if (action == "clear")
     {
         _controllers.security().clearDetect();
@@ -745,7 +878,7 @@ bool CloudClient::handleCmdSecurity_(const String &action, JsonObjectConst args)
             uid = args["serial"] | "";
         if (!uid.length())
             return false;
-        const String src = args["name"] | "cloud";
+        const String src = actor.resolved_user.length() ? actor.resolved_user : String(args["name"] | "cloud");
         return _controllers.security().processRfidUidString(uid.c_str(), src.c_str());
     }
     if (action == "ibutton")
@@ -753,7 +886,7 @@ bool CloudClient::handleCmdSecurity_(const String &action, JsonObjectConst args)
         const String serial = args["serial"] | "";
         if (!serial.length())
             return false;
-        const String src = args["name"] | "cloud";
+        const String src = actor.resolved_user.length() ? actor.resolved_user : String(args["name"] | "cloud");
         return _controllers.security().processIButtonSerialString(serial.c_str(), src.c_str());
     }
     return false;
@@ -1171,11 +1304,11 @@ void CloudClient::fillSystemInfo_(JsonObject out)
     out["fw_version"] = _fw_version;
 
     JsonObject wifi = out["wifi"].to<JsonObject>();
-    wifi["mode"] = _wifi.ap() ? "ap" : "sta";
-    if (_wifi.ap())
-        wifi["ap_ssid"] = _wifi.apSsid();
-    else
+    wifi["mode"] = _wifi.modeName();
+    if (_wifi.staEnabled())
         wifi["ssid"] = _wifi.ssid();
+    if (_wifi.apEnabled())
+        wifi["ap_ssid"] = _wifi.apSsid();
     wifi["ip"] = localIp_();
     wifi["mac"] = WiFi.macAddress();
 
@@ -1257,6 +1390,12 @@ void CloudClient::fillGroups_(JsonArray out)
 }
 void CloudClient::fillSockets_(JsonArray out, bool lights)
 {
+    auto guard = _controllers.sockets().lockGuard(kSnapshotLockTimeoutMs);
+    if (!guard.locked())
+    {
+        _log.warn(F("CLOUD"), F("Snapshot lock timeout: sockets lights: %u"), lights ? 1u : 0u);
+        return;
+    }
     const size_t count = lights ? SocketController::kLightCount : SocketController::kSocketCount;
     for (size_t i = 0; i < count; ++i)
     {
@@ -1281,6 +1420,18 @@ void CloudClient::fillSockets_(JsonArray out, bool lights)
 }
 void CloudClient::fillMeteo_(JsonArray out)
 {
+    auto guard = _controllers.meteo().lockGuard(kSnapshotLockTimeoutMs);
+    if (!guard.locked())
+    {
+        static uint32_t last_warn_ms = 0;
+        const uint32_t now = millis();
+        if (last_warn_ms == 0 || (uint32_t)(now - last_warn_ms) >= kSnapshotWarnIntervalMs)
+        {
+            last_warn_ms = now;
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: meteo"));
+        }
+        return;
+    }
     for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
     {
         const auto *cfg = _controllers.meteo().configByIndex(i);
@@ -1314,6 +1465,12 @@ void CloudClient::fillMeteo_(JsonArray out)
 }
 void CloudClient::fillThermo_(JsonArray out)
 {
+    auto guard = _controllers.thermo().lockGuard(kSnapshotLockTimeoutMs);
+    if (!guard.locked())
+    {
+        _log.warn(F("CLOUD"), F("Snapshot lock timeout: thermo"));
+        return;
+    }
     for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
     {
         const auto *cfg = _controllers.thermo().configByIndex(i);
@@ -1343,6 +1500,12 @@ void CloudClient::fillThermo_(JsonArray out)
 }
 void CloudClient::fillTanks_(JsonArray out)
 {
+    auto guard = _controllers.tanks().lockGuard(kSnapshotLockTimeoutMs);
+    if (!guard.locked())
+    {
+        _log.warn(F("CLOUD"), F("Snapshot lock timeout: tanks"));
+        return;
+    }
     for (size_t i = 0; i < TankController::kTankCount; ++i)
     {
         const auto *cfg = _controllers.tanks().configByIndex(i);
@@ -1379,6 +1542,12 @@ void CloudClient::fillTanks_(JsonArray out)
 }
 void CloudClient::fillSeptic_(JsonArray out)
 {
+    auto guard = _controllers.septic().lockGuard(kSnapshotLockTimeoutMs);
+    if (!guard.locked())
+    {
+        _log.warn(F("CLOUD"), F("Snapshot lock timeout: septic"));
+        return;
+    }
     for (size_t i = 0; i < SepticController::kSepticCount; ++i)
     {
         const auto *cfg = _controllers.septic().configByIndex(i);
@@ -1406,6 +1575,12 @@ void CloudClient::fillSeptic_(JsonArray out)
 }
 void CloudClient::fillWatering_(JsonArray out)
 {
+    auto guard = _controllers.watering().lockGuard(kSnapshotLockTimeoutMs);
+    if (!guard.locked())
+    {
+        _log.warn(F("CLOUD"), F("Snapshot lock timeout: watering"));
+        return;
+    }
     for (size_t i = 0; i < WateringController::kRuleCount; ++i)
     {
         const auto *cfg = _controllers.watering().configByIndex(i);
@@ -1452,6 +1627,12 @@ void CloudClient::fillWatering_(JsonArray out)
 }
 void CloudClient::fillSecurity_(JsonObject out)
 {
+    auto guard = _controllers.security().lockGuard(kSnapshotLockTimeoutMs);
+    if (!guard.locked())
+    {
+        _log.warn(F("CLOUD"), F("Snapshot lock timeout: security"));
+        return;
+    }
     out["enabled"] = _controllers.security().controllerEnabled();
     out["armed"] = _controllers.security().armed();
     out["alarm"] = _controllers.security().alarmOn();
@@ -1480,6 +1661,12 @@ void CloudClient::fillSecurity_(JsonObject out)
 }
 void CloudClient::fillRing_(JsonObject out)
 {
+    auto guard = _controllers.ring().lockGuard(kSnapshotLockTimeoutMs);
+    if (!guard.locked())
+    {
+        _log.warn(F("CLOUD"), F("Snapshot lock timeout: ring"));
+        return;
+    }
     const auto &cfg = _controllers.ring().config();
     const auto &st = _controllers.ring().state();
     out["enabled"] = cfg.enabled;
@@ -1491,6 +1678,25 @@ void CloudClient::fillRing_(JsonObject out)
 }
 void CloudClient::fillAvr_(JsonObject out)
 {
+    auto guard = _controllers.avr().lockGuard(kSnapshotLockTimeoutMs);
+    if (!guard.locked())
+    {
+        static uint32_t last_warn_ms = 0;
+        const uint32_t now = millis();
+        if (last_warn_ms == 0 || (uint32_t)(now - last_warn_ms) >= kSnapshotWarnIntervalMs)
+        {
+            last_warn_ms = now;
+#if RTOS_LOCK_DIAG
+            const char *owner = _controllers.avr().lockOwnerName();
+            const uint32_t held_ms = _controllers.avr().lockHeldMs();
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: avr owner: %s held_ms: %lu"),
+                      owner ? owner : "-", (unsigned long)held_ms);
+#else
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: avr"));
+#endif
+        }
+        return;
+    }
     const auto &cfg = _controllers.avr().config();
     const auto &st = _controllers.avr().state();
     out["enabled"] = cfg.enabled;
@@ -1520,6 +1726,12 @@ void CloudClient::fillAvr_(JsonObject out)
 }
 void CloudClient::fillLeak_(JsonArray out)
 {
+    auto guard = _controllers.leak().lockGuard(kSnapshotLockTimeoutMs);
+    if (!guard.locked())
+    {
+        _log.warn(F("CLOUD"), F("Snapshot lock timeout: leak"));
+        return;
+    }
     for (size_t i = 0; i < LeakController::kZoneCount; ++i)
     {
         const auto *cfg = _controllers.leak().configByIndex(i);
@@ -2154,10 +2366,10 @@ uint32_t CloudClient::deviceId_() const
 }
 String CloudClient::localIp_() const
 {
-    if (_wifi.ap())
-        return WiFi.softAPIP().toString();
-    if (WiFi.status() == WL_CONNECTED)
+    if (_wifi.staEnabled() && WiFi.status() == WL_CONNECTED)
         return WiFi.localIP().toString();
+    if (_wifi.apEnabled())
+        return WiFi.softAPIP().toString();
     return String();
 }
 String CloudClient::stackNodeName_(uint32_t node_id) const
@@ -2192,5 +2404,128 @@ void CloudClient::sendJson_(JsonDocument &doc)
     String out;
     serializeJson(doc, out);
     if (out.length())
-        _ws.sendTXT(out);
+    {
+        if (!_transport || !_transport->sendText(out))
+            _log.warn(F("CLOUD"), F("Transport tx failed"));
+    }
+    else
+    {
+        _log.warn(F("CLOUD"), F("WS tx skipped: empty json"));
+    }
+}
+bool CloudClient::parseActor_(JsonObjectConst payload, CloudClient::ActorInfo &out) const
+{
+    JsonObjectConst actor = payload["actor"].as<JsonObjectConst>();
+    if (actor.isNull())
+        return false;
+    out.uid = actor["uid"] | "";
+    out.username = actor["username"] | "";
+    out.plc_username = actor["plc_username"] | "";
+    out.source = actor["source"] | "";
+    out.session_id = actor["session_id"] | "";
+    out.resolved_user = "";
+    return out.plc_username.length() != 0;
+}
+bool CloudClient::resolveActor_(CloudClient::ActorInfo &actor) const
+{
+    if (!_users)
+        return false;
+    String key = actor.plc_username;
+    key = UsersRegistry::normalizeUsername(key);
+    if (key.length() == 0)
+        return false;
+    for (size_t i = 0; i < _users->size(); ++i)
+    {
+        const auto &u = _users->user(i);
+        if (!u.enabled || u.username.length() == 0)
+            continue;
+        if (UsersRegistry::normalizeUsername(u.username) != key)
+            continue;
+        actor.resolved_user = u.username;
+        actor.resolved_idx = (uint8_t)i;
+        actor.is_admin = u.tg_admin;
+        return true;
+    }
+    return false;
+}
+uint8_t CloudClient::aclUnitByNodeId_(uint32_t node_id) const
+{
+    if (node_id == 0)
+        return 0;
+    if (!_stack_master)
+        return UsersRegistry::kAclUnitCount;
+    for (size_t i = 0; i < _stack_master->nodeCount(); ++i)
+    {
+        if (_stack_master->nodeIdAt(i) == node_id)
+        {
+            const size_t unit = i + 1u;
+            if (unit >= (size_t)UsersRegistry::kAclUnitCount)
+                return UsersRegistry::kAclUnitCount;
+            return (uint8_t)unit;
+        }
+    }
+    return UsersRegistry::kAclUnitCount;
+}
+bool CloudClient::aclControllerByName_(const String &ctrl, UsersRegistry::AclController &out)
+{
+    if (ctrl == "sockets")
+        out = UsersRegistry::AclController::Sockets;
+    else if (ctrl == "lights")
+        out = UsersRegistry::AclController::Lights;
+    else if (ctrl == "meteo")
+        out = UsersRegistry::AclController::Meteo;
+    else if (ctrl == "thermo")
+        out = UsersRegistry::AclController::Thermo;
+    else if (ctrl == "tanks")
+        out = UsersRegistry::AclController::Tanks;
+    else if (ctrl == "septic")
+        out = UsersRegistry::AclController::Septic;
+    else if (ctrl == "security")
+        out = UsersRegistry::AclController::Security;
+    else if (ctrl == "watering")
+        out = UsersRegistry::AclController::Watering;
+    else if (ctrl == "leak")
+        out = UsersRegistry::AclController::Leak;
+    else if (ctrl == "avr")
+        out = UsersRegistry::AclController::Avr;
+    else if (ctrl == "ring")
+        out = UsersRegistry::AclController::Ring;
+    else
+        return false;
+    return true;
+}
+uint16_t CloudClient::aclItemIdForCmd_(const String &ctrl, const String &action, JsonObjectConst args)
+{
+    const uint16_t id = (uint16_t)(args["id"] | 0);
+    if (ctrl == "avr" || ctrl == "ring")
+        return 1;
+    if (ctrl == "security" && (action == "arm" || action == "disarm" || action == "clear"))
+        return 1;
+    if (ctrl == "septic")
+        return id ? id : 1;
+    if (ctrl == "leak" && action == "ack_all")
+        return 1;
+    return id;
+}
+bool CloudClient::aclCanControl_(const ActorInfo &actor, const String &ctrl, const String &action,
+                                 JsonObjectConst args, uint32_t node_id) const
+{
+    if (!_users || actor.resolved_idx == 0xFF)
+        return false;
+    const auto &u = _users->user(actor.resolved_idx);
+    if (!u.enabled)
+        return false;
+    if (actor.is_admin)
+        return true;
+
+    UsersRegistry::AclController acl_ctrl = UsersRegistry::AclController::Sockets;
+    if (!aclControllerByName_(ctrl, acl_ctrl))
+        return false;
+    const uint8_t unit = aclUnitByNodeId_(node_id);
+    if (unit >= UsersRegistry::kAclUnitCount)
+        return false;
+    const uint16_t item_id = aclItemIdForCmd_(ctrl, action, args);
+    if (item_id != 0)
+        return u.canControlItem(unit, acl_ctrl, item_id);
+    return u.controllerAllowed(unit, acl_ctrl);
 }

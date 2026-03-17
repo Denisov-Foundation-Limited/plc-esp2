@@ -28,21 +28,25 @@ IoStack::IoStack(PortIO &portio)
 
 bool IoStack::begin()
 {
+    auto guard = _lock.guard();
     return _portio.begin();
 }
 
 void IoStack::loop()
 {
+    auto guard = _lock.guard();
     _portio.loop();
 }
 
 void IoStack::pinMode(uint8_t id, PortIO::PortMode mode)
 {
+    auto guard = _lock.guard();
     _portio.pinMode(id, mode);
 }
 
 void IoStack::initImages()
 {
+    auto guard = _lock.guard();
     for (uint8_t i = 0; i < PORT_COUNT; ++i)
     {
         const auto &p = _portio.desc(i);
@@ -57,11 +61,13 @@ void IoStack::initImages()
         }
         if (has(p.caps, Cap::Output) && !has(p.caps, Cap::InputOnly))
         {
-            bool v = false;
-            if (_portio.lastState(i, v))
-                _outputs[i] = v;
-            _applied[i] = _outputs[i];
-            _dirty[i] = false;
+            if (!_dirty[i])
+            {
+                bool v = false;
+                if (_portio.lastState(i, v))
+                    _outputs[i] = v;
+                _applied[i] = _outputs[i];
+            }
         }
     }
 }
@@ -77,6 +83,7 @@ void IoStack::scanInputs()
         if (has(p.caps, Cap::Input))
         {
             const bool raw = _portio.read(i);
+            auto guard = _lock.guard();
             if (raw != _raw_inputs[i])
             {
                 _raw_inputs[i] = raw;
@@ -99,19 +106,36 @@ void IoStack::applyOutputs()
             continue;
         if (!has(p.caps, Cap::Output) || has(p.caps, Cap::InputOnly))
             continue;
-        const bool v = _outputs[i];
-        if (_dirty[i] || _applied[i] != v)
+        bool should_apply = false;
+        bool v = false;
+        {
+            auto guard = _lock.guard();
+            v = _outputs[i];
+            should_apply = _dirty[i] || _applied[i] != v;
+        }
+        if (should_apply)
         {
             _portio.write(i, v);
-            _applied[i] = v;
-            _dirty[i] = false;
+            auto guard = _lock.guard();
+            if (_outputs[i] == v)
+            {
+                _applied[i] = v;
+                _dirty[i] = false;
+            }
+            else
+            {
+                _dirty[i] = true;
+            }
         }
     }
     _portio.loop();
 }
 
-bool IoStack::write(uint8_t id, bool logicalLevel)
+bool IoStack::write(uint8_t id, bool logicalLevel, uint32_t timeout_ms)
 {
+    auto guard = _lock.guard(timeout_ms);
+    if (!guard.locked())
+        return false;
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _portio.desc(id);
@@ -122,8 +146,11 @@ bool IoStack::write(uint8_t id, bool logicalLevel)
     return true;
 }
 
-bool IoStack::read(uint8_t id) const
+bool IoStack::read(uint8_t id, uint32_t timeout_ms) const
 {
+    auto guard = _lock.guard(timeout_ms);
+    if (!guard.locked())
+        return false;
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _portio.desc(id);
@@ -143,6 +170,7 @@ const PortIO::PortDesc &IoStack::desc(uint8_t id) const
 
 bool IoStack::lastState(uint8_t id, bool &outLogical) const
 {
+    auto guard = _lock.guard();
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _portio.desc(id);

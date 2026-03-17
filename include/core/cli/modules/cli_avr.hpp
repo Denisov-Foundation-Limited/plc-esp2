@@ -60,6 +60,7 @@ public:
 
     void showAvr() const
     {
+        auto guard = _avr.lockGuard();
         const auto &cfg = _avr.config();
         const auto &st = _avr.state();
         _c._io->println(F("AVR:"));

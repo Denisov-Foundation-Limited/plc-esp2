@@ -15,6 +15,7 @@ size_t WebInterfaceControllersSocketsHelper::socketsLocalRenderCount_(const WebI
         if (!web._controllers)
             return 0;
         SocketController &sockets = web._controllers->sockets();
+        auto guard = sockets.lockGuard();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < SocketController::kSocketCount; ++i)
         {
@@ -41,12 +42,31 @@ String WebInterfaceControllersSocketsHelper::listSocketsHtml_(WebInterface &web,
             reserve = 16384u;
         items.reserve(reserve);
         SocketController &sockets = web._controllers->sockets();
-        bool tmp_state = false;
-        auto appendRow = [&](const SocketController::SocketConfig &cfg, bool enabled) {
+        SocketController::SocketConfig cfgs[SocketController::kSocketCount];
+        bool cfg_valid[SocketController::kSocketCount] = {};
+        bool relay_on[SocketController::kSocketCount] = {};
+        size_t last_enabled_idx = SIZE_MAX;
+        {
+            auto guard = sockets.lockGuard();
+            bool tmp_state = false;
+            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+            {
+                const auto *cfg = sockets.configByIndex(i);
+                if (!cfg)
+                    continue;
+                cfgs[i] = *cfg;
+                cfg_valid[i] = true;
+                if (cfg->enabled)
+                {
+                    last_enabled_idx = i;
+                    relay_on[i] = sockets.relayState(cfg->id, tmp_state) ? tmp_state : false;
+                }
+            }
+        }
+        auto appendRow = [&](const SocketController::SocketConfig &cfg, bool enabled, bool on) {
             const bool can_edit = web.webSessionIsAdmin_();
             const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id);
             const bool has_groups = web.hasGroups_();
-            const bool on = enabled && sockets.relayState(cfg.id, tmp_state) ? tmp_state : false;
             items += "<div class=\"tile js-group-item";
             if (!enabled)
                 items += " disabled";
@@ -145,20 +165,24 @@ String WebInterfaceControllersSocketsHelper::listSocketsHtml_(WebInterface &web,
             items += "</div></div>";
         };
     
-        const size_t render_count = web.socketsLocalRenderCount_();
+        const size_t render_count = (last_enabled_idx == SIZE_MAX)
+                                        ? (SocketController::kSocketCount ? 1u : 0u)
+                                        : ((last_enabled_idx + 2u) > SocketController::kSocketCount
+                                               ? SocketController::kSocketCount
+                                               : (last_enabled_idx + 2u));
         const bool can_view_disabled = web.webSessionIsAdmin_();
         for (size_t i = 0; i < render_count; ++i)
         {
-            const auto *cfg = sockets.configByIndex(i);
-            if (!cfg)
+            if (!cfg_valid[i])
                 continue;
-            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg->id))
+            const auto &cfg = cfgs[i];
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id))
                 continue;
-            if (cfg->id < start_id || cfg->id > end_id)
+            if (cfg.id < start_id || cfg.id > end_id)
                 continue;
-            if (!can_view_disabled && !cfg->enabled)
+            if (!can_view_disabled && !cfg.enabled)
                 continue;
-            appendRow(*cfg, cfg->enabled);
+            appendRow(cfg, cfg.enabled, relay_on[i]);
         }
         if (items.length() == 0)
             items = WebUiRu::Sockets::kText8;
@@ -504,11 +528,11 @@ void WebInterfaceControllersSocketsHelper::handleStackSocketsToggle_(WebInterfac
             return;
         }
 
-        // Immediately schedule a fresh stack snapshot so UI poll does not read stale state.
+        // Immediately schedule a fresh stack snapshot; the switch request itself returns simple ack.
         web.requestStackSockets_(node_id);
         (void)desired_known;
         (void)desired;
-        web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+        web.sendText_(request, 200, "text/plain", "OK", set_cookie);
     }
 
 void WebInterfaceControllersSocketsHelper::handleStackSocketsEnable_(WebInterface &web, AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie) {

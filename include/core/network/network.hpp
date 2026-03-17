@@ -113,7 +113,7 @@ private:
     uint16_t _proxy_port = 0;
     String _proxy_path;
     bool _started = false;
-    static constexpr uint32_t kTelegramPollIntervalMs = 5000;
+    static constexpr uint32_t kTelegramPollIntervalMs = 500;
     static constexpr uint16_t kTelegramPollTimeoutSec = 2;
 
     static constexpr uint16_t kStackPort = 9010;

@@ -20,6 +20,7 @@ public:
     static void handleRemoteSources(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleMeteo(WebInterface &web, AsyncWebServerRequest *request);
+    static void handleMeteoList(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleMeteoState(WebInterface &web, AsyncWebServerRequest *request);
 

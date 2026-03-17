@@ -14,6 +14,7 @@
 #include "core/network/web/web_interface.hpp"
 
 void SecurityHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
+        server.on("/security/list", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleSecurityList(web, request); });
         server.on("/security/arm", HTTP_POST,
                   [&web](AsyncWebServerRequest *request) { handleSecurityArm(web, request); });
         server.on("/security/state", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleSecurityState(web, request); });
@@ -68,6 +69,7 @@ void SecurityHandler::handleSecurityState(WebInterface &web, AsyncWebServerReque
                 return;
             }
             SecurityController &sec = web._controllers->security();
+            auto sec_guard = sec.lockGuard();
             doc["enabled"] = sec.controllerEnabled();
             doc["armed"] = sec.armed();
             doc["alarm"] = sec.alarmOn();
@@ -169,7 +171,7 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
             page.replace("%SECURITY_ALARM_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%SECURITY_GSM_LABEL%", web.gsmStatusLabel_());
             page.replace("%SECURITY_SIREN%", "");
-            page.replace("%SECURITY_SENSORS%", WebUiRu::Security::kText4);
+            page.replace("%SECURITY_SENSORS%", "<div class=\"tile empty\">Loading...</div>");
             page.replace("%SECURITY_SENSORS_PAGE%", "1");
             page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)(max_pages ? max_pages : 1)));
             page.replace("%SECURITY_SENSOR_JSON%", "[]");
@@ -186,6 +188,7 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
         }
 
         SecurityController &sec = web._controllers->security();
+        auto sec_guard = sec.lockGuard();
         const auto *stack_cache = (stack_view && web._stack_cache) ? web._stack_cache->securityCache(node_id) : nullptr;
         const bool sec_enabled = stack_view ? (stack_cache && stack_cache->has_data && stack_cache->enabled) : sec.controllerEnabled();
         const bool sec_armed = stack_view ? (stack_cache && stack_cache->has_data && stack_cache->armed) : sec.armed();
@@ -204,10 +207,7 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
             page.replace("%SECURITY_SIREN%", String((unsigned)sec_siren));
         else
             page.replace("%SECURITY_SIREN%", "");
-        page.replace("%SECURITY_SENSORS%",
-                     stack_view ? web.listStackSecuritySensorsTiles_(node_id, (size_t)page_idx * page_size, page_size)
-                                : web.listSecuritySensorsTiles_(groups_available ? 0 : start,
-                                                                 groups_available ? SecurityController::kSensorCount : end));
+        page.replace("%SECURITY_SENSORS%", "<div class=\"tile empty\">Loading...</div>");
         page.replace("%SECURITY_SENSORS_PAGE%", String((unsigned)(page_idx + 1)));
         page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)max_pages));
         page.replace("%SECURITY_SENSOR_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
@@ -227,6 +227,48 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
                      web.composeTopFiltersHtml_(web.securityDeviceSelectHtml_(node_id, stack_view),
                                                 groups_available ? web.groupFilterHtml_("security-group-filter", stack_view ? node_id : 0u) : String("")));
         web.sendHtml_(request, page, set_cookie);
+    }
+
+void SecurityHandler::handleSecurityList(WebInterface &web, AsyncWebServerRequest *request) {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Security, node_id))
+            return;
+        const bool stack_view = web.isStackSecurityView_(node_id);
+        const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
+        const uint8_t page_size = 8u;
+        const String page_str = web.paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+        uint8_t start = 0;
+        uint8_t end = SecurityController::kSensorCount;
+        if (!stack_view && !groups_available)
+        {
+            const size_t visible = web.securityLocalRenderCount_();
+            const uint8_t max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            start = (uint8_t)(page_idx * page_size);
+            end = (uint8_t)(start + page_size - 1);
+        }
+        else if (stack_view)
+        {
+            const size_t visible = web.stackSecurityVisibleCount_(node_id);
+            const uint8_t max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+        const String html = stack_view ? web.listStackSecuritySensorsTiles_(node_id, (size_t)page_idx * page_size, page_size)
+                                       : web.listSecuritySensorsTiles_(groups_available ? 0 : start,
+                                                                       groups_available ? SecurityController::kSensorCount : end);
+        web.sendText_(request, 200, "text/html; charset=utf-8", html, set_cookie);
     }
 
 void SecurityHandler::handleSecuritySave(WebInterface &web, AsyncWebServerRequest *request) {
@@ -477,6 +519,7 @@ void SecurityHandler::handleSecuritySave(WebInterface &web, AsyncWebServerReques
             return;
         }
         SecurityController &sec = web._controllers->security();
+        auto sec_guard = sec.lockGuard();
         const String action = web.paramValue_(request, "action");
         if (action == "arm")
         {

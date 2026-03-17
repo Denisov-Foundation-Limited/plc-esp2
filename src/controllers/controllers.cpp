@@ -29,6 +29,7 @@ Controllers::Controllers(Gpio &gpio, OneWireManager &ow, EepromStorage &storage,
 }
 
 bool Controllers::begin(){
+    auto guard = _lock.guard();
     _logs.info(F("CTRL"), F("Init begin"));
     const bool sockets_enabled = _sockets.controllerEnabled() || _sockets.lightsEnabled();
     if (sockets_enabled)
@@ -101,7 +102,6 @@ bool Controllers::begin(){
         _logs.error(F("CTRL"), F("Leak init failed"));
         return false;
     }
-    loadFromStorage_();
     _logs.info(F("CTRL"), F("Init done"));
     return true;
 }
@@ -111,6 +111,7 @@ void Controllers::task(){
 }
 
 void Controllers::applyConfig(JsonObjectConst cfg){
+    auto guard = _lock.guard();
     if (cfg["sockets_enabled"].is<bool>())
         _sockets.setControllerEnabled(cfg["sockets_enabled"].as<bool>());
     if (cfg["lights_enabled"].is<bool>())
@@ -163,6 +164,7 @@ void Controllers::applyConfig(JsonObjectConst cfg){
 }
 
 void Controllers::serialize(JsonObject out) const{
+    auto guard = _lock.guard();
     out["sockets_enabled"] = _sockets.controllerEnabled();
     JsonArray arr = out["sockets"].to<JsonArray>();
     _sockets.serialize(arr);
@@ -239,16 +241,21 @@ LeakController &Controllers::leak(){ return _leak; }
 
 const LeakController &Controllers::leak() const{ return _leak; }
 
-void Controllers::invalidateGpioUsageCache() const{ _gpio_usage_cache.valid = false; }
+void Controllers::invalidateGpioUsageCache() const{
+    auto guard = _lock.guard();
+    _gpio_usage_cache.valid = false;
+}
 
 bool Controllers::gpioPortUsed(uint8_t port) const{
     if (port >= PortIO::PORT_COUNT)
         return false;
     ensureGpioUsageCache_();
+    auto guard = _lock.guard();
     return _gpio_usage_cache.used[port];
 }
 
 bool Controllers::gpioPortUsedByType(uint8_t port, PortIO::PinType type) const{
+    auto guard = _lock.guard();
     if (port >= PortIO::PORT_COUNT)
         return false;
     const auto &p = ActiveBoardProfile::PORTS[port];
@@ -257,17 +264,49 @@ bool Controllers::gpioPortUsedByType(uint8_t port, PortIO::PinType type) const{
     return gpioPortUsed(port);
 }
 
-void Controllers::setSaveIntervalMs(uint32_t ms){ _save_interval_ms = ms; }
+void Controllers::setSaveIntervalMs(uint32_t ms){
+    auto guard = _lock.guard();
+    _save_interval_ms = ms;
+}
+
+bool Controllers::eepromSaveEnabled() const{
+    auto guard = _lock.guard();
+    return _eeprom_save_enabled;
+}
+
+bool Controllers::eepromLoadEnabled() const{
+    auto guard = _lock.guard();
+    return _eeprom_load_enabled;
+}
+
+void Controllers::setEepromSaveEnabled(bool enabled){
+    auto guard = _lock.guard();
+    _eeprom_save_enabled = enabled;
+}
+
+void Controllers::setEepromLoadEnabled(bool enabled){
+    auto guard = _lock.guard();
+    _eeprom_load_enabled = enabled;
+}
+
+void Controllers::restoreFromStorage()
+{
+    auto guard = _lock.guard();
+    if (!_eeprom_load_enabled)
+        return;
+    loadFromStorage_();
+}
 
 void Controllers::markPortUsed_(bool used[], uint8_t port){
     if (port < PortIO::PORT_COUNT)
         used[port] = true;
 }
 
-void Controllers::rebuildGpioUsageCache_() const{
+void Controllers::rebuildGpioUsageCache_(bool used[]) const{
     for (size_t i = 0; i < PortIO::PORT_COUNT; ++i)
-        _gpio_usage_cache.used[i] = false;
+        used[i] = false;
 
+    auto sockets_guard = _sockets.lockGuard();
     for (size_t i = 0; i < SocketController::kSocketCount; ++i)
     {
         const auto *cfg = _sockets.configByIndex(i);
@@ -275,8 +314,8 @@ void Controllers::rebuildGpioUsageCache_() const{
             continue;
         if (!cfg->enabled)
             continue;
-        markPortUsed_(_gpio_usage_cache.used, cfg->button_port);
-        markPortUsed_(_gpio_usage_cache.used, cfg->relay_port);
+        markPortUsed_(used, cfg->button_port);
+        markPortUsed_(used, cfg->relay_port);
     }
     for (size_t i = 0; i < SocketController::kLightCount; ++i)
     {
@@ -285,9 +324,10 @@ void Controllers::rebuildGpioUsageCache_() const{
             continue;
         if (!cfg->enabled)
             continue;
-        markPortUsed_(_gpio_usage_cache.used, cfg->button_port);
-        markPortUsed_(_gpio_usage_cache.used, cfg->relay_port);
+        markPortUsed_(used, cfg->button_port);
+        markPortUsed_(used, cfg->relay_port);
     }
+    auto meteo_guard = _meteo.lockGuard();
     for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
     {
         const auto *cfg = _meteo.configByIndex(i);
@@ -295,84 +335,98 @@ void Controllers::rebuildGpioUsageCache_() const{
             continue;
         if (cfg->type != MeteoController::SensorType::Dht22)
             continue;
-        markPortUsed_(_gpio_usage_cache.used, cfg->dht_pin);
+        markPortUsed_(used, cfg->dht_pin);
     }
+    auto thermo_guard = _thermo.lockGuard();
     for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
     {
         const auto *cfg = _thermo.configByIndex(i);
         if (!cfg)
             continue;
-        markPortUsed_(_gpio_usage_cache.used, cfg->heat_port);
-        markPortUsed_(_gpio_usage_cache.used, cfg->cool_port);
-        markPortUsed_(_gpio_usage_cache.used, cfg->button_port);
+        markPortUsed_(used, cfg->heat_port);
+        markPortUsed_(used, cfg->cool_port);
+        markPortUsed_(used, cfg->button_port);
     }
+    auto tanks_guard = _tanks.lockGuard();
     for (size_t i = 0; i < TankController::kTankCount; ++i)
     {
         const auto *cfg = _tanks.configByIndex(i);
         if (!cfg)
             continue;
-        markPortUsed_(_gpio_usage_cache.used, cfg->level_low);
-        markPortUsed_(_gpio_usage_cache.used, cfg->level_mid);
-        markPortUsed_(_gpio_usage_cache.used, cfg->level_full);
-        markPortUsed_(_gpio_usage_cache.used, cfg->relay_valve);
-        markPortUsed_(_gpio_usage_cache.used, cfg->relay_pump);
-        markPortUsed_(_gpio_usage_cache.used, cfg->relay_alarm);
+        markPortUsed_(used, cfg->level_low);
+        markPortUsed_(used, cfg->level_mid);
+        markPortUsed_(used, cfg->level_full);
+        markPortUsed_(used, cfg->relay_valve);
+        markPortUsed_(used, cfg->relay_pump);
+        markPortUsed_(used, cfg->relay_alarm);
     }
+    auto septic_guard = _septic.lockGuard();
     for (size_t i = 0; i < SepticController::kSepticCount; ++i)
     {
         const auto *cfg = _septic.configByIndex(i);
         if (!cfg)
             continue;
-        markPortUsed_(_gpio_usage_cache.used, cfg->warning_port);
-        markPortUsed_(_gpio_usage_cache.used, cfg->alarm_port);
-        markPortUsed_(_gpio_usage_cache.used, cfg->relay_warning);
-        markPortUsed_(_gpio_usage_cache.used, cfg->relay_alarm);
+        markPortUsed_(used, cfg->warning_port);
+        markPortUsed_(used, cfg->alarm_port);
+        markPortUsed_(used, cfg->relay_warning);
+        markPortUsed_(used, cfg->relay_alarm);
     }
+    auto security_guard = _security.lockGuard();
     if (_security.sirenPort() != SecurityController::kInvalidPort)
-        markPortUsed_(_gpio_usage_cache.used, _security.sirenPort());
+        markPortUsed_(used, _security.sirenPort());
     for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
     {
         const auto *cfg = _security.configByIndex(i);
         if (!cfg)
             continue;
-        markPortUsed_(_gpio_usage_cache.used, cfg->port);
+        markPortUsed_(used, cfg->port);
     }
+    auto ring_guard = _ring.lockGuard();
     const auto &rcfg = _ring.config();
-    markPortUsed_(_gpio_usage_cache.used, rcfg.button_port);
-    markPortUsed_(_gpio_usage_cache.used, rcfg.relay_port);
+    markPortUsed_(used, rcfg.button_port);
+    markPortUsed_(used, rcfg.relay_port);
 
+    auto avr_guard = _avr.lockGuard();
     const auto &acfg = _avr.config();
-    markPortUsed_(_gpio_usage_cache.used, acfg.main_ok_port);
-    markPortUsed_(_gpio_usage_cache.used, acfg.reserve_ok_port);
-    markPortUsed_(_gpio_usage_cache.used, acfg.feedback_main_port);
-    markPortUsed_(_gpio_usage_cache.used, acfg.feedback_reserve_port);
-    markPortUsed_(_gpio_usage_cache.used, acfg.relay_main_port);
-    markPortUsed_(_gpio_usage_cache.used, acfg.relay_reserve_port);
+    markPortUsed_(used, acfg.main_ok_port);
+    markPortUsed_(used, acfg.reserve_ok_port);
+    markPortUsed_(used, acfg.feedback_main_port);
+    markPortUsed_(used, acfg.feedback_reserve_port);
+    markPortUsed_(used, acfg.relay_main_port);
+    markPortUsed_(used, acfg.relay_reserve_port);
 
+    auto leak_guard = _leak.lockGuard();
     for (size_t i = 0; i < LeakController::kZoneCount; ++i)
     {
         const auto *cfg = _leak.configByIndex(i);
         if (!cfg)
             continue;
-        markPortUsed_(_gpio_usage_cache.used, cfg->sensor_port);
-        markPortUsed_(_gpio_usage_cache.used, cfg->valve_port);
-        markPortUsed_(_gpio_usage_cache.used, cfg->alarm_port);
+        markPortUsed_(used, cfg->sensor_port);
+        markPortUsed_(used, cfg->valve_port);
+        markPortUsed_(used, cfg->alarm_port);
     }
 
+    auto watering_guard = _watering.lockGuard();
     for (size_t i = 0; i < WateringController::kRuleCount; ++i)
     {
         const auto *cfg = _watering.configByIndex(i);
         if (!cfg)
             continue;
-        markPortUsed_(_gpio_usage_cache.used, cfg->port);
+        markPortUsed_(used, cfg->port);
     }
 }
 
 void Controllers::ensureGpioUsageCache_() const{
     const uint32_t now = millis();
-    if (_gpio_usage_cache.valid && _gpio_usage_cache.built_ms == now)
-        return;
-    rebuildGpioUsageCache_();
+    {
+        auto guard = _lock.guard();
+        if (_gpio_usage_cache.valid && (uint32_t)(now - _gpio_usage_cache.built_ms) < 1000u)
+            return;
+    }
+    bool used[PortIO::PORT_COUNT] = {};
+    rebuildGpioUsageCache_(used);
+    auto guard = _lock.guard();
+    memcpy(_gpio_usage_cache.used, used, sizeof(used));
     _gpio_usage_cache.valid = true;
     _gpio_usage_cache.built_ms = now;
 }
@@ -408,11 +462,22 @@ void Controllers::loadFromStorage_(){
 }
 
 void Controllers::saveIfNeeded_(){
+    bool eeprom_save_enabled = true;
+    uint32_t save_interval_ms = 0;
+    uint32_t last_save_ms = 0;
+    {
+        auto guard = _lock.guard();
+        eeprom_save_enabled = _eeprom_save_enabled;
+        save_interval_ms = _save_interval_ms;
+        last_save_ms = _last_save_ms;
+    }
+    if (!eeprom_save_enabled)
+        return;
     if (!_storage.isReady())
         return;
     const uint32_t now = millis();
     const bool force_security = _security.takeForceSave();
-    if (!force_security && _save_interval_ms && (uint32_t)(now - _last_save_ms) < _save_interval_ms)
+    if (!force_security && save_interval_ms && (uint32_t)(now - last_save_ms) < save_interval_ms)
         return;
     bool saved = false;
     if (_sockets.takeDirty())
@@ -474,5 +539,8 @@ void Controllers::saveIfNeeded_(){
             saved = true;
     }
     if (saved)
+    {
+        auto guard = _lock.guard();
         _last_save_ms = now;
+    }
 }

@@ -281,7 +281,7 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
       </div>
       <form method="POST" action="/lights" id="lights-form">
         %LIGHTS_FORM_HIDDEN%
-        <div class="grid">
+        <div class="grid" id="lights-grid">
           %LIGHTS%
         </div>
         <p class="actions">
@@ -299,10 +299,48 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
     };
     const lightsPage = %LIGHTS_PAGE%;
     const lightsPages = %LIGHTS_PAGES%;
+    const lightsGrid = document.getElementById('lights-grid');
     const socketUsed = {
       dinput: %DINPUT_USED_JSON%,
       relay: %RELAY_USED_JSON%
     };
+    async function loadLightsList() {
+      if (!lightsGrid) return;
+      try {
+        let url = '/lights/list?page=' + encodeURIComponent(String(lightsPage));
+        if (lightsUnit === 'stack' && lightsNodeId) {
+          url += '&unit=stack&node_id=' + encodeURIComponent(String(lightsNodeId));
+        }
+        const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) {
+          lightsGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+          return;
+        }
+        lightsGrid.innerHTML = await res.text();
+        bindLightHandlers();
+        refreshLightSelects();
+      } catch (e) {
+        lightsGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+      }
+    }
+    async function pollLightPortOptions() {
+      try {
+        let url = '/lights/ports_options';
+        if (lightsUnit === 'stack' && lightsNodeId) {
+          url += '?unit=stack&node_id=' + encodeURIComponent(String(lightsNodeId));
+        }
+        const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data || typeof data !== 'object') return;
+        socketOptions.dinput = Array.isArray(data.dinput) ? data.dinput : [];
+        socketOptions.relay = Array.isArray(data.relay) ? data.relay : [];
+        socketUsed.dinput = Array.isArray(data.dinput_used) ? data.dinput_used : [];
+        socketUsed.relay = Array.isArray(data.relay_used) ? data.relay_used : [];
+        refreshLightSelects();
+      } catch (e) {
+      }
+    }
     function labelFor(type, val) {
       if (type === 'dinput') return 'in' + val;
       if (type === 'relay') return 'rly' + val;
@@ -350,9 +388,9 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
       });
     }
     refreshLightSelects();
-    document.querySelectorAll('select.socket-select').forEach((el) => {
-      el.addEventListener('change', refreshLightSelects);
-    });
+    loadLightsList();
+    setTimeout(pollLightPortOptions, 50);
+    setInterval(pollLightPortOptions, 2000);
     const prevBtn = document.getElementById('lights-prev');
     const nextBtn = document.getElementById('lights-next');
     const pageSelect = document.getElementById('lights-page');
@@ -443,10 +481,20 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
       toggle.checked = !toggle.checked;
       toggle.dispatchEvent(new Event('change', { bubbles: true }));
     }
+    function bindLightHandlers() {
+    document.querySelectorAll('select.socket-select').forEach((el) => {
+      if (el.dataset.bound === '1') return;
+      el.dataset.bound = '1';
+      el.addEventListener('change', refreshLightSelects);
+    });
     document.querySelectorAll('.sock-visual').forEach((visual) => {
+      if (visual.dataset.bound === '1') return;
+      visual.dataset.bound = '1';
       visual.addEventListener('click', () => toggleFromVisual(visual));
     });
     document.querySelectorAll('input.socket-toggle').forEach((el) => {
+      if (el.dataset.bound === '1') return;
+      el.dataset.bound = '1';
       el.addEventListener('change', async () => {
         const id = el.dataset.id;
         const tile = el.closest('.tile');
@@ -457,7 +505,7 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
         try {
           const action = el.checked ? 'on' : 'off';
           const state = await postForm('/lights/toggle', 'id=' + encodeURIComponent(id) + '&action=' + action);
-          if (state === 'pending') {
+          if (state === 'pending' || state === 'OK') {
             updateSocketVisual(tile, desired);
             return;
           }
@@ -474,6 +522,8 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
       });
     });
       document.querySelectorAll('input.socket-enable').forEach((el) => {
+        if (el.dataset.bound === '1') return;
+        el.dataset.bound = '1';
         el.addEventListener('change', async () => {
           const id = el.dataset.id;
           const tile = el.closest('.tile');
@@ -495,6 +545,7 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
         }
         });
       });
+    }
       async function fetchState(id) {
         let url = '/lights/toggle?id=' + encodeURIComponent(id) + '&action=state';
         if (lightsUnit === 'stack' && lightsNodeId) {

@@ -580,6 +580,8 @@ const char kDate[] = "Дата";
 const char kTime[] = "Время";
 const char kReboot[] = "Перезагрузить";
 const char kAdminStatusAcl[] = "управление через users ACL";
+const char kEepromSave[] = "Сохранять";
+const char kEepromLoad[] = "Загружать";
 } // namespace AdminPage
 
 namespace CloudPage

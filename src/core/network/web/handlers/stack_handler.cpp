@@ -11,7 +11,26 @@
 
 #include "core/network/web/handlers/stack_handler.hpp"
 
+#include <atomic>
+
 #include "core/network/web/web_interface.hpp"
+
+namespace
+{
+constexpr uint32_t kStackPageCacheMs = 1500u;
+String g_stack_page_cache;
+uint32_t g_stack_page_cache_built_ms = 0;
+uint8_t g_stack_page_cache_role = 0xFF;
+
+bool canUseStackPageCache_(uint32_t now_ms, uint8_t role)
+{
+    if (!g_stack_page_cache.length())
+        return false;
+    if (g_stack_page_cache_role != role)
+        return false;
+    return (uint32_t)(now_ms - g_stack_page_cache_built_ms) <= kStackPageCacheMs;
+}
+}
 
 void StackHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
         server.on("/stack/nodes_tbody", HTTP_GET,
@@ -29,26 +48,38 @@ void StackHandler::handleStack(WebInterface &web, AsyncWebServerRequest *request
             return;
         if (!web.requireWebAdmin_(request, &set_cookie))
             return;
-        String page = FPSTR(kWebInterfaceStackHtml);
-        page.reserve(page.length() + 4096);
-        page.replace("%NAV%", web.navHtml_());
         const auto role = web.stackRole_();
-        page.replace("%STACK_ROLE%", web.stackRoleName_(role));
-        page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
-        page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
-        page.replace("%STACK_SLAVE_STYLE%", role == ConfigsManagerIface::StackRole::Slave ? "" : "display:none");
-        page.replace("%STACK_PAGE_TITLE%", WebUiRu::StackPage::kPageTitle);
-        page.replace("%STACK_TITLE%", WebUiRu::StackPage::kTitle);
-        page.replace("%STACK_LABEL_ROLE%", WebUiRu::StackPage::kRole);
-        page.replace("%STACK_LABEL_MASTER_HOST%", WebUiRu::StackPage::kMasterHost);
-        page.replace("%STACK_LABEL_FALLBACK_MASTER%", WebUiRu::StackPage::kFallbackMaster);
-        page.replace("%STACK_LABEL_ENABLE%", WebUiRu::StackPage::kEnable);
-        page.replace("%STACK_LABEL_FALLBACK_HOST%", WebUiRu::StackPage::kFallbackHost);
-        page.replace("%STACK_LABEL_SLAVE_CONTROLLER%", WebUiRu::StackPage::kSlaveController);
-        page.replace("%STACK_LABEL_FULL_CONTROLLER%", WebUiRu::StackPage::kFullController);
-        page.replace("%STACK_LABEL_API_KEY%", WebUiRu::StackPage::kApiKey);
-        page.replace("%STACK_API_KEY_PLACEHOLDER%", WebUiRu::StackPage::kApiKeyPlaceholder);
-        page.replace("%STACK_BTN_GEN_KEY%", WebUiRu::StackPage::kGenerate);
+        const uint32_t now_ms = millis();
+        String page;
+        if (canUseStackPageCache_(now_ms, (uint8_t)role))
+        {
+            page = g_stack_page_cache;
+        }
+        else
+        {
+            page = FPSTR(kWebInterfaceStackHtml);
+            page.reserve(page.length() + 4096);
+            page.replace("%NAV%", web.navHtml_());
+            page.replace("%STACK_ROLE%", web.stackRoleName_(role));
+            page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
+            page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
+            page.replace("%STACK_SLAVE_STYLE%", role == ConfigsManagerIface::StackRole::Slave ? "" : "display:none");
+            page.replace("%STACK_PAGE_TITLE%", WebUiRu::StackPage::kPageTitle);
+            page.replace("%STACK_TITLE%", WebUiRu::StackPage::kTitle);
+            page.replace("%STACK_LABEL_ROLE%", WebUiRu::StackPage::kRole);
+            page.replace("%STACK_LABEL_MASTER_HOST%", WebUiRu::StackPage::kMasterHost);
+            page.replace("%STACK_LABEL_FALLBACK_MASTER%", WebUiRu::StackPage::kFallbackMaster);
+            page.replace("%STACK_LABEL_ENABLE%", WebUiRu::StackPage::kEnable);
+            page.replace("%STACK_LABEL_FALLBACK_HOST%", WebUiRu::StackPage::kFallbackHost);
+            page.replace("%STACK_LABEL_SLAVE_CONTROLLER%", WebUiRu::StackPage::kSlaveController);
+            page.replace("%STACK_LABEL_FULL_CONTROLLER%", WebUiRu::StackPage::kFullController);
+            page.replace("%STACK_LABEL_API_KEY%", WebUiRu::StackPage::kApiKey);
+            page.replace("%STACK_API_KEY_PLACEHOLDER%", WebUiRu::StackPage::kApiKeyPlaceholder);
+            page.replace("%STACK_BTN_GEN_KEY%", WebUiRu::StackPage::kGenerate);
+            g_stack_page_cache = page;
+            g_stack_page_cache_built_ms = now_ms;
+            g_stack_page_cache_role = (uint8_t)role;
+        }
         auto linkDisconnectedText = [role]() -> const char * {
             return role == ConfigsManagerIface::StackRole::Slave
                        ? WebUiRu::StackPage::kMasterLinkDisconnected

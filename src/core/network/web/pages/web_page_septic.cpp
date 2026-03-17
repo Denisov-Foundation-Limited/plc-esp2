@@ -294,7 +294,7 @@ const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       %SEPTIC_DEVICE_SELECT%
       %SEPTIC_PAGINATION%
       <form method="POST" action="/septic" id="septic-form">
-        <div class="grid">
+        <div class="grid" id="septic-grid">
           %SEPTIC_ITEMS%
         </div>
         <div class="actions">
@@ -312,6 +312,33 @@ const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       dinput: %SEPTIC_DINPUT_USED_JSON%,
       relay: %SEPTIC_RELAY_USED_JSON%
     };
+    const septicGrid = document.getElementById('septic-grid');
+    const septicPageValue = (() => {
+      const url = new URL(window.location.href);
+      return url.searchParams.get('page') || '1';
+    })();
+    async function loadSepticList() {
+      if (!septicGrid) return;
+      try {
+        const url = new URL('/septic/list', window.location.origin);
+        const cur = new URL(window.location.href);
+        const unit = cur.searchParams.get('unit');
+        const node = cur.searchParams.get('node');
+        if (unit) url.searchParams.set('unit', unit);
+        if (node) url.searchParams.set('node', node);
+        url.searchParams.set('page', septicPageValue);
+        const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) {
+          septicGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+          return;
+        }
+        septicGrid.innerHTML = await res.text();
+        bindSepticHandlers();
+        refreshSepticSelects();
+      } catch (e) {
+        septicGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+      }
+    }
     function labelFor(type, val) {
       if (type === 'dinput') return 'in' + val;
       if (type === 'relay') return 'rly' + val;
@@ -358,10 +385,74 @@ const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
         el.value = selected || '';
       });
     }
-    refreshSepticSelects();
-    document.querySelectorAll('select.septic-select').forEach((el) => {
-      el.addEventListener('change', refreshSepticSelects);
-    });
+    const septicForm = document.getElementById('septic-form');
+    const reloadKey = 'septic_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname);
+    }
+    if (septicForm) {
+      septicForm.addEventListener('submit', () => {
+        sessionStorage.setItem(reloadKey, '1');
+      });
+    }
+    function bindSepticHandlers() {
+      document.querySelectorAll('select.septic-select').forEach((el) => {
+        if (el.dataset.boundChange === '1') return;
+        el.dataset.boundChange = '1';
+        el.addEventListener('change', refreshSepticSelects);
+      });
+      document.querySelectorAll('input[type="checkbox"][name^="sep"][name$="_en"]').forEach((el) => {
+        if (el.dataset.boundEnable === '1') return;
+        el.dataset.boundEnable = '1';
+        el.addEventListener('change', () => {
+          const tile = el.closest('.tile');
+          updateSepticEnabled(tile, el.checked);
+          if (!el.checked && septicForm) {
+            sessionStorage.setItem(reloadKey, '1');
+            septicForm.submit();
+          }
+        });
+      });
+      document.querySelectorAll('input.septic-monitor').forEach((el) => {
+        if (el.dataset.boundMonitor === '1') return;
+        el.dataset.boundMonitor = '1';
+        el.addEventListener('change', async () => {
+          if (el.dataset.busy === '1') return;
+          el.dataset.busy = '1';
+          const reqId = String((parseInt(el.dataset.reqId || '0', 10) || 0) + 1);
+          el.dataset.reqId = reqId;
+          const prev = !el.checked;
+          const name = el.dataset.action;
+          const hidden = document.querySelector('input[name="' + name + '"]');
+          if (hidden) {
+            hidden.value = el.checked ? 'on' : 'off';
+          }
+          const tile = el.closest('.tile');
+          const idMatch = name ? name.match(/^sep(\d+)_mon$/) : null;
+          const id = idMatch ? parseInt(idMatch[1], 10) : 0;
+          try {
+            if (!id) throw new Error('bad id');
+            const desired = !!el.checked;
+            const st = await postSepticToggle(id, desired ? 'on' : 'off');
+            if (typeof st === 'object' && st) {
+              el.checked = !!st.monitor;
+              if (hidden) hidden.value = st.monitor ? 'on' : 'off';
+              applySepticStateUi(tile, st);
+            }
+            scheduleSepticStateRefresh(id, tile, el, hidden, reqId);
+          } catch (e) {
+            if (el.dataset.reqId !== reqId) return;
+            el.checked = prev;
+            if (hidden) hidden.value = prev ? 'on' : 'off';
+          } finally {
+            if (el.dataset.reqId === reqId) {
+              el.dataset.busy = '0';
+            }
+          }
+        });
+      });
+    }
     function updateSepticEnabled(tile, enabled) {
       if (!tile) return;
       tile.classList.toggle('disabled', !enabled);
@@ -381,27 +472,6 @@ const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
         if (monitorHidden) monitorHidden.value = 'off';
         refreshSepticSelects();
       }
-    }
-    document.querySelectorAll('input[type="checkbox"][name^="sep"][name$="_en"]').forEach((el) => {
-      el.addEventListener('change', () => {
-        const tile = el.closest('.tile');
-        updateSepticEnabled(tile, el.checked);
-        if (!el.checked && septicForm) {
-          sessionStorage.setItem(reloadKey, '1');
-          septicForm.submit();
-        }
-      });
-    });
-    const septicForm = document.getElementById('septic-form');
-    const reloadKey = 'septic_reload';
-    if (sessionStorage.getItem(reloadKey)) {
-      sessionStorage.removeItem(reloadKey);
-      location.replace(location.pathname);
-    }
-    if (septicForm) {
-      septicForm.addEventListener('submit', () => {
-        sessionStorage.setItem(reloadKey, '1');
-      });
     }
     const septicQs = new URLSearchParams(window.location.search);
     const septicIsStackView = septicQs.get('unit') === 'stack';
@@ -489,42 +559,9 @@ const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       };
       setTimeout(tick, 220);
     }
-    document.querySelectorAll('input.septic-monitor').forEach((el) => {
-      el.addEventListener('change', async () => {
-        if (el.dataset.busy === '1') return;
-        el.dataset.busy = '1';
-        const reqId = String((parseInt(el.dataset.reqId || '0', 10) || 0) + 1);
-        el.dataset.reqId = reqId;
-        const prev = !el.checked;
-        const name = el.dataset.action;
-        const hidden = document.querySelector('input[name="' + name + '"]');
-        if (hidden) {
-          hidden.value = el.checked ? 'on' : 'off';
-        }
-        const tile = el.closest('.tile');
-        const idMatch = name ? name.match(/^sep(\d+)_mon$/) : null;
-        const id = idMatch ? parseInt(idMatch[1], 10) : 0;
-        try {
-          if (!id) throw new Error('bad id');
-          const desired = !!el.checked;
-          const st = await postSepticToggle(id, desired ? 'on' : 'off');
-          if (typeof st === 'object' && st) {
-            el.checked = !!st.monitor;
-            if (hidden) hidden.value = st.monitor ? 'on' : 'off';
-            applySepticStateUi(tile, st);
-          }
-          scheduleSepticStateRefresh(id, tile, el, hidden, reqId);
-        } catch (e) {
-          if (el.dataset.reqId !== reqId) return;
-          el.checked = prev;
-          if (hidden) hidden.value = prev ? 'on' : 'off';
-        } finally {
-          if (el.dataset.reqId === reqId) {
-            el.dataset.busy = '0';
-          }
-        }
-      });
-    });
+    refreshSepticSelects();
+    loadSepticList();
+    bindSepticHandlers();
     function septicTileId(tile) {
       if (!tile) return 0;
       const monitor = tile.querySelector('input.septic-monitor');

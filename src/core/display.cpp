@@ -20,6 +20,7 @@ Display::Display(I2CManager &i2c, Lcd1602I2c &lcd) : _i2c(i2c), _lcd(lcd) {}
 bool Display::begin()
 {
     const uint8_t bus_num = ActiveBoardProfile::LCD.bus_num;
+    _bus_num = bus_num;
     const uint8_t addr = ActiveBoardProfile::LCD.addr;
     if (!busExists_(bus_num))
     {
@@ -34,27 +35,37 @@ bool Display::begin()
         return false;
     }
 
-    if (!_lcd.begin(*wire, addr))
     {
-        _err = Error::I2c;
-        return false;
+        I2CManager::ScopedBusLock lk(_i2c, _bus_num);
+        if (!lk.locked())
+        {
+            _err = Error::I2c;
+            return false;
+        }
+        if (!_i2c.probeAddressLocked(_bus_num, addr))
+        {
+            _err = Error::I2c;
+            return false;
+        }
+        if (!_lcd.begin(*wire, addr))
+        {
+            _err = Error::I2c;
+            return false;
+        }
     }
-
-    _lcd.createChar(kDegreeChar, kDegreeCharMap_);
     _err = Error::Ok;
     _ready = true;
-
-    _lcd.setBacklight(true);
-
-    clear();
-    showStr(0, F("      FCPLC     "));
-    showStr(1, F("Denisov Fnd Ltd."));
+    _line0 = F("      FCPLC     ");
+    _line1 = F("Denisov Fnd Ltd.");
     return true;
 }
 
 bool Display::showStr(uint8_t str, const String &text)
 {
     if (str > 1 || text.length() > 16)
+        return false;
+    I2CManager::ScopedBusLock lk(_i2c, _bus_num);
+    if (!lk.locked())
         return false;
     _lcd.setCursor(0, str);
     _lcd.print(text);
@@ -63,6 +74,9 @@ bool Display::showStr(uint8_t str, const String &text)
 
 void Display::clear()
 {
+    I2CManager::ScopedBusLock lk(_i2c, _bus_num);
+    if (!lk.locked())
+        return;
     _lcd.clear();
 }
 
@@ -70,13 +84,30 @@ void Display::task()
 {
     if (!_ready)
         return;
-    // Keep LCD backpack backlight latched ON after transient I2C glitches.
-    _lcd.backlightOn();
+    char line0[17] = {};
+    char line1[17] = {};
+    bool have_rendered_slots = false;
+
     if (_slot_provider)
     {
-        char line0[17] = {};
-        char line1[17] = {};
         renderSlots_(line0, line1);
+        have_rendered_slots = true;
+    }
+
+    I2CManager::ScopedBusLock lk(_i2c, _bus_num);
+    if (!lk.locked())
+        return;
+
+    // Keep LCD backpack backlight latched ON after transient I2C glitches.
+    _lcd.backlightOn();
+    static bool custom_chars_ready = false;
+    if (!custom_chars_ready)
+    {
+        _lcd.createChar(kDegreeChar, kDegreeCharMap_);
+        custom_chars_ready = true;
+    }
+    if (have_rendered_slots)
+    {
         writeLine_(0, line0);
         writeLine_(1, line1);
         return;

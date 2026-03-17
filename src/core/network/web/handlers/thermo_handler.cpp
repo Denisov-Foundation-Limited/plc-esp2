@@ -14,6 +14,7 @@
 #include "core/network/web/web_interface.hpp"
 
 void ThermoHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
+        server.on("/thermo/list", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleThermoList(web, request); });
         server.on("/thermo/toggle", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleThermoToggle(web, request); });
         server.on("/thermo/toggle", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleThermoToggle(web, request); });
         server.on("/thermo", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleThermoSave(web, request); });
@@ -147,9 +148,7 @@ void ThermoHandler::handleThermo(WebInterface &web, AsyncWebServerRequest *reque
             pagination += "</div>";
         }
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%THERMO_ROWS%", stack_view ? web.listStackThermoHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size, groups_available ? SIZE_MAX : page_size)
-                                                 : web.listThermoHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
-                                                                       groups_available ? SIZE_MAX : page_size));
+        page.replace("%THERMO_ROWS%", "<div class=\"tile empty\">Loading...</div>");
         page.replace("%THERMO_PAGINATION%", pagination);
         page.replace("%THERMO_STATUS%", stack_view ? web.stackThermoStatusText_(node_id) : web._thermo_status);
         page.replace("%THERMO_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
@@ -207,6 +206,7 @@ void ThermoHandler::handleThermo(WebInterface &web, AsyncWebServerRequest *reque
         else if (web._controllers)
         {
             ThermoController &thermo = web._controllers->thermo();
+            auto thermo_guard = thermo.lockGuard();
             for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
             {
                 const auto *cfg = thermo.configByIndex(i);
@@ -231,6 +231,52 @@ void ThermoHandler::handleThermo(WebInterface &web, AsyncWebServerRequest *reque
                               : (String("<button type=\"submit\" disabled>") + WebUiRu::kSave + "</button>"));
         page.replace("%BOARD_NAME%", ActiveBoardProfile::UI_NAME);
         web.sendHtml_(request, page, set_cookie);
+    }
+
+void ThermoHandler::handleThermoList(WebInterface &web, AsyncWebServerRequest *request) {
+        bool set_cookie = false;
+        if (!web.checkAuthApi_(request, &set_cookie))
+            return;
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Thermo, node_id))
+            return;
+        const bool stack_view = web.isStackThermoView_(node_id);
+        const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
+        const uint8_t page_size = 8u;
+        const String page_str = web.paramValueAny_(request, "page");
+        uint8_t page_idx = 0;
+        if (page_str.length())
+        {
+            const int v = page_str.toInt();
+            if (v > 0)
+                page_idx = (uint8_t)(v - 1);
+        }
+        if (stack_view)
+        {
+            if (!groups_available)
+            {
+                const size_t visible = web.stackThermoVisibleCount_(node_id);
+                const uint8_t max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+                if (page_idx >= max_pages)
+                    page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            }
+            web.sendText_(request, 200, "text/html; charset=utf-8",
+                          web.listStackThermoHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                   groups_available ? SIZE_MAX : page_size),
+                          set_cookie);
+            return;
+        }
+        if (!groups_available)
+        {
+            const size_t visible = web.thermoLocalRenderCount_();
+            const uint8_t max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
+            if (page_idx >= max_pages)
+                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+        }
+        web.sendText_(request, 200, "text/html; charset=utf-8",
+                      web.listThermoHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                          groups_available ? SIZE_MAX : page_size),
+                      set_cookie);
     }
 
 void ThermoHandler::handleThermoSave(WebInterface &web, AsyncWebServerRequest *request) {
@@ -677,6 +723,7 @@ void ThermoHandler::handleThermoSave(WebInterface &web, AsyncWebServerRequest *r
             return;
         }
         ThermoController &thermo = web._controllers->thermo();
+        auto thermo_guard = thermo.lockGuard();
         if (!web.webSessionIsAdmin_())
         {
             bool power_changed = false;
@@ -1127,6 +1174,7 @@ void ThermoHandler::handleThermoToggle(WebInterface &web, AsyncWebServerRequest 
             return;
         }
         ThermoController &thermo = web._controllers->thermo();
+        auto thermo_guard = thermo.lockGuard();
         if (!thermo.config(id))
         {
             web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);

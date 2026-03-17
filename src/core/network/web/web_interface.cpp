@@ -161,6 +161,8 @@ void WebInterface::registerRoutes()
             return;
         const bool has_rtc = request->hasParam("rtc_date", true) || request->hasParam("rtc_time", true);
         const bool has_buzzer = request->hasParam("buzzer_present", true);
+        const bool has_eeprom = request->hasParam("eeprom_present", true);
+        const bool has_system = has_buzzer || has_eeprom;
 
         if (has_rtc)
         {
@@ -194,14 +196,29 @@ void WebInterface::registerRoutes()
             }
             const bool enabled = request->hasParam("buzzer_enabled", true);
             _plc->setBuzzerEnabled(enabled);
-            if (_configs_manager && !_configs_manager->save())
+        }
+
+        if (has_eeprom)
+        {
+            if (!_configs_manager)
+            {
+                sendText_(request, 500, "text/plain", "Config manager unavailable", set_cookie);
+                return;
+            }
+            _configs_manager->setEepromSaveEnabled(request->hasParam("eeprom_save", true));
+            _configs_manager->setEepromLoadEnabled(request->hasParam("eeprom_load", true));
+        }
+
+        if (has_system)
+        {
+            if (!_configs_manager || !_configs_manager->save())
             {
                 sendText_(request, 500, "text/plain", "Save failed", set_cookie);
                 return;
             }
         }
 
-        if (!has_rtc && !has_buzzer)
+        if (!has_rtc && !has_system)
         {
             sendText_(request, 400, "text/plain", "Missing data", set_cookie);
             return;
@@ -1973,8 +1990,11 @@ int32_t WebInterface::scaled10_(float value)
 
         if (path == "/wifi")
         {
-            hashAdd_(hash, _wifi.ap() ? "AP" : "STA");
-            hashAdd_(hash, _wifi.ap() ? _wifi.apSsid() : _wifi.ssid());
+            hashAdd_(hash, _wifi.modeLabel());
+            if (_wifi.staEnabled())
+                hashAdd_(hash, _wifi.ssid());
+            if (_wifi.apEnabled())
+                hashAdd_(hash, _wifi.apSsid());
             hashAdd_(hash, wifiIp_());
             if (_gsm)
             {
@@ -2030,6 +2050,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 MeteoController &meteo = _controllers->meteo();
+                auto guard = meteo.lockGuard();
                 for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
                 {
                     const auto *cfg = meteo.configByIndex(i);
@@ -2092,6 +2113,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 ThermoController &thermo = _controllers->thermo();
+                auto guard = thermo.lockGuard();
                 for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
                 {
                     const auto *cfg = thermo.configByIndex(i);
@@ -2157,6 +2179,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 TankController &tanks = _controllers->tanks();
+                auto guard = tanks.lockGuard();
                 for (size_t i = 0; i < TankController::kTankCount; ++i)
                 {
                     const auto *cfg = tanks.configByIndex(i);
@@ -2228,6 +2251,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 SepticController &septic = _controllers->septic();
+                auto guard = septic.lockGuard();
                 for (size_t i = 0; i < SepticController::kSepticCount; ++i)
                 {
                     const auto *cfg = septic.configByIndex(i);
@@ -2286,6 +2310,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 WateringController &watering = _controllers->watering();
+                auto guard = watering.lockGuard();
                 for (size_t i = 0; i < WateringController::kRuleCount; ++i)
                 {
                     const auto *cfg = watering.configByIndex(i);
@@ -2365,6 +2390,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 SecurityController &sec = _controllers->security();
+                auto guard = sec.lockGuard();
                 hashAdd_(hash, sec.controllerEnabled() ? 1u : 0u);
                 hashAdd_(hash, sec.armed() ? 1u : 0u);
                 hashAdd_(hash, sec.alarmOn() ? 1u : 0u);
@@ -2434,6 +2460,7 @@ int32_t WebInterface::scaled10_(float value)
         {
             if (_controllers)
             {
+                auto guard = _controllers->ring().lockGuard();
                 const auto &cfg = _controllers->ring().config();
                 hashAdd_(hash, cfg.enabled ? 1u : 0u);
                 hashAdd_(hash, (uint32_t)cfg.button_port);
@@ -2447,6 +2474,7 @@ int32_t WebInterface::scaled10_(float value)
         {
             if (_controllers)
             {
+                auto guard = _controllers->avr().lockGuard();
                 const auto &cfg = _controllers->avr().config();
                 const auto &st = _controllers->avr().state();
                 hashAdd_(hash, cfg.enabled ? 1u : 0u);
@@ -2522,6 +2550,7 @@ int32_t WebInterface::scaled10_(float value)
             if (_controllers)
             {
                 LeakController &leak = _controllers->leak();
+                auto guard = leak.lockGuard();
                 hashAdd_(hash, leak.controllerEnabled() ? 1u : 0u);
                 for (size_t i = 0; i < LeakController::kZoneCount; ++i)
                 {
@@ -2608,6 +2637,7 @@ int32_t WebInterface::scaled10_(float value)
                 hashAdd_(hash, _tgbot->token());
                 hashAdd_(hash, String((long long)_tgbot->chatId()));
                 hashAdd_(hash, _tgbot->clientKindName());
+                hashAdd_(hash, _tgbot->pollMode() == TelegramClient::PollMode::Long ? "long" : "short");
                 hashAdd_(hash, _tgbot->useProxy() ? "1" : "0");
                 hashAdd_(hash, _tgbot->proxyHost());
                 hashAdd_(hash, String((unsigned)_tgbot->proxyPort()));

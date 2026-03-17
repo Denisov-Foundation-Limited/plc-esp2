@@ -40,6 +40,7 @@ public:
     using MenuMarkupProvider = String (*)(void *ctx, int64_t chat_id, const Menu &menu);
     using CommandHandler = bool (*)(TelegramBot &bot, const TelegramClient::Update &upd, String &reply);
     using TextHandler = bool (*)(void *ctx, const TelegramClient::Update &upd);
+    using BackgroundHandler = void (*)(void *ctx);
 
     struct Command
     {
@@ -57,6 +58,7 @@ public:
     void setCommands(const Command *cmds, size_t count);
 
     void setTextHandler(TextHandler handler, void *ctx);
+    void setBackgroundHandler(BackgroundHandler handler, void *ctx);
 
     void setMenuPrefixProvider(MenuPrefixProvider handler, void *ctx);
 
@@ -109,6 +111,8 @@ private:
     size_t _cmd_count = 0;
     TextHandler _text_handler = nullptr;
     void *_text_ctx = nullptr;
+    BackgroundHandler _bg_handler = nullptr;
+    void *_bg_ctx = nullptr;
     MenuPrefixProvider _menu_prefix_handler = nullptr;
     void *_menu_prefix_ctx = nullptr;
     MenuMarkupProvider _menu_markup_handler = nullptr;
@@ -121,6 +125,7 @@ private:
     uint32_t _send_tick = 0;
 
     static constexpr size_t kMaxOutQueue = 32;
+    static constexpr uint32_t kTraceSlowMs = 1000;
 
     bool handleUpdate_(const TelegramClient::Update &u);
 

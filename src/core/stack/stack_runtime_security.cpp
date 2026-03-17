@@ -12,6 +12,7 @@
 #include "app.hpp"
 void StackRuntime::updateSecurityAlarms_(){
     SecurityController &sec = control.controllers.security();
+    auto sec_guard = sec.lockGuard();
     uint32_t detail_mask = 0;
     uint32_t unit_mask = 0;
     for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
@@ -118,7 +119,9 @@ void StackRuntime::broadcastSecurityState_(bool armed){
 }
 
 void StackRuntime::sendSecurityStateToNode_(uint32_t node_id){
-    sendSecurityStateToNode_(node_id, control.controllers.security().armed(), false);
+    auto &sec = control.controllers.security();
+    auto sec_guard = sec.lockGuard();
+    sendSecurityStateToNode_(node_id, sec.armed(), false);
 }
 
 void StackRuntime::sendSecurityStateToNode_(uint32_t node_id, bool armed, bool force){
@@ -134,7 +137,9 @@ void StackRuntime::sendSecurityStateToNode_(uint32_t node_id, bool armed, bool f
     doc["action"] = "set";
     JsonObject params = doc["params"].to<JsonObject>();
     params["armed"] = armed;
-    params["alarm"] = armed ? control.controllers.security().alarmOn() : false;
+    auto &sec = control.controllers.security();
+    auto sec_guard = sec.lockGuard();
+    params["alarm"] = armed ? sec.alarmOn() : false;
     if (force && armed)
         params["force"] = true;
 

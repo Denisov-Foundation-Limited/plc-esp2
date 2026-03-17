@@ -18,10 +18,10 @@ public:
     static void registerRoutes(WebInterface &web, AsyncWebServer &server);
 
     static void handleTanks(WebInterface &web, AsyncWebServerRequest *request);
+    static void handleTanksList(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleTanksSave(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleTanksToggle(WebInterface &web, AsyncWebServerRequest *request);
 };
-
 

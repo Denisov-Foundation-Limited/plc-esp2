@@ -129,6 +129,7 @@ private:
     uint32_t _alarm_blink_ms = 500;
     uint32_t _alarm_next_toggle_ms = 0;
     bool _buzzer_enabled = true;
+    uint8_t _lm75_bus = 0;
 
 
     static bool timeDue_(uint32_t now, uint32_t at);

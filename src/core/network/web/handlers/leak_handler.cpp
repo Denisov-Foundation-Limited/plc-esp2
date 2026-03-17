@@ -178,6 +178,7 @@ void LeakHandler::handleLeakSave(WebInterface &web, AsyncWebServerRequest *reque
         bool changed = false;
         bool ok = true;
         String err;
+        auto leak_guard = leak.lockGuard();
         DynamicJsonDocument stack_doc(4096);
         JsonArray stack_zones = stack_doc.to<JsonArray>();
         for (size_t i = 0; i < LeakController::kZoneCount && ok; ++i)
@@ -415,11 +416,11 @@ String LeakHandler::portValue_(uint8_t port) {
     }
 
 size_t LeakHandler::stackLeakVisibleCount_(WebInterface &web, uint32_t node_id) {
-        if (!web._controllers)
-            return 0;
-        LeakController &leak = web._controllers->leak();
-        (void)leak;
-        const bool can_view_disabled = web.webSessionIsAdmin_();
+    if (!web._controllers)
+        return 0;
+    LeakController &leak = web._controllers->leak();
+    auto leak_guard = leak.lockGuard();
+    const bool can_view_disabled = web.webSessionIsAdmin_();
         const StackCache::StackLeakCache *stack_cache = web._stack_cache ? web.stackCache().leakCache(node_id) : nullptr;
         if (!stack_cache || !stack_cache->has_data || !stack_cache->items)
             return 0;
@@ -461,10 +462,11 @@ size_t LeakHandler::stackLeakVisibleCount_(WebInterface &web, uint32_t node_id) 
     }
 
 size_t LeakHandler::localLeakVisibleCount_(WebInterface &web, uint32_t node_id) {
-        if (!web._controllers)
-            return 0;
-        LeakController &leak = web._controllers->leak();
-        size_t render_count = LeakController::kZoneCount ? 1u : 0u;
+    if (!web._controllers)
+        return 0;
+    LeakController &leak = web._controllers->leak();
+    auto leak_guard = leak.lockGuard();
+    size_t render_count = LeakController::kZoneCount ? 1u : 0u;
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < LeakController::kZoneCount; ++i)
         {
@@ -489,10 +491,11 @@ size_t LeakHandler::localLeakVisibleCount_(WebInterface &web, uint32_t node_id) 
     }
 
 String LeakHandler::buildRows_(WebInterface &web, uint32_t node_id, bool stack_view, size_t offset, size_t limit) {
-        if (!web._controllers)
-            return String("<div class=\"tile tile-empty\">") + WebUiRu::Common::kControllersUnavailable + "</div>";
-        LeakController &leak = web._controllers->leak();
-        String rows;
+    if (!web._controllers)
+        return String("<div class=\"tile tile-empty\">") + WebUiRu::Common::kControllersUnavailable + "</div>";
+    LeakController &leak = web._controllers->leak();
+    auto leak_guard = leak.lockGuard();
+    String rows;
         rows.reserve(LeakController::kZoneCount * 1200);
         const StackCache::StackLeakCache *stack_cache = nullptr;
         const bool can_view_disabled = web.webSessionIsAdmin_();

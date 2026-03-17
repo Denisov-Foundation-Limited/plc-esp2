@@ -55,6 +55,126 @@
   - CLI команды + help
   - README
 
+## FreeRTOS / TaskBinder: текущее состояние
+
+- Перенос runtime на FreeRTOS через `TaskBinder` завершён; `TaskManager` удалён.
+- Текущая цель архитектуры:
+  - короткий и детерминированный `control_loop`;
+  - изоляция сетевых/блокирующих операций в фоновых RTOS-задачах;
+  - минимальный и предсказуемый `App::loop()`.
+
+### Текущий состав RTOS-задач
+
+- Сеть/интеграции:
+  - `network_loop`
+  - `console_loop`
+  - `wifi`
+  - `gsm`
+  - `cloud`
+  - `telegram`
+  - `meteo_history`
+- Контроль и I/O:
+  - `control_loop`
+  - `plc_scan`
+  - `extender`
+  - `display`
+  - `plc`
+- Stack:
+  - `stack_evt` (`taskPost/taskFlush`) через очередь.
+
+### Что осталось в основном loop
+
+- `App::loop()` сейчас выполняет только `runStackPre(stack)` (и опциональные GPIO-метрики под флагом).
+- `notifyStackPostNetwork()` вызывается из RTOS-задачи `network_loop`.
+- Прямых вызовов `network.loop()/console.loop()/plc_scan.tick()` из `App::loop()` больше нет.
+
+### Архитектурные договорённости по RTOS
+
+- Не плодить отдельные RTOS-задачи на каждое чтение GPIO.
+- Для быстрых контроллеров предпочтителен **один общий `control_loop`**, а не десяток параллельных задач с гонками за `Controllers/Gpio`.
+- `stack_evt` должен работать через очередь, а не через прямой вызов `taskPost/taskFlush` из `App::loop`.
+- Для `stack_evt` добавлен флаг pending:
+  - не надо заново посылать уведомление, если предыдущее ещё не обработано;
+  - флаг реализован атомарно (`std::atomic`), не через `volatile bool`.
+- Отдельные задачи оправданы для:
+  - network / cloud / telegram / gsm;
+  - console loop;
+  - display;
+  - plc scan;
+  - extender / I/O-обвязки;
+  - meteo history;
+  - plc background.
+
+### Debug и метрики RTOS
+
+- Диагностический флаг:
+  - `TASK_BINDER_RTOS_DEBUG`
+  - задаётся через `platformio.ini`, а не hardcode в `TaskBinder`.
+- Для появления RTOS debug-логов нужен и уровень логгера:
+  - `LOGGER_LEVEL=4`
+- Текущие RTOS-метрики логируются тегом `RTOS` и содержат:
+  - `exec_us`
+  - `avg_us`
+  - `max_us`
+  - `wavg_us`
+  - `wmax_us`
+  - `cnt`
+  - `hwm`
+  - `min_hwm`
+- `wavg_us/wmax_us` — скользящее окно, более полезное, чем глобальный `max_us`, который может быть «испорчен» старым единичным пиком.
+
+### Практические выводы по метрикам
+
+- Нормальная картина:
+  - `stack_evt`, `wifi`, `gsm` — десятки микросекунд;
+  - `cloud` — обычно сотни микросекунд, иногда миллисекундные пики;
+  - `telegram` и `meteo_history` могут иметь секундные пики из-за сети/FS.
+- Если реле переключаются без микролагов, а `stack_evt/control` короткие — перенос сделан правильно, даже если `telegram/cloud` иногда подвисают на секунды.
+
+### Логгер и RTOS
+
+- После появления нескольких RTOS-задач вывод в лог надо считать многопоточным.
+- В `Logger` добавлен mutex для сериализации вывода и recent-buffer.
+- Если строки в логах всё ещё рвутся:
+  - проверять прямые `Serial.print`/`printf` вне `Logger`;
+  - проверять сторонние библиотеки, которые пишут в UART напрямую;
+  - помнить, что `logISR` и сторонний вывод могут обходить общий lock.
+
+### Антипаттерны для дальнейшего переноса
+
+- Не выносить каждую розетку/датчик/кнопку в отдельную RTOS-задачу.
+- Не переносить «чтение GPIO» как самостоятельную цель — проблема обычно не в GPIO, а в блокирующем соседнем коде.
+- Не разносить controller logic по множеству задач без явной модели синхронизации.
+- Не слать `stack_evt` notify на каждом витке loop без pending-защиты.
+
+### Что смотреть после новых переносов
+
+- Логи `RTOS`:
+  - рост `wmax_us` у `control`
+  - уменьшение `hwm/min_hwm`
+  - `network`/`stack_evt` (не растёт ли latency post-network фазы)
+  - всплески у `cloud` во время reconnect
+  - всплески у `telegram` во время long-poll / reconnect
+- Если появляются артефакты в логах — сначала проверять потокобезопасность логгера, а не сами метрики.
+
+## I2C/extender/выходы: текущее состояние надёжности
+
+- `I2CManager`:
+  - при `probeAddress`-ошибке пытается восстановить шину (clock pulses + STOP) и повторить probe;
+  - на ESP32 для `Wire` включён timeout (`setTimeOut(50)`).
+- `RTC`:
+  - хранит `_ready`;
+  - при I2C-сбое сбрасывает ready и при следующем обращении делает повторный `begin()`.
+- `Display`:
+  - при `Time`-слоте и ошибке `RTC` выводит `ERR` вместо пустого/битого значения;
+  - custom-символы и backlight инициализируются в task под lock, а не в раннем begin без проверки шины.
+- `Extender`:
+  - runtime I/O fail -> устройство помечается `missing`;
+  - включается ускоренный перескан (`fast_rescan_interval_ms`) до восстановления.
+- `PortIO`:
+  - добавлен режим `setOutputsEnabled(false/true)`;
+  - выходы не применяются физически до явного разрешения;
+  - в `App::begin()` порядок: `controllers.restoreFromStorage()` -> `io.applyOutputs()` -> `portio.setOutputsEnabled(true)`.
 ## Стековые кэши: структура работы
 
 - Два уровня кэшей:
@@ -239,6 +359,12 @@
   - структуры данных (features/parts/actions);
   - совместимости версии протокола.
 - Любые изменения в протоколе должны синхронно отражаться в прошивке и в облаке.
+- `CloudClient` не должен зависеть напрямую от `WebSocketsClient` или `HTTPClient`; transport-специфика выносится в `CloudTransport`.
+- Текущая реализация транспорта: `CloudWsTransport`; `CloudHttpTransport` пока каркасный и предназначен как точка будущего расширения.
+- При доработке облака разделять слои жёстко:
+  - `CloudClient` — protocol/session/business logic;
+  - `CloudTransport` — connect/disconnect/send/poll и события транспорта.
+- При смене транспорта нельзя дублировать или форкать cloud-протокол; transport меняется под `CloudClient`, а не наоборот.
 
 ## Кейс: рассинхрон Thermo (stack web tile) и шаблон для будущих контроллеров
 

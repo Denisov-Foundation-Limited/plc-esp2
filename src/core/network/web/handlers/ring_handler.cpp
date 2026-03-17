@@ -59,6 +59,7 @@ void RingHandler::handleRing(WebInterface &web, AsyncWebServerRequest *request) 
             return;
         }
         const RingController &ring = web._controllers->ring();
+        auto ring_guard = ring.lockGuard();
         const auto &cfg = ring.config();
         const String status = stack_view ? String(WebUiRu::Ring::kStackControlSlave) : web._ring_status;
         page.replace("%RING_STATUS%", status);
@@ -240,6 +241,7 @@ void RingHandler::handleRingTrigger(WebInterface &web, AsyncWebServerRequest *re
             return;
         }
         RingController &ring = web._controllers->ring();
+        auto ring_guard = ring.lockGuard();
         const auto &cfg = ring.config();
         const bool has_state = request->hasParam("state", true);
         if (has_state)

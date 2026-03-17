@@ -79,44 +79,35 @@ bool MeteoHistory::loadHeader_(File &f, uint32_t &date_out){
 }
 
 bool MeteoHistory::writeHour_(uint32_t date, uint8_t hour){
-    File f = LittleFS.open(kPath, "r+");
-    if (!f)
+    File f = LittleFS.open(kPath, "r");
+    if (f)
     {
-        if (!initFile_(date))
-            return false;
-        f = LittleFS.open(kPath, "r+");
-        if (!f)
-            return false;
-    }
-    uint32_t stored_date = 0;
-    if (!loadHeader_(f, stored_date) || stored_date != date)
-    {
-        f.close();
-        if (!initFile_(date))
-            return false;
-        f = LittleFS.open(kPath, "r+");
-        if (!f)
-            return false;
-        if (!loadHeader_(f, stored_date) || stored_date != date)
+        uint32_t stored_date = 0;
+        if (loadHeader_(f, stored_date) && stored_date == date)
         {
             f.close();
-            return false;
+            for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+            {
+                if (!writeEntry_(i, hour))
+                    return false;
+            }
+            return true;
         }
+        f.close();
     }
 
+    if (!initFile_(date))
+        return false;
     for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
     {
-        if (!writeEntry_(f, i, hour))
-        {
-            f.close();
+        if (!writeEntry_(i, hour))
             return false;
-        }
     }
-    f.close();
     return true;
 }
 
-bool MeteoHistory::writeEntry_(File &f, size_t index, uint8_t hour){
+bool MeteoHistory::writeEntry_(size_t index, uint8_t hour){
+    auto guard = _meteo.lockGuard();
     const auto *cfg = _meteo.configByIndex(index);
     const auto *st = _meteo.stateByIndex(index);
     int16_t t10 = kInvalid;
@@ -137,9 +128,24 @@ bool MeteoHistory::writeEntry_(File &f, size_t index, uint8_t hour){
         }
     }
     const size_t off = entryOffset_((uint8_t)index, hour);
-    if (!f.seek(off, SeekSet))
+    File f = LittleFS.open(kPath, "r+");
+    if (!f)
         return false;
-    f.write(reinterpret_cast<const uint8_t *>(&t10), sizeof(t10));
-    f.write(reinterpret_cast<const uint8_t *>(&h10), sizeof(h10));
+    if (!f.seek(off, SeekSet))
+    {
+        f.close();
+        return false;
+    }
+    if (f.write(reinterpret_cast<const uint8_t *>(&t10), sizeof(t10)) != sizeof(t10))
+    {
+        f.close();
+        return false;
+    }
+    if (f.write(reinterpret_cast<const uint8_t *>(&h10), sizeof(h10)) != sizeof(h10))
+    {
+        f.close();
+        return false;
+    }
+    f.close();
     return true;
 }

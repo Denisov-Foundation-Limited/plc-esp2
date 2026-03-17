@@ -65,6 +65,7 @@ public:
     {
         bool any = false;
         _c.printSocketsHeader_();
+        auto guard = _sockets.lockGuard();
         for (size_t i = 0; i < SocketController::kSocketCount; ++i)
         {
             const SocketController::SocketConfig *cfg = _sockets.configByIndex(i);
@@ -84,6 +85,7 @@ public:
 
     void showSocket(size_t id)
     {
+        auto guard = _sockets.lockGuard();
         const SocketController::SocketConfig *cfg = _sockets.config(id);
         const SocketController::SocketState *st = _sockets.state(id);
         if (!cfg || !st)

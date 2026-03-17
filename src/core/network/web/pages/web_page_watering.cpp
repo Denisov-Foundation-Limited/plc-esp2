@@ -286,7 +286,7 @@ const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
       %WATERING_DEVICE_SELECT%
       %WATERING_PAGINATION%
       <form method="POST" action="%WATERING_FORM_ACTION%" id="watering-form">
-        <div class="grid">
+        <div class="grid" id="watering-grid">
           %WATERING_ROWS%
         </div>
         <div class="actions">
@@ -303,6 +303,33 @@ const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
     const wateringUsed = {
       relay: %WATERING_RELAY_USED_JSON%
     };
+    const wateringGrid = document.getElementById('watering-grid');
+    const wateringPageValue = (() => {
+      const url = new URL(window.location.href);
+      return url.searchParams.get('page') || '1';
+    })();
+    async function loadWateringList() {
+      if (!wateringGrid) return;
+      try {
+        const url = new URL('/watering/list', window.location.origin);
+        const cur = new URL(window.location.href);
+        const unit = cur.searchParams.get('unit');
+        const node = cur.searchParams.get('node');
+        if (unit) url.searchParams.set('unit', unit);
+        if (node) url.searchParams.set('node', node);
+        url.searchParams.set('page', wateringPageValue);
+        const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) {
+          wateringGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+          return;
+        }
+        wateringGrid.innerHTML = await res.text();
+        bindWateringHandlers();
+        refreshWateringSelects();
+      } catch (e) {
+        wateringGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+      }
+    }
     function optionValue(item) {
       return (item && typeof item === 'object') ? String(item.v) : String(item);
     }
@@ -345,10 +372,27 @@ const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
         el.value = selected || '';
       });
     }
-    refreshWateringSelects();
-    document.querySelectorAll('select.watering-select').forEach((el) => {
-      el.addEventListener('change', refreshWateringSelects);
-    });
+    function bindWateringHandlers() {
+      document.querySelectorAll('select.watering-select').forEach((el) => {
+        if (el.dataset.boundSelect === '1') return;
+        el.dataset.boundSelect = '1';
+        el.addEventListener('change', refreshWateringSelects);
+      });
+      document.querySelectorAll('.tile').forEach((tile) => {
+        updateTankDependent(tile);
+        updateResumeDependent(tile);
+        const tankSelect = tile.querySelector('select[data-type="tank"]');
+        if (tankSelect && tankSelect.dataset.boundTank !== '1') {
+          tankSelect.dataset.boundTank = '1';
+          tankSelect.addEventListener('change', () => updateTankDependent(tile));
+        }
+        const resumeToggle = tile.querySelector('input[name$="_resume"]');
+        if (resumeToggle && resumeToggle.dataset.boundResume !== '1') {
+          resumeToggle.dataset.boundResume = '1';
+          resumeToggle.addEventListener('change', () => updateResumeDependent(tile));
+        }
+      });
+    }
     function updateTankDependent(tile) {
       const tankSelect = tile.querySelector('select[data-type="tank"]');
       const hasTank = tankSelect && tankSelect.value && tankSelect.value !== '0';
@@ -366,18 +410,9 @@ const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
         el.style.display = (hasTank && resumeOn) ? '' : 'none';
       });
     }
-    document.querySelectorAll('.tile').forEach((tile) => {
-      updateTankDependent(tile);
-      updateResumeDependent(tile);
-      const tankSelect = tile.querySelector('select[data-type="tank"]');
-      if (tankSelect) {
-        tankSelect.addEventListener('change', () => updateTankDependent(tile));
-      }
-      const resumeToggle = tile.querySelector('input[name$="_resume"]');
-      if (resumeToggle) {
-        resumeToggle.addEventListener('change', () => updateResumeDependent(tile));
-      }
-    });
+    refreshWateringSelects();
+    loadWateringList();
+    bindWateringHandlers();
     const wateringForm = document.getElementById('watering-form');
     if (wateringForm) {
       const markDirty = () => { window.__plcDirty = true; };

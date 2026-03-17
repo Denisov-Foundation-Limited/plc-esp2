@@ -15,6 +15,7 @@ size_t WebInterfaceControllersSecurityHelper::securityLocalRenderCount_(const We
         if (!web._controllers)
             return 0;
         SecurityController &sec = web._controllers->security();
+        auto guard = sec.lockGuard();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
         {
@@ -116,6 +117,7 @@ String WebInterfaceControllersSecurityHelper::listSecuritySensorsHtml_(WebInterf
         String items;
         items.reserve(16384);
         SecurityController &sec = web._controllers->security();
+        auto guard = sec.lockGuard();
     
         auto appendTypeOption = [&](const char *value, const char *label, bool selected) {
             items += "<option value=\"";
@@ -198,6 +200,7 @@ String WebInterfaceControllersSecurityHelper::listSecuritySensorsTiles_(WebInter
         String items;
         items.reserve(16384);
         SecurityController &sec = web._controllers->security();
+        auto guard = sec.lockGuard();
     
         auto appendTypeOption = [&](String &out, const char *value, const char *label, bool selected) {
             out += "<option value=\"";
@@ -564,6 +567,7 @@ String WebInterfaceControllersSecurityHelper::securityUsedPinsJson_(const WebInt
         if (web._controllers)
         {
             SecurityController &sec = web._controllers->security();
+            auto guard = sec.lockGuard();
             bool used[PortIO::PORT_COUNT] = {};
             for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
             {

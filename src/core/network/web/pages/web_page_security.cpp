@@ -349,7 +349,7 @@ const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
           <span class="page-info">/ %SECURITY_SENSORS_PAGES%</span>
           <button type="button" class="btn btn-sm" id="security-next">%SECURITY_PAGE_NEXT%</button>
         </div>
-        <div class="grid">
+        <div class="grid" id="security-grid">
           %SECURITY_SENSORS%
         </div>
         <div class="buttons">
@@ -401,6 +401,33 @@ const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
     const sirenUsed = {
       relay: %SECURITY_SIREN_USED_JSON%
     };
+    const securityGrid = document.getElementById('security-grid');
+    const securityPageValue = (() => {
+      const url = new URL(window.location.href);
+      return url.searchParams.get('page') || '1';
+    })();
+    async function loadSecurityList() {
+      if (!securityGrid) return;
+      try {
+        const url = new URL('/security/list', window.location.origin);
+        const cur = new URL(window.location.href);
+        const unit = cur.searchParams.get('unit');
+        const node = cur.searchParams.get('node');
+        if (unit) url.searchParams.set('unit', unit);
+        if (node) url.searchParams.set('node', node);
+        url.searchParams.set('page', securityPageValue);
+        const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) {
+          securityGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+          return;
+        }
+        securityGrid.innerHTML = await res.text();
+        bindSecurityHandlers();
+        refreshSecuritySelects();
+      } catch (e) {
+        securityGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+      }
+    }
     function labelFor(type, val) {
       if (type === 'dinput') return 'in' + val;
       if (type === 'relay') return 'rly' + val;
@@ -512,13 +539,45 @@ const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
         el.value = selected || '';
       });
     }
-    refreshSecuritySelects();
-    document.querySelectorAll('select.security-port').forEach((el) => {
-      el.addEventListener('change', refreshSecuritySelects);
-    });
-    document.querySelectorAll('select.siren-select').forEach((el) => {
-      el.addEventListener('change', refreshSecuritySelects);
-    });
+    const securityForm = document.getElementById('security-form');
+    const reloadKey = 'security_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname + location.search);
+    }
+    if (securityForm) {
+      securityForm.addEventListener('submit', (e) => {
+        const submitter = e.submitter;
+        if (submitter && submitter.value !== 'save') {
+          return;
+        }
+        sessionStorage.setItem(reloadKey, '1');
+      });
+    }
+    function bindSecurityHandlers() {
+      document.querySelectorAll('select.security-port').forEach((el) => {
+        if (el.dataset.boundPort === '1') return;
+        el.dataset.boundPort = '1';
+        el.addEventListener('change', refreshSecuritySelects);
+      });
+      document.querySelectorAll('select.siren-select').forEach((el) => {
+        if (el.dataset.boundSiren === '1') return;
+        el.dataset.boundSiren = '1';
+        el.addEventListener('change', refreshSecuritySelects);
+      });
+      document.querySelectorAll('input[type="checkbox"][name^="sec"][name$="_en"]').forEach((el) => {
+        if (el.dataset.boundEnable === '1') return;
+        el.dataset.boundEnable = '1';
+        el.addEventListener('change', () => {
+          const container = el.closest('.tile') || el.closest('tr');
+          updateSecurityEnabled(container, el.checked);
+          if (!el.checked && securityForm) {
+            sessionStorage.setItem(reloadKey, '1');
+            securityForm.submit();
+          }
+        });
+      });
+    }
     function updateSecurityEnabled(container, enabled) {
       if (!container) return;
       const tile = container.classList && container.classList.contains('tile') ? container : container.closest('.tile');
@@ -541,16 +600,9 @@ const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
         refreshSecuritySelects();
       }
     }
-    document.querySelectorAll('input[type="checkbox"][name^="sec"][name$="_en"]').forEach((el) => {
-      el.addEventListener('change', () => {
-        const container = el.closest('.tile') || el.closest('tr');
-        updateSecurityEnabled(container, el.checked);
-        if (!el.checked && securityForm) {
-          sessionStorage.setItem(reloadKey, '1');
-          securityForm.submit();
-        }
-      });
-    });
+    refreshSecuritySelects();
+    loadSecurityList();
+    bindSecurityHandlers();
     const securityPage = %SECURITY_SENSORS_PAGE%;
     const securityPages = %SECURITY_SENSORS_PAGES%;
     const pageSelect = document.getElementById('security-page');
@@ -566,21 +618,6 @@ const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
         const url = new URL(window.location.href);
         url.searchParams.set('page', pageSelect.value || String(securityPage));
         window.location.href = url.toString();
-      });
-    }
-    const securityForm = document.getElementById('security-form');
-    const reloadKey = 'security_reload';
-    if (sessionStorage.getItem(reloadKey)) {
-      sessionStorage.removeItem(reloadKey);
-      location.replace(location.pathname + location.search);
-    }
-    if (securityForm) {
-      securityForm.addEventListener('submit', (e) => {
-        const submitter = e.submitter;
-        if (submitter && submitter.value !== 'save') {
-          return;
-        }
-        sessionStorage.setItem(reloadKey, '1');
       });
     }
     function setStatusDot(dot, on, bad) {

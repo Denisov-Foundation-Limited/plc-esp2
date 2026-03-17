@@ -12,6 +12,7 @@
 #include "app.hpp"
 void StackRuntime::updateTankAlarms_(){
     TankController &tanks = control.controllers.tanks();
+    auto tanks_guard = tanks.lockGuard();
     uint32_t detail_mask = 0;
     uint32_t unit_mask = 0;
     for (size_t i = 0; i < TankController::kTankCount; ++i)
@@ -61,6 +62,7 @@ void StackRuntime::updateTankAlarms_(){
 
 void StackRuntime::updateSepticAlarms_(){
     SepticController &septic = control.controllers.septic();
+    auto septic_guard = septic.lockGuard();
     uint32_t detail_mask = 0;
     uint32_t unit_mask = 0;
     for (size_t i = 0; i < SepticController::kSepticCount; ++i)
@@ -108,6 +110,7 @@ void StackRuntime::updateSepticAlarms_(){
 
 void StackRuntime::updateMeteoAlarms_(){
     MeteoController &meteo = control.controllers.meteo();
+    auto meteo_guard = meteo.lockGuard();
     uint32_t detail_mask = 0;
     uint32_t unit_mask = 0;
     for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
@@ -185,7 +188,9 @@ void StackRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
                              label.c_str(), (unsigned long)node_id, ip_c, (unsigned)fw_ver);
         self->_stack_cache.requestPlcStatus(node_id);
         self->_stack_cache.requestRtcStatus(node_id);
-        self->sendSecurityStateToNode_(node_id, self->control.controllers.security().armed(), true);
+        auto &sec = self->control.controllers.security();
+        auto sec_guard = sec.lockGuard();
+        self->sendSecurityStateToNode_(node_id, sec.armed(), true);
         self->enqueueStackBootstrapSync_(node_id);
     }
     else
@@ -1051,4 +1056,3 @@ void StackRuntime::clearInventoryLogState_(uint32_t node_id){
         return;
     }
 }
-

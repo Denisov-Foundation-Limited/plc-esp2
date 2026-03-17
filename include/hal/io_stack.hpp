@@ -14,13 +14,17 @@
 #include <stdint.h>
 
 #include "hal/gpio/portio.hpp"
+#include "utils/rtos_lock.hpp"
 
 class IoStack
 {
 public:
     static constexpr uint8_t PORT_COUNT = PortIO::PORT_COUNT;
+    using LockGuard = RtosRecursiveLock::Guard;
 
     explicit IoStack(PortIO &portio);
+
+    LockGuard lockGuard() const { return _lock.guard(); }
 
     bool begin();
     void loop();
@@ -28,8 +32,8 @@ public:
     void initImages();
     void scanInputs();
     void applyOutputs();
-    bool write(uint8_t id, bool logicalLevel);
-    bool read(uint8_t id) const;
+    bool write(uint8_t id, bool logicalLevel, uint32_t timeout_ms = 0xFFFFFFFFu);
+    bool read(uint8_t id, uint32_t timeout_ms = 0xFFFFFFFFu) const;
     const PortIO::PortDesc &desc(uint8_t id) const;
     bool lastState(uint8_t id, bool &outLogical) const;
 
@@ -45,4 +49,5 @@ private:
     bool _dirty[PORT_COUNT] = {};
     bool _raw_inputs[PORT_COUNT] = {};
     uint32_t _last_change_ms[PORT_COUNT] = {};
+    mutable RtosRecursiveLock _lock;
 };

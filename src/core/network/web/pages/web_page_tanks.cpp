@@ -287,7 +287,7 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       %TANK_DEVICE_SELECT%
       %TANK_PAGINATION%
       <form method="POST" action="/tanks" id="tanks-form">
-        <div class="grid">
+        <div class="grid" id="tanks-grid">
           %TANK_ITEMS%
         </div>
         <div class="actions">
@@ -305,6 +305,33 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       dinput: %TANK_DINPUT_USED_JSON%,
       relay: %TANK_RELAY_USED_JSON%
     };
+    const tanksGrid = document.getElementById('tanks-grid');
+    const tanksPageValue = (() => {
+      const url = new URL(window.location.href);
+      return url.searchParams.get('page') || '1';
+    })();
+    async function loadTanksList() {
+      if (!tanksGrid) return;
+      try {
+        const url = new URL('/tanks/list', window.location.origin);
+        const cur = new URL(window.location.href);
+        const unit = cur.searchParams.get('unit');
+        const node = cur.searchParams.get('node');
+        if (unit) url.searchParams.set('unit', unit);
+        if (node) url.searchParams.set('node', node);
+        url.searchParams.set('page', tanksPageValue);
+        const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) {
+          tanksGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+          return;
+        }
+        tanksGrid.innerHTML = await res.text();
+        bindTankHandlers();
+        refreshTankSelects();
+      } catch (e) {
+        tanksGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+      }
+    }
     function labelFor(type, val) {
       if (type === 'dinput') return 'in' + val;
       if (type === 'relay') return 'rly' + val;
@@ -351,40 +378,6 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
         el.value = selected || '';
       });
     }
-    refreshTankSelects();
-    document.querySelectorAll('select.tank-select').forEach((el) => {
-      el.addEventListener('change', refreshTankSelects);
-    });
-    function updateTankEnabled(tile, enabled) {
-      if (!tile) return;
-      tile.classList.toggle('disabled', !enabled);
-      if (!enabled) {
-        const name = tile.querySelector('input.field.name');
-        if (name) name.value = '';
-        tile.querySelectorAll('select.tank-select').forEach((sel) => {
-          sel.value = '';
-          sel.dataset.selected = '';
-        });
-        const power = tile.querySelector('input.tank-power');
-        if (power) {
-          power.checked = false;
-          power.disabled = true;
-        }
-        const powerHidden = tile.querySelector('input[type="hidden"][name$="_power"]');
-        if (powerHidden) powerHidden.value = 'off';
-        refreshTankSelects();
-      }
-    }
-    document.querySelectorAll('input[type="checkbox"][name^="k"][name$="_en"]').forEach((el) => {
-      el.addEventListener('change', () => {
-        const tile = el.closest('.tile');
-        updateTankEnabled(tile, el.checked);
-        if (!el.checked && tanksForm) {
-          sessionStorage.setItem(reloadKey, '1');
-          tanksForm.submit();
-        }
-      });
-    });
     const tanksForm = document.getElementById('tanks-form');
     let tanksDirty = false;
     const markDirty = () => {
@@ -404,6 +397,83 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       tanksForm.addEventListener('submit', () => {
         sessionStorage.setItem(reloadKey, '1');
       });
+    }
+    function bindTankHandlers() {
+      document.querySelectorAll('select.tank-select').forEach((el) => {
+        if (el.dataset.boundChange === '1') return;
+        el.dataset.boundChange = '1';
+        el.addEventListener('change', refreshTankSelects);
+      });
+      document.querySelectorAll('input[type="checkbox"][name^="k"][name$="_en"]').forEach((el) => {
+        if (el.dataset.boundEnable === '1') return;
+        el.dataset.boundEnable = '1';
+        el.addEventListener('change', () => {
+          const tile = el.closest('.tile');
+          updateTankEnabled(tile, el.checked);
+          if (!el.checked && tanksForm) {
+            sessionStorage.setItem(reloadKey, '1');
+            tanksForm.submit();
+          }
+        });
+      });
+      document.querySelectorAll('input.tank-power').forEach((el) => {
+        if (el.dataset.boundPower === '1') return;
+        el.dataset.boundPower = '1';
+        el.addEventListener('change', async () => {
+          if (el.dataset.busy === '1') return;
+          el.dataset.busy = '1';
+          const reqId = String((parseInt(el.dataset.reqId || '0', 10) || 0) + 1);
+          el.dataset.reqId = reqId;
+          const prev = !el.checked;
+          const name = el.dataset.action;
+          const hidden = document.querySelector('input[name="' + name + '"]');
+          if (hidden) {
+            hidden.value = el.checked ? 'on' : 'off';
+          }
+          const tile = el.closest('.tile');
+          const idMatch = name ? name.match(/^k(\d+)_power$/) : null;
+          const id = idMatch ? parseInt(idMatch[1], 10) : 0;
+          try {
+            if (!id) throw new Error('bad id');
+            const desired = !!el.checked;
+            const st = await postTankToggle(id, desired ? 'on' : 'off');
+            if (typeof st === 'object' && st) {
+              el.checked = !!st.power;
+              if (hidden) hidden.value = st.power ? 'on' : 'off';
+              applyTankStateUi(tile, st);
+            }
+            scheduleTankStateRefresh(id, tile, el, hidden, reqId);
+          } catch (e) {
+            if (el.dataset.reqId !== reqId) return;
+            el.checked = prev;
+            if (hidden) hidden.value = prev ? 'on' : 'off';
+          } finally {
+            if (el.dataset.reqId === reqId) {
+              el.dataset.busy = '0';
+            }
+          }
+        });
+      });
+    }
+    function updateTankEnabled(tile, enabled) {
+      if (!tile) return;
+      tile.classList.toggle('disabled', !enabled);
+      if (!enabled) {
+        const name = tile.querySelector('input.field.name');
+        if (name) name.value = '';
+        tile.querySelectorAll('select.tank-select').forEach((sel) => {
+          sel.value = '';
+          sel.dataset.selected = '';
+        });
+        const power = tile.querySelector('input.tank-power');
+        if (power) {
+          power.checked = false;
+          power.disabled = true;
+        }
+        const powerHidden = tile.querySelector('input[type="hidden"][name$="_power"]');
+        if (powerHidden) powerHidden.value = 'off';
+        refreshTankSelects();
+      }
     }
     const tanksQs = new URLSearchParams(window.location.search);
     const tanksIsStackView = tanksQs.get('unit') === 'stack';
@@ -489,42 +559,9 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       };
       setTimeout(tick, 220);
     }
-    document.querySelectorAll('input.tank-power').forEach((el) => {
-      el.addEventListener('change', async () => {
-        if (el.dataset.busy === '1') return;
-        el.dataset.busy = '1';
-        const reqId = String((parseInt(el.dataset.reqId || '0', 10) || 0) + 1);
-        el.dataset.reqId = reqId;
-        const prev = !el.checked;
-        const name = el.dataset.action;
-        const hidden = document.querySelector('input[name="' + name + '"]');
-        if (hidden) {
-          hidden.value = el.checked ? 'on' : 'off';
-        }
-        const tile = el.closest('.tile');
-        const idMatch = name ? name.match(/^k(\d+)_power$/) : null;
-        const id = idMatch ? parseInt(idMatch[1], 10) : 0;
-        try {
-          if (!id) throw new Error('bad id');
-          const desired = !!el.checked;
-          const st = await postTankToggle(id, desired ? 'on' : 'off');
-          if (typeof st === 'object' && st) {
-            el.checked = !!st.power;
-            if (hidden) hidden.value = st.power ? 'on' : 'off';
-            applyTankStateUi(tile, st);
-          }
-          scheduleTankStateRefresh(id, tile, el, hidden, reqId);
-        } catch (e) {
-          if (el.dataset.reqId !== reqId) return;
-          el.checked = prev;
-          if (hidden) hidden.value = prev ? 'on' : 'off';
-        } finally {
-          if (el.dataset.reqId === reqId) {
-            el.dataset.busy = '0';
-          }
-        }
-      });
-    });
+    refreshTankSelects();
+    loadTanksList();
+    bindTankHandlers();
     async function pollTankTilesState() {
       const controls = Array.from(document.querySelectorAll('input.tank-power'));
       for (const el of controls) {

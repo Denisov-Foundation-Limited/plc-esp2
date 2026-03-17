@@ -594,6 +594,8 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
         switch (ctrl)
         {
         case UsersRegistry::AclController::Sockets:
+        {
+            auto guard = c.sockets().lockGuard();
             for (size_t i = 0; i < SocketController::kSocketCount; ++i)
             {
                 const auto *cfg = c.sockets().configByIndex(i);
@@ -603,7 +605,10 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
                 fn(cfg->id, label);
             }
             return;
+        }
         case UsersRegistry::AclController::Lights:
+        {
+            auto guard = c.sockets().lockGuard();
             for (size_t i = 0; i < SocketController::kLightCount; ++i)
             {
                 const auto *cfg = c.sockets().lightConfigByIndex(i);
@@ -613,7 +618,10 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
                 fn(cfg->id, label);
             }
             return;
+        }
         case UsersRegistry::AclController::Meteo:
+        {
+            auto guard = c.meteo().lockGuard();
             for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
             {
                 const auto *cfg = c.meteo().configByIndex(i);
@@ -623,7 +631,10 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
                 fn(cfg->id, label);
             }
             return;
+        }
         case UsersRegistry::AclController::Thermo:
+        {
+            auto guard = c.thermo().lockGuard();
             for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
             {
                 const auto *cfg = c.thermo().configByIndex(i);
@@ -633,7 +644,10 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
                 fn(cfg->id, label);
             }
             return;
+        }
         case UsersRegistry::AclController::Tanks:
+        {
+            auto guard = c.tanks().lockGuard();
             for (size_t i = 0; i < TankController::kTankCount; ++i)
             {
                 const auto *cfg = c.tanks().configByIndex(i);
@@ -643,7 +657,10 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
                 fn(cfg->id, label);
             }
             return;
+        }
         case UsersRegistry::AclController::Septic:
+        {
+            auto guard = c.septic().lockGuard();
             for (size_t i = 0; i < SepticController::kSepticCount; ++i)
             {
                 const auto *cfg = c.septic().configByIndex(i);
@@ -653,7 +670,10 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
                 fn(cfg->id, label);
             }
             return;
+        }
         case UsersRegistry::AclController::Security:
+        {
+            auto guard = c.security().lockGuard();
             for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
             {
                 const auto *cfg = c.security().configByIndex(i);
@@ -663,7 +683,10 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
                 fn(cfg->id, label);
             }
             return;
+        }
         case UsersRegistry::AclController::Watering:
+        {
+            auto guard = c.watering().lockGuard();
             for (size_t i = 0; i < WateringController::kRuleCount; ++i)
             {
                 const auto *cfg = c.watering().configByIndex(i);
@@ -673,7 +696,10 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
                 fn(cfg->id, label);
             }
             return;
+        }
         case UsersRegistry::AclController::Leak:
+        {
+            auto guard = c.leak().lockGuard();
             for (size_t i = 0; i < LeakController::kZoneCount; ++i)
             {
                 const auto *cfg = c.leak().configByIndex(i);
@@ -683,14 +709,21 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
                 fn(cfg->id, label);
             }
             return;
+        }
         case UsersRegistry::AclController::Avr:
+        {
+            auto guard = c.avr().lockGuard();
             if (c.avr().controllerEnabled())
                 fn(1, String("AVR"));
             return;
+        }
         case UsersRegistry::AclController::Ring:
+        {
+            auto guard = c.ring().lockGuard();
             if (c.ring().controllerEnabled())
                 fn(1, String("Ring"));
             return;
+        }
         default:
             break;
         }

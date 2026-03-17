@@ -63,6 +63,10 @@ String ConfigsManager::cloudApiKey() const{ return _cloud_api_key; }
 
 String ConfigsManager::cloudFirmwareVersion() const{ return _cloud_fw_version; }
 
+bool ConfigsManager::eepromSaveEnabled() const{ return _eeprom_save_enabled; }
+
+bool ConfigsManager::eepromLoadEnabled() const{ return _eeprom_load_enabled; }
+
 size_t ConfigsManager::groupCount() const{
     size_t count = 0;
     for (const auto &g : _groups)
@@ -245,6 +249,20 @@ void ConfigsManager::setCloudFirmwareVersion(const String &ver){
     _network.setCloudFirmwareVersion(ver);
 }
 
+void ConfigsManager::setEepromSaveEnabled(bool enabled){
+    if (enabled == _eeprom_save_enabled)
+        return;
+    _eeprom_save_enabled = enabled;
+    _controllers.setEepromSaveEnabled(enabled);
+}
+
+void ConfigsManager::setEepromLoadEnabled(bool enabled){
+    if (enabled == _eeprom_load_enabled)
+        return;
+    _eeprom_load_enabled = enabled;
+    _controllers.setEepromLoadEnabled(enabled);
+}
+
 void ConfigsManager::setDisplaySlot(size_t idx, const DisplaySlotConfig &slot){
     if (idx >= kDisplaySlotCount)
         return;
@@ -290,9 +308,10 @@ bool ConfigsManager::loadConfigs(){
 bool ConfigsManager::save(){
     _doc.clear();
     JsonObject w = _doc["wifi"].to<JsonObject>();
+    w["mode"] = _wifi.modeName();
     w["ssid"] = _wifi.ssid();
     w["password"] = _wifi.password();
-    w["ap"] = _wifi.ap();
+    w["ap"] = _wifi.apEnabled();
     w["ap_ssid"] = _wifi.apSsid();
     w["ap_password"] = _wifi.apPassword();
 
@@ -300,6 +319,7 @@ bool ConfigsManager::save(){
     t["token"] = _telegram.token();
     t["insecure"] = _telegram.insecure();
     t["client"] = _telegram.clientKindName();
+    t["poll_mode"] = (_telegram.pollMode() == TelegramClient::PollMode::Long) ? "long" : "short";
     t["use_proxy"] = _telegram.useProxy();
     t["proxy_host"] = _telegram.proxyHost();
     t["proxy_port"] = (unsigned)_telegram.proxyPort();
@@ -314,6 +334,10 @@ bool ConfigsManager::save(){
     JsonObject plc = _doc["plc"].to<JsonObject>();
     plc["device_name"] = _plc.deviceName();
     plc["buzzer"] = _plc.buzzerEnabled();
+
+    JsonObject eeprom = _doc["eeprom"].to<JsonObject>();
+    eeprom["save"] = _eeprom_save_enabled;
+    eeprom["load"] = _eeprom_load_enabled;
 
     JsonObject s = _doc["stack"].to<JsonObject>();
     s["role"] = (_stack_role == StackRole::Master) ? "master" : "slave";
@@ -387,6 +411,11 @@ bool ConfigsManager::save(const JsonDocument &doc){
     tmp.set(doc);
     if (tmp.overflowed())
         return false;
+    JsonObject eeprom = tmp["eeprom"].is<JsonObject>() ? tmp["eeprom"].as<JsonObject>() : tmp["eeprom"].to<JsonObject>();
+    if (!eeprom["save"].is<bool>())
+        eeprom["save"] = _eeprom_save_enabled;
+    if (!eeprom["load"].is<bool>())
+        eeprom["load"] = _eeprom_load_enabled;
     if (doc["users"].is<JsonArrayConst>())
     {
         _users.applyFromJson(doc["users"].as<JsonArrayConst>());
@@ -549,12 +578,14 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
     if (doc["wifi"].is<JsonObjectConst>())
     {
         JsonObjectConst w = doc["wifi"].as<JsonObjectConst>();
+        if (w["mode"].is<const char *>())
+            _wifi.setModeByName(w["mode"].as<const char *>());
+        else if (w["ap"].is<bool>())
+            _wifi.setAp(w["ap"].as<bool>());
         if (w["ssid"].is<const char *>())
             _wifi.setSsid(w["ssid"].as<const char *>());
         if (w["password"].is<const char *>())
             _wifi.setPassword(w["password"].as<const char *>());
-        if (w["ap"].is<bool>())
-            _wifi.setAp(w["ap"].as<bool>());
         if (w["ap_ssid"].is<const char *>())
             _wifi.setApSsid(w["ap_ssid"].as<const char *>());
         if (w["ap_password"].is<const char *>())
@@ -577,6 +608,13 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
                 _network.setTelegramClientKind(TelegramNetCfg::ClientKind::TinyGsm);
             else if (c == "wifi" || c == "wifi_secure")
                 _network.setTelegramClientKind(TelegramNetCfg::ClientKind::WifiSecure);
+        }
+        if (t["poll_mode"].is<const char *>())
+        {
+            String mode = t["poll_mode"].as<const char *>();
+            mode.toLowerCase();
+            _telegram.setPollMode(mode == "short" ? TelegramClient::PollMode::Short
+                                                  : TelegramClient::PollMode::Long);
         }
 
         bool proxy_override = false;
@@ -747,6 +785,17 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
         }
     }
 
+    if (doc["eeprom"].is<JsonObjectConst>())
+    {
+        JsonObjectConst eeprom = doc["eeprom"].as<JsonObjectConst>();
+        if (eeprom["save"].is<bool>())
+            _eeprom_save_enabled = eeprom["save"].as<bool>();
+        if (eeprom["load"].is<bool>())
+            _eeprom_load_enabled = eeprom["load"].as<bool>();
+    }
+    _controllers.setEepromSaveEnabled(_eeprom_save_enabled);
+    _controllers.setEepromLoadEnabled(_eeprom_load_enabled);
+
     if (doc["gsm"].is<JsonObjectConst>())
     {
         JsonObjectConst g = doc["gsm"].as<JsonObjectConst>();
@@ -877,42 +926,49 @@ void ConfigsManager::clearGroupRefs_(uint8_t group_id){
         return;
     for (size_t i = 0; i < SocketController::kSocketCount; ++i)
     {
+        auto guard = _controllers.sockets().lockGuard();
         const auto *cfg = _controllers.sockets().configByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.sockets().setGroupId(cfg->id, 0);
     }
     for (size_t i = 0; i < SocketController::kLightCount; ++i)
     {
+        auto guard = _controllers.sockets().lockGuard();
         const auto *cfg = _controllers.sockets().lightConfigByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.sockets().setLightGroupId(cfg->id, 0);
     }
     for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
     {
+        auto guard = _controllers.meteo().lockGuard();
         const auto *cfg = _controllers.meteo().configByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.meteo().setGroupId(cfg->id, 0);
     }
     for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
     {
+        auto guard = _controllers.thermo().lockGuard();
         const auto *cfg = _controllers.thermo().configByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.thermo().setGroupId(cfg->id, 0);
     }
     for (size_t i = 0; i < TankController::kTankCount; ++i)
     {
+        auto guard = _controllers.tanks().lockGuard();
         const auto *cfg = _controllers.tanks().configByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.tanks().setGroupId(cfg->id, 0);
     }
     for (size_t i = 0; i < SepticController::kSepticCount; ++i)
     {
+        auto guard = _controllers.septic().lockGuard();
         const auto *cfg = _controllers.septic().configByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.septic().setGroupId(cfg->id, 0);
     }
     for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
     {
+        auto guard = _controllers.security().lockGuard();
         const auto *cfg = _controllers.security().configByIndex(i);
         if (cfg && cfg->group_id == group_id)
             _controllers.security().setGroupId(cfg->id, 0);

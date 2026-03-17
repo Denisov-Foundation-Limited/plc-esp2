@@ -15,6 +15,11 @@
 #include <stdarg.h>
 #include <string.h>
 
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
+
 #include "core/rtc.hpp"
 
 #include "hal/bus/uart.hpp"
@@ -71,11 +76,13 @@ public:
         vsnprintf_P(msg, sizeof(msg), (const char *)fmt, ap);
         va_end(ap);
 
+        lock_();
 #if LOGGER_FORMAT_JSON
         writeJson_<L>(tag, msg);
 #else
         writeText_<L>(tag, msg);
 #endif
+        unlock_();
     }
 
     // ISR-safe: no ArduinoJson; minimal output
@@ -88,12 +95,15 @@ public:
         if (!_out)
             return;
 
-        _out->print(F("["));
-        _out->print(levelName_(L));
-        _out->print(F("]["));
-        _out->print(tag);
-        _out->print(F("] "));
-        _out->println(msg);
+        char tag_buf[32] = {};
+        char msg_buf[LOGGER_BUFFER_SIZE] = {};
+        char line[LOGGER_BUFFER_SIZE + 48] = {};
+        if (tag)
+            strncpy_P(tag_buf, reinterpret_cast<const char *>(tag), sizeof(tag_buf) - 1);
+        if (msg)
+            strncpy_P(msg_buf, reinterpret_cast<const char *>(msg), sizeof(msg_buf) - 1);
+        snprintf(line, sizeof(line), "[%s][%s] %s", levelName_(L), tag_buf, msg_buf);
+        _out->println(line);
     }
 
     template <typename... Args>
@@ -111,8 +121,16 @@ private:
     Stream *_out = nullptr;
     UartManager &uart_;
     RTC *_rtc = nullptr;
+    mutable bool _has_last_rtc = false;
+    mutable Ds3231Mz::DateTime _last_rtc = {};
+    mutable uint32_t _last_rtc_ms = 0;
+#if defined(ESP32)
+    SemaphoreHandle_t _lock = nullptr;
+    portMUX_TYPE _lock_init_mux = portMUX_INITIALIZER_UNLOCKED;
+#endif
     static constexpr size_t kRecentMax = 30;
-    char _recent[kRecentMax][LOGGER_BUFFER_SIZE] = {};
+    static constexpr size_t kRecentLineSize = LOGGER_BUFFER_SIZE + 48;
+    char _recent[kRecentMax][kRecentLineSize] = {};
     uint8_t _recent_head = 0;
     uint8_t _recent_count = 0;
 
@@ -142,53 +160,16 @@ private:
     template <Level L>
     void writeText_(const __FlashStringHelper *tag, const char *msg)
     {
+        char line[LOGGER_BUFFER_SIZE + 48] = {};
+        buildTextLine_(line, sizeof(line), tag, levelName_(L), msg);
 #if LOGGER_USE_COLOR
         _out->print(color_<L>());
 #endif
-#if LOGGER_USE_TIMESTAMP
-        if (_rtc)
-        {
-            Ds3231Mz::DateTime dt{};
-            if (_rtc->Time(dt))
-            {
-                char date_buf[16] = {};
-                char time_buf[16] = {};
-                snprintf(date_buf, sizeof(date_buf), "%04u-%02u-%02u",
-                         (unsigned)dt.year, (unsigned)dt.month, (unsigned)dt.day);
-                snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
-                         (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
-                _out->print(F("["));
-                _out->print(date_buf);
-                _out->print(F("]["));
-                _out->print(time_buf);
-                _out->print(F("]"));
-            }
-            else
-            {
-                _out->print(F("["));
-                _out->print((uint32_t)millis());
-                _out->print(F("]"));
-            }
-        }
-        else
-        {
-            _out->print(F("["));
-            _out->print((uint32_t)millis());
-            _out->print(F("]"));
-        }
-#endif
-        _out->print(F("["));
-        _out->print(levelName_(L));
-        _out->print(F("]["));
-        _out->print(tag);
-        _out->print(F("] "));
-        _out->println(msg);
+        _out->println(line);
 #if LOGGER_USE_COLOR
         _out->print(F("\x1b[0m"));
 #endif
 
-        char line[LOGGER_BUFFER_SIZE] = {};
-        buildTextLine_(line, sizeof(line), tag, levelName_(L), msg);
         storeLine_(line);
     }
 
@@ -235,4 +216,4 @@ private:
     }
 
     void storeLine_(const char *line);void buildTextLine_(char *out, size_t cap, const __FlashStringHelper *tag,
-                        const char *level, const char *msg);bool formatTimestamp_(char *out, size_t cap);};
+                        const char *level, const char *msg);bool formatTimestamp_(char *out, size_t cap);void ensureLock_();void lock_();void unlock_();};

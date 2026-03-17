@@ -302,7 +302,7 @@ const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       %THERMO_PAGINATION%
       <form method="POST" action="/thermo" id="thermo-form">
         %THERMO_FORM_HIDDEN%
-        <div class="grid">
+        <div class="grid" id="thermo-grid">
           %THERMO_ROWS%
         </div>
         <div class="actions">
@@ -320,6 +320,33 @@ const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       relay: %THERMO_RELAY_USED_JSON%,
       dinput: %THERMO_DINPUT_USED_JSON%
     };
+    const thermoGrid = document.getElementById('thermo-grid');
+    const thermoPageValue = (() => {
+      const url = new URL(window.location.href);
+      return url.searchParams.get('page') || '1';
+    })();
+    async function loadThermoList() {
+      if (!thermoGrid) return;
+      try {
+        const url = new URL('/thermo/list', window.location.origin);
+        const cur = new URL(window.location.href);
+        const unit = cur.searchParams.get('unit');
+        const node = cur.searchParams.get('node');
+        if (unit) url.searchParams.set('unit', unit);
+        if (node) url.searchParams.set('node', node);
+        url.searchParams.set('page', thermoPageValue);
+        const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) {
+          thermoGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+          return;
+        }
+        thermoGrid.innerHTML = await res.text();
+        bindThermoHandlers();
+        refreshThermoSelects();
+      } catch (e) {
+        thermoGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+      }
+    }
     function labelFor(type, val) {
       if (type === 'dinput') return 'in' + val;
       if (type === 'relay') return 'rly' + val;
@@ -371,10 +398,6 @@ const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
         el.dataset.rendered = '1';
       });
     }
-    refreshThermoSelects();
-    document.querySelectorAll('select.thermo-select').forEach((el) => {
-      el.addEventListener('change', refreshThermoSelects);
-    });
     const thermoForm = document.getElementById('thermo-form');
     if (thermoForm) {
       const markDirty = () => { window.__plcDirty = true; };
@@ -404,6 +427,112 @@ const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       } else {
         thermoForm.submit();
       }
+    }
+    function bindThermoHandlers() {
+      document.querySelectorAll('select.thermo-select').forEach((el) => {
+        if (el.dataset.boundSelect === '1') return;
+        el.dataset.boundSelect = '1';
+        el.addEventListener('change', refreshThermoSelects);
+      });
+      document.querySelectorAll('input.thermo-power').forEach((el) => {
+        if (el.dataset.boundPower === '1') return;
+        el.dataset.boundPower = '1';
+        el.addEventListener('change', async () => {
+          if (el.dataset.busy === '1') return;
+          el.dataset.busy = '1';
+          const reqId = String((parseInt(el.dataset.reqId || '0', 10) || 0) + 1);
+          el.dataset.reqId = reqId;
+          const prev = !el.checked;
+          const name = el.dataset.action;
+          const hidden = document.querySelector('input[name="' + name + '"]');
+          if (hidden) {
+            hidden.value = el.checked ? 'on' : 'off';
+          }
+          const tile = el.closest('.tile');
+          const idMatch = name ? name.match(/^t(\d+)_power$/) : null;
+          const id = idMatch ? parseInt(idMatch[1], 10) : 0;
+          try {
+            if (!id) throw new Error('bad id');
+            const expectedOn = !!el.checked;
+            const state = await postThermoToggle(id, expectedOn ? 'on' : 'off');
+            const isOn = state.known ? !!state.power : el.checked;
+            el.checked = isOn;
+            if (hidden) hidden.value = isOn ? 'on' : 'off';
+            const working = (!!state.heat || !!state.cool);
+            if (!expectedOn || !isOn || working) {
+              applyThermoPowerUi(tile, isOn, !!state.heat, !!state.cool);
+            }
+            scheduleThermoStateRefresh(id, tile, el, hidden, reqId, expectedOn);
+          } catch (e) {
+            if (el.dataset.reqId !== reqId) return;
+            el.checked = prev;
+            if (hidden) hidden.value = prev ? 'on' : 'off';
+            applyThermoPowerUi(tile, prev, false, false);
+          } finally {
+            if (el.dataset.reqId === reqId) {
+              el.dataset.busy = '0';
+            }
+          }
+        });
+      });
+      document.querySelectorAll('input.thermo-enable').forEach((el) => {
+        if (el.dataset.boundEnable === '1') return;
+        el.dataset.boundEnable = '1';
+        el.addEventListener('change', () => {
+          if (el.dataset.busy === '1') return;
+          el.dataset.busy = '1';
+          const tile = el.closest('.tile');
+          if (tile) {
+            const enForce = tile.querySelector('input[type="hidden"][name$="_en_force"]');
+            if (enForce) {
+              enForce.value = '';
+            }
+            if (!el.checked) {
+              const nameField = tile.querySelector('input.field.name');
+              if (nameField) nameField.value = '';
+              const sensor = tile.querySelector('select[name$="_sensor"]');
+              if (sensor) sensor.value = '';
+              const mode = tile.querySelector('select[name$="_mode"]');
+              if (mode) mode.value = 'auto';
+              const target = tile.querySelector('input[name$="_target"]');
+              if (target) target.value = '22';
+              const hyst = tile.querySelector('input[name$="_hyst"]');
+              if (hyst) hyst.value = '1';
+              tile.querySelectorAll('select.thermo-select').forEach((sel) => {
+                sel.value = '';
+                sel.dataset.selected = '';
+              });
+              const power = tile.querySelector('input.thermo-power');
+              if (power) {
+                power.checked = false;
+                power.disabled = true;
+              }
+              const powerHidden = tile.querySelector('input[type="hidden"][name$="_power"]');
+              if (powerHidden) powerHidden.value = 'off';
+              refreshThermoSelects();
+            }
+          }
+          if (thermoForm) {
+            submitThermoForm();
+            setTimeout(() => {
+              el.dataset.busy = '0';
+            }, 1500);
+          } else {
+            el.dataset.busy = '0';
+          }
+        });
+      });
+      document.querySelectorAll('.thermo-visual').forEach((el) => {
+        if (el.dataset.boundClick === '1') return;
+        el.dataset.boundClick = '1';
+        el.addEventListener('click', () => {
+          const tile = el.closest('.tile');
+          if (!tile) return;
+          const power = tile.querySelector('input.thermo-power');
+          if (!power || power.disabled) return;
+          power.click();
+        });
+      });
     }
     async function postThermoToggle(id, action) {
       let body = 'id=' + encodeURIComponent(String(id)) + '&action=' + encodeURIComponent(action || 'toggle');
@@ -507,90 +636,9 @@ const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       };
       setTimeout(tick, 220);
     }
-    document.querySelectorAll('input.thermo-power').forEach((el) => {
-      el.addEventListener('change', async () => {
-        if (el.dataset.busy === '1') return;
-        el.dataset.busy = '1';
-        const reqId = String((parseInt(el.dataset.reqId || '0', 10) || 0) + 1);
-        el.dataset.reqId = reqId;
-        const prev = !el.checked;
-        const name = el.dataset.action;
-        const hidden = document.querySelector('input[name="' + name + '"]');
-        if (hidden) {
-          hidden.value = el.checked ? 'on' : 'off';
-        }
-        const tile = el.closest('.tile');
-        const idMatch = name ? name.match(/^t(\d+)_power$/) : null;
-        const id = idMatch ? parseInt(idMatch[1], 10) : 0;
-        try {
-          if (!id) throw new Error('bad id');
-          const expectedOn = !!el.checked;
-          const state = await postThermoToggle(id, expectedOn ? 'on' : 'off');
-          const isOn = state.known ? !!state.power : el.checked;
-          el.checked = isOn;
-          if (hidden) hidden.value = isOn ? 'on' : 'off';
-          const working = (!!state.heat || !!state.cool);
-          if (!expectedOn || !isOn || working) {
-            applyThermoPowerUi(tile, isOn, !!state.heat, !!state.cool);
-          }
-          scheduleThermoStateRefresh(id, tile, el, hidden, reqId, expectedOn);
-        } catch (e) {
-          if (el.dataset.reqId !== reqId) return;
-          el.checked = prev;
-          if (hidden) hidden.value = prev ? 'on' : 'off';
-          applyThermoPowerUi(tile, prev, false, false);
-        } finally {
-          if (el.dataset.reqId === reqId) {
-            el.dataset.busy = '0';
-          }
-        }
-      });
-    });
-    document.querySelectorAll('input.thermo-enable').forEach((el) => {
-      el.addEventListener('change', () => {
-        if (el.dataset.busy === '1') return;
-        el.dataset.busy = '1';
-        const tile = el.closest('.tile');
-        if (tile) {
-          const enForce = tile.querySelector('input[type="hidden"][name$="_en_force"]');
-          if (enForce) {
-            enForce.value = '';
-          }
-          if (!el.checked) {
-            const nameField = tile.querySelector('input.field.name');
-            if (nameField) nameField.value = '';
-            const sensor = tile.querySelector('select[name$="_sensor"]');
-            if (sensor) sensor.value = '';
-            const mode = tile.querySelector('select[name$="_mode"]');
-            if (mode) mode.value = 'auto';
-            const target = tile.querySelector('input[name$="_target"]');
-            if (target) target.value = '22';
-            const hyst = tile.querySelector('input[name$="_hyst"]');
-            if (hyst) hyst.value = '1';
-            tile.querySelectorAll('select.thermo-select').forEach((sel) => {
-              sel.value = '';
-              sel.dataset.selected = '';
-            });
-            const power = tile.querySelector('input.thermo-power');
-            if (power) {
-              power.checked = false;
-              power.disabled = true;
-            }
-            const powerHidden = tile.querySelector('input[type="hidden"][name$="_power"]');
-            if (powerHidden) powerHidden.value = 'off';
-            refreshThermoSelects();
-          }
-        }
-        if (thermoForm) {
-          submitThermoForm();
-          setTimeout(() => {
-            el.dataset.busy = '0';
-          }, 1500);
-        } else {
-          el.dataset.busy = '0';
-        }
-      });
-    });
+    refreshThermoSelects();
+    loadThermoList();
+    bindThermoHandlers();
     function thermoTileId(tile) {
       if (!tile) return 0;
       const power = tile.querySelector('input.thermo-power');
@@ -618,15 +666,6 @@ const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
     }
     setInterval(pollThermoStates, 2000);
     setTimeout(pollThermoStates, 500);
-    document.querySelectorAll('.thermo-visual').forEach((el) => {
-      el.addEventListener('click', () => {
-        const tile = el.closest('.tile');
-        if (!tile) return;
-        const power = tile.querySelector('input.thermo-power');
-        if (!power || power.disabled) return;
-        power.click();
-      });
-    });
     const scrollKey = 'thermo_scroll_y';
     const savedScroll = sessionStorage.getItem(scrollKey);
     if (savedScroll) {

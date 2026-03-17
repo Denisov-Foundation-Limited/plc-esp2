@@ -15,6 +15,7 @@ size_t WebInterfaceControllersWateringHelper::wateringLocalRenderCount_(const We
         if (!web._controllers)
             return 0;
         WateringController &watering = web._controllers->watering();
+        auto guard = watering.lockGuard();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < WateringController::kRuleCount; ++i)
         {
@@ -343,6 +344,7 @@ String WebInterfaceControllersWateringHelper::listWateringHtml_(WebInterface &we
         String items;
         items.reserve(16384);
         WateringController &watering = web._controllers->watering();
+        auto guard = watering.lockGuard();
         auto appendRule = [&](const WateringController::RuleConfig &cfg, const WateringController::RuleState &st)
         {
             const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Watering, cfg.id);
@@ -538,6 +540,7 @@ String WebInterfaceControllersWateringHelper::wateringTankOptionsJson_(const Web
         if (web._controllers)
         {
             const TankController &tanks = web._controllers->tanks();
+            auto guard = tanks.lockGuard();
             for (size_t i = 0; i < TankController::kTankCount; ++i)
             {
                 const auto *cfg = tanks.configByIndex(i);

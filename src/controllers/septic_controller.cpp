@@ -19,6 +19,7 @@ SepticController::SepticController(Gpio &gpio, Logger &logs, TelegramBot &bot, T
 }
 
 bool SepticController::begin(){
+    auto guard = _lock.guard();
     if (!_controller_enabled)
         return true;
     for (size_t i = 0; i < kSepticCount; ++i)
@@ -39,42 +40,56 @@ bool SepticController::begin(){
 }
 
 void SepticController::task(){
-    if (!_controller_enabled)
-        return;
-    for (size_t i = 0; i < kSepticCount; ++i)
+    SepticConfig pending_cfg[kSepticCount]{};
+    bool pending_alarm[kSepticCount]{};
+    size_t pending_count = 0;
     {
-        SepticConfig &cfg = _cfg[i];
-        SepticState &st = _state[i];
-        if (!cfg.enabled)
-            continue;
-        if (!cfg.monitoring_on)
+        auto guard = _lock.guard();
+        if (!_controller_enabled)
+            return;
+        for (size_t i = 0; i < kSepticCount; ++i)
         {
-            writeRelay_(cfg.relay_warning, false);
-            writeRelay_(cfg.relay_alarm, false);
-            st = SepticState{};
-            continue;
+            SepticConfig &cfg = _cfg[i];
+            SepticState &st = _state[i];
+            if (!cfg.enabled)
+                continue;
+            if (!cfg.monitoring_on)
+            {
+                writeRelay_(cfg.relay_warning, false);
+                writeRelay_(cfg.relay_alarm, false);
+                st = SepticState{};
+                continue;
+            }
+            const SepticState prev = st;
+            readLevels_(cfg, st);
+            updateRelays_(cfg, st);
+            logLevelChange_(cfg, prev, st);
+            logRelayChange_(cfg, prev, st);
+            if (!prev.warning && st.warning && pending_count < kSepticCount)
+            {
+                pending_cfg[pending_count] = cfg;
+                pending_alarm[pending_count] = false;
+                ++pending_count;
+            }
+            if (!prev.alarm && st.alarm && pending_count < kSepticCount)
+            {
+                pending_cfg[pending_count] = cfg;
+                pending_alarm[pending_count] = true;
+                ++pending_count;
+            }
+            st.last_warning = st.warning;
+            st.last_alarm = st.alarm;
         }
-        const SepticState prev = st;
-        readLevels_(cfg, st);
-        updateRelays_(cfg, st);
-        logLevelChange_(cfg, prev, st);
-        logRelayChange_(cfg, prev, st);
-        if (!prev.warning && st.warning)
-        {
-            notifyDetectEvent_(cfg, false);
-            notifyLevel_(cfg, false);
-        }
-        if (!prev.alarm && st.alarm)
-        {
-            notifyDetectEvent_(cfg, true);
-            notifyLevel_(cfg, true);
-        }
-        st.last_warning = st.warning;
-        st.last_alarm = st.alarm;
+    }
+    for (size_t i = 0; i < pending_count; ++i)
+    {
+        notifyDetectEvent_(pending_cfg[i], pending_alarm[i]);
+        notifyLevel_(pending_cfg[i], pending_alarm[i]);
     }
 }
 
 void SepticController::applyConfig(JsonArrayConst septic){
+    auto guard = _lock.guard();
     reset_();
     size_t idx = 0;
     for (JsonVariantConst v : septic)
@@ -129,6 +144,7 @@ void SepticController::applyConfig(JsonArrayConst septic){
 }
 
 void SepticController::serialize(JsonArray out) const{
+    auto guard = _lock.guard();
     for (size_t i = 0; i < kSepticCount; ++i)
     {
         const SepticConfig &cfg = _cfg[i];
@@ -154,9 +170,13 @@ void SepticController::serialize(JsonArray out) const{
     }
 }
 
-bool SepticController::controllerEnabled() const{ return _controller_enabled; }
+bool SepticController::controllerEnabled() const{
+    auto guard = _lock.guard();
+    return _controller_enabled;
+}
 
 void SepticController::setControllerEnabled(bool enabled){
+    auto guard = _lock.guard();
     if (_controller_enabled == enabled)
         return;
     _controller_enabled = enabled;
@@ -180,6 +200,7 @@ void SepticController::setControllerEnabled(bool enabled){
 }
 
 bool SepticController::setEnabled(size_t id, bool enabled){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return false;
@@ -213,6 +234,7 @@ bool SepticController::setEnabled(size_t id, bool enabled){
 }
 
 bool SepticController::setMonitoring(size_t id, bool on){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return false;
@@ -238,6 +260,7 @@ bool SepticController::setMonitoring(size_t id, bool on){
 }
 
 bool SepticController::setName(size_t id, const String &name){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return false;
@@ -246,6 +269,7 @@ bool SepticController::setName(size_t id, const String &name){
 }
 
 bool SepticController::setGroupId(size_t id, uint8_t group_id){
+    auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_((uint8_t)id, idx))
         return false;
@@ -254,32 +278,43 @@ bool SepticController::setGroupId(size_t id, uint8_t group_id){
 }
 
 bool SepticController::setWarningPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     return setLevelPort_(id, port, &SepticConfig::warning_port);
 }
 
 bool SepticController::setAlarmPort(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     return setLevelPort_(id, port, &SepticConfig::alarm_port);
 }
 
 bool SepticController::setWarningRelay(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     return setRelayPort_(id, port, &SepticConfig::relay_warning);
 }
 
 bool SepticController::setAlarmRelay(size_t id, uint8_t port){
+    auto guard = _lock.guard();
     return setRelayPort_(id, port, &SepticConfig::relay_alarm);
 }
 
 void SepticController::setDetectHandler(SepticController::DetectHandler cb, void *ctx){
+    auto guard = _lock.guard();
     _detect_cb = cb;
     _detect_ctx = ctx;
 }
 
 void SepticController::setNotifyEnabled(bool enabled){
+    auto guard = _lock.guard();
     _notify_enabled = enabled;
 }
 
 void SepticController::notifyRemoteLevel(const String &source, uint8_t septic_id, const String &name, bool is_alarm){
-    if (!_notify_enabled)
+    bool notify_enabled = false;
+    {
+        auto guard = _lock.guard();
+        notify_enabled = _notify_enabled;
+    }
+    if (!notify_enabled)
         return;
     String msg = F("Септик: уровень ");
     msg += is_alarm ? F("ALARM") : F("WARNING");
@@ -304,12 +339,14 @@ void SepticController::notifyRemoteLevel(const String &source, uint8_t septic_id
 }
 
 const SepticController::SepticConfig *SepticController::configByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kSepticCount)
         return nullptr;
     return &_cfg[idx];
 }
 
 const SepticController::SepticState *SepticController::stateByIndex(size_t idx) const{
+    auto guard = _lock.guard();
     if (idx >= kSepticCount)
         return nullptr;
     return &_state[idx];

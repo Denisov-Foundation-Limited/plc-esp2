@@ -15,6 +15,7 @@ size_t WebInterfaceControllersTanksHelper::tanksLocalRenderCount_(const WebInter
         if (!web._controllers)
             return 0;
         TankController &tanks = web._controllers->tanks();
+        auto guard = tanks.lockGuard();
         size_t last_enabled_idx = SIZE_MAX;
         for (size_t i = 0; i < TankController::kTankCount; ++i)
         {
@@ -346,6 +347,7 @@ String WebInterfaceControllersTanksHelper::listTanksHtml_(WebInterface &web, siz
         String items;
         items.reserve(16384);
         TankController &tanks = web._controllers->tanks();
+        auto guard = tanks.lockGuard();
     
         auto appendRow = [&](const TankController::TankConfig &cfg, const TankController::TankState &st,
                              bool enabled) {

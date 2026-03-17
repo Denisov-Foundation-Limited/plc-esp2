@@ -19,10 +19,14 @@
 class Ds18b20
 {
 public:
+    using BusLockCallback = bool (*)(void *ctx, uint32_t timeout_ms);
+    using BusUnlockCallback = void (*)(void *ctx);
+
     Ds18b20() = default;
     explicit Ds18b20(OneWireBus &bus);
 
     bool begin(OneWireBus &bus);
+    void setBusLockCallbacks(BusLockCallback lock_cb, BusUnlockCallback unlock_cb, void *ctx);
     bool readTempC(float &out_c);
     bool readTempC(uint8_t addr[8], float &out_c);
     bool readTempC(const String &hex_serial, float &out_c);
@@ -38,7 +42,9 @@ public:
 
 private:
     static constexpr uint8_t kFamily = 0x28;
-    static constexpr uint16_t kDefaultConvMs = 750;
+    static constexpr uint16_t kDefaultConvMs = 1000;
+    static constexpr uint8_t kReadAttempts = 2;
+    static constexpr uint16_t kRetryDelayMs = 25;
 
     OneWireBus *bus_();
     bool findFirst_();
@@ -50,6 +56,8 @@ private:
     static String toString_(const uint8_t in[8]);
     static void toHex_(const uint8_t in[8], char out[17]);
     static int hexNibble_(char c);
+    bool lockBus_(uint32_t timeout_ms = 1000);
+    void unlockBus_();
 
     OneWireBus *_bus = nullptr;
     uint8_t _addr[8] = {};
@@ -57,4 +65,7 @@ private:
     uint32_t _last_conv_ms = 0;
     uint16_t _conv_time_ms = kDefaultConvMs;
     bool _has_conv = false;
+    BusLockCallback _bus_lock_cb = nullptr;
+    BusUnlockCallback _bus_unlock_cb = nullptr;
+    void *_bus_lock_ctx = nullptr;
 };

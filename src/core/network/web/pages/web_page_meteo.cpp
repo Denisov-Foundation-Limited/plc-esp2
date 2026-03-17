@@ -309,7 +309,7 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       %METEO_PAGINATION%
       <form method="POST" action="/meteo" id="meteo-form">
         %METEO_FORM_HIDDEN%
-        <div class="grid">
+        <div class="grid" id="meteo-grid">
           %METEO_TILES%
         </div>
         <p class="actions">
@@ -323,6 +323,33 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     const meteoCanEdit = %METEO_CAN_EDIT%;
     const sensorOptions = %SENSOR_JSON%;
     const sensorUsed = %SENSOR_USED_JSON%;
+    const meteoGrid = document.getElementById('meteo-grid');
+    const meteoPageValue = (() => {
+      const url = new URL(window.location.href);
+      return url.searchParams.get('page') || '1';
+    })();
+    async function loadMeteoList() {
+      if (!meteoGrid) return;
+      try {
+        const url = new URL('/meteo/list', window.location.origin);
+        const cur = new URL(window.location.href);
+        const unit = cur.searchParams.get('unit');
+        const node = cur.searchParams.get('node');
+        if (unit) url.searchParams.set('unit', unit);
+        if (node) url.searchParams.set('node', node);
+        url.searchParams.set('page', meteoPageValue);
+        const res = await fetch(url.toString(), { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) {
+          meteoGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+          return;
+        }
+        meteoGrid.innerHTML = await res.text();
+        bindMeteoHandlers();
+        refreshMeteoPins();
+      } catch (e) {
+        meteoGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+      }
+    }
 
     function labelFor(val) {
       return 'sens' + val;
@@ -361,11 +388,57 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
         el.value = selected || '';
       });
     }
+    const meteoForm = document.getElementById('meteo-form');
+    let meteoDirty = false;
+    if (meteoForm) {
+      meteoForm.addEventListener('input', () => { meteoDirty = true; });
+      meteoForm.addEventListener('change', () => { meteoDirty = true; });
+    }
+    const reloadKey = 'meteo_reload';
+    if (sessionStorage.getItem(reloadKey)) {
+      sessionStorage.removeItem(reloadKey);
+      location.replace(location.pathname + location.search);
+    }
+    if (meteoForm) {
+      meteoForm.addEventListener('submit', () => {
+        sessionStorage.setItem(reloadKey, '1');
+      });
+    }
 
-    refreshMeteoPins();
-    document.querySelectorAll('select.meteo-pin').forEach((el) => {
-      el.addEventListener('change', refreshMeteoPins);
-    });
+    function bindMeteoHandlers() {
+      document.querySelectorAll('select.meteo-pin').forEach((el) => {
+        if (el.dataset.boundPin === '1') return;
+        el.dataset.boundPin = '1';
+        el.addEventListener('change', refreshMeteoPins);
+      });
+      document.querySelectorAll('select.meteo-type').forEach((el) => {
+        const row = el.closest('.tile');
+        if (!row) return;
+        updateRow(row);
+        if (el.dataset.boundType === '1') return;
+        el.dataset.boundType = '1';
+        el.addEventListener('change', () => updateRow(row));
+      });
+      document.querySelectorAll('select.meteo-device').forEach((el) => {
+        const row = el.closest('.tile');
+        if (!row) return;
+        if (el.dataset.boundDevice === '1') return;
+        el.dataset.boundDevice = '1';
+        el.addEventListener('change', () => updateRow(row));
+      });
+      document.querySelectorAll('input.meteo-enable').forEach((el) => {
+        if (el.dataset.boundEnable === '1') return;
+        el.dataset.boundEnable = '1';
+        el.addEventListener('change', () => {
+          const tile = el.closest('.tile');
+          updateMeteoEnabled(tile, el.checked);
+          if (!el.checked && meteoForm) {
+            sessionStorage.setItem(reloadKey, '1');
+            meteoForm.submit();
+          }
+        });
+      });
+    }
 
     function setDisabled(el, disabled) {
       if (!el) {
@@ -473,20 +546,6 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
         updateRow(tile);
       }
     }
-
-    document.querySelectorAll('select.meteo-type').forEach((el) => {
-      const row = el.closest('.tile');
-      if (row) {
-        updateRow(row);
-        el.addEventListener('change', () => updateRow(row));
-      }
-    });
-    document.querySelectorAll('select.meteo-device').forEach((el) => {
-      const row = el.closest('.tile');
-      if (row) {
-        el.addEventListener('change', () => updateRow(row));
-      }
-    });
     let remoteSourcesBusy = false;
     async function pollRemoteSources() {
       if (remoteSourcesBusy) return;
@@ -585,33 +644,9 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     }
     setTimeout(pollMeteoStates, 500);
     setInterval(pollMeteoStates, 2000);
-
-    document.querySelectorAll('input.meteo-enable').forEach((el) => {
-      el.addEventListener('change', () => {
-        const tile = el.closest('.tile');
-        updateMeteoEnabled(tile, el.checked);
-        if (!el.checked && meteoForm) {
-          sessionStorage.setItem(reloadKey, '1');
-          meteoForm.submit();
-        }
-      });
-    });
-    const meteoForm = document.getElementById('meteo-form');
-    let meteoDirty = false;
-    if (meteoForm) {
-      meteoForm.addEventListener('input', () => { meteoDirty = true; });
-      meteoForm.addEventListener('change', () => { meteoDirty = true; });
-    }
-    const reloadKey = 'meteo_reload';
-    if (sessionStorage.getItem(reloadKey)) {
-      sessionStorage.removeItem(reloadKey);
-      location.replace(location.pathname + location.search);
-    }
-    if (meteoForm) {
-      meteoForm.addEventListener('submit', () => {
-        sessionStorage.setItem(reloadKey, '1');
-      });
-    }
+    refreshMeteoPins();
+    loadMeteoList();
+    bindMeteoHandlers();
     const scrollKey = 'meteo_scroll_y';
     const savedScroll = sessionStorage.getItem(scrollKey);
     if (savedScroll) {

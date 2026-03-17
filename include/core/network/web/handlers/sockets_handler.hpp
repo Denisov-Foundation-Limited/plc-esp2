@@ -19,6 +19,7 @@ public:
     static void registerRoutes(WebInterface &web, AsyncWebServer &server);
 
     static void handleSockets(WebInterface &web, AsyncWebServerRequest *request);
+    static void handleSocketsList(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleSocketsSave(WebInterface &web, AsyncWebServerRequest *request, const char *redirect);
 
@@ -28,4 +29,3 @@ public:
 
     static void handleSocketsEnable(WebInterface &web, AsyncWebServerRequest *request);
 };
-

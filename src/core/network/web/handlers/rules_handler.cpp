@@ -831,6 +831,7 @@ void RulesHandler::appendConditionItemOptions_(WebInterface &web, String &out, u
         else if (controller.equalsIgnoreCase("sockets"))
         {
             SocketController &s = web._controllers->sockets();
+            auto guard = s.lockGuard();
             for (size_t i = 0; i < SocketController::kSocketCount; ++i)
             {
                 const auto *cfg = s.configByIndex(i);
@@ -842,6 +843,7 @@ void RulesHandler::appendConditionItemOptions_(WebInterface &web, String &out, u
         else if (controller.equalsIgnoreCase("lights"))
         {
             SocketController &s = web._controllers->sockets();
+            auto guard = s.lockGuard();
             for (size_t i = 0; i < SocketController::kLightCount; ++i)
             {
                 const auto *cfg = s.lightConfigByIndex(i);
@@ -853,6 +855,7 @@ void RulesHandler::appendConditionItemOptions_(WebInterface &web, String &out, u
         else if (controller.equalsIgnoreCase("meteo"))
         {
             MeteoController &m = web._controllers->meteo();
+            auto guard = m.lockGuard();
             for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
             {
                 const auto *cfg = m.configByIndex(i);
@@ -864,6 +867,7 @@ void RulesHandler::appendConditionItemOptions_(WebInterface &web, String &out, u
         else if (controller.equalsIgnoreCase("security"))
         {
             SecurityController &s = web._controllers->security();
+            auto guard = s.lockGuard();
             for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
             {
                 const auto *cfg = s.configByIndex(i);
@@ -875,6 +879,7 @@ void RulesHandler::appendConditionItemOptions_(WebInterface &web, String &out, u
         else if (controller.equalsIgnoreCase("tanks"))
         {
             TankController &t = web._controllers->tanks();
+            auto guard = t.lockGuard();
             for (size_t i = 0; i < TankController::kTankCount; ++i)
             {
                 const auto *cfg = t.configByIndex(i);
@@ -886,6 +891,7 @@ void RulesHandler::appendConditionItemOptions_(WebInterface &web, String &out, u
         else if (controller.equalsIgnoreCase("septic"))
         {
             SepticController &s = web._controllers->septic();
+            auto guard = s.lockGuard();
             for (size_t i = 0; i < SepticController::kSepticCount; ++i)
             {
                 const auto *cfg = s.configByIndex(i);
@@ -963,6 +969,7 @@ void RulesHandler::appendSocketValueOptions_(WebInterface &web, String &out, uin
             return;
         }
         SocketController &sockets = web._controllers->sockets();
+        auto sockets_guard = sockets.lockGuard();
         bool any = false;
         for (size_t i = 0; i < SocketController::kSocketCount; ++i)
         {
@@ -1021,6 +1028,7 @@ void RulesHandler::appendLightValueOptions_(WebInterface &web, String &out, uint
             return;
         }
         SocketController &sockets = web._controllers->sockets();
+        auto sockets_guard = sockets.lockGuard();
         bool any = false;
         for (size_t i = 0; i < SocketController::kLightCount; ++i)
         {
@@ -1218,6 +1226,7 @@ String RulesHandler::actionsGridHtml_(WebInterface &web, uint8_t rule_id, uint32
         if (web._controllers)
         {
             SocketController &s = web._controllers->sockets();
+            auto guard = s.lockGuard();
             bool first = true;
             for (size_t idx = 0; idx < SocketController::kSocketCount; ++idx)
             {
@@ -1238,6 +1247,7 @@ String RulesHandler::actionsGridHtml_(WebInterface &web, uint8_t rule_id, uint32
         if (web._controllers)
         {
             SocketController &s = web._controllers->sockets();
+            auto guard = s.lockGuard();
             bool first = true;
             for (size_t idx = 0; idx < SocketController::kLightCount; ++idx)
             {
@@ -1258,6 +1268,7 @@ String RulesHandler::actionsGridHtml_(WebInterface &web, uint8_t rule_id, uint32
         if (web._controllers)
         {
             MeteoController &m = web._controllers->meteo();
+            auto guard = m.lockGuard();
             bool first = true;
             for (size_t idx = 0; idx < MeteoController::kSensorCount; ++idx)
             {
@@ -1278,6 +1289,7 @@ String RulesHandler::actionsGridHtml_(WebInterface &web, uint8_t rule_id, uint32
         if (web._controllers)
         {
             SecurityController &s = web._controllers->security();
+            auto guard = s.lockGuard();
             bool first = true;
             for (size_t idx = 0; idx < SecurityController::kSensorCount; ++idx)
             {
@@ -1298,6 +1310,7 @@ String RulesHandler::actionsGridHtml_(WebInterface &web, uint8_t rule_id, uint32
         if (web._controllers)
         {
             TankController &t = web._controllers->tanks();
+            auto guard = t.lockGuard();
             bool first = true;
             for (size_t idx = 0; idx < TankController::kTankCount; ++idx)
             {
@@ -1318,6 +1331,7 @@ String RulesHandler::actionsGridHtml_(WebInterface &web, uint8_t rule_id, uint32
         if (web._controllers)
         {
             SepticController &s = web._controllers->septic();
+            auto guard = s.lockGuard();
             bool first = true;
             for (size_t idx = 0; idx < SepticController::kSepticCount; ++idx)
             {

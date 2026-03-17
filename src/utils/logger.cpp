@@ -16,30 +16,124 @@
 
 using LoggerLevel = Logger::Level;
 
+namespace
+{
+uint8_t daysInMonth_(uint16_t year, uint8_t month)
+{
+    switch (month)
+    {
+    case 1:
+    case 3:
+    case 5:
+    case 7:
+    case 8:
+    case 10:
+    case 12:
+        return 31;
+    case 4:
+    case 6:
+    case 9:
+    case 11:
+        return 30;
+    case 2:
+        return (year % 4u == 0u && (year % 100u != 0u || year % 400u == 0u)) ? 29 : 28;
+    default:
+        return 31;
+    }
+}
+
+void advanceDateTime_(Ds3231Mz::DateTime &dt, uint32_t delta_sec)
+{
+    uint32_t sec_of_day = (uint32_t)dt.hour * 3600u + (uint32_t)dt.minute * 60u + (uint32_t)dt.second;
+    uint32_t total_sec = sec_of_day + delta_sec;
+    uint32_t day_carry = total_sec / 86400u;
+    total_sec %= 86400u;
+
+    dt.hour = (uint8_t)(total_sec / 3600u);
+    total_sec %= 3600u;
+    dt.minute = (uint8_t)(total_sec / 60u);
+    dt.second = (uint8_t)(total_sec % 60u);
+
+    while (day_carry > 0)
+    {
+        const uint8_t dim = daysInMonth_(dt.year, dt.month);
+        if (dt.day < dim)
+            ++dt.day;
+        else
+        {
+            dt.day = 1;
+            if (dt.month < 12)
+                ++dt.month;
+            else
+            {
+                dt.month = 1;
+                ++dt.year;
+            }
+        }
+        if (dt.day_of_week >= 1 && dt.day_of_week <= 7)
+            dt.day_of_week = (uint8_t)((dt.day_of_week % 7u) + 1u);
+        --day_carry;
+    }
+}
+
+void formatDateTime_(const Ds3231Mz::DateTime &dt, char *out, size_t cap)
+{
+    char date_buf[16] = {};
+    char time_buf[16] = {};
+    snprintf(date_buf, sizeof(date_buf), "%04u-%02u-%02u",
+             (unsigned)dt.year, (unsigned)dt.month, (unsigned)dt.day);
+    snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
+             (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
+    snprintf(out, cap, "[%s][%s]", date_buf, time_buf);
+}
+} // namespace
+
 Logger::Logger(UartManager &uart) : uart_(uart){}
 
-void Logger::begin(Stream &out){ _out = &out; }
+void Logger::begin(Stream &out){
+    ensureLock_();
+    _out = &out;
+}
 
 bool Logger::ready() const{ return _out != nullptr; }
 
-void Logger::setRtc(RTC &rtc){ _rtc = &rtc; }
+void Logger::setRtc(RTC &rtc){
+    _rtc = &rtc;
+    _has_last_rtc = false;
+    _last_rtc_ms = 0;
+    _last_rtc = {};
+}
 
-size_t Logger::recentCount() const{ return _recent_count; }
+size_t Logger::recentCount() const{
+    const_cast<Logger *>(this)->lock_();
+    const size_t out = _recent_count;
+    const_cast<Logger *>(this)->unlock_();
+    return out;
+}
 
 bool Logger::getRecentLine(size_t idx, char *out, size_t cap) const{
+    const_cast<Logger *>(this)->lock_();
     if (!out || cap == 0)
+    {
+        const_cast<Logger *>(this)->unlock_();
         return false;
+    }
     if (idx >= _recent_count)
+    {
+        const_cast<Logger *>(this)->unlock_();
         return false;
+    }
     const size_t start = (_recent_count < kRecentMax) ? 0 : _recent_head;
     const size_t pos = (start + idx) % kRecentMax;
     strncpy(out, _recent[pos], cap - 1);
     out[cap - 1] = '\0';
+    const_cast<Logger *>(this)->unlock_();
     return true;
 }
 
 bool Logger::beginAuto(){
     const LogCfg cfg = ActiveBoardProfile::LOG;
+    ensureLock_();
 
     if (cfg.sink == LogCfg::Sink::UsbSerial)
     {
@@ -58,6 +152,17 @@ bool Logger::beginAuto(){
     }
 
     return false;
+}
+
+void Logger::ensureLock_(){
+#if defined(ESP32)
+    if (_lock != nullptr)
+        return;
+    portENTER_CRITICAL(&_lock_init_mux);
+    if (_lock == nullptr)
+        _lock = xSemaphoreCreateMutex();
+    portEXIT_CRITICAL(&_lock_init_mux);
+#endif
 }
 
 char Logger::levelChar_(LoggerLevel l){
@@ -99,8 +204,8 @@ const char *Logger::levelName_(LoggerLevel l){
 void Logger::storeLine_(const char *line){
     if (!line)
         return;
-    strncpy(_recent[_recent_head], line, LOGGER_BUFFER_SIZE - 1);
-    _recent[_recent_head][LOGGER_BUFFER_SIZE - 1] = '\0';
+    strncpy(_recent[_recent_head], line, kRecentLineSize - 1);
+    _recent[_recent_head][kRecentLineSize - 1] = '\0';
     _recent_head = (uint8_t)((_recent_head + 1) % kRecentMax);
     if (_recent_count < kRecentMax)
         ++_recent_count;
@@ -128,16 +233,22 @@ bool Logger::formatTimestamp_(char *out, size_t cap){
         return false;
     if (_rtc)
     {
+        const uint32_t now_ms = millis();
         Ds3231Mz::DateTime dt{};
-        if (_rtc->Time(dt))
+        const bool need_refresh = !_has_last_rtc || (uint32_t)(now_ms - _last_rtc_ms) >= 1000u;
+        if (need_refresh && _rtc->Time(dt))
         {
-            char date_buf[16] = {};
-            char time_buf[16] = {};
-            snprintf(date_buf, sizeof(date_buf), "%04u-%02u-%02u",
-                     (unsigned)dt.year, (unsigned)dt.month, (unsigned)dt.day);
-            snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
-                     (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
-            snprintf(out, cap, "[%s][%s]", date_buf, time_buf);
+            _last_rtc = dt;
+            _last_rtc_ms = now_ms;
+            _has_last_rtc = true;
+            formatDateTime_(dt, out, cap);
+            return true;
+        }
+        if (_has_last_rtc)
+        {
+            dt = _last_rtc;
+            advanceDateTime_(dt, (uint32_t)((now_ms - _last_rtc_ms) / 1000u));
+            formatDateTime_(dt, out, cap);
             return true;
         }
     }
@@ -147,5 +258,20 @@ bool Logger::formatTimestamp_(char *out, size_t cap){
     (void)out;
     (void)cap;
     return false;
+#endif
+}
+
+void Logger::lock_(){
+#if defined(ESP32)
+    ensureLock_();
+    if (_lock)
+        xSemaphoreTake(_lock, portMAX_DELAY);
+#endif
+}
+
+void Logger::unlock_(){
+#if defined(ESP32)
+    if (_lock)
+        xSemaphoreGive(_lock);
 #endif
 }

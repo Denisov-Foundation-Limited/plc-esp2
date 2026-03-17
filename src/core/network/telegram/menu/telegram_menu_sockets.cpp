@@ -27,6 +27,12 @@
 #include "core/network/telegram/menu/telegram_menu_sockets.hpp"
 
 // ---- telegram menu extracted definitions ----
+namespace
+{
+static constexpr uint32_t kTelegramSocketLockTimeoutMs = 300;
+static constexpr uint8_t kTelegramSocketMenuVerifyRetries = 8;
+}
+
 bool TelegramMenuSockets::cmdSockets_(TelegramBot &bot, const TelegramClient::Update &u, String &reply)
     {
         (void)reply;
@@ -642,6 +648,7 @@ void TelegramMenuSockets::buildSocketLabels_(TelegramMenu &self, std::vector<Str
     {
         if (!self._bot)
             return;
+        const uint32_t started = millis();
         const char *menu_id = lights_only ? "lights" : "sockets";
         TelegramMenu::ChatAuth *st = self.ensureAuth_(chat_id);
         if (st)
@@ -867,8 +874,20 @@ void TelegramMenuSockets::buildSocketLabels_(TelegramMenu &self, std::vector<Str
         }
         const String markup = TelegramMenu::buildKeyboardMarkup_(labels);
         const String list = TelegramMenuSockets::socketListTextHtml_(self, chat_id, lights_only);
+        const uint32_t built_ms = millis() - started;
         self._bot->setMenu(chat_id, lights_only ? "lights" : "sockets");
+        const uint32_t send_started = millis();
         self._bot->sendText(chat_id, list, markup, "HTML");
+        const uint32_t send_ms = millis() - send_started;
+        if (self._logs && self._logs->ready() && (built_ms >= 200u || send_ms >= 200u))
+        {
+            self._logs->warn(F("TGBOT"),
+                             F("Socket menu slow: build_ms: %lu send_ms: %lu local: %u lights: %u chat: %lld"),
+                             (unsigned long)built_ms, (unsigned long)send_ms,
+                             self.isLocalSelected_(chat_id) ? 1u : 0u,
+                             lights_only ? 1u : 0u,
+                             (long long)chat_id);
+        }
     }
 
 
@@ -927,26 +946,8 @@ void TelegramMenuSockets::buildSocketLabels_(TelegramMenu &self, std::vector<Str
         bool ok = false;
         if (self.isLocalSelected_(u.chat_id))
         {
-            if (lights_only)
-            {
-                const auto *cfg = self._sockets->lightConfig(id);
-                if (!cfg)
-                {
-                    self._bot->sendText(u.chat_id, F("Неизвестный свет"));
-                    return true;
-                }
-                ok = self._sockets->toggleLightRelayById(id);
-            }
-            else
-            {
-                const auto *cfg = self._sockets->config(id);
-                if (!cfg)
-                {
-                    self._bot->sendText(u.chat_id, F("Неизвестная розетка"));
-                    return true;
-                }
-                ok = self._sockets->toggleRelayById(id);
-            }
+            ok = lights_only ? self._sockets->toggleLightRelayById(id, kTelegramSocketLockTimeoutMs)
+                             : self._sockets->toggleRelayById(id, kTelegramSocketLockTimeoutMs);
         }
         else
         {
@@ -977,10 +978,12 @@ void TelegramMenuSockets::buildSocketLabels_(TelegramMenu &self, std::vector<Str
         }
         if (!ok)
         {
-            self._bot->sendText(u.chat_id, F("Не удалось"));
+            self._bot->sendText(u.chat_id,
+                                self.isLocalSelected_(u.chat_id) ? F("Контроллер занят, повторите")
+                                                                 : F("Не удалось"));
             return true;
         }
-        TelegramMenuSockets::sendSocketMenu_(self, u.chat_id, lights_only);
+        self._bot->sendText(u.chat_id, F("OK"));
         return true;
     }
 

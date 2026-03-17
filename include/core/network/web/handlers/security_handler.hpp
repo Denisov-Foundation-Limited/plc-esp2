@@ -21,9 +21,9 @@ public:
     static void handleSecurityState(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleSecurity(WebInterface &web, AsyncWebServerRequest *request);
+    static void handleSecurityList(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleSecuritySave(WebInterface &web, AsyncWebServerRequest *request);
 
     static void handleSecurityArm(WebInterface &web, AsyncWebServerRequest *request);
 };
-

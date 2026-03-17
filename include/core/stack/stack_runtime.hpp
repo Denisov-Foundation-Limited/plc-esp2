@@ -17,6 +17,7 @@
 #include "boards/board_profile.hpp"
 #include "controllers/controllers.hpp"
 #include "core/display.hpp"
+#include "hal/ds3231mz.hpp"
 #include "core/network/stack/stack_cache.hpp"
 #include "core/network/stack/stack_protocol.hpp"
 
@@ -27,6 +28,7 @@ struct ControlContext;
 struct UiContext;
 struct NetworkContext;
 struct ConfigContext;
+class TaskBinder;
 
 class StackRuntime
 {
@@ -47,6 +49,10 @@ public:
     void bindCallbacks();
     void init();
     void applyLoadedConfig();
+
+private:
+    friend class TaskBinder;
+
     void loopBegin();
     void loopAfterNetwork();
     void flushPending();
@@ -55,7 +61,6 @@ public:
     void taskPost();
     void taskFlush();
 
-private:
     bool stackMasterActive_() const;
 
     bool stackSlaveActive_() const;
@@ -311,4 +316,7 @@ private:
     uint8_t _stack_bootstrap_queue_count = 0;
     StackInventoryLogState _stack_inventory_log[StackMaster::MAX_SESSIONS]{};
     DisplaySlotConfig _display_slots[Display::kSlotCount]{};
+    bool _display_rtc_cache_valid = false;
+    Ds3231Mz::DateTime _display_rtc_cache{};
+    uint32_t _display_rtc_cache_ms = 0;
 };

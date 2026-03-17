@@ -580,6 +580,8 @@ extern const char kDate[];
 extern const char kTime[];
 extern const char kReboot[];
 extern const char kAdminStatusAcl[];
+extern const char kEepromSave[];
+extern const char kEepromLoad[];
 } // namespace AdminPage
 
 namespace CloudPage

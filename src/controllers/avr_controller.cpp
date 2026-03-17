@@ -13,10 +13,40 @@
 
 #include "hal/gpio/gpio_caps.hpp"
 
+namespace
+{
+bool sameAvrConfig_(const AvrController::Config &a, const AvrController::Config &b)
+{
+    return a.enabled == b.enabled &&
+           a.auto_mode == b.auto_mode &&
+           a.prefer_main == b.prefer_main &&
+           a.auto_return_main == b.auto_return_main &&
+           a.main_ok_port == b.main_ok_port &&
+           a.reserve_ok_port == b.reserve_ok_port &&
+           a.relay_main_port == b.relay_main_port &&
+           a.relay_reserve_port == b.relay_reserve_port &&
+           a.feedback_main_port == b.feedback_main_port &&
+           a.feedback_reserve_port == b.feedback_reserve_port &&
+           a.main_ok_active_low == b.main_ok_active_low &&
+           a.reserve_ok_active_low == b.reserve_ok_active_low &&
+           a.feedback_main_active_low == b.feedback_main_active_low &&
+           a.feedback_reserve_active_low == b.feedback_reserve_active_low &&
+           a.relay_main_invert == b.relay_main_invert &&
+           a.relay_reserve_invert == b.relay_reserve_invert &&
+           a.debounce_ms == b.debounce_ms &&
+           a.loss_delay_ms == b.loss_delay_ms &&
+           a.return_delay_ms == b.return_delay_ms &&
+           a.break_ms == b.break_ms &&
+           a.warmup_ms == b.warmup_ms &&
+           a.transfer_timeout_ms == b.transfer_timeout_ms;
+}
+}
+
 AvrController::AvrController(Gpio &gpio, Logger &logs, TelegramBot &bot, TelegramAllowedUsersProvider &users)
  : _gpio(gpio), _logs(logs), _tgbot(bot), _tgusers(users){}
 
 bool AvrController::begin(){
+    auto guard = _lock.guard();
     if (!_cfg.enabled)
         return true;
     setupHardware_();
@@ -31,59 +61,89 @@ bool AvrController::begin(){
 }
 
 void AvrController::task(){
-    updateInputs_();
-    if (!_cfg.enabled)
+    String main_notify;
+    String source_notify;
+    bool flush_notify = false;
+    Config cfg_snapshot{};
+    InputSample sample{};
     {
-        if (_st.active_source != Source::Off || _st.relay_main_on || _st.relay_reserve_on)
+        auto guard = _lock.guard();
+        cfg_snapshot = _cfg;
+    }
+    sampleInputs_(cfg_snapshot, sample);
+    {
+        auto guard = _lock.guard();
+        if (!sameAvrConfig_(_cfg, cfg_snapshot))
+            return;
+        applyInputSample_(sample, millis());
+        if (!_cfg.enabled)
         {
+            if (_st.active_source != Source::Off || _st.relay_main_on || _st.relay_reserve_on)
+            {
+                setRelays_(false, false);
+                _st.active_source = Source::Off;
+                _st.target_source = Source::Off;
+                _st.transfer_state = TransferState::Idle;
+                _st.transfer_in_progress = false;
+            }
+            return;
+        }
+
+        const uint32_t now = millis();
+        if (_st.relay_main_on && _st.relay_reserve_on)
+        {
+            setFault_(Fault::Interlock);
             setRelays_(false, false);
             _st.active_source = Source::Off;
-            _st.target_source = Source::Off;
-            _st.transfer_state = TransferState::Idle;
             _st.transfer_in_progress = false;
-        }
-        return;
-    }
-
-    const uint32_t now = millis();
-    if (_st.relay_main_on && _st.relay_reserve_on)
-    {
-        setFault_(Fault::Interlock);
-        setRelays_(false, false);
-        _st.active_source = Source::Off;
-        _st.transfer_in_progress = false;
-        _st.transfer_state = TransferState::Idle;
-        return;
-    }
-
-    if (_st.transfer_in_progress)
-    {
-        processTransfer_(now);
-        return;
-    }
-
-    if (_st.fault != Fault::None)
-    {
-        if (_cfg.auto_mode && (_st.main_ok || _st.reserve_ok))
-            clearFault();
-        else
+            _st.transfer_state = TransferState::Idle;
             return;
-    }
+        }
 
-    if (!_cfg.auto_mode)
-    {
-        const Source desired = _st.manual_source;
-        if (desired != _st.active_source)
-            startTransfer_(desired, now);
-        return;
+        if (_st.transfer_in_progress)
+        {
+            processTransfer_(now);
+            main_notify = _pending_main_notify;
+            source_notify = _pending_source_notify;
+            _pending_main_notify = "";
+            _pending_source_notify = "";
+            flush_notify = true;
+        }
+        else if (_st.fault != Fault::None)
+        {
+            if (_cfg.auto_mode && (_st.main_ok || _st.reserve_ok))
+                clearFault();
+            else
+                return;
+        }
+        else if (!_cfg.auto_mode)
+        {
+            const Source desired = _st.manual_source;
+            if (desired != _st.active_source)
+                startTransfer_(desired, now);
+        }
+        else
+        {
+            const Source desired = decideAutoSource_(now);
+            if (desired != _st.active_source)
+                startTransfer_(desired, now);
+        }
+        if (!flush_notify)
+        {
+            main_notify = _pending_main_notify;
+            source_notify = _pending_source_notify;
+            _pending_main_notify = "";
+            _pending_source_notify = "";
+        }
     }
-
-    const Source desired = decideAutoSource_(now);
-    if (desired != _st.active_source)
-        startTransfer_(desired, now);
+    if (main_notify.length())
+        sendTgNotify_(main_notify);
+    if (source_notify.length())
+        sendTgNotify_(source_notify);
 }
 
 void AvrController::applyConfig(JsonObjectConst obj){
+    auto guard = _lock.guard();
     Config next = _cfg;
     if (obj["enabled"].is<bool>())
         next.enabled = obj["enabled"].as<bool>();
@@ -126,6 +186,7 @@ void AvrController::applyConfig(JsonObjectConst obj){
 }
 
 void AvrController::serialize(JsonObject out) const{
+    auto guard = _lock.guard();
     out["enabled"] = _cfg.enabled;
     out["auto_mode"] = _cfg.auto_mode;
     out["prefer_main"] = _cfg.prefer_main;
@@ -159,6 +220,7 @@ void AvrController::serialize(JsonObject out) const{
 }
 
 bool AvrController::setControllerEnabled(bool enabled){
+    auto guard = _lock.guard();
     if (_cfg.enabled == enabled)
         return false;
     _cfg.enabled = enabled;
@@ -187,9 +249,13 @@ bool AvrController::setControllerEnabled(bool enabled){
     return true;
 }
 
-bool AvrController::controllerEnabled() const{ return _cfg.enabled; }
+bool AvrController::controllerEnabled() const{
+    auto guard = _lock.guard();
+    return _cfg.enabled;
+}
 
 bool AvrController::setAutoMode(bool auto_mode){
+    auto guard = _lock.guard();
     if (_cfg.auto_mode == auto_mode)
         return false;
     _cfg.auto_mode = auto_mode;
@@ -198,27 +264,39 @@ bool AvrController::setAutoMode(bool auto_mode){
     return true;
 }
 
-bool AvrController::autoMode() const{ return _cfg.auto_mode; }
+bool AvrController::autoMode() const{
+    auto guard = _lock.guard();
+    return _cfg.auto_mode;
+}
 
 bool AvrController::setPreferMain(bool prefer_main){
+    auto guard = _lock.guard();
     if (_cfg.prefer_main == prefer_main)
         return false;
     _cfg.prefer_main = prefer_main;
     return true;
 }
 
-bool AvrController::preferMain() const{ return _cfg.prefer_main; }
+bool AvrController::preferMain() const{
+    auto guard = _lock.guard();
+    return _cfg.prefer_main;
+}
 
 bool AvrController::setAutoReturnMain(bool auto_return){
+    auto guard = _lock.guard();
     if (_cfg.auto_return_main == auto_return)
         return false;
     _cfg.auto_return_main = auto_return;
     return true;
 }
 
-bool AvrController::autoReturnMain() const{ return _cfg.auto_return_main; }
+bool AvrController::autoReturnMain() const{
+    auto guard = _lock.guard();
+    return _cfg.auto_return_main;
+}
 
 bool AvrController::setManualSource(AvrController::Source src){
+    auto guard = _lock.guard();
     if (_st.manual_source == src)
         return false;
     _st.manual_source = src;
@@ -227,15 +305,28 @@ bool AvrController::setManualSource(AvrController::Source src){
     return true;
 }
 
-AvrController::Source AvrController::manualSource() const{ return _st.manual_source; }
+AvrController::Source AvrController::manualSource() const{
+    auto guard = _lock.guard();
+    return _st.manual_source;
+}
 
-AvrController::Source AvrController::activeSource() const{ return _st.active_source; }
+AvrController::Source AvrController::activeSource() const{
+    auto guard = _lock.guard();
+    return _st.active_source;
+}
 
-const AvrController::Config &AvrController::config() const{ return _cfg; }
+const AvrController::Config &AvrController::config() const{
+    auto guard = _lock.guard();
+    return _cfg;
+}
 
-const AvrController::State &AvrController::state() const{ return _st; }
+const AvrController::State &AvrController::state() const{
+    auto guard = _lock.guard();
+    return _st;
+}
 
 bool AvrController::setMainOkPort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.main_ok_port == port)
         return false;
     _cfg.main_ok_port = port;
@@ -244,6 +335,7 @@ bool AvrController::setMainOkPort(uint8_t port){
 }
 
 bool AvrController::setReserveOkPort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.reserve_ok_port == port)
         return false;
     _cfg.reserve_ok_port = port;
@@ -252,6 +344,7 @@ bool AvrController::setReserveOkPort(uint8_t port){
 }
 
 bool AvrController::setRelayMainPort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.relay_main_port == port)
         return false;
     _cfg.relay_main_port = port;
@@ -262,6 +355,7 @@ bool AvrController::setRelayMainPort(uint8_t port){
 }
 
 bool AvrController::setRelayReservePort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.relay_reserve_port == port)
         return false;
     _cfg.relay_reserve_port = port;
@@ -272,6 +366,7 @@ bool AvrController::setRelayReservePort(uint8_t port){
 }
 
 bool AvrController::setFeedbackMainPort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.feedback_main_port == port)
         return false;
     _cfg.feedback_main_port = port;
@@ -280,6 +375,7 @@ bool AvrController::setFeedbackMainPort(uint8_t port){
 }
 
 bool AvrController::setFeedbackReservePort(uint8_t port){
+    auto guard = _lock.guard();
     if (_cfg.feedback_reserve_port == port)
         return false;
     _cfg.feedback_reserve_port = port;
@@ -287,11 +383,18 @@ bool AvrController::setFeedbackReservePort(uint8_t port){
     return true;
 }
 
-bool AvrController::transferInProgress() const{ return _st.transfer_in_progress; }
+bool AvrController::transferInProgress() const{
+    auto guard = _lock.guard();
+    return _st.transfer_in_progress;
+}
 
-AvrController::Fault AvrController::fault() const{ return _st.fault; }
+AvrController::Fault AvrController::fault() const{
+    auto guard = _lock.guard();
+    return _st.fault;
+}
 
 void AvrController::clearFault(){
+    auto guard = _lock.guard();
     _st.fault = Fault::None;
     _st.fault_ms = 0;
 }
@@ -369,7 +472,7 @@ void AvrController::parseMs_(JsonVariantConst v, uint32_t &out){
     out = (uint32_t)v.as<unsigned>();
 }
 
-bool AvrController::readInput_(uint8_t port, bool active_low, bool &out){
+bool AvrController::readInput_(uint8_t port, bool active_low, bool &out) const{
     if (port == kInvalidPort)
         return false;
     bool raw = false;
@@ -402,18 +505,22 @@ bool AvrController::updateDebounce_(AvrController::InputDebounce &db, bool value
     return false;
 }
 
-void AvrController::updateInputs_(){
-    const uint32_t now = millis();
-    bool val = false;
-    if (readInput_(_cfg.main_ok_port, _cfg.main_ok_active_low, val))
-        updateDebounce_(_main_ok_db, val, now);
-    if (readInput_(_cfg.reserve_ok_port, _cfg.reserve_ok_active_low, val))
-        updateDebounce_(_reserve_ok_db, val, now);
-    if (readInput_(_cfg.feedback_main_port, _cfg.feedback_main_active_low, val))
-        updateDebounce_(_fb_main_db, val, now);
-    if (readInput_(_cfg.feedback_reserve_port, _cfg.feedback_reserve_active_low, val))
-        updateDebounce_(_fb_reserve_db, val, now);
+void AvrController::sampleInputs_(const AvrController::Config &cfg, AvrController::InputSample &sample) const{
+    sample.has_main_ok = readInput_(cfg.main_ok_port, cfg.main_ok_active_low, sample.main_ok);
+    sample.has_reserve_ok = readInput_(cfg.reserve_ok_port, cfg.reserve_ok_active_low, sample.reserve_ok);
+    sample.has_fb_main = readInput_(cfg.feedback_main_port, cfg.feedback_main_active_low, sample.fb_main);
+    sample.has_fb_reserve = readInput_(cfg.feedback_reserve_port, cfg.feedback_reserve_active_low, sample.fb_reserve);
+}
 
+void AvrController::applyInputSample_(const AvrController::InputSample &sample, uint32_t now){
+    if (sample.has_main_ok)
+        updateDebounce_(_main_ok_db, sample.main_ok, now);
+    if (sample.has_reserve_ok)
+        updateDebounce_(_reserve_ok_db, sample.reserve_ok, now);
+    if (sample.has_fb_main)
+        updateDebounce_(_fb_main_db, sample.fb_main, now);
+    if (sample.has_fb_reserve)
+        updateDebounce_(_fb_reserve_db, sample.fb_reserve, now);
     _st.main_ok = _main_ok_db.stable;
     _st.reserve_ok = _reserve_ok_db.stable;
     _st.fb_main_on = _fb_main_db.stable;
@@ -602,12 +709,12 @@ void AvrController::notifyMainStateIfChanged_(){
     if (_st.main_ok)
     {
         _logs.info(F("AVR"), F("main: restored"));
-        sendTgNotify_(F("AVR: main power restored"));
+        _pending_main_notify = F("AVR: main power restored");
     }
     else
     {
         _logs.warn(F("AVR"), F("main: lost"));
-        sendTgNotify_(F("AVR: main power lost"));
+        _pending_main_notify = F("AVR: main power lost");
     }
 }
 
@@ -617,12 +724,12 @@ void AvrController::notifySourceSwitched_(AvrController::Source from, AvrControl
     if (to == Source::Reserve)
     {
         _logs.warn(F("AVR"), F("source switched: reserve"));
-        sendTgNotify_(F("AVR: power switched to reserve"));
+        _pending_source_notify = F("AVR: power switched to reserve");
     }
     else if (to == Source::Main)
     {
         _logs.info(F("AVR"), F("source switched: main"));
-        sendTgNotify_(F("AVR: power switched to main"));
+        _pending_source_notify = F("AVR: power switched to main");
     }
 }
 
