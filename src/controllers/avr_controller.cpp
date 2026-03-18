@@ -42,8 +42,14 @@ bool sameAvrConfig_(const AvrController::Config &a, const AvrController::Config 
 }
 }
 
-AvrController::AvrController(Gpio &gpio, Logger &logs, TelegramBot &bot, TelegramAllowedUsersProvider &users)
- : _gpio(gpio), _logs(logs), _tgbot(bot), _tgusers(users){}
+AvrController::AvrController(Gpio &gpio, Logger &logs)
+ : _gpio(gpio), _logs(logs){}
+
+void AvrController::setEventHandler(AvrController::EventHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _event_cb = cb;
+    _event_ctx = ctx;
+}
 
 bool AvrController::begin(){
     auto guard = _lock.guard();
@@ -136,10 +142,8 @@ void AvrController::task(){
             _pending_source_notify = "";
         }
     }
-    if (main_notify.length())
-        sendTgNotify_(main_notify);
-    if (source_notify.length())
-        sendTgNotify_(source_notify);
+    (void)main_notify;
+    (void)source_notify;
 }
 
 void AvrController::applyConfig(JsonObjectConst obj){
@@ -550,6 +554,7 @@ void AvrController::setFault_(AvrController::Fault f){
     _st.fault = f;
     _st.fault_ms = millis();
     _logs.error(F("AVR"), F("fault: %s"), faultName(f));
+    notifyEvent_(Event::Fault, faultName(f));
 }
 
 AvrController::Source AvrController::decideAutoSource_(uint32_t now){
@@ -710,11 +715,13 @@ void AvrController::notifyMainStateIfChanged_(){
     {
         _logs.info(F("AVR"), F("main: restored"));
         _pending_main_notify = F("AVR: main power restored");
+        notifyEvent_(Event::MainState, "restored");
     }
     else
     {
         _logs.warn(F("AVR"), F("main: lost"));
         _pending_main_notify = F("AVR: main power lost");
+        notifyEvent_(Event::MainState, "lost");
     }
 }
 
@@ -725,23 +732,17 @@ void AvrController::notifySourceSwitched_(AvrController::Source from, AvrControl
     {
         _logs.warn(F("AVR"), F("source switched: reserve"));
         _pending_source_notify = F("AVR: power switched to reserve");
+        notifyEvent_(Event::SourceSwitch, "reserve");
     }
     else if (to == Source::Main)
     {
         _logs.info(F("AVR"), F("source switched: main"));
         _pending_source_notify = F("AVR: power switched to main");
+        notifyEvent_(Event::SourceSwitch, "main");
     }
 }
 
-void AvrController::sendTgNotify_(const String &msg){
-    const auto users = _tgusers.allowedUsers();
-    if (users.empty())
-        return;
-    for (size_t i = 0; i < users.size; ++i)
-    {
-        const auto &user = users[i];
-        if (!user.enabled || !user.is_notify || user.chat_id == 0)
-            continue;
-        _tgbot.sendText(user.chat_id, msg);
-    }
+void AvrController::notifyEvent_(AvrController::Event ev, const char *message){
+    if (_event_cb)
+        _event_cb(_event_ctx, ev, _st, message);
 }

@@ -63,7 +63,7 @@ public:
         Stack = 4
     };
 
-    RingController(Gpio &gpio, Logger &logs) ;bool begin();void task();void applyConfig(JsonObjectConst obj);void serialize(JsonObject out) const;bool setControllerEnabled(bool enabled);bool controllerEnabled() const;bool setButtonPort(uint8_t port);bool setRelayPort(uint8_t port);bool setHoldRelay(bool on);bool setHoldRelayLocal(bool on);bool setHoldRelayWithSource(bool on, Source source);bool setHoldRelayLocalWithSource(bool on, Source source);const Config &config() const;const State &state() const;Source lastSource() const;void setHoldHandler(HoldHandler cb, void *ctx);LockGuard lockGuard(uint32_t timeout_ms = 0xFFFFFFFFu) const { return _lock.guard(timeout_ms); }
+    RingController(Gpio &gpio, Logger &logs) ;bool begin();void task();void applyConfig(JsonObjectConst obj);void serialize(JsonObject out) const;bool setControllerEnabled(bool enabled);bool controllerEnabled() const;bool setButtonPort(uint8_t port);bool setRelayPort(uint8_t port);bool setHoldRelay(bool on);bool setHoldRelayLocal(bool on);bool setHoldRelayWithSource(bool on, Source source);bool setHoldRelayLocalWithSource(bool on, Source source);const Config &config() const;const State &state() const;Source lastSource() const;void setHoldHandler(HoldHandler cb, void *ctx);void setHoldHandlerSecondary(HoldHandler cb, void *ctx);LockGuard lockGuard(uint32_t timeout_ms = 0xFFFFFFFFu) const { return _lock.guard(timeout_ms); }
 private:
     Gpio &_gpio;
     Logger &_logs;
@@ -71,6 +71,8 @@ private:
     State _st;
     HoldHandler _hold_cb = nullptr;
     void *_hold_ctx = nullptr;
+    HoldHandler _hold_cb_secondary = nullptr;
+    void *_hold_ctx_secondary = nullptr;
     bool _pending_hold_notify = false;
     bool _pending_hold_on = false;
     mutable RtosRecursiveLock _lock;

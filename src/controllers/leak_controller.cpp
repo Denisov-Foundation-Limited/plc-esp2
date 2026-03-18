@@ -13,9 +13,15 @@
 
 #include <string.h>
 
-LeakController::LeakController(Gpio &gpio, Logger &logs, TelegramBot &bot, TelegramAllowedUsersProvider &users)
- : _gpio(gpio), _logs(logs), _tgbot(bot), _tgusers(users){
+LeakController::LeakController(Gpio &gpio, Logger &logs)
+ : _gpio(gpio), _logs(logs){
     reset_();
+}
+
+void LeakController::setEventHandler(LeakController::EventHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _event_cb = cb;
+    _event_ctx = ctx;
 }
 
 bool LeakController::begin(){
@@ -294,6 +300,7 @@ bool LeakController::ack(size_t id){
         return false;
     st.alarm_latched = false;
     writeOutputs_(_cfg[idx], st, false);
+    notifyEvent_(Event::Ack, _cfg[idx].id, _cfg[idx].name, st.wet, st.alarm_latched);
     return true;
 }
 
@@ -433,27 +440,10 @@ void LeakController::writeOutputs_(const LeakController::ZoneConfig &cfg, LeakCo
 void LeakController::notifyLeak_(const LeakController::ZoneConfig &cfg){
     _logs.warn(F("LEAK"), F("detected: zone: %u name: %s"),
                (unsigned)cfg.id, cfg.name.length() ? cfg.name.c_str() : "-");
-    String msg = F("Leak detected");
-    msg += F(": zone ");
-    msg += String((unsigned)cfg.id);
-    if (cfg.name.length())
-    {
-        msg += F(" (");
-        msg += cfg.name;
-        msg += F(")");
-    }
-    sendTgNotify_(msg);
+    notifyEvent_(Event::Detect, cfg.id, cfg.name, true, true);
 }
 
-void LeakController::sendTgNotify_(const String &msg){
-    const auto users = _tgusers.allowedUsers();
-    if (users.empty())
-        return;
-    for (size_t i = 0; i < users.size; ++i)
-    {
-        const auto &user = users[i];
-        if (!user.enabled || !user.is_notify || user.chat_id == 0)
-            continue;
-        _tgbot.sendText(user.chat_id, msg);
-    }
+void LeakController::notifyEvent_(LeakController::Event ev, uint8_t id, const String &name, bool wet, bool alarm_latched){
+    if (_event_cb)
+        _event_cb(_event_ctx, ev, id, name, wet, alarm_latched);
 }

@@ -379,7 +379,7 @@ String WebInterfaceControllersOps::listStackNodesStatusHtml_() const
         html += "</strong></td><td><strong>";
         html += has_plc ? formatTemp_(cache->board_temp) : "n/a";
         html += "</strong></td><td><strong>";
-        html += has_plc ? formatTemp_(cache->cpu_temp) : "n/a";
+        html += "n/a";
         html += "</strong></td><td class=\"center\"><strong>";
         if (has_plc)
             html += fanStatusIcon_(cache->fan_on);
@@ -1703,7 +1703,6 @@ String WebInterfaceControllersOps::navHtml_() const
             appendNavLink(nav, F("/display"), F("Дисплей"));
             appendNavLink(nav, F("/rules"), F("Правила"));
             appendNavLink(nav, F("/groups"), F("Группы"));
-            appendNavLink(nav, F("/telegram"), F("Telegram"));
             appendNavLink(nav, F("/cloud"), F("Облако"));
             appendNavLink(nav, F("/admin"), F("Система"));
             appendNavLink(nav, F("/logs"), F("Logs"));
@@ -1878,6 +1877,15 @@ String WebInterfaceControllersOps::navHtml_() const
         if (_configs_manager)
             return _configs_manager->cloudEnabled();
         return false;
+    }
+
+
+
+    CloudTransportKind WebInterfaceControllersOps::cloudTransport_() const
+{
+        if (_configs_manager)
+            return _configs_manager->cloudTransport();
+        return CloudTransportKind::WebSocket;
     }
 
 

@@ -24,7 +24,7 @@
 #endif
 
 CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
-           TelegramClient &tgbot, TelegramMenu &tgbot_menu, Configs &configs, Extender &ext,
+           Configs &configs, Extender &ext,
            UsersRegistry &users,
            Controllers &controllers, StackMaster *stack_master)
     : _plc(plc),
@@ -33,14 +33,11 @@ CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftes
       _ftest(ftest),
       _i2c(i2c),
       _ow(ow),
-      _tgbot(tgbot),
-      _tgbot_menu(tgbot_menu),
       _configs(configs),
       _ext(ext),
       _users(users),
       _controllers(controllers),
       _wifi_cli(*this),
-      _tgbot_cli(*this),
       _stack_cli(*this),
       _socket_cli(*this, controllers.sockets()),
       _meteo_cli(*this, controllers.meteo()),
@@ -54,7 +51,7 @@ CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftes
       _watering_cli(*this, controllers.watering()),
       _cloud_cli(*this),
       _enable(*this, _wifi_cli),
-      _config(*this, _wifi_cli, _tgbot_cli, _socket_cli, _meteo_cli, _thermo_cli, _tank_cli, _septic_cli,
+      _config(*this, _wifi_cli, _socket_cli, _meteo_cli, _thermo_cli, _tank_cli, _septic_cli,
               _security_cli, _ring_cli, _avr_cli, _leak_cli, _watering_cli, _cloud_cli)
 {
     _stack_cli.bind(stack_master);
@@ -166,8 +163,6 @@ void CliConsole::enterConfig()
 { _mode = Mode::Config; printPrompt_(); }
 void CliConsole::enterConfigWifi()
 { _mode = Mode::ConfigWifi; printPrompt_(); }
-void CliConsole::enterConfigTgbot()
-{ _mode = Mode::ConfigTgbot; printPrompt_(); }
 void CliConsole::enterConfigTime()
 { _mode = Mode::ConfigTime; printPrompt_(); }
 void CliConsole::enterConfigSocket()
@@ -204,13 +199,12 @@ void CliConsole::cmdShowPlc_()
 {
     printPlcHeader_();
     const float board_t = _plc.boardTemp();
-    const float cpu_t = _plc.cpuTemp();
     const bool fan = _plc.fanStatus();
     const float on_c = _plc.fanOnC();
     const float hyst_c = _plc.fanHysteresisC();
     float rtc_t = 0.0f;
     const bool rtc_ok = _rtc.readTemp(rtc_t);
-    printPlcRow_("CPU", String(ActiveBoardProfile::UI_NAME), fan, board_t, cpu_t,
+    printPlcRow_("CPU", String(ActiveBoardProfile::UI_NAME), fan, board_t,
                  on_c, hyst_c, rtc_ok ? &rtc_t : nullptr);
     _stack_cli.requestStackPlc_();
 }
@@ -293,20 +287,6 @@ void CliConsole::cmdShowTime_()
 
     _stack_cli.requestStackRtc_();
 }
-void CliConsole::cmdShowTelegram_()
-{
-    _io->println(F("Telegram:"));
-    const size_t key_w = 10; // proxy_host
-    printKeyValue_(F("token"), _tgbot.token(), key_w);
-    printKeyValue_(F("chat_id"), String((long long)_tgbot.chatId()), key_w);
-    printKeyValue_(F("insecure"), _tgbot.insecure() ? F("true") : F("false"), key_w);
-    printKeyValue_(F("client"), _tgbot.clientKindName(), key_w);
-    printKeyValue_(F("poll_mode"), _tgbot.pollMode() == TelegramClient::PollMode::Long ? F("long") : F("short"), key_w);
-    printKeyValue_(F("proxy"), _tgbot.useProxy() ? F("true") : F("false"), key_w);
-    printKeyValue_(F("proxy_host"), _tgbot.proxyHost(), key_w);
-    printKeyValue_(F("proxy_port"), String((unsigned)_tgbot.proxyPort()), key_w);
-    printKeyValue_(F("proxy_path"), _tgbot.proxyPath(), key_w);
-}
 void CliConsole::cmdShowCloud_()
 {
     if (!_configs_manager)
@@ -317,6 +297,7 @@ void CliConsole::cmdShowCloud_()
     _io->println(F("Cloud:"));
     const size_t key_w = 12; // reconnect_ms
     printKeyValue_(F("enabled"), _configs_manager->cloudEnabled() ? F("true") : F("false"), key_w);
+    printKeyValue_(F("transport"), _configs_manager->cloudTransport() == CloudTransportKind::Http ? F("http") : F("ws"), key_w);
     printKeyValue_(F("host"), _configs_manager->cloudHost(), key_w);
     printKeyValue_(F("port"), String((unsigned)_configs_manager->cloudPort()), key_w);
     printKeyValue_(F("path"), _configs_manager->cloudPath(), key_w);
@@ -715,7 +696,6 @@ void CliConsole::showHelpTopic_(const String &topic)
         _io->println(F("  show i2c        - I2C device list"));
         _io->println(F("  show ow         - OneWire device list"));
         _io->println(F("  show stack      - stack role settings"));
-        _io->println(F("  show telegram   - Telegram settings"));
         _io->println(F("  show cloud      - Cloud settings"));
         _io->println(F("  show config     - configuration file contents"));
         _io->println(F("  show port <id>  - port details"));
@@ -771,11 +751,6 @@ void CliConsole::showHelpTopic_(const String &topic)
         _io->println(F("  eeprom show             - show EEPROM save/load flags"));
         _io->println(F("  eeprom save <on|off>    - enable/disable EEPROM periodic save"));
         _io->println(F("  eeprom load <on|off>    - enable/disable EEPROM load on boot"));
-        return;
-    }
-    if (t == "tgbot")
-    {
-        _tgbot_cli.printHelpTopic();
         return;
     }
     if (t == "cloud")
@@ -849,7 +824,7 @@ void CliConsole::handleTab_()
 {
     if (!_io || _state != State::LoggedIn)
         return;
-    static const std::array<const char *, 83> kEnableCmds = {{
+    static const std::array<const char *, 81> kEnableCmds = {{
         "show plc",
         "show board",
         "show wifi",
@@ -857,7 +832,6 @@ void CliConsole::handleTab_()
         "show i2c",
         "show ow",
         "show stack",
-        "show telegram",
         "show cloud",
         "show config",
         "show ext",
@@ -921,7 +895,6 @@ void CliConsole::handleTab_()
         "help wifi",
         "help user",
         "help system",
-        "help tgbot",
         "help cloud",
         "help socket",
         "help meteo",
@@ -934,7 +907,7 @@ void CliConsole::handleTab_()
         "help avr",
         "help leak"}};
 
-    static const std::array<const char *, 47> kConfigCmds = {{
+    static const std::array<const char *, 48> kConfigCmds = {{
         "password <pass>",
         "admin password <pass>",
         "eeprom show",
@@ -949,7 +922,6 @@ void CliConsole::handleTab_()
         "stack api_key clear",
         "stack api_key gen",
         "wifi",
-        "tgbot",
         "cloud",
         "time",
         "socket",
@@ -970,7 +942,6 @@ void CliConsole::handleTab_()
         "help user",
         "help eeprom",
         "help system",
-        "help tgbot",
         "help cloud",
         "help socket",
         "help meteo",
@@ -999,44 +970,6 @@ void CliConsole::handleTab_()
         "help wifi",
         "help user",
         "help system",
-        "help security"}};
-
-    static const std::array<const char *, 36> kConfigTgbotCmds = {{
-        "token <value>",
-        "chat <id>",
-        "insecure on",
-        "insecure off",
-        "user list",
-        "user enable <id> on",
-        "user enable <id> off",
-        "user username <id> <value>",
-        "user tg_username <id> <value>",
-        "user tg_chat <id> <chat_id>",
-        "user is_admin <id> on",
-        "user is_admin <id> off",
-        "user tg_notify <id> on",
-        "user tg_notify <id> off",
-        "user tg_quick <id> on",
-        "user tg_quick <id> off",
-        "user webpass <id> <password>",
-        "user webpass <id> clear",
-        "user acl <id> all",
-        "user acl <id> none",
-        "allow list",
-        "allow add <username>",
-        "allow del <username>",
-        "allow clear",
-        "send <text>",
-        "poll",
-        "show",
-        "exit",
-        "end",
-        "help",
-        "help show",
-        "help wifi",
-        "help user",
-        "help system",
-        "help tgbot",
         "help security"}};
 
     static const std::array<const char *, 8> kConfigTimeCmds = {{
@@ -1230,9 +1163,11 @@ void CliConsole::handleTab_()
         "exit",
         "help"}};
 
-    static const std::array<const char *, 15> kConfigCloudCmds = {{
+    static const std::array<const char *, 17> kConfigCloudCmds = {{
         "enable on",
         "enable off",
+        "transport ws",
+        "transport http",
         "host <value>",
         "port <num>",
         "path <value>",
@@ -1262,10 +1197,6 @@ void CliConsole::handleTab_()
     case Mode::ConfigWifi:
         cmds = kConfigWifiCmds.data();
         count = kConfigWifiCmds.size();
-        break;
-    case Mode::ConfigTgbot:
-        cmds = kConfigTgbotCmds.data();
-        count = kConfigTgbotCmds.size();
         break;
     case Mode::ConfigTime:
         cmds = kConfigTimeCmds.data();
@@ -1534,8 +1465,6 @@ void CliConsole::handleShow_(String what)
         cmdShowOw_();
     else if (eq_(what, "stack"))
         cmdShowStack_();
-    else if (eq_(what, "telegram"))
-        cmdShowTelegram_();
     else if (eq_(what, "cloud"))
         cmdShowCloud_();
     else if (eq_(what, "config"))
@@ -1956,7 +1885,6 @@ bool CliConsole::enforceAcl_(const String &line)
         return enforceAclEnable_(line);
     case Mode::Config:
     case Mode::ConfigWifi:
-    case Mode::ConfigTgbot:
     case Mode::ConfigTime:
     case Mode::ConfigSocket:
     case Mode::ConfigMeteo:
@@ -2007,9 +1935,6 @@ void CliConsole::handleLine_(String line)
         break;
     case Mode::ConfigWifi:
         _config.handleWifiContext(line);
-        break;
-    case Mode::ConfigTgbot:
-        _config.handleTgbotContext(line);
         break;
     case Mode::ConfigTime:
         _config.handleTimeContext(line);
@@ -2136,9 +2061,6 @@ void CliConsole::printPrompt_()
         break;
     case Mode::ConfigWifi:
         _io->print(F("plc(config-wifi)# "));
-        break;
-    case Mode::ConfigTgbot:
-        _io->print(F("plc(config-tgbot)# "));
         break;
     case Mode::ConfigTime:
         _io->print(F("plc(config-time)# "));
@@ -2543,11 +2465,11 @@ void CliConsole::printOwRow_(const String &unit, uint8_t bus,
 void CliConsole::printPlcHeader_()
 {
     _io->println(F("PLC status:"));
-    _io->println(F("  Unit        DeviceName        Fan  BoardC  CpuC    RtcC    Thresh  Hyst"));
-    _io->println(F("  ----------  ----------------  ---  ------  ------  ------  ------  ------"));
+    _io->println(F("  Unit        DeviceName        Fan  BoardC  RtcC    Thresh  Hyst"));
+    _io->println(F("  ----------  ----------------  ---  ------  ------  ------  ------"));
 }
 void CliConsole::printPlcRow_(const String &unit, const String &name, bool fan,
-                  float board_c, float cpu_c, float on_c, float hyst_c,
+                  float board_c, float on_c, float hyst_c,
                   const float *rtc_c)
 {
     _io->print(F("  "));
@@ -2559,9 +2481,6 @@ void CliConsole::printPlcRow_(const String &unit, const String &name, bool fan,
     _io->print(F("  "));
     char buf[16] = {};
     dtostrf(board_c, 0, 2, buf);
-    printPadStr_(buf, 6);
-    _io->print(F("  "));
-    dtostrf(cpu_c, 0, 2, buf);
     printPadStr_(buf, 6);
     _io->print(F("  "));
     if (rtc_c)

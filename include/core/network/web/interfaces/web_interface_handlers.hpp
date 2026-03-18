@@ -31,7 +31,6 @@
 #include "core/network/web/handlers/septic_handler.hpp"
 #include "core/network/web/handlers/ring_handler.hpp"
 #include "core/network/web/handlers/security_handler.hpp"
-#include "core/network/web/handlers/telegram_handler.hpp"
 #include "core/network/web/handlers/cloud_handler.hpp"
 #include "core/network/web/handlers/meteo_handler.hpp"
 #include "core/network/web/handlers/tank_handler.hpp"

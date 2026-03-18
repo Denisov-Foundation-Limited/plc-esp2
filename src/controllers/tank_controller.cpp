@@ -13,8 +13,8 @@
 
 #include <string.h>
 
-TankController::TankController(Gpio &gpio, Logger &logs, TelegramBot &bot, TelegramAllowedUsersProvider &users)
- : _gpio(gpio), _logs(logs), _tgbot(bot), _tgusers(users){
+TankController::TankController(Gpio &gpio, Logger &logs)
+ : _gpio(gpio), _logs(logs){
     reset_();
 }
 
@@ -430,6 +430,12 @@ void TankController::setDetectHandler(TankController::DetectHandler cb, void *ct
     _detect_ctx = ctx;
 }
 
+void TankController::setDetectHandlerSecondary(TankController::DetectHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _detect_cb_secondary = cb;
+    _detect_ctx_secondary = ctx;
+}
+
 void TankController::setNotifyEnabled(bool enabled){
     auto guard = _lock.guard();
     _notify_enabled = enabled;
@@ -443,25 +449,11 @@ void TankController::notifyRemoteEmpty(const String &source, uint8_t tank_id, co
     }
     if (!notify_enabled)
         return;
-    String msg = F("Бак пустой");
-    if (source.length())
-    {
-        msg += F(" [");
-        msg += source;
-        msg += F("]");
-    }
-    if (tank_id > 0)
-    {
-        msg += F(" #");
-        msg += String((unsigned)tank_id);
-    }
-    if (name.length())
-    {
-        msg += F(" (");
-        msg += name;
-        msg += F(")");
-    }
-    sendTgNotify_(msg);
+    (void)source;
+    TankConfig cfg;
+    cfg.id = tank_id;
+    cfg.name = name;
+    notifyDetectEvent_(cfg, true);
 }
 
 const TankController::TankConfig *TankController::config(size_t id) const{
@@ -537,7 +529,9 @@ void TankController::setupInput_(uint8_t port){
     if (port == kInvalidPort)
         return;
     const PortIO::PortMode mode = kLevelPullup ? PortIO::PortMode::InputPullUp : PortIO::PortMode::Input;
-    _gpio.pinModeDyn(port, mode);
+    if (!_gpio.pinModeDyn(port, mode))
+        _logs.warn(F("TANK"), F("input setup failed: port: %u mode: %s"),
+                   (unsigned)port, kLevelPullup ? "input_pullup" : "input");
 }
 
 bool TankController::setLevelPort_(size_t id, uint8_t port, uint8_t TankConfig::*field){
@@ -611,11 +605,14 @@ void TankController::readLevels_(const TankController::TankConfig &cfg, TankCont
         if (st.levels_ok_prev)
         {
             _logs.warn(F("TANK"),
-                       F("id: %u level read failed (low:%u mid:%u full:%u)"),
+                       F("id: %u level read failed (low:%u port:%u mid:%u port:%u full:%u port:%u)"),
                        (unsigned)cfg.id,
                        ok_low ? 1u : 0u,
+                       (unsigned)cfg.level_low,
                        ok_mid ? 1u : 0u,
-                       ok_full ? 1u : 0u);
+                       (unsigned)cfg.level_mid,
+                       ok_full ? 1u : 0u,
+                       (unsigned)cfg.level_full);
         }
     }
     else if (!st.levels_ok_prev)
@@ -696,33 +693,12 @@ void TankController::writeRelay_(uint8_t port, bool on){
 }
 
 void TankController::notifyEmpty_(const TankController::TankConfig &cfg){
-    if (!_notify_enabled)
-        return;
-    String msg = F("Бак пустой: ");
-    msg += String((unsigned)cfg.id);
-    if (cfg.name.length())
-    {
-        msg += F(" (");
-        msg += cfg.name;
-        msg += F(")");
-    }
-    sendTgNotify_(msg);
-}
-
-void TankController::sendTgNotify_(const String &msg){
-    const auto users = _tgusers.allowedUsers();
-    if (users.empty())
-        return;
-    for (size_t i = 0; i < users.size; ++i)
-    {
-        const auto &user = users[i];
-        if (!user.enabled || !user.is_notify || user.chat_id == 0)
-            continue;
-        _tgbot.sendText(user.chat_id, msg);
-    }
+    (void)cfg;
 }
 
 void TankController::notifyDetectEvent_(const TankController::TankConfig &cfg, bool empty){
     if (_detect_cb)
         _detect_cb(_detect_ctx, cfg.id, cfg.name, empty);
+    if (_detect_cb_secondary)
+        _detect_cb_secondary(_detect_ctx_secondary, cfg.id, cfg.name, empty);
 }

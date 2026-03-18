@@ -183,8 +183,8 @@ void RulesController::applyConfig(JsonArrayConst arr)
                 k.toLowerCase();
                 if (k == "pause" || k == "delay")
                     act->kind = ActionKind::Pause;
-                else if (k == "telegram" || k == "tg")
-                    act->kind = ActionKind::Telegram;
+                else if (k == "notify" || k == "telegram" || k == "tg")
+                    act->kind = ActionKind::Notify;
                 else
                     act->kind = ActionKind::Controller;
             }
@@ -252,8 +252,8 @@ void RulesController::serialize(JsonArray out) const
             ao["enabled"] = a.enabled;
             if (a.kind == ActionKind::Pause)
                 ao["kind"] = "pause";
-            else if (a.kind == ActionKind::Telegram)
-                ao["kind"] = "telegram";
+            else if (a.kind == ActionKind::Notify)
+                ao["kind"] = "notify";
             else
                 ao["kind"] = "controller";
             if (a.delay_ms)
@@ -269,6 +269,11 @@ void RulesController::serialize(JsonArray out) const
         }
     }
 }
+void RulesController::setTriggerHandler(RulesController::TriggerHandler cb, void *ctx)
+{
+    _trigger_handler = cb;
+    _trigger_ctx = ctx;
+}
 bool RulesController::triggerRule(uint8_t id)
 {
     Rule *r = rule(id);
@@ -276,6 +281,8 @@ bool RulesController::triggerRule(uint8_t id)
         return false;
     _last_triggered_rule_id = id;
     _last_triggered_ms = millis();
+    if (_trigger_handler)
+        _trigger_handler(_trigger_ctx, *r);
     return true;
 }
 uint8_t RulesController::lastTriggeredRuleId() const

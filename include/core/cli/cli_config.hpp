@@ -14,7 +14,6 @@
 #include <Arduino.h>
 
 #include "core/cli/modules/cli_wifi.hpp"
-#include "core/cli/modules/cli_tgbot.hpp"
 #include "core/cli/modules/cli_socket.hpp"
 #include "core/cli/modules/cli_meteo.hpp"
 #include "core/cli/modules/cli_thermo.hpp"
@@ -32,14 +31,13 @@ template <typename ConsoleT>
 class CLIConfigT
 {
 public:
-    CLIConfigT(ConsoleT &console, CLIWifiT<ConsoleT> &wifi, CLITgbotT<ConsoleT> &tgbot,
+    CLIConfigT(ConsoleT &console, CLIWifiT<ConsoleT> &wifi,
                CLISocketT<ConsoleT> &socket, CLIMeteoT<ConsoleT> &meteo, CLIThermoT<ConsoleT> &thermo,
                CLITankT<ConsoleT> &tank, CLISepticT<ConsoleT> &septic, CLISecurityT<ConsoleT> &security,
                CLIRingT<ConsoleT> &ring, CLIAvrT<ConsoleT> &avr, CLILeakT<ConsoleT> &leak,
                CLIWateringT<ConsoleT> &watering, CLICloudT<ConsoleT> &cloud)
         : _c(console),
           _wifi(wifi),
-          _tgbot(tgbot),
           _socket(socket),
           _meteo(meteo),
           _thermo(thermo),
@@ -92,8 +90,6 @@ public:
             _c._io->println(F("    wifi                     - enter Wi-Fi context"));
             _c._io->println(F("  Time:"));
             _c._io->println(F("    time                     - enter Time context"));
-            _c._io->println(F("  Telegram:"));
-            _tgbot.printHelpConfigLines();
             _c._io->println(F("  Cloud:"));
             _cloud.printHelpConfigLines();
             _socket.printHelpConfigLines();
@@ -120,11 +116,6 @@ public:
         if (lower == "wifi")
         {
             _c.enterConfigWifi();
-            return;
-        }
-        if (lower == "tgbot")
-        {
-            _c.enterConfigTgbot();
             return;
         }
         if (lower == "time")
@@ -240,49 +231,6 @@ public:
             return;
         }
         if (_wifi.handleContext(cmd))
-            return;
-
-        _c._io->println(F("Unknown command"));
-        _c.printPrompt_();
-    }
-
-    void handleTgbotContext(const String &line)
-    {
-        String cmd = line;
-        cmd.trim();
-        String lower = cmd;
-        lower.toLowerCase();
-
-        if (lower.startsWith("help "))
-        {
-            String topic = cmd.substring(5);
-            topic.trim();
-            _c.showHelpTopic_(topic);
-            _c.printPrompt_();
-            return;
-        }
-        if (lower == "help" || lower == "?")
-        {
-            _c._io->println(F("Commands (config-tgbot):"));
-            _c._io->println(F("  Telegram:"));
-            _tgbot.printHelpContextLines();
-            _c._io->println(F("  Session:"));
-            _c._io->println(F("    exit                - return to config"));
-            _c._io->println(F("    end                 - return to enable"));
-            _c.printPrompt_();
-            return;
-        }
-        if (lower == "exit")
-        {
-            _c.enterConfig();
-            return;
-        }
-        if (lower == "end")
-        {
-            _c.enterEnable();
-            return;
-        }
-        if (_tgbot.handleContext(cmd))
             return;
 
         _c._io->println(F("Unknown command"));
@@ -1215,7 +1163,6 @@ private:
 
     ConsoleT &_c;
     CLIWifiT<ConsoleT> &_wifi;
-    CLITgbotT<ConsoleT> &_tgbot;
     CLISocketT<ConsoleT> &_socket;
     CLIMeteoT<ConsoleT> &_meteo;
     CLIThermoT<ConsoleT> &_thermo;

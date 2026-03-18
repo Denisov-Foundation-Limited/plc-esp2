@@ -39,21 +39,12 @@ void CloudHttpTransport::loop()
 {
     if (!_configured)
         return;
-
-    // Placeholder transport contract for future HTTP poll/long-poll implementation.
-    // Once real polling is added, transition to Connected after the first successful exchange.
-    if (!_connected)
-    {
-        _connected = true;
-        notifyEvent_(CloudTransport::Event::Connected);
-    }
-
-    _last_poll_ms = millis();
-    if (_outbox.length() == 0)
+    const uint32_t now = millis();
+    if (_last_poll_ms != 0 && (uint32_t)(now - _last_poll_ms) < 30000u)
         return;
-
-    // Placeholder for buffered POST/send path.
-    _outbox = "";
+    _last_poll_ms = now;
+    static const char kMsg[] = "HTTP transport placeholder: server device HTTP endpoints not implemented";
+    notifyEvent_(CloudTransport::Event::Error, reinterpret_cast<const uint8_t *>(kMsg), sizeof(kMsg) - 1u);
 }
 
 void CloudHttpTransport::disconnect()
@@ -75,7 +66,7 @@ bool CloudHttpTransport::sendText(const String &text)
     if (!_configured || text.length() == 0)
         return false;
     _outbox = text;
-    return true;
+    return false;
 }
 
 void CloudHttpTransport::notifyEvent_(CloudTransport::Event event, const uint8_t *payload, size_t len)

@@ -39,9 +39,8 @@ String formatOutgoingPhone_(const String &raw)
 }
 }
 
-SecurityController::SecurityController(Gpio &gpio, OneWireManager &ow, Logger &logs,
- TelegramBot &bot, TelegramAllowedUsersProvider &users)
- : _gpio(gpio), _ow(ow), _logs(logs), _tgbot(bot), _tgusers(users){
+SecurityController::SecurityController(Gpio &gpio, OneWireManager &ow, Logger &logs)
+ : _gpio(gpio), _ow(ow), _logs(logs){
     reset_();
 }
 
@@ -70,7 +69,6 @@ bool SecurityController::begin(){
 
 void SecurityController::task(){
     handleGsm_();
-    processTgNotifyQueue_();
     SensorConfig pending_detect[kSensorCount]{};
     size_t pending_detect_count = 0;
     bool notify_alarm_on = false;
@@ -448,6 +446,12 @@ void SecurityController::setArmStateHandler(SecurityController::ArmStateHandler 
     _arm_state_ctx = ctx;
 }
 
+void SecurityController::setArmStateHandlerSecondary(SecurityController::ArmStateHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _arm_state_cb_secondary = cb;
+    _arm_state_ctx_secondary = ctx;
+}
+
 void SecurityController::setPreArmCheckHandler(SecurityController::PreArmCheckHandler cb, void *ctx){
     auto guard = _lock.guard();
     _pre_arm_cb = cb;
@@ -460,16 +464,34 @@ void SecurityController::setAlarmStateHandler(SecurityController::AlarmStateHand
     _alarm_state_ctx = ctx;
 }
 
+void SecurityController::setAlarmStateHandlerSecondary(SecurityController::AlarmStateHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _alarm_state_cb_secondary = cb;
+    _alarm_state_ctx_secondary = ctx;
+}
+
 void SecurityController::setClearDetectHandler(SecurityController::ClearDetectHandler cb, void *ctx){
     auto guard = _lock.guard();
     _clear_detect_cb = cb;
     _clear_detect_ctx = ctx;
 }
 
+void SecurityController::setClearDetectHandlerSecondary(SecurityController::ClearDetectHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _clear_detect_cb_secondary = cb;
+    _clear_detect_ctx_secondary = ctx;
+}
+
 void SecurityController::setDetectHandler(SecurityController::DetectHandler cb, void *ctx){
     auto guard = _lock.guard();
     _detect_cb = cb;
     _detect_ctx = ctx;
+}
+
+void SecurityController::setDetectHandlerSecondary(SecurityController::DetectHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _detect_cb_secondary = cb;
+    _detect_ctx_secondary = ctx;
 }
 
 void SecurityController::setRfidUidHandler(SecurityController::RfidUidHandler cb, void *ctx){
@@ -761,27 +783,12 @@ void SecurityController::notifyRemoteDetect(const String &source, uint8_t sensor
     }
     if (!notify_enabled)
         return;
-    String msg = F("Охрана: тревога ");
-    if (source.length())
-    {
-        msg += F("<b>");
-        msg += escapeHtml_(source);
-        msg += F("</b>");
-        msg += F(", ");
-    }
-    msg += F("датчик ");
-    msg += String((unsigned)sensor_id);
-    if (name.length())
-    {
-        msg += F(" (");
-        msg += F("<b>");
-        msg += escapeHtml_(name);
-        msg += F("</b>");
-        msg += F(")");
-    }
-    if (silent)
-        msg += F(" [silent]");
-    sendTgNotify_(msg, F("HTML"));
+    (void)source;
+    SensorConfig cfg;
+    cfg.id = sensor_id;
+    cfg.name = name;
+    cfg.silent = silent;
+    notifyDetectEvent_(cfg);
     sendSmsNotify_(sensor_id, name);
 }
 
@@ -1663,7 +1670,7 @@ void SecurityController::arm_(){
         msg += F("</b>\nСработали датчики:\n<pre>");
         msg += blocked;
         msg += F("</pre>");
-        sendTgNotify_(msg, F("HTML"));
+        _logs.warn(F("SECURITY"), F("arm blocked: local sensors active"));
         return;
     }
     _armed = true;
@@ -1718,7 +1725,8 @@ void SecurityController::arm_(const char *src, const String &user){
         msg += F("</b>\nСработали датчики:\n<pre>");
         msg += blocked;
         msg += F("</pre>");
-        sendTgNotify_(msg, F("HTML"));
+        _logs.warn(F("SECURITY"), F("arm blocked: sensors active src: %s user: %s"),
+                   from, who);
         return;
     }
     _armed = true;
@@ -1983,118 +1991,13 @@ void SecurityController::notifyDetect_(const SecurityController::SensorConfig &c
     notifyDetectEvent_(cfg);
     if (!_notify_enabled)
         return;
-    String msg = F("Охрана: тревога датчик ");
-    msg += String((unsigned)cfg.id);
-    if (cfg.name.length())
-    {
-        msg += F(" (");
-        msg += F("<b>");
-        msg += escapeHtml_(cfg.name);
-        msg += F("</b>");
-        msg += F(")");
-    }
-    sendTgNotify_(msg, F("HTML"));
     sendSmsNotify_(cfg);
 }
 
 void SecurityController::notifyArmAction_(bool armed, const char *src, const String &user){
-    if (!_notify_enabled)
-        return;
-    String msg = armed ? F("Охрана: постановка") : F("Охрана: снятие");
-    const char *who = user.length() ? user.c_str() : "неизвестен";
-    const char *from = src ? src : "локально";
-    String who_txt = who;
-    String from_txt = from;
-    who_txt.replace("&", "&amp;");
-    who_txt.replace("<", "&lt;");
-    who_txt.replace(">", "&gt;");
-    from_txt.replace("&", "&amp;");
-    from_txt.replace("<", "&lt;");
-    from_txt.replace(">", "&gt;");
-    msg += F(", кто: <b>");
-    msg += who_txt;
-    msg += F("</b>, способ: <b>");
-    msg += from_txt;
-    msg += F("</b>");
-    sendTgNotify_(msg, F("HTML"));
-}
-
-void SecurityController::sendTgNotify_(const String &msg, const String &parse_mode ){
-    enqueueTgNotify_(msg, parse_mode);
-}
-
-bool SecurityController::enqueueTgNotify_(const String &msg, const String &parse_mode){
-    if (_tg_q_size > 0)
-    {
-        const uint8_t last = (uint8_t)((_tg_q_tail + kTgQueueDepth - 1) % kTgQueueDepth);
-        const TgNotifyItem &prev = _tg_queue[last];
-        if (prev.msg == msg && prev.parse_mode == parse_mode)
-            return true;
-    }
-    if (_tg_q_size >= kTgQueueDepth)
-    {
-        _logs.warn(F("SECURITY"), F("notify queue full, drop oldest"));
-        popTgNotify_();
-    }
-    TgNotifyItem &item = _tg_queue[_tg_q_tail];
-    item.msg = msg;
-    item.parse_mode = parse_mode;
-    item.next_user = 0;
-    _tg_q_tail = (uint8_t)((_tg_q_tail + 1) % kTgQueueDepth);
-    ++_tg_q_size;
-    return true;
-}
-
-void SecurityController::popTgNotify_(){
-    if (_tg_q_size == 0)
-        return;
-    TgNotifyItem &item = _tg_queue[_tg_q_head];
-    item.msg = "";
-    item.parse_mode = "";
-    item.next_user = 0;
-    _tg_q_head = (uint8_t)((_tg_q_head + 1) % kTgQueueDepth);
-    --_tg_q_size;
-}
-
-void SecurityController::processTgNotifyQueue_(){
-    String msg;
-    String parse_mode;
-    int64_t chat_id = 0;
-    {
-        auto guard = _lock.guard();
-        if (_tg_q_size == 0)
-            return;
-        const uint32_t now = millis();
-        const int32_t delta = (int32_t)(now - _tg_last_send_ms);
-        if (_tg_last_send_ms != 0 && delta < (int32_t)kTgSendGapMs)
-            return;
-
-        const auto users = _tgusers.allowedUsers();
-        while (_tg_q_size > 0)
-        {
-            TgNotifyItem &item = _tg_queue[_tg_q_head];
-            while (item.next_user < users.size)
-            {
-                const auto &u = users[item.next_user++];
-                if (!u.enabled || !u.is_notify || u.chat_id == 0)
-                    continue;
-                chat_id = u.chat_id;
-                msg = item.msg;
-                parse_mode = item.parse_mode;
-                _tg_last_send_ms = now;
-                break;
-            }
-            if (chat_id != 0)
-                break;
-            popTgNotify_();
-        }
-    }
-    if (chat_id == 0)
-        return;
-    if (parse_mode.length())
-        _tgbot.sendText(chat_id, msg, "", parse_mode);
-    else
-        _tgbot.sendText(chat_id, msg);
+    (void)armed;
+    (void)src;
+    (void)user;
 }
 
 bool SecurityController::isAllowedPhone_(const String &number) const{
@@ -2296,21 +2199,29 @@ void SecurityController::logArmAction_(bool armed, const char *src, const String
 void SecurityController::notifyArmState_(bool armed){
     if (_arm_state_cb)
         _arm_state_cb(_arm_state_ctx, armed);
+    if (_arm_state_cb_secondary)
+        _arm_state_cb_secondary(_arm_state_ctx_secondary, armed);
 }
 
 void SecurityController::notifyAlarmState_(bool alarm_on){
     if (_alarm_state_cb)
         _alarm_state_cb(_alarm_state_ctx, alarm_on);
+    if (_alarm_state_cb_secondary)
+        _alarm_state_cb_secondary(_alarm_state_ctx_secondary, alarm_on);
 }
 
 void SecurityController::notifyClearDetect_(){
     if (_clear_detect_cb)
         _clear_detect_cb(_clear_detect_ctx);
+    if (_clear_detect_cb_secondary)
+        _clear_detect_cb_secondary(_clear_detect_ctx_secondary);
 }
 
 void SecurityController::notifyDetectEvent_(const SecurityController::SensorConfig &cfg){
     if (_detect_cb)
         _detect_cb(_detect_ctx, cfg.id, cfg.name, cfg.silent);
+    if (_detect_cb_secondary)
+        _detect_cb_secondary(_detect_ctx_secondary, cfg.id, cfg.name, cfg.silent);
 }
 
 int SecurityController::hexNibble_(char c){

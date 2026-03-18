@@ -120,6 +120,14 @@ const char kWebInterfaceCloudHtml[] PROGMEM = R"HTML(
         </div>
         <div class="grid" id="cloud-fields">
           <div class="form-row">
+            <label>%CLOUD_TRANSPORT_LABEL%</label>
+            <select class="field" name="transport">
+              <option value="ws" %CLOUD_TRANSPORT_WS_SELECTED%>%CLOUD_TRANSPORT_WS%</option>
+              <option value="http" %CLOUD_TRANSPORT_HTTP_SELECTED%>%CLOUD_TRANSPORT_HTTP%</option>
+            </select>
+            <div class="hint">%CLOUD_TRANSPORT_HINT%</div>
+          </div>
+          <div class="form-row">
             <label>%CLOUD_HOST_LABEL%</label>
             <input class="field" type="text" name="host" value="%CLOUD_HOST%" placeholder="cloud.example.com">
           </div>

@@ -25,8 +25,6 @@
 #include "controllers/watering_controller.hpp"
 #include "core/eeprom_storage.hpp"
 #include "core/network/gsm_modem.hpp"
-#include "core/network/telegram/telegram_allowed_users.hpp"
-#include "core/network/telegram/telegram_bot.hpp"
 #include "core/rtc.hpp"
 #include "hal/gpio/gpio.hpp"
 #include "utils/logger.hpp"
@@ -37,7 +35,7 @@ class Controllers
 public:
     using LockGuard = RtosRecursiveLock::Guard;
     Controllers(Gpio &gpio, OneWireManager &ow, EepromStorage &storage, Logger &logs,
-                TelegramBot &tgbot, TelegramAllowedUsersProvider &tgmenu, GsmModem &gsm, RTC &rtc)
+                GsmModem &gsm, RTC &rtc)
         ;bool begin();void task();void applyConfig(JsonObjectConst cfg);void serialize(JsonObject out) const;SocketController &sockets();const SocketController &sockets() const;MeteoController &meteo();const MeteoController &meteo() const;ThermoController &thermo();const ThermoController &thermo() const;TankController &tanks();const TankController &tanks() const;SepticController &septic();const SepticController &septic() const;SecurityController &security();const SecurityController &security() const;RingController &ring();const RingController &ring() const;WateringController &watering();const WateringController &watering() const;AvrController &avr();const AvrController &avr() const;LeakController &leak();const LeakController &leak() const;void invalidateGpioUsageCache() const;bool gpioPortUsed(uint8_t port) const;bool gpioPortUsedByType(uint8_t port, PortIO::PinType type) const;void setSaveIntervalMs(uint32_t ms);bool eepromSaveEnabled() const;bool eepromLoadEnabled() const;void setEepromSaveEnabled(bool enabled);void setEepromLoadEnabled(bool enabled);void restoreFromStorage();private:
     LockGuard lockGuard() const { return _lock.guard(); }
 private:

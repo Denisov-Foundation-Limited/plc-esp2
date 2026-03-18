@@ -36,6 +36,12 @@ bool ThermoController::begin(){
     return true;
 }
 
+void ThermoController::setEventHandler(ThermoController::EventHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _event_cb = cb;
+    _event_ctx = ctx;
+}
+
 void ThermoController::task(){
     auto guard = _lock.guard();
     if (!_controller_enabled)
@@ -421,6 +427,7 @@ bool ThermoController::setPower(size_t id, bool on, const char *src ){
     else
         _logs.info(F("THERMO"), F("id: %u power: %s"),
                    (unsigned)cfg.id, st.power_on ? "on" : "off");
+    notifyEvent_(cfg.id, cfg.name, st.power_on, (src && src[0] != '\0') ? src : "set");
     return true;
 }
 
@@ -473,6 +480,11 @@ bool ThermoController::setButtonPort(size_t id, uint8_t port){
         return true;
     st.has_button = setupButton_(cfg, st);
     return true;
+}
+
+void ThermoController::notifyEvent_(uint8_t id, const String &name, bool power_on, const char *source){
+    if (_event_cb)
+        _event_cb(_event_ctx, id, name, power_on, source);
 }
 
 const char *ThermoController::modeName(ThermoController::Mode mode){ return modeName_(mode); }

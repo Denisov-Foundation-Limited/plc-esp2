@@ -28,6 +28,12 @@ void WateringController::setEventHandler(WateringController::EventHandler cb, vo
     _event_ctx = ctx;
 }
 
+void WateringController::setEventHandlerSecondary(WateringController::EventHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _event_cb_secondary = cb;
+    _event_ctx_secondary = ctx;
+}
+
 void WateringController::task(){
     struct PendingEvent
     {
@@ -853,4 +859,6 @@ bool WateringController::indexById_(size_t id, size_t &out) const{
 void WateringController::notifyEvent_(WateringController::Event ev, const WateringController::RuleConfig &cfg, const WateringController::RuleState &st){
     if (_event_cb)
         _event_cb(_event_ctx, ev, cfg, st);
+    if (_event_cb_secondary)
+        _event_cb_secondary(_event_ctx_secondary, ev, cfg, st);
 }

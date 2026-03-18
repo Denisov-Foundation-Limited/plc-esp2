@@ -14,9 +14,13 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
+#include "controllers/avr_controller.hpp"
+#include "controllers/leak_controller.hpp"
+#include "controllers/watering_controller.hpp"
 #include "controllers/thermo_controller.hpp"
 #include "core/network/cloud/cloud_transport.hpp"
 #include "core/network/cloud/cloud_ws_transport.hpp"
+#include "core/rules_controller.hpp"
 #include "core/network/stack/stack_features.hpp"
 #include "core/network/stack/stack_protocol.hpp"
 #include "utils/users_registry.hpp"
@@ -41,6 +45,7 @@ public:
         String path = "/";
         bool use_ssl = false;
         uint32_t reconnect_ms = 2000;
+        CloudTransportKind transport = CloudTransportKind::WebSocket;
     };
 
     CloudClient(Logger &log, Controllers &controllers, PlcControl &plc, WifiManager &wifi, RTC &rtc);
@@ -50,7 +55,15 @@ public:
     void setStackCache(StackCache *cache);
     void setConfigsManager(ConfigsManagerIface *cfg);
     void setUsersRegistry(UsersRegistry *users);
+    void setRulesController(RulesController *rules);
     void setTransport(CloudTransport &transport);
+    void useDefaultTransport();
+    void bindControllerCallbacks();
+    void bindRuleCallbacks();
+    bool publishEvent(const String &kind, const String &reason, const String &data_json = String());
+    bool publishScopedEvent(const String &unit, uint32_t node_id,
+                            const String &kind, const String &reason,
+                            const String &data_json = String());
 
     void setEnabled(bool enabled);
     bool enabled() const;
@@ -71,6 +84,7 @@ private:
     static constexpr uint16_t kStackCmdIdMax = 0xFFFE;
     static constexpr uint8_t kMaxPending = 6;
     static constexpr uint8_t kMaxStackCmds = 32;
+    static constexpr uint8_t kMaxQueuedEvents = 64;
     static constexpr uint32_t kStackTimeoutMs = 1500;
     static constexpr size_t kWsDocCapacity = 8192;
     static constexpr uint32_t kHelloRetryMs = 10000;
@@ -135,6 +149,15 @@ private:
         uint8_t resolved_idx = 0xFF;
         bool is_admin = false;
     };
+    struct QueuedEvent
+    {
+        bool used = false;
+        String unit;
+        uint32_t node_id = 0;
+        String kind;
+        String reason;
+        String data_json;
+    };
 
     Logger &_log;
     Controllers &_controllers;
@@ -146,6 +169,7 @@ private:
     StackCache *_stack_cache = nullptr;
     ConfigsManagerIface *_configs = nullptr;
     UsersRegistry *_users = nullptr;
+    RulesController *_rules = nullptr;
 
     Config _cfg;
     CloudWsTransport _default_transport;
@@ -166,6 +190,9 @@ private:
     PendingRequest _pending[kMaxPending] = {};
     PendingStackCmd _stack_cmds[kMaxStackCmds] = {};
     uint16_t _next_stack_cmd_id = kStackCmdIdBase;
+    QueuedEvent _event_queue[kMaxQueuedEvents] = {};
+    uint8_t _event_head = 0;
+    uint8_t _event_count = 0;
 
     void handleMessage_(const uint8_t *payload, size_t len);
 
@@ -176,6 +203,17 @@ private:
     void sendHello_();
 
     void maintainConnectionHealth_();
+    void flushQueuedEvents_();
+    bool enqueueEvent_(const String &kind, const String &reason, const String &data_json,
+                       const String &unit = String(), uint32_t node_id = 0);
+    bool sendEvent_(const String &kind, const String &reason, const String &data_json,
+                    const String &unit = String(), uint32_t node_id = 0);
+    bool tryCoalesceQueuedEvent_(const String &kind, const String &reason, const String &data_json,
+                                 const String &unit, uint32_t node_id);
+    static bool isCoalescibleStateEvent_(const String &kind);
+    static uint32_t eventItemId_(const String &data_json);
+    void logEvent_(const __FlashStringHelper *stage, const String &kind, const String &reason,
+                   const String &unit = String(), uint32_t node_id = 0);
 
     void sendPong_(const String &reply_to, JsonVariantConst payload);
 
@@ -222,14 +260,16 @@ private:
 
     void scheduleStackControllers_(PendingRequest *p);
 
-    void sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                       const char *action);
+    bool sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
+                       const char *action, PendingRequest *p = nullptr);
 
-    void sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                       const char *action, const DynamicJsonDocument &params);
+    bool sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
+                       const char *action, const DynamicJsonDocument &params,
+                       PendingRequest *p = nullptr);
 
-    void sendStackCmdSimple_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                             const char *action, const DynamicJsonDocument &params);
+    bool sendStackCmdSimple_(uint32_t node_id, StackMsgType type, StackFeature feature,
+                             const char *action, const DynamicJsonDocument &params,
+                             PendingRequest *p = nullptr);
 
     static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame);
 
@@ -242,8 +282,28 @@ private:
     void applyStackControllers_(JsonObject root, StackPart part, JsonObject data, bool first_part);
 
     static void copyItems_(JsonObject &dst_parent, const char *key, JsonArrayConst items, bool reset);
+    static void onSocketEvent_(void *ctx, bool lights, uint8_t id, const String &name, bool state_on,
+                               const char *source);
+    static void onMeteoAlarmEvent_(void *ctx, uint32_t node_id, uint8_t sensor_id, bool alarm);
+    static void onThermoEvent_(void *ctx, uint8_t id, const String &name, bool power_on, const char *source);
+    static void onTankEvent_(void *ctx, uint8_t tank_id, const String &name, bool empty);
+    static void onSepticEvent_(void *ctx, uint8_t septic_id, const String &name, bool is_alarm);
+    static void onSecurityArmEvent_(void *ctx, bool armed);
+    static void onSecurityAlarmEvent_(void *ctx, bool alarm_on);
+    static void onSecurityClearEvent_(void *ctx);
+    static void onSecurityDetectEvent_(void *ctx, uint8_t sensor_id, const String &name, bool silent);
+    static void onWateringEvent_(void *ctx, WateringController::Event ev,
+                                 const WateringController::RuleConfig &cfg,
+                                 const WateringController::RuleState &st);
+    static void onRingEvent_(void *ctx, bool on);
+    static void onAvrEvent_(void *ctx, AvrController::Event ev, const AvrController::State &st,
+                            const char *message);
+    static void onLeakEvent_(void *ctx, LeakController::Event ev, uint8_t id, const String &name,
+                             bool wet, bool alarm_latched);
+    static void onRuleTriggered_(void *ctx, const RulesController::Rule &rule);
 
     void fillSystemInfo_(JsonObject out);
+    void fillAuthzInfo_(JsonObject out);
 
     void fillControllersInfo_(JsonObject out);
 
@@ -306,6 +366,7 @@ private:
     static uint32_t maskFor_(StackPart p);
 
     static bool hasWhat_(JsonArrayConst what, const char *name);
+    const char *transportName_() const;
 
     const char *stackRoleName_() const;
 
@@ -316,6 +377,7 @@ private:
     String localIp_() const;
 
     String stackNodeName_(uint32_t node_id) const;
+    String eventSourceName_(const String &unit, uint32_t node_id) const;
 
     static ThermoController::Mode parseThermoMode_(const String &mode);
 

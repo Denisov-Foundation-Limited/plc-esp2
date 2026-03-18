@@ -19,6 +19,12 @@ SocketController::SocketController(Gpio &gpio, Logger &logs) : _gpio(gpio), _log
     resetLights_();
 }
 
+void SocketController::setEventHandler(SocketController::EventHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _event_cb = cb;
+    _event_ctx = ctx;
+}
+
 void SocketController::applyConfig(JsonArrayConst sockets, bool legacy_lights ){
     auto guard = _lock.guard();
     resetSockets_();
@@ -444,6 +450,7 @@ bool SocketController::setRelay(size_t id, bool on, uint32_t timeout_ms){
     const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
     _logs.info(F("SOCKET"), F("Id: %u name: %s state: %s"),
                (unsigned)cfg.id, name, on ? "on" : "off");
+    notifyEvent_(false, cfg.id, cfg.name, on, "set");
     return true;
 }
 
@@ -506,6 +513,7 @@ bool SocketController::toggleRelay(size_t id, uint32_t timeout_ms){
     const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
     _logs.info(F("SOCKET"), F("Id: %u name: %s state: %s src: toggle"),
                (unsigned)cfg.id, name, next_on ? "on" : "off");
+    notifyEvent_(false, cfg.id, cfg.name, next_on, "toggle");
     return true;
 }
 
@@ -591,6 +599,7 @@ bool SocketController::setLightRelay(size_t id, bool on, uint32_t timeout_ms){
     const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
     _logs.info(F("LIGHT"), F("id: %u name: %s state: %s"),
                (unsigned)cfg.id, name, on ? "on" : "off");
+    notifyEvent_(true, cfg.id, cfg.name, on, "set");
     return true;
 }
 
@@ -653,6 +662,7 @@ bool SocketController::toggleLightRelay(size_t id, uint32_t timeout_ms){
     const char *name = cfg.name.length() ? cfg.name.c_str() : "-";
     _logs.info(F("LIGHT"), F("id: %u name: %s state: %s src: toggle"),
                (unsigned)cfg.id, name, next_on ? "on" : "off");
+    notifyEvent_(true, cfg.id, cfg.name, next_on, "toggle");
     return true;
 }
 
@@ -678,6 +688,11 @@ bool SocketController::setLightRelayById(uint8_t id, bool on, uint32_t timeout_m
 bool SocketController::toggleLightRelayById(uint8_t id, uint32_t timeout_ms){ return toggleLightRelay(id, timeout_ms); }
 
 bool SocketController::lightRelayStateById(uint8_t id, bool &out, uint32_t timeout_ms) const{ return lightRelayState(id, out, timeout_ms); }
+
+void SocketController::notifyEvent_(bool lights, uint8_t id, const String &name, bool state_on, const char *source){
+    if (_event_cb)
+        _event_cb(_event_ctx, lights, id, name, state_on, source);
+}
 
 bool SocketController::enqueueRelayActionById(uint8_t id, uint8_t action, bool lights, bool on, uint32_t timeout_ms){
     auto guard = _lock.guard(timeout_ms);

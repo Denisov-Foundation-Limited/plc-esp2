@@ -22,6 +22,7 @@
 #include "core/network/stack/stack_master.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/rtc.hpp"
+#include "core/rules_controller.hpp"
 #include "plc/plc_control.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/logger.hpp"
@@ -79,11 +80,48 @@ void CloudClient::setConfigsManager(ConfigsManagerIface *cfg)
 { _configs = cfg; }
 void CloudClient::setUsersRegistry(UsersRegistry *users)
 { _users = users; }
+void CloudClient::setRulesController(RulesController *rules)
+{ _rules = rules; }
 void CloudClient::setTransport(CloudTransport &transport)
 {
     _transport = &transport;
     _transport->setMessageHandler(&CloudClient::onTransportMessage_, this);
     _transport->setEventHandler(&CloudClient::onTransportEvent_, this);
+}
+void CloudClient::useDefaultTransport()
+{
+    setTransport(_default_transport);
+}
+void CloudClient::bindControllerCallbacks()
+{
+    _controllers.sockets().setEventHandler(&CloudClient::onSocketEvent_, this);
+    _controllers.meteo().setAlarmHandlerSecondary(&CloudClient::onMeteoAlarmEvent_, this);
+    _controllers.thermo().setEventHandler(&CloudClient::onThermoEvent_, this);
+    _controllers.tanks().setDetectHandlerSecondary(&CloudClient::onTankEvent_, this);
+    _controllers.septic().setDetectHandlerSecondary(&CloudClient::onSepticEvent_, this);
+    _controllers.security().setArmStateHandlerSecondary(&CloudClient::onSecurityArmEvent_, this);
+    _controllers.security().setAlarmStateHandlerSecondary(&CloudClient::onSecurityAlarmEvent_, this);
+    _controllers.security().setClearDetectHandlerSecondary(&CloudClient::onSecurityClearEvent_, this);
+    _controllers.security().setDetectHandlerSecondary(&CloudClient::onSecurityDetectEvent_, this);
+    _controllers.watering().setEventHandlerSecondary(&CloudClient::onWateringEvent_, this);
+    _controllers.ring().setHoldHandlerSecondary(&CloudClient::onRingEvent_, this);
+    _controllers.avr().setEventHandler(&CloudClient::onAvrEvent_, this);
+    _controllers.leak().setEventHandler(&CloudClient::onLeakEvent_, this);
+}
+void CloudClient::bindRuleCallbacks()
+{
+    if (_rules)
+        _rules->setTriggerHandler(&CloudClient::onRuleTriggered_, this);
+}
+bool CloudClient::publishEvent(const String &kind, const String &reason, const String &data_json)
+{
+    return enqueueEvent_(kind, reason, data_json);
+}
+bool CloudClient::publishScopedEvent(const String &unit, uint32_t node_id,
+                                     const String &kind, const String &reason,
+                                     const String &data_json)
+{
+    return enqueueEvent_(kind, reason, data_json, unit, node_id);
 }
 void CloudClient::setEnabled(bool enabled)
 {
@@ -137,7 +175,8 @@ void CloudClient::begin(const CloudClient::Config &cfg)
         _cfg.path = "/";
     if (_cfg.reconnect_ms < CloudClient::kFastReconnectMs)
         _cfg.reconnect_ms = CloudClient::kFastReconnectMs;
-    _log.info(F("CLOUD"), F("WS begin: %s:%u%s%s"),
+    _log.info(F("CLOUD"), F("Begin: transport: %s host: %s port: %u%s%s"),
+              transportName_(),
               _cfg.host.c_str(), _cfg.port,
               _cfg.use_ssl ? " ssl " : " ",
               _cfg.path.c_str());
@@ -147,6 +186,7 @@ void CloudClient::begin(const CloudClient::Config &cfg)
     transport_cfg.path = _cfg.path;
     transport_cfg.use_ssl = _cfg.use_ssl;
     transport_cfg.reconnect_ms = _cfg.reconnect_ms;
+    transport_cfg.transport = _cfg.transport;
     _transport->begin(transport_cfg);
     if (_stack_master)
         _stack_master->setFrameHandlerSecondary(&CloudClient::onStackFrame_, this);
@@ -174,6 +214,7 @@ void CloudClient::loop()
     _transport->loop();
     maintainConnectionHealth_();
     handlePendingTimeouts_();
+    flushQueuedEvents_();
     if (_event_interval_ms)
         maybeSendPeriodicEvent_();
 }
@@ -205,7 +246,7 @@ void CloudClient::handleTransportEvent_(CloudTransport::Event event, const uint8
         _reconnect_backoff_until_ms = 0;
         _reconnect_fail_streak = 0;
         _disconnect_reported = false;
-        _log.info(F("CLOUD"), F("WS connected: path: %s"), _cfg.path.c_str());
+        _log.info(F("CLOUD"), F("%s connected: path: %s"), transportName_(), _cfg.path.c_str());
         sendHello_();
         break;
     case CloudTransport::Event::Error:
@@ -218,11 +259,11 @@ void CloudClient::handleTransportEvent_(CloudTransport::Event event, const uint8
             msg.reserve(len + 1);
             for (size_t i = 0; i < len; ++i)
                 msg += (char)payload[i];
-            _log.warn(F("CLOUD"), F("WS error: %s"), msg.c_str());
+            _log.warn(F("CLOUD"), F("%s error: %s"), transportName_(), msg.c_str());
         }
         else
         {
-            _log.warn(F("CLOUD"), F("WS error"));
+            _log.warn(F("CLOUD"), F("%s error"), transportName_());
         }
         ++_reconnect_fail_streak;
         const uint32_t wait_ms = cloudBackoffMs_(_reconnect_fail_streak, _cfg.reconnect_ms);
@@ -234,6 +275,7 @@ void CloudClient::handleTransportEvent_(CloudTransport::Event event, const uint8
         const String session = _session_id;
         _last_disconnect_ms = millis();
         const uint32_t connected_ms = _last_connect_ms ? (_last_disconnect_ms - _last_connect_ms) : 0u;
+        const uint32_t connected_s = connected_ms / 1000u;
         const bool had_session = session.length() != 0;
         const bool was_established = had_session || connected_ms >= 5000u;
         if (was_established)
@@ -250,8 +292,9 @@ void CloudClient::handleTransportEvent_(CloudTransport::Event event, const uint8
         clearPending_();
         if (!_disconnect_reported)
         {
-            _log.warn(F("CLOUD"), F("WS disconnected: connected_ms: %lu session: %s"),
-                      (unsigned long)connected_ms,
+            _log.warn(F("CLOUD"), F("%s disconnected: connected_s: %lu session: %s"),
+                      transportName_(),
+                      (unsigned long)connected_s,
                       session.length() ? session.c_str() : "-");
             _disconnect_reported = true;
         }
@@ -380,7 +423,7 @@ void CloudClient::maintainConnectionHealth_()
         if (_cfg.host.length() &&
             (int32_t)(now - _last_disconnect_ms) >= (int32_t)kWsReinitDisconnectedMs)
         {
-            _log.warn(F("CLOUD"), F("WS reconnect stalled, reinit"));
+        _log.warn(F("CLOUD"), F("%s reconnect stalled, reinit"), transportName_());
             _last_disconnect_ms = now;
             begin(_cfg);
         }
@@ -406,8 +449,173 @@ void CloudClient::maintainConnectionHealth_()
     if (_last_rx_ms != 0 &&
         (int32_t)(now - _last_rx_ms) >= (int32_t)kWsSilentTimeoutMs)
     {
-        _log.warn(F("CLOUD"), F("WS silent timeout, reconnect"));
+        _log.warn(F("CLOUD"), F("%s silent timeout, reconnect"), transportName_());
         _transport->disconnect();
+    }
+}
+
+bool CloudClient::enqueueEvent_(const String &kind, const String &reason, const String &data_json,
+                                const String &unit, uint32_t node_id)
+{
+    if (kind.length() == 0 || reason.length() == 0)
+        return false;
+    if (tryCoalesceQueuedEvent_(kind, reason, data_json, unit, node_id))
+        return true;
+    if (_event_count >= kMaxQueuedEvents)
+    {
+        _log.warn(F("CLOUD"), F("Event queue full, drop oldest"));
+        _event_head = (uint8_t)((_event_head + 1u) % kMaxQueuedEvents);
+        --_event_count;
+    }
+    const uint8_t idx = (uint8_t)((_event_head + _event_count) % kMaxQueuedEvents);
+    QueuedEvent &slot = _event_queue[idx];
+    slot.used = true;
+    slot.unit = unit;
+    slot.node_id = node_id;
+    slot.kind = kind;
+    slot.reason = reason;
+    slot.data_json = data_json;
+    ++_event_count;
+    return true;
+}
+
+bool CloudClient::tryCoalesceQueuedEvent_(const String &kind, const String &reason, const String &data_json,
+                                          const String &unit, uint32_t node_id)
+{
+    if (!isCoalescibleStateEvent_(kind))
+        return false;
+    const uint32_t item_id = eventItemId_(data_json);
+    if (item_id == 0)
+        return false;
+    for (uint8_t i = 0; i < _event_count; ++i)
+    {
+        const uint8_t idx = (uint8_t)((_event_head + i) % kMaxQueuedEvents);
+        QueuedEvent &slot = _event_queue[idx];
+        if (!slot.used)
+            continue;
+        if (slot.kind != kind || slot.unit != unit || slot.node_id != node_id)
+            continue;
+        if (eventItemId_(slot.data_json) != item_id)
+            continue;
+        slot.reason = reason;
+        slot.data_json = data_json;
+        return true;
+    }
+    return false;
+}
+
+bool CloudClient::isCoalescibleStateEvent_(const String &kind)
+{
+    return kind == "sockets.state" || kind == "lights.state";
+}
+
+uint32_t CloudClient::eventItemId_(const String &data_json)
+{
+    if (!data_json.length())
+        return 0;
+    DynamicJsonDocument doc(256);
+    if (deserializeJson(doc, data_json))
+        return 0;
+    JsonVariantConst id = doc["id"];
+    if (id.is<uint32_t>())
+        return id.as<uint32_t>();
+    if (id.is<unsigned>())
+        return (uint32_t)id.as<unsigned>();
+    if (id.is<int>())
+    {
+        const int v = id.as<int>();
+        return v > 0 ? (uint32_t)v : 0;
+    }
+    return 0;
+}
+
+bool CloudClient::sendEvent_(const String &kind, const String &reason, const String &data_json,
+                             const String &unit, uint32_t node_id)
+{
+    if (!_session_id.length())
+        return false;
+    DynamicJsonDocument doc(2048);
+    doc["v"] = kProtoVersion;
+    doc["type"] = "event";
+    doc["id"] = nextWsId_();
+    doc["session_id"] = _session_id;
+    if (unit.length())
+    {
+        doc["unit"] = unit;
+        if (node_id)
+            doc["node_id"] = node_id;
+    }
+    JsonObject payload = doc["payload"].to<JsonObject>();
+    payload["kind"] = kind;
+    payload["reason"] = reason;
+    JsonObject data = payload["data"].to<JsonObject>();
+    if (data_json.length())
+    {
+        DynamicJsonDocument tmp(1024);
+        if (!deserializeJson(tmp, data_json))
+            data.set(tmp.as<JsonObjectConst>());
+    }
+    const String source_name = eventSourceName_(unit, node_id);
+    if (source_name.length())
+    {
+        data["source_name"] = source_name;
+        if (unit == "stack" && !data["unit_name"].is<const char *>())
+            data["unit_name"] = source_name;
+    }
+    sendJson_(doc);
+    logEvent_(F("Notify send"), kind, reason, unit, node_id);
+    return true;
+}
+
+void CloudClient::logEvent_(const __FlashStringHelper *stage, const String &kind, const String &reason,
+                            const String &unit, uint32_t node_id)
+{
+    if (kind == "periodic" && reason == "periodic")
+        return;
+    if (unit.length())
+    {
+        if (unit == "stack" && node_id != 0)
+        {
+            const String unit_name = stackNodeName_(node_id);
+            if (unit_name.length())
+            {
+                _log.info(F("CLOUD"), F("%s: unit: %s slave: %s kind: %s reason: %s"),
+                          stage,
+                          unit.c_str(),
+                          unit_name.c_str(),
+                          kind.c_str(),
+                          reason.c_str());
+                return;
+            }
+        }
+        _log.info(F("CLOUD"), F("%s: unit: %s node_id: %lu kind: %s reason: %s"),
+                  stage,
+                  unit.c_str(),
+                  (unsigned long)node_id,
+                  kind.c_str(),
+                  reason.c_str());
+        return;
+    }
+    _log.info(F("CLOUD"), F("%s: kind: %s reason: %s"),
+              stage,
+              kind.c_str(),
+              reason.c_str());
+}
+
+void CloudClient::flushQueuedEvents_()
+{
+    if (!_session_id.length() || _event_count == 0)
+        return;
+    while (_event_count)
+    {
+        QueuedEvent &slot = _event_queue[_event_head];
+        const bool ok = sendEvent_(slot.kind, slot.reason, slot.data_json,
+                                   slot.unit, slot.node_id);
+        slot = QueuedEvent{};
+        _event_head = (uint8_t)((_event_head + 1u) % kMaxQueuedEvents);
+        --_event_count;
+        if (!ok)
+            break;
     }
 }
 void CloudClient::sendPong_(const String &reply_to, JsonVariantConst payload)
@@ -458,6 +666,8 @@ void CloudClient::handleGetLocal_(const String &req_id, JsonArrayConst what)
         fillControllersInfo_(data.createNestedObject("controllers"));
     if (hasWhat_(what, "stack"))
         fillStackInfo_(data.createNestedObject("stack"));
+    if (hasWhat_(what, "authz"))
+        fillAuthzInfo_(data.createNestedObject("authz"));
 
     sendJson_(out);
 }
@@ -671,7 +881,48 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
         feature = StackFeature::Watering;
         stack_action = "set";
         params["id"] = (unsigned)(args["id"] | 0);
-        params["state"] = (String(args["state"] | "") == "on");
+        uint8_t slot = (uint8_t)(args["slot"] | 1);
+        if (slot < 1 || slot > 3)
+            slot = 1;
+        if (action == "status")
+            params["state"] = (String(args["state"] | "") == "on");
+        else if (action == "weekdays")
+            params["weekdays_mask"] = (unsigned)((args["weekdays_mask"] | 0) & 0x7Fu);
+        else if (action == "time")
+        {
+            const unsigned hour = (unsigned)(args["hour"] | 0);
+            const unsigned minute = (unsigned)(args["minute"] | 0);
+            if (slot == 2)
+            {
+                params["hour2"] = hour;
+                params["minute2"] = minute;
+            }
+            else if (slot == 3)
+            {
+                params["hour3"] = hour;
+                params["minute3"] = minute;
+            }
+            else
+            {
+                params["hour"] = hour;
+                params["minute"] = minute;
+            }
+        }
+        else if (action == "duration")
+        {
+            const unsigned duration_s = (unsigned)(args["duration_s"] | 0UL);
+            if (slot == 2)
+                params["duration2_s"] = duration_s;
+            else if (slot == 3)
+                params["duration3_s"] = duration_s;
+            else
+                params["duration_s"] = duration_s;
+        }
+        else
+        {
+            sendError_(req_id, "bad watering action");
+            return;
+        }
     }
     else if (ctrl == "security")
     {
@@ -785,7 +1036,11 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
     p->pending_mask = maskFor_(set_part);
     p->want_controllers = true;
     ensurePendingDoc_(p);
-    sendStackCmd_(node_id, StackMsgType::CmdSet, feature, stack_action.c_str(), params);
+    if (!sendStackCmd_(node_id, StackMsgType::CmdSet, feature, stack_action.c_str(), params, p))
+    {
+        finalizePending_(p, false, "stack send failed");
+        return;
+    }
     // Force fast cache refresh for relay-like controllers so cloud UI does not wait for background poll.
     if (_stack_cache)
     {
@@ -852,12 +1107,33 @@ bool CloudClient::handleCmdSeptic_(const String &action, JsonObjectConst args)
 }
 bool CloudClient::handleCmdWatering_(const String &action, JsonObjectConst args)
 {
-    if (action != "status")
-        return false;
     const uint8_t id = (uint8_t)(args["id"] | 0);
     if (id == 0)
         return false;
-    return _controllers.watering().setStatus(id, (String(args["state"] | "") == "on"));
+    uint8_t slot = (uint8_t)(args["slot"] | 1);
+    if (slot < 1 || slot > 3)
+        slot = 1;
+    const uint8_t slot_idx = (uint8_t)(slot - 1u);
+    if (action == "status")
+        return _controllers.watering().setStatus(id, (String(args["state"] | "") == "on"));
+    if (action == "weekdays")
+        return _controllers.watering().setWeekdaysMask(
+            id,
+            (uint8_t)((unsigned)(args["weekdays_mask"] | 0) & 0x7Fu));
+    if (action == "time")
+    {
+        const uint8_t hour = (uint8_t)(args["hour"] | 0);
+        const uint8_t minute = (uint8_t)(args["minute"] | 0);
+        if (hour > 23 || minute > 59)
+            return false;
+        return _controllers.watering().setStartTimeSlot(id, slot_idx, hour, minute);
+    }
+    if (action == "duration")
+        return _controllers.watering().setDurationSlot(
+            id,
+            slot_idx,
+            (uint32_t)(args["duration_s"] | 0UL));
+    return false;
 }
 bool CloudClient::handleCmdSecurity_(const String &action, JsonObjectConst args, const ActorInfo &actor)
 {
@@ -1040,58 +1316,64 @@ void CloudClient::scheduleStackControllers_(CloudClient::PendingRequest *p)
     sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Avr, "get");
     sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Leak, "get");
 }
-void CloudClient::sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                   const char *action)
+bool CloudClient::sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
+                   const char *action, PendingRequest *p)
 {
     if (!_stack_master)
-        return;
+        return false;
     DynamicJsonDocument doc(1024);
     const uint16_t cmd_id = nextStackCmdId_();
     doc["cmd_id"] = cmd_id;
     doc["feature"] = (uint8_t)feature;
     doc["action"] = action;
-    registerStackCmd_(cmd_id, findPendingByNode_(node_id), partFrom_(feature, action));
     uint8_t buf[StackCodec::kMaxPayload] = {};
     const size_t len = serializeJson(doc, reinterpret_cast<char *>(buf), sizeof(buf));
     if (len == 0 || len > sizeof(buf))
-        return;
-    _stack_master->sendTo(node_id, (uint8_t)type, buf, len);
+        return false;
+    if (!_stack_master->sendTo(node_id, (uint8_t)type, buf, len))
+        return false;
+    registerStackCmd_(cmd_id, p ? p : findPendingByNode_(node_id), partFrom_(feature, action));
+    return true;
 }
-void CloudClient::sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                   const char *action, const DynamicJsonDocument &params)
+bool CloudClient::sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
+                   const char *action, const DynamicJsonDocument &params, PendingRequest *p)
 {
     if (!_stack_master)
-        return;
+        return false;
     DynamicJsonDocument doc(1024);
     const uint16_t cmd_id = nextStackCmdId_();
     doc["cmd_id"] = cmd_id;
     doc["feature"] = (uint8_t)feature;
     doc["action"] = action;
     doc["params"] = params.as<JsonVariantConst>();
-    registerStackCmd_(cmd_id, findPendingByNode_(node_id), partFrom_(feature, action));
     uint8_t buf[StackCodec::kMaxPayload] = {};
     const size_t len = serializeJson(doc, reinterpret_cast<char *>(buf), sizeof(buf));
     if (len == 0 || len > sizeof(buf))
-        return;
-    _stack_master->sendTo(node_id, (uint8_t)type, buf, len);
+        return false;
+    if (!_stack_master->sendTo(node_id, (uint8_t)type, buf, len))
+        return false;
+    registerStackCmd_(cmd_id, p ? p : findPendingByNode_(node_id), partFrom_(feature, action));
+    return true;
 }
-void CloudClient::sendStackCmdSimple_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                         const char *action, const DynamicJsonDocument &params)
+bool CloudClient::sendStackCmdSimple_(uint32_t node_id, StackMsgType type, StackFeature feature,
+                         const char *action, const DynamicJsonDocument &params, PendingRequest *p)
 {
     if (!_stack_master)
-        return;
+        return false;
     DynamicJsonDocument doc(1024);
     const uint16_t cmd_id = nextStackCmdId_();
     doc["cmd_id"] = cmd_id;
     doc["feature"] = (uint8_t)feature;
     doc["action"] = action;
     doc["params"] = params.as<JsonVariantConst>();
-    registerStackCmd_(cmd_id, findPendingByNode_(node_id), StackPart::None);
     uint8_t buf[StackCodec::kMaxPayload] = {};
     const size_t len = serializeJson(doc, reinterpret_cast<char *>(buf), sizeof(buf));
     if (len == 0 || len > sizeof(buf))
-        return;
-    _stack_master->sendTo(node_id, (uint8_t)type, buf, len);
+        return false;
+    if (!_stack_master->sendTo(node_id, (uint8_t)type, buf, len))
+        return false;
+    registerStackCmd_(cmd_id, p ? p : findPendingByNode_(node_id), StackPart::None);
+    return true;
 }
 void CloudClient::onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame)
 {
@@ -1117,6 +1399,12 @@ void CloudClient::handleStackFrame_(uint32_t node_id, const StackFrame &frame)
         return;
     }
     const bool ok = doc["ok"] | false;
+    if (!ok)
+    {
+        const char *err = doc["error"] | doc["message"] | "stack error";
+        _log.warn(F("CLOUD"), F("Stack cmd error: node_id: %lu cmd_id: %u err: %s"),
+                  (unsigned long)node_id, (unsigned)cmd_id, err);
+    }
     JsonObject data = doc["data"].as<JsonObject>();
     const uint16_t part_idx = data["part"] | 1;
     const uint16_t parts = data["parts"] | 1;
@@ -1163,7 +1451,6 @@ void CloudClient::applyStackSystem_(JsonObject root, CloudClient::StackPart part
     {
         JsonObject plc = sys["plc"].to<JsonObject>();
         plc["board_temp"] = data["board_temp"] | 0.0f;
-        plc["cpu_temp"] = data["cpu_temp"] | 0.0f;
         JsonObject fan = sys["fan"].to<JsonObject>();
         fan["fan_on"] = data["fan_on"] | false;
         fan["on_c"] = data["on_c"] | 0.0f;
@@ -1296,6 +1583,264 @@ void CloudClient::copyItems_(JsonObject &dst_parent, const char *key, JsonArrayC
     for (JsonVariantConst v : items)
         dst.add(v);
 }
+void CloudClient::onSocketEvent_(void *ctx, bool lights, uint8_t id, const String &name, bool state_on,
+                                 const char *source)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    DynamicJsonDocument doc(256);
+    doc["controller"] = lights ? "lights" : "sockets";
+    doc["id"] = id;
+    if (name.length())
+        doc["name"] = name;
+    doc["state"] = state_on;
+    if (source && source[0] != '\0')
+        doc["source"] = source;
+    String json;
+    serializeJson(doc, json);
+    self->enqueueEvent_(lights ? "lights.state" : "sockets.state", "change", json);
+}
+
+void CloudClient::onMeteoAlarmEvent_(void *ctx, uint32_t node_id, uint8_t sensor_id, bool alarm)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    if (node_id != 0)
+        return;
+    DynamicJsonDocument doc(192);
+    doc["sensor_id"] = sensor_id;
+    doc["alarm"] = alarm;
+    String json;
+    serializeJson(doc, json);
+    self->enqueueEvent_("meteo.sensor", alarm ? "alarm" : "restore", json);
+}
+
+void CloudClient::onThermoEvent_(void *ctx, uint8_t id, const String &name, bool power_on, const char *source)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    DynamicJsonDocument doc(192);
+    doc["id"] = id;
+    if (name.length())
+        doc["name"] = name;
+    doc["power_on"] = power_on;
+    if (source && source[0] != '\0')
+        doc["source"] = source;
+    String json;
+    serializeJson(doc, json);
+    self->enqueueEvent_("thermo.power", "change", json);
+}
+
+void CloudClient::onTankEvent_(void *ctx, uint8_t tank_id, const String &name, bool empty)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    DynamicJsonDocument doc(192);
+    doc["id"] = tank_id;
+    if (name.length())
+        doc["name"] = name;
+    doc["empty"] = empty;
+    String json;
+    serializeJson(doc, json);
+    self->enqueueEvent_("tanks.level", empty ? "empty" : "change", json);
+}
+
+void CloudClient::onSepticEvent_(void *ctx, uint8_t septic_id, const String &name, bool is_alarm)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    DynamicJsonDocument doc(192);
+    doc["id"] = septic_id;
+    if (name.length())
+        doc["name"] = name;
+    doc["alarm"] = is_alarm;
+    String json;
+    serializeJson(doc, json);
+    self->enqueueEvent_("septic.level", is_alarm ? "alarm" : "warning", json);
+}
+
+void CloudClient::onSecurityArmEvent_(void *ctx, bool armed)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    DynamicJsonDocument doc(64);
+    doc["armed"] = armed;
+    String json;
+    serializeJson(doc, json);
+    self->enqueueEvent_("security.arm", armed ? "armed" : "disarmed", json);
+}
+
+void CloudClient::onSecurityAlarmEvent_(void *ctx, bool alarm_on)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    DynamicJsonDocument doc(64);
+    doc["alarm_on"] = alarm_on;
+    String json;
+    serializeJson(doc, json);
+    self->enqueueEvent_("security.alarm", alarm_on ? "alarm" : "clear", json);
+}
+
+void CloudClient::onSecurityClearEvent_(void *ctx)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    self->enqueueEvent_("security.detect", "clear", String("{}"));
+}
+
+void CloudClient::onSecurityDetectEvent_(void *ctx, uint8_t sensor_id, const String &name, bool silent)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    DynamicJsonDocument doc(192);
+    doc["sensor_id"] = sensor_id;
+    if (name.length())
+        doc["name"] = name;
+    doc["silent"] = silent;
+    String json;
+    serializeJson(doc, json);
+    self->enqueueEvent_("security.detect", silent ? "silent" : "detect", json);
+}
+
+void CloudClient::onWateringEvent_(void *ctx, WateringController::Event ev,
+                                   const WateringController::RuleConfig &cfg,
+                                   const WateringController::RuleState &st)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    const char *reason = "change";
+    switch (ev)
+    {
+    case WateringController::Event::Start: reason = "start"; break;
+    case WateringController::Event::PauseEmpty: reason = "pause_empty"; break;
+    case WateringController::Event::Resume: reason = "resume"; break;
+    case WateringController::Event::Stop: reason = "stop"; break;
+    case WateringController::Event::StopEmpty: reason = "stop_empty"; break;
+    case WateringController::Event::StopDone: reason = "stop_done"; break;
+    }
+    DynamicJsonDocument doc(256);
+    doc["id"] = cfg.id;
+    if (cfg.name.length())
+        doc["name"] = cfg.name;
+    doc["active"] = st.active;
+    doc["paused"] = st.paused;
+    doc["tank_id"] = cfg.tank_id;
+    String json;
+    serializeJson(doc, json);
+    self->enqueueEvent_("watering.rule", reason, json);
+}
+
+void CloudClient::onRingEvent_(void *ctx, bool on)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    DynamicJsonDocument doc(64);
+    doc["hold_on"] = on;
+    String json;
+    serializeJson(doc, json);
+    self->enqueueEvent_("ring.hold", on ? "start" : "stop", json);
+}
+
+void CloudClient::onAvrEvent_(void *ctx, AvrController::Event ev, const AvrController::State &st,
+                              const char *message)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    const char *kind = "avr.state";
+    const char *reason = "change";
+    if (ev == AvrController::Event::MainState)
+    {
+        kind = "avr.main";
+        reason = (message && message[0]) ? message : "change";
+    }
+    else if (ev == AvrController::Event::SourceSwitch)
+    {
+        kind = "avr.source";
+        reason = (message && message[0]) ? message : "change";
+    }
+    else if (ev == AvrController::Event::Fault)
+    {
+        kind = "avr.fault";
+        reason = (message && message[0]) ? message : "fault";
+    }
+    DynamicJsonDocument doc(256);
+    doc["active_source"] = AvrController::sourceName(st.active_source);
+    doc["target_source"] = AvrController::sourceName(st.target_source);
+    doc["fault"] = AvrController::faultName(st.fault);
+    doc["main_ok"] = st.main_ok;
+    doc["reserve_ok"] = st.reserve_ok;
+    String json;
+    serializeJson(doc, json);
+    self->enqueueEvent_(kind, reason, json);
+}
+
+void CloudClient::onLeakEvent_(void *ctx, LeakController::Event ev, uint8_t id, const String &name,
+                               bool wet, bool alarm_latched)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+    DynamicJsonDocument doc(192);
+    doc["id"] = id;
+    if (name.length())
+        doc["name"] = name;
+    doc["wet"] = wet;
+    doc["alarm_latched"] = alarm_latched;
+    String json;
+    serializeJson(doc, json);
+    self->enqueueEvent_("leak.zone", (ev == LeakController::Event::Detect) ? "detect" : "ack", json);
+}
+
+void CloudClient::onRuleTriggered_(void *ctx, const RulesController::Rule &rule)
+{
+    auto *self = static_cast<CloudClient *>(ctx);
+    if (!self)
+        return;
+
+    DynamicJsonDocument trigger_doc(256);
+    trigger_doc["rule_id"] = rule.id;
+    if (rule.name.length())
+        trigger_doc["rule_name"] = rule.name;
+    String trigger_json;
+    serializeJson(trigger_doc, trigger_json);
+    self->enqueueEvent_("rules.trigger", "trigger", trigger_json);
+
+    for (size_t i = 0; i < RulesController::kActionCount; ++i)
+    {
+        const auto &action = rule.actions[i];
+        if (!action.enabled || action.kind != RulesController::ActionKind::Notify)
+            continue;
+        DynamicJsonDocument doc(320);
+        doc["rule_id"] = rule.id;
+        doc["action_id"] = action.id;
+        if (rule.name.length())
+            doc["rule_name"] = rule.name;
+        if (action.value.length())
+            doc["message"] = action.value;
+        if (action.node_id)
+            doc["node_id"] = action.node_id;
+        if (action.delay_ms)
+            doc["delay_ms"] = action.delay_ms;
+        String json;
+        serializeJson(doc, json);
+        const String kind = action.controller.length() ? action.controller : String("system.notify");
+        const String reason = action.parameter.length() ? action.parameter : String("rule");
+        self->enqueueEvent_(kind, reason, json);
+    }
+}
+
 void CloudClient::fillSystemInfo_(JsonObject out)
 {
     out["device_name"] = _plc.deviceName();
@@ -1314,7 +1859,6 @@ void CloudClient::fillSystemInfo_(JsonObject out)
 
     JsonObject plc = out["plc"].to<JsonObject>();
     plc["board_temp"] = _plc.boardTemp();
-    plc["cpu_temp"] = _plc.cpuTemp();
 
     JsonObject fan = out["fan"].to<JsonObject>();
     fan["mode"] = _plc.fanManualMode() ? "manual" : "auto";
@@ -1356,6 +1900,100 @@ void CloudClient::fillSystemInfo_(JsonObject out)
         gsm["last_ussd"] = _gsm->lastUssd();
         gsm["last_http_status"] = _gsm->lastHttpStatus();
         gsm["last_http_len"] = _gsm->lastHttpLen();
+    }
+}
+
+namespace
+{
+const char *aclControllerKey_(UsersRegistry::AclController ctrl)
+{
+    switch (ctrl)
+    {
+    case UsersRegistry::AclController::Sockets: return "sockets";
+    case UsersRegistry::AclController::Lights: return "lights";
+    case UsersRegistry::AclController::Meteo: return "meteo";
+    case UsersRegistry::AclController::Thermo: return "thermo";
+    case UsersRegistry::AclController::Tanks: return "tanks";
+    case UsersRegistry::AclController::Septic: return "septic";
+    case UsersRegistry::AclController::Security: return "security";
+    case UsersRegistry::AclController::Watering: return "watering";
+    case UsersRegistry::AclController::Leak: return "leak";
+    case UsersRegistry::AclController::Avr: return "avr";
+    case UsersRegistry::AclController::Ring: return "ring";
+    }
+    return "";
+}
+} // namespace
+
+void CloudClient::fillAuthzInfo_(JsonObject out)
+{
+    if (!_users)
+        return;
+
+    JsonObject users = out["users"].to<JsonObject>();
+    for (size_t i = 0; i < _users->size(); ++i)
+    {
+        const auto &u = _users->user(i);
+        if (!u.enabled || u.username.length() == 0)
+            continue;
+
+        JsonObject entry = users[u.username].to<JsonObject>();
+        entry["plc_username"] = u.username;
+        JsonObject permissions = entry["permissions"].to<JsonObject>();
+        permissions["read_all"] = false;
+        permissions["write_all"] = false;
+        permissions["status"]["read"] = true;
+        permissions["network"]["read"] = true;
+        JsonObject controllers = permissions["controllers"].to<JsonObject>();
+
+        JsonObject quick = controllers["quick_actions"].to<JsonObject>();
+        quick["read"] = true;
+        quick["write"] = u.tg_quick_actions;
+
+        for (uint8_t ctrl_idx = 0; ctrl_idx < (uint8_t)UsersRegistry::kAclControllerCount; ++ctrl_idx)
+        {
+            const auto ctrl = static_cast<UsersRegistry::AclController>(ctrl_idx);
+            const char *key = aclControllerKey_(ctrl);
+            if (!key || key[0] == '\0')
+                continue;
+            JsonObject policy = controllers[key].to<JsonObject>();
+            const bool ctrl_allowed = u.controllerAllowed(0, ctrl);
+            if (!ctrl_allowed)
+            {
+                policy["read"] = false;
+                policy["write"] = false;
+                continue;
+            }
+
+            const uint16_t max_id = UsersRegistry::kAclItemsPerController[ctrl_idx];
+            uint16_t view_count = 0;
+            uint16_t control_count = 0;
+            for (uint16_t item_id = 1; item_id <= max_id; ++item_id)
+            {
+                if (u.itemViewAllowedRaw(0, ctrl, item_id))
+                    ++view_count;
+                if (u.itemControlAllowedRaw(0, ctrl, item_id))
+                    ++control_count;
+            }
+
+            // Controller-level allow is the base permission. Item-level ACL narrows it down via ids.
+            const bool read = true;
+            const bool write = (control_count != 0 || max_id == 0);
+            policy["read"] = read;
+            policy["write"] = write;
+            const bool partial_view = (view_count != 0 && view_count < max_id);
+            const bool partial_control = (control_count != 0 && control_count < max_id);
+            if ((partial_view || partial_control) && max_id != 0)
+            {
+                JsonArray ids = policy["ids"].to<JsonArray>();
+                for (uint16_t item_id = 1; item_id <= max_id; ++item_id)
+                {
+                    if (u.itemViewAllowedRaw(0, ctrl, item_id) ||
+                        u.itemControlAllowedRaw(0, ctrl, item_id))
+                        ids.add(item_id);
+                }
+            }
+        }
     }
 }
 void CloudClient::fillControllersInfo_(JsonObject out)
@@ -1484,6 +2122,8 @@ void CloudClient::fillThermo_(JsonArray out)
         if (cfg->name.length())
             o["name"] = cfg->name;
         o["sensor"] = (unsigned)cfg->sensor_id;
+        if (cfg->sensor_node_id != 0)
+            o["sensor_node"] = (unsigned long)cfg->sensor_node_id;
         o["mode"] = ThermoController::modeName(cfg->mode);
         o["target"] = cfg->target_c;
         o["hyst"] = cfg->hysteresis;
@@ -1496,6 +2136,46 @@ void CloudClient::fillThermo_(JsonArray out)
         o["power_on"] = st->power_on;
         o["heat_on"] = st->heat_on;
         o["cool_on"] = st->cool_on;
+
+        if (cfg->sensor_id != ThermoController::kInvalidSensor)
+        {
+            if (cfg->sensor_node_id == 0)
+            {
+                auto meteo_guard = _controllers.meteo().lockGuard(kSnapshotLockTimeoutMs);
+                if (meteo_guard.locked())
+                {
+                    const auto *sensor_cfg = _controllers.meteo().config(cfg->sensor_id);
+                    const auto *sensor_st = _controllers.meteo().state(cfg->sensor_id);
+                    if (sensor_cfg && sensor_cfg->name.length())
+                        o["sensor_name"] = sensor_cfg->name;
+                    if (sensor_st)
+                    {
+                        o["has_temp"] = sensor_st->has_temp;
+                        if (sensor_st->has_temp)
+                            o["temp_c"] = sensor_st->temp_c;
+                    }
+                }
+            }
+            else if (_stack_cache)
+            {
+                const auto *meteo = _stack_cache->meteoCache(cfg->sensor_node_id);
+                if (meteo && meteo->has_data && meteo->items)
+                {
+                    for (size_t j = 0; j < meteo->item_count && j < meteo->capacity; ++j)
+                    {
+                        const auto &it = meteo->items[j];
+                        if (it.id != cfg->sensor_id)
+                            continue;
+                        if (it.name[0])
+                            o["sensor_name"] = it.name;
+                        o["has_temp"] = it.has_temp;
+                        if (it.has_temp)
+                            o["temp_c"] = it.temp_c;
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 void CloudClient::fillTanks_(JsonArray out)
@@ -1596,7 +2276,12 @@ void CloudClient::fillWatering_(JsonArray out)
         if (cfg->port != WateringController::kInvalidPort)
             o["port"] = cfg->port;
         if (cfg->tank_id)
+        {
             o["tank"] = cfg->tank_id;
+            const auto *tank_cfg = _controllers.tanks().config(cfg->tank_id);
+            if (tank_cfg && tank_cfg->name.length())
+                o["tank_name"] = tank_cfg->name;
+        }
         if (cfg->weekdays_mask)
             o["weekdays_mask"] = cfg->weekdays_mask;
         if (cfg->duration_sec && cfg->hour <= 23 && cfg->minute <= 59)
@@ -1787,7 +2472,6 @@ bool CloudClient::fillStackCachedSystem_(JsonObject out, uint32_t node_id)
     {
         JsonObject plc = out["plc"].to<JsonObject>();
         plc["board_temp"] = status->board_temp;
-        plc["cpu_temp"] = status->cpu_temp;
         JsonObject fan = out["fan"].to<JsonObject>();
         fan["fan_on"] = status->fan_on;
         fan["on_c"] = status->fan_on_c;
@@ -1922,6 +2606,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         _stack_cache->requestMeteo(node_id);
 
     const auto *thermo = _stack_cache->thermoCache(node_id);
+    const auto *local_meteo = _stack_cache->meteoCache(node_id);
     if (thermo && thermo->has_data && thermo->items)
     {
         JsonArray arr = out.createNestedArray("thermo");
@@ -1935,6 +2620,8 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             if (it.name[0])
                 o["name"] = it.name;
             o["sensor"] = it.sensor;
+            if (it.sensor_node != 0)
+                o["sensor_node"] = (unsigned long)it.sensor_node;
             if (it.mode[0])
                 o["mode"] = it.mode;
             o["target"] = it.target;
@@ -1948,6 +2635,24 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             o["power_on"] = it.power_on;
             o["heat_on"] = it.heat_on;
             o["cool_on"] = it.cool_on;
+
+            const uint32_t sensor_node_id = it.sensor_node ? it.sensor_node : node_id;
+            const auto *meteo = (sensor_node_id == node_id) ? local_meteo : _stack_cache->meteoCache(sensor_node_id);
+            if (it.sensor != 0 && meteo && meteo->has_data && meteo->items)
+            {
+                for (size_t j = 0; j < meteo->item_count && j < meteo->capacity; ++j)
+                {
+                    const auto &sensor = meteo->items[j];
+                    if (sensor.id != it.sensor)
+                        continue;
+                    if (sensor.name[0])
+                        o["sensor_name"] = sensor.name;
+                    o["has_temp"] = sensor.has_temp;
+                    if (sensor.has_temp)
+                        o["temp_c"] = sensor.temp_c;
+                    break;
+                }
+            }
         }
         has_any = true;
     }
@@ -2039,7 +2744,11 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             if (it.port != WateringController::kInvalidPort)
                 o["port"] = it.port;
             if (it.tank_id)
+            {
                 o["tank"] = it.tank_id;
+                if (it.tank_name[0])
+                    o["tank_name"] = it.tank_name;
+            }
             if (it.weekdays_mask)
                 o["weekdays_mask"] = it.weekdays_mask;
             if (it.duration_sec && it.hour <= 23 && it.minute <= 59)
@@ -2347,6 +3056,10 @@ bool CloudClient::hasWhat_(JsonArrayConst what, const char *name)
     }
     return false;
 }
+const char *CloudClient::transportName_() const
+{
+    return (_cfg.transport == CloudTransportKind::Http) ? "HTTP" : "WS";
+}
 const char *CloudClient::stackRoleName_() const
 {
     if (!_configs)
@@ -2381,6 +3094,16 @@ String CloudClient::stackNodeName_(uint32_t node_id) const
         if (_stack_master->nodeIdAt(i) == node_id)
             return _stack_master->nodeNameAt(i);
     return String();
+}
+String CloudClient::eventSourceName_(const String &unit, uint32_t node_id) const
+{
+    if (unit == "stack" && node_id != 0)
+    {
+        const String name = stackNodeName_(node_id);
+        if (name.length())
+            return name;
+    }
+    return _plc.deviceName();
 }
 ThermoController::Mode CloudClient::parseThermoMode_(const String &mode)
 {

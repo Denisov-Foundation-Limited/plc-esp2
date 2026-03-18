@@ -32,7 +32,6 @@ void WebInterfaceSystemRoutes::registerSecondary(WebInterface &web, AsyncWebServ
 
 void WebInterfaceSystemRoutes::registerTail(WebInterface &web, AsyncWebServer &server)
 {
-    TelegramHandler::registerRoutes(web, server);
     CloudHandler::registerRoutes(web, server);
     AdminHandler::registerRoutes(web, server);
     LogsHandler::registerRoutes(web, server);

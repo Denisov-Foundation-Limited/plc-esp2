@@ -37,7 +37,6 @@
 #include "hal/gpio/extender.hpp"
 #include "core/rtc.hpp"
 #include "plc/plc_control.hpp"
-#include "core/network/telegram/telegram.hpp"
 #include "controllers/meteo_controller.hpp"
 #include "controllers/septic_controller.hpp"
 #include "controllers/security_controller.hpp"
@@ -354,7 +353,7 @@ public:
     };
 
     StackSlaveHandler(IoStack &io, Ds18b20 &ds18b20, OneWireManager &ow, I2CManager &i2c,
-                      PlcControl &plc, RTC &rtc, TelegramClient &telegram, Logger &logs,
+                      PlcControl &plc, RTC &rtc, Logger &logs,
                       Extender &ext, SocketController &sockets, MeteoController &meteo,
                       ThermoController &thermo, SepticController &septic, SecurityController &security,
                       TankController &tanks, WateringController &watering, RingController &ring,
@@ -365,7 +364,6 @@ public:
           _i2c(i2c),
           _plc(plc),
           _rtc(rtc),
-          _telegram(telegram),
           _logs(logs),
           _ext(ext),
           _sockets(sockets),
@@ -505,7 +503,6 @@ private:
     I2CManager &_i2c;
     PlcControl &_plc;
     RTC &_rtc;
-    TelegramClient &_telegram;
     Logger &_logs;
     Extender &_ext;
     SocketController &_sockets;
@@ -1334,7 +1331,6 @@ private:
         _tx_doc.clear();
         JsonDocument &doc = _tx_doc;
         doc["board_temp"] = _plc.boardTemp();
-        doc["cpu_temp"] = _plc.cpuTemp();
         doc["fan_on"] = _plc.fanStatus();
         doc["on_c"] = _plc.fanOnC();
         doc["hyst_c"] = _plc.fanHysteresisC();
@@ -1412,20 +1408,8 @@ private:
 
     void handleTelegram_(uint16_t cmd_id, const String &action)
     {
-        if (action != "get")
-        {
-            sendErr_(cmd_id, "unsupported");
-            return;
-        }
-        _tx_doc.clear();
-        JsonDocument &doc = _tx_doc;
-        doc["token_set"] = _telegram.token().length() > 0;
-        doc["chat_id"] = (long long)_telegram.chatId();
-        doc["insecure"] = _telegram.insecure();
-        doc["use_proxy"] = _telegram.useProxy();
-        doc["proxy_host"] = _telegram.proxyHost();
-        doc["proxy_port"] = (unsigned)_telegram.proxyPort();
-        sendAck_(cmd_id, doc);
+        (void)action;
+        sendErr_(cmd_id, "unsupported");
     }
 
     void handleStorage_(uint16_t cmd_id, const String &action)
@@ -3072,7 +3056,12 @@ private:
                 if (cfg->port != WateringController::kInvalidPort)
                     o["port"] = cfg->port;
                 if (cfg->tank_id)
+                {
                     o["tank"] = cfg->tank_id;
+                    const auto *tank_cfg = _tanks.config(cfg->tank_id);
+                    if (tank_cfg && tank_cfg->name.length())
+                        o["tank_name"] = tank_cfg->name;
+                }
                 if (cfg->weekdays_mask)
                     o["weekdays_mask"] = cfg->weekdays_mask;
                 if (cfg->duration_sec && cfg->hour <= 23 && cfg->minute <= 59)
@@ -3550,7 +3539,6 @@ private:
         StaticJsonDocument<256> doc;
         doc["uptime_ms"] = (uint32_t)millis();
         doc["board_temp"] = _plc.boardTemp();
-        doc["cpu_temp"] = _plc.cpuTemp();
         doc["fan_on"] = _plc.fanStatus();
         return serializeJson(doc, reinterpret_cast<char *>(out), cap);
     }

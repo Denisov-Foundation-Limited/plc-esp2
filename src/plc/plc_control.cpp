@@ -59,8 +59,6 @@ void PlcControl::task(){
     if (timeDue_(now, _next_sample_ms))
     {
         _next_sample_ms = now + _sample_interval_ms;
-        _last_cpu_temp_c = readCpuTemp_();
-        _cpu_temp_valid = isfinite(_last_cpu_temp_c);
         float sample = 0.0f;
         {
             I2CManager::ScopedBusLock lk(_i2c, _lm75_bus);
@@ -90,11 +88,6 @@ void PlcControl::task(){
         temp_c = _last_temp_c;
         has_temp = true;
     }
-    if (_cpu_temp_valid && (!has_temp || _last_cpu_temp_c > temp_c))
-    {
-        temp_c = _last_cpu_temp_c;
-        has_temp = true;
-    }
     if (_rtc_temp_valid && (!has_temp || _last_rtc_temp_c > temp_c))
     {
         temp_c = _last_rtc_temp_c;
@@ -121,8 +114,6 @@ void PlcControl::task(){
 }
 
 float PlcControl::boardTemp() const{ return _last_temp_c; }
-
-float PlcControl::cpuTemp() const{ return _last_cpu_temp_c; }
 
 bool PlcControl::fanStatus() const{ return _fan_on; }
 
@@ -245,22 +236,6 @@ void PlcControl::setFans_(bool on){
             continue;
         _io.write(i, on);
     }
-}
-
-float PlcControl::readCpuTemp_(){
-#if defined(ESP32)
-    const uint32_t now = millis();
-    static uint32_t last_read_ms = 0;
-    static float last_value = 0.0f;
-    if (timeDue_(now, last_read_ms + 5000u))
-    {
-        last_read_ms = now;
-        last_value = temperatureRead();
-    }
-    return last_value;
-#else
-    return 0.0f;
-#endif
 }
 
 void PlcControl::setAlarmModule_(uint8_t module, bool has_alarm){

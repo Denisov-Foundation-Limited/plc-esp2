@@ -125,7 +125,7 @@ flowchart TD
 - `include/boards/*` — профили плат, порты, шины, аппаратные ограничения
 - `include/utils/*`, `src/utils/*` — конфиги, реестры, вспомогательные утилиты
 
-## 🌐 Режимы Stack
+## 🔀 Режимы Stack
 
 Устройство может работать как:
 - `master` — агрегирует данные slave-узлов в `StackCache`, отдаёт их в Web/Display/Telegram;
@@ -139,14 +139,27 @@ flowchart TD
 - `CloudClient` отвечает за протокол, сессию, обработку `hello/get/cmd/result/error` и интеграцию с контроллерами/Stack.
 - `CloudTransport` — абстракция транспорта облака; `CloudClient` работает только через события подключения и входящие текстовые сообщения.
 - Текущая рабочая реализация транспорта: `CloudWsTransport` поверх `WebSocketsClient`.
-- Подготовлен каркас `CloudHttpTransport` для будущего перехода на HTTP poll/long-poll без переписывания протокольной логики `CloudClient`.
+- `CloudHttpTransport` уже встроен в конфиг/CLI/Web как selectable transport, но пока остаётся placeholder до появления device-side HTTP endpoints в `plc-cloud`.
+- Контроллеры публикуют доменные события в `CloudClient` через очередь `event`, а не выполняют сетевую отправку сами.
+- Локальные и stack-события отправляются единообразно как `type: "event"`; для stack-master используется scoped event с `unit: "stack"` и `node_id`.
+- В `payload.data` cloud-события теперь добавляется `source_name`: локально это имя текущего PLC, для stack-событий — имя слейва.
+- Прямые Telegram-уведомления из контроллеров убраны; cloud-события дальше обрабатываются на стороне `plc-cloud`.
+- Локальные GSM/SMS/Call-сценарии безопасности остаются в прошивке и не зависят от облачного транспорта.
 - `proto.json` остаётся источником правды для формата JSON-сообщений и не должен зависеть от выбранного транспорта.
+- Очередь cloud events увеличена до `64`; для `sockets.state` и `lights.state` включено coalescing по `source + id`, чтобы серия переключений не забивала очередь дубликатами.
+- В логах прошивки cloud-отправка доменных событий видна как `Notify send: ...`; `periodic` в эти логи специально не попадает.
+- Stack transport больше не считает `write()` успешным по умолчанию: при перегрузе/неполной записи появляются `STACK Master tx busy/short write` и `STACK Unit tx busy/short write`.
 
 ### 🚀 Что это даёт
 
 - Переключение `WebSocket` -> `HTTP` должно происходить заменой транспорта, а не переписыванием `CloudClient`.
 - Transport-слой отвечает только за доставку и события `Connected/Disconnected/Error`.
 - Protocol/business logic остаётся в одном месте, что упрощает поддержку совместимости с облаком.
+- Telegram/browser notifications для cloud-сценариев строятся из `event/last_event` уже в `plc-cloud`, а не в контроллерах прошивки.
+- Transport можно переключить:
+  - в CLI: `config -> cloud -> transport ws|http`
+  - в Web: страница `/cloud`, поле `Транспорт`
+- На текущем этапе рабочий transport: `ws`; `http` сохранится в конфиге и переключит рантайм, но без серверной HTTP-части реальное cloud-session соединение не поднимет.
 
 ## ⌨️ CLI (кратко)
 
@@ -155,12 +168,12 @@ flowchart TD
 
 ### ▶️ Enable (`plc#`)
 
-- Диагностика:
+- Диагностика 🔎:
   - `show board`, `show plc`, `show wifi`, `show time`, `show i2c`, `show ow`, `show ports`, `show config`
-- Состояние контроллеров:
+- Состояние контроллеров 🎛️:
   - `show sockets|meteo|thermo|tanks|watering|septic|security`
   - `show <controller> <id>`
-- Управление:
+- Управление 🎮:
   - `socket on|off|toggle <id>`
   - `security status|arm|disarm`
   - `stack nodes`
@@ -168,37 +181,37 @@ flowchart TD
   - `stack socket <unit> <on|off|toggle> <id>`
   - `stack thermo <unit> <on|off|toggle> <id>`
   - `stack security <unit> <arm|disarm|status|clear>`
-- Система:
+- Система 🛠️:
   - `write`, `erase`, `wifi restart`, `reload`, `reset`, `ext scan`, `show ext`
-- Обновление:
+- Обновление ⬆️:
   - `copy tftp://<ip>/firmware.bin firmware`
   - `copy http://<ip>/firmware.bin firmware`
 
 ### ⚙️ Config (`plc(config)#`)
 
-- Глобально:
+- Глобально 🌍:
   - `password <pass>` / `admin password <pass>`
   - `stack role <master|slave>`
   - `stack master <host>`
-- Контексты:
+- Контексты 🧱:
   - `wifi`, `tgbot`, `cloud`, `time`
   - `socket`, `meteo`, `thermo`, `tank`, `watering`, `septic`, `security`
 
 ### 📌 Примеры контекстов
 
 - `plc(config-wifi)#`: `mode <sta|ap|sta_ap>`, `ssid`, `password`, `ap on|off`, `ap_ssid`, `ap_password`, `restart`, `show`
-- `plc(config-cloud)#`: `enable`, `host`, `port`, `path`, `ssl`, `reconnect`, `event`, `api_key`, `show`
+- `plc(config-cloud)#`: `enable`, `transport ws|http`, `host`, `port`, `path`, `ssl`, `reconnect`, `event`, `api_key`, `show`
 - `plc(config-security)#`: `show`, `enable/disable <id>`, `type <id> <pir|reed>`, `port <id>`, `name <id>`, `silent <id>`, `siren <port|none>`, `keys ...`
 
 ## 🖼️ Скриншоты
 
-Telegram:
+Telegram 🤖:
 
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg1.png" width="300" />
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg2.png" width="300" />
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg3.png" width="300" />
 
-Web:
+Web 🖥️:
 
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web1.png" width="600" />
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web2.png" width="600" />
@@ -216,13 +229,13 @@ Web:
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web14.png" width="700" />
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web15.png" width="700" />
 
-Аппаратная часть:
+Аппаратная часть 🔧:
 
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/board2.png" width="700" />
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/ext.png" width="700" />
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/fan.png" width="700" />
 
-## Пример логов запуска
+## 📜 Пример логов запуска
 
 ```text
 [1329][INFO][TANK] controller: enabled

@@ -58,10 +58,6 @@ void Ftest::task(){
     logBoardTemp_();
 
     _logs.info(F("FTEST"), F(""));
-    _logs.info(F("FTEST"), F("[CPU_TEMP]"));
-    logCPUTemp_();
-
-    _logs.info(F("FTEST"), F(""));
     _logs.info(F("FTEST"), F("[RTC]"));
     logRtc_();
 
@@ -139,15 +135,6 @@ void Ftest::i2cUnlockCb_(void *ctx)
     I2cLockCtx *c = static_cast<I2cLockCtx *>(ctx);
     if (c && c->i2c)
         c->i2c->unlockBus(c->bus);
-}
-
-void Ftest::logCPUTemp_(){
-#if defined(ESP32)
-    float t = temperatureRead();
-    _logs.info(F("FTEST"), F("CPU: %.2fC"), t);
-#else
-    _logs.info(F("FTEST"), F("TSENS: na"));
-#endif
 }
 
 void Ftest::logRtc_(){

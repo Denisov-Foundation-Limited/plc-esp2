@@ -14,8 +14,6 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
-#include "core/network/telegram/telegram_bot.hpp"
-#include "core/network/telegram/telegram_allowed_users.hpp"
 #include "hal/gpio/gpio.hpp"
 #include "hal/gpio/portio.hpp"
 #include "utils/logger.hpp"
@@ -53,13 +51,11 @@ public:
 
     using DetectHandler = void (*)(void *ctx, uint8_t septic_id, const String &name, bool is_alarm);
 
-    SepticController(Gpio &gpio, Logger &logs, TelegramBot &bot, TelegramAllowedUsersProvider &users)
-        ;bool begin();void task();void applyConfig(JsonArrayConst septic);void serialize(JsonArray out) const;bool controllerEnabled() const;void setControllerEnabled(bool enabled);bool setEnabled(size_t id, bool enabled);bool setMonitoring(size_t id, bool on);bool setName(size_t id, const String &name);bool setGroupId(size_t id, uint8_t group_id);bool setWarningPort(size_t id, uint8_t port);bool setAlarmPort(size_t id, uint8_t port);bool setWarningRelay(size_t id, uint8_t port);bool setAlarmRelay(size_t id, uint8_t port);void setDetectHandler(DetectHandler cb, void *ctx);void setNotifyEnabled(bool enabled);void notifyRemoteLevel(const String &source, uint8_t septic_id, const String &name, bool is_alarm);const SepticConfig *configByIndex(size_t idx) const;const SepticState *stateByIndex(size_t idx) const;LockGuard lockGuard(uint32_t timeout_ms = 0xFFFFFFFFu) const { return _lock.guard(timeout_ms); }
+    SepticController(Gpio &gpio, Logger &logs)
+        ;bool begin();void task();void applyConfig(JsonArrayConst septic);void serialize(JsonArray out) const;bool controllerEnabled() const;void setControllerEnabled(bool enabled);bool setEnabled(size_t id, bool enabled);bool setMonitoring(size_t id, bool on);bool setName(size_t id, const String &name);bool setGroupId(size_t id, uint8_t group_id);bool setWarningPort(size_t id, uint8_t port);bool setAlarmPort(size_t id, uint8_t port);bool setWarningRelay(size_t id, uint8_t port);bool setAlarmRelay(size_t id, uint8_t port);void setDetectHandler(DetectHandler cb, void *ctx);void setDetectHandlerSecondary(DetectHandler cb, void *ctx);void setNotifyEnabled(bool enabled);void notifyRemoteLevel(const String &source, uint8_t septic_id, const String &name, bool is_alarm);const SepticConfig *configByIndex(size_t idx) const;const SepticState *stateByIndex(size_t idx) const;LockGuard lockGuard(uint32_t timeout_ms = 0xFFFFFFFFu) const { return _lock.guard(timeout_ms); }
 private:
     Gpio &_gpio;
     Logger &_logs;
-    TelegramBot &_tgbot;
-    TelegramAllowedUsersProvider &_tgusers;
 
     SepticConfig _cfg[kSepticCount]{};
     SepticState _state[kSepticCount]{};
@@ -67,8 +63,10 @@ private:
     bool _notify_enabled = true;
     DetectHandler _detect_cb = nullptr;
     void *_detect_ctx = nullptr;
+    DetectHandler _detect_cb_secondary = nullptr;
+    void *_detect_ctx_secondary = nullptr;
     mutable RtosRecursiveLock _lock;
 
-    void reset_();static bool indexById_(uint8_t id, size_t &out);void setupInputs_(const SepticConfig &cfg);void setupInput_(uint8_t port);void setupOutputs_(const SepticConfig &cfg, SepticState &st);void setupRelay_(uint8_t port, bool &state);void readLevels_(const SepticConfig &cfg, SepticState &st);bool setLevelPort_(size_t id, uint8_t port, uint8_t SepticConfig::*field);bool setRelayPort_(size_t id, uint8_t port, uint8_t SepticConfig::*field);bool readInput_(uint8_t port);void updateRelays_(const SepticConfig &cfg, SepticState &st);void writeRelay_(uint8_t port, bool on);void logLevelChange_(const SepticConfig &cfg, const SepticState &prev, const SepticState &curr);void logRelayChange_(const SepticConfig &cfg, const SepticState &prev, const SepticState &curr);void notifyLevel_(const SepticConfig &cfg, bool is_alarm);void sendTgNotify_(const String &msg);void notifyDetectEvent_(const SepticConfig &cfg, bool is_alarm);static bool parsePort_(JsonVariantConst v, uint8_t &out);static constexpr bool kRelayInvert = false;
+    void reset_();static bool indexById_(uint8_t id, size_t &out);void setupInputs_(const SepticConfig &cfg);void setupInput_(uint8_t port);void setupOutputs_(const SepticConfig &cfg, SepticState &st);void setupRelay_(uint8_t port, bool &state);void readLevels_(const SepticConfig &cfg, SepticState &st);bool setLevelPort_(size_t id, uint8_t port, uint8_t SepticConfig::*field);bool setRelayPort_(size_t id, uint8_t port, uint8_t SepticConfig::*field);bool readInput_(uint8_t port);void updateRelays_(const SepticConfig &cfg, SepticState &st);void writeRelay_(uint8_t port, bool on);void logLevelChange_(const SepticConfig &cfg, const SepticState &prev, const SepticState &curr);void logRelayChange_(const SepticConfig &cfg, const SepticState &prev, const SepticState &curr);void notifyLevel_(const SepticConfig &cfg, bool is_alarm);void notifyDetectEvent_(const SepticConfig &cfg, bool is_alarm);static bool parsePort_(JsonVariantConst v, uint8_t &out);static constexpr bool kRelayInvert = false;
     static constexpr bool kLevelPullup = true;
 };

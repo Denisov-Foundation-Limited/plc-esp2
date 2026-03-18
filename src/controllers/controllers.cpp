@@ -12,17 +12,17 @@
 #include "controllers/controllers.hpp"
 
 Controllers::Controllers(Gpio &gpio, OneWireManager &ow, EepromStorage &storage, Logger &logs,
- TelegramBot &tgbot, TelegramAllowedUsersProvider &tgmenu, GsmModem &gsm, RTC &rtc)
+ GsmModem &gsm, RTC &rtc)
  : _sockets(gpio, logs),
  _meteo(ow, logs),
  _thermo(gpio, _meteo, logs),
- _tanks(gpio, logs, tgbot, tgmenu),
- _septic(gpio, logs, tgbot, tgmenu),
- _security(gpio, ow, logs, tgbot, tgmenu),
+ _tanks(gpio, logs),
+ _septic(gpio, logs),
+ _security(gpio, ow, logs),
  _ring(gpio, logs),
  _watering(gpio, _tanks, rtc, logs),
- _avr(gpio, logs, tgbot, tgmenu),
- _leak(gpio, logs, tgbot, tgmenu),
+ _avr(gpio, logs),
+ _leak(gpio, logs),
  _storage(storage),
  _logs(logs){
     _security.setGsmModem(gsm);

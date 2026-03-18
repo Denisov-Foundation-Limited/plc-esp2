@@ -17,15 +17,12 @@
 
 using CfgMgrStackRole = ConfigsManagerIface::StackRole;
 
-ConfigsManager::ConfigsManager(Configs &configs, WifiManager &wifi, TelegramClient &telegram,
-               Network &network, CliConsole &console, TelegramMenu &telegram_menu, PlcControl &plc,
+ConfigsManager::ConfigsManager(Configs &configs, WifiManager &wifi, Network &network, CliConsole &console, PlcControl &plc,
                Controllers &controllers, RulesController &rules, GsmModem &gsm, UsersRegistry &users)
     : _configs(configs),
       _wifi(wifi),
-      _telegram(telegram),
       _network(network),
       _console(console),
-      _telegram_menu(telegram_menu),
       _plc(plc),
       _controllers(controllers),
       _rules(rules),
@@ -46,6 +43,8 @@ String ConfigsManager::stackFallbackHost() const{ return _stack_fallback_host; }
 bool ConfigsManager::stackSlaveController() const{ return _stack_slave_controller; }
 
 bool ConfigsManager::cloudEnabled() const{ return _cloud_enabled; }
+
+CloudTransportKind ConfigsManager::cloudTransport() const{ return _cloud_transport; }
 
 String ConfigsManager::cloudHost() const{ return _cloud_host; }
 
@@ -193,6 +192,13 @@ void ConfigsManager::setCloudEnabled(bool enabled){
     _network.setCloudEnabled(enabled);
 }
 
+void ConfigsManager::setCloudTransport(CloudTransportKind kind){
+    if (kind == _cloud_transport)
+        return;
+    _cloud_transport = kind;
+    applyCloudConfig_();
+}
+
 void ConfigsManager::setCloudHost(const String &host){
     if (host == _cloud_host)
         return;
@@ -315,16 +321,6 @@ bool ConfigsManager::save(){
     w["ap_ssid"] = _wifi.apSsid();
     w["ap_password"] = _wifi.apPassword();
 
-    JsonObject t = _doc["telegram"].to<JsonObject>();
-    t["token"] = _telegram.token();
-    t["insecure"] = _telegram.insecure();
-    t["client"] = _telegram.clientKindName();
-    t["poll_mode"] = (_telegram.pollMode() == TelegramClient::PollMode::Long) ? "long" : "short";
-    t["use_proxy"] = _telegram.useProxy();
-    t["proxy_host"] = _telegram.proxyHost();
-    t["proxy_port"] = (unsigned)_telegram.proxyPort();
-    t["proxy_path"] = _telegram.proxyPath();
-
     if (_console.adminPasswordSet())
     {
         JsonObject a = _doc["admin"].to<JsonObject>();
@@ -383,6 +379,7 @@ bool ConfigsManager::save(){
 
     JsonObject c = _doc["cloud"].to<JsonObject>();
     c["enabled"] = _cloud_enabled;
+    c["transport"] = (_cloud_transport == CloudTransportKind::Http) ? "http" : "ws";
     c["host"] = _cloud_host;
     c["port"] = (unsigned)_cloud_port;
     c["path"] = _cloud_path;
@@ -592,73 +589,6 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
             _wifi.setApPassword(w["ap_password"].as<const char *>());
     }
 
-    if (doc["telegram"].is<JsonObjectConst>())
-    {
-        JsonObjectConst t = doc["telegram"].as<JsonObjectConst>();
-        if (t["token"].is<const char *>())
-            _telegram.setToken(t["token"].as<const char *>());
-        if (t["insecure"].is<bool>())
-            _telegram.setInsecure(t["insecure"].as<bool>());
-
-        if (t["client"].is<const char *>())
-        {
-            String c = t["client"].as<const char *>();
-            c.toLowerCase();
-            if (c == "tinygsm")
-                _network.setTelegramClientKind(TelegramNetCfg::ClientKind::TinyGsm);
-            else if (c == "wifi" || c == "wifi_secure")
-                _network.setTelegramClientKind(TelegramNetCfg::ClientKind::WifiSecure);
-        }
-        if (t["poll_mode"].is<const char *>())
-        {
-            String mode = t["poll_mode"].as<const char *>();
-            mode.toLowerCase();
-            _telegram.setPollMode(mode == "short" ? TelegramClient::PollMode::Short
-                                                  : TelegramClient::PollMode::Long);
-        }
-
-        bool proxy_override = false;
-        bool use_proxy = false;
-        String host;
-        uint16_t port = 0;
-        String path;
-
-        if (t["use_proxy"].is<bool>())
-        {
-            proxy_override = true;
-            use_proxy = t["use_proxy"].as<bool>();
-        }
-        if (t["proxy_host"].is<const char *>())
-        {
-            proxy_override = true;
-            host = t["proxy_host"].as<const char *>();
-            if (!t["use_proxy"].is<bool>())
-                use_proxy = true;
-        }
-        if (t["proxy_port"].is<unsigned>())
-        {
-            proxy_override = true;
-            port = (uint16_t)t["proxy_port"].as<unsigned>();
-            if (!t["use_proxy"].is<bool>())
-                use_proxy = true;
-        }
-        if (t["proxy_path"].is<const char *>())
-        {
-            proxy_override = true;
-            path = t["proxy_path"].as<const char *>();
-            if (!t["use_proxy"].is<bool>())
-                use_proxy = true;
-        }
-
-        if (proxy_override)
-        {
-            if (use_proxy && host.length() > 0)
-                _network.setTelegramProxy(host, port, path);
-            else
-                _network.disableTelegramProxy();
-        }
-    }
-
     if (doc["users"].is<JsonArrayConst>())
     {
         _users.applyFromJson(doc["users"].as<JsonArrayConst>());
@@ -808,6 +738,9 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
         JsonObjectConst c = doc["cloud"].as<JsonObjectConst>();
         if (c["enabled"].is<bool>())
             _cloud_enabled = c["enabled"].as<bool>();
+        String transport = c["transport"] | "ws";
+        transport.toLowerCase();
+        _cloud_transport = (transport == "http") ? CloudTransportKind::Http : CloudTransportKind::WebSocket;
         _cloud_host = c["host"] | "";
         _cloud_port = (uint16_t)(c["port"] | 0u);
         _cloud_path = c["path"] | "/";
@@ -1071,6 +1004,7 @@ String ConfigsManager::cp1251ToUtf8_(const String &in){
 
 CloudClient::Config ConfigsManager::buildCloudConfig_() const{
     CloudClient::Config cfg;
+    cfg.transport = _cloud_transport;
     cfg.host = _cloud_host;
     cfg.port = _cloud_port;
     cfg.path = _cloud_path;

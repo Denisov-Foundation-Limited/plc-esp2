@@ -152,7 +152,9 @@ private:
 
     void notifyRingHold_();
 
-    void sendTelegramNotify_(const String &msg);
+    void sendCloudNotify_(const char *kind, const char *reason, const String &msg);
+    void publishCloudStackEvent_(uint32_t node_id, const char *kind, const char *reason,
+                                 const String &data_json);
 
     void handleStackFrame_(uint32_t node_id, const StackFrame &frame);
 

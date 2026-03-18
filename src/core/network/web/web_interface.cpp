@@ -31,7 +31,7 @@ void WebInterface::registerRoutes()
 }
 
     WebInterface::WebInterface(AsyncWebServer &server, CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
-                 RTC &rtc, TelegramClient &tgbot, TelegramBot &tgbot_bot, TelegramMenu &tgbot_menu, Logger &logs,
+                 RTC &rtc, Logger &logs,
                  Extender &ext,
                  I2CManager &i2c, OneWireManager &ow, Controllers &controllers, RulesController &rules)
         : _server(server),
@@ -40,9 +40,6 @@ void WebInterface::registerRoutes()
           _configs(configs),
           _plc(&plc),
           _rtc(&rtc),
-          _tgbot(&tgbot),
-          _tgbot_bot(&tgbot_bot),
-          _tgbot_menu(&tgbot_menu),
           _controllers(&controllers),
           _rules(&rules),
           _ext(&ext),
@@ -1121,6 +1118,13 @@ String WebInterface::topFiltersBackHtml_() const
 
 
 
+    CloudTransportKind WebInterface::cloudTransport_() const
+{
+    return _controllers_ops.cloudTransport_();
+}
+
+
+
     String WebInterface::cloudHost_() const
 {
     return _controllers_ops.cloudHost_();
@@ -1609,13 +1613,6 @@ void WebInterface::requestBasicAuth_(AsyncWebServerRequest *request)
 
 
 
-    float WebInterface::cpuTemp_() const
-{
-        return _plc ? _plc->cpuTemp() : 0.0f;
-    }
-
-
-
     String WebInterface::formatTemp_(float temp_c) const
 {
         char buf[16] = {};
@@ -1735,25 +1732,21 @@ uint8_t WebInterface::calcDow_(uint16_t y, uint8_t m, uint8_t d)
         }
         if (_log)
             _log->info(F("RING"), F("%s"), msg.c_str());
-        sendTelegramNotify_(msg);
+        sendCloudNotify_("ring.hold", stack_view ? "web_stack" : "web_local", msg);
     }
 
 
 
-    void WebInterface::sendTelegramNotify_(const String &msg)
+    void WebInterface::sendCloudNotify_(const char *kind, const char *reason, const String &msg)
 {
-        if (!_tgbot_bot || !_tgbot_menu)
+        if (!_cloud)
             return;
-        const auto users = _tgbot_menu->allowedUsers();
-        if (users.empty())
-            return;
-        for (size_t i = 0; i < users.size; ++i)
-        {
-            const auto &user = users[i];
-            if (!user.enabled || !user.is_notify || user.chat_id == 0)
-                continue;
-            _tgbot_bot->sendText(user.chat_id, msg);
-        }
+        DynamicJsonDocument doc(256);
+        if (msg.length())
+            doc["message"] = msg;
+        String json;
+        serializeJson(doc, json);
+        _cloud->publishEvent(kind ? kind : "system.notify", reason ? reason : "change", json);
     }
 
 void WebInterface::appendJsonEscaped_(String &out, const String &value)
@@ -1960,7 +1953,6 @@ int32_t WebInterface::scaled10_(float value)
         hashAdd_(hash, _last_status);
         hashAdd_(hash, _wifi_status);
         hashAdd_(hash, _gsm_status);
-        hashAdd_(hash, _tgbot_status);
         hashAdd_(hash, _cloud_status);
         hashAdd_(hash, _stack_status);
         hashAdd_(hash, _device_status);
@@ -2630,25 +2622,10 @@ int32_t WebInterface::scaled10_(float value)
             return hash;
         }
 
-        if (path == "/telegram")
-        {
-            if (_tgbot)
-            {
-                hashAdd_(hash, _tgbot->token());
-                hashAdd_(hash, String((long long)_tgbot->chatId()));
-                hashAdd_(hash, _tgbot->clientKindName());
-                hashAdd_(hash, _tgbot->pollMode() == TelegramClient::PollMode::Long ? "long" : "short");
-                hashAdd_(hash, _tgbot->useProxy() ? "1" : "0");
-                hashAdd_(hash, _tgbot->proxyHost());
-                hashAdd_(hash, String((unsigned)_tgbot->proxyPort()));
-                hashAdd_(hash, _tgbot->proxyPath());
-            }
-            return hash;
-        }
-
         if (path == "/cloud")
         {
             hashAdd_(hash, cloudEnabled_() ? 1u : 0u);
+            hashAdd_(hash, cloudTransport_() == CloudTransportKind::Http ? 1u : 0u);
             hashAdd_(hash, cloudHost_());
             hashAdd_(hash, (uint32_t)cloudPort_());
             hashAdd_(hash, cloudPath_());

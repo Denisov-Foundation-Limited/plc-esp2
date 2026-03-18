@@ -59,6 +59,12 @@ void MeteoController::setAlarmHandler(MeteoController::AlarmHandler cb, void *ct
     _alarm_ctx = ctx;
 }
 
+void MeteoController::setAlarmHandlerSecondary(MeteoController::AlarmHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _alarm_cb_secondary = cb;
+    _alarm_ctx_secondary = ctx;
+}
+
 bool MeteoController::begin(){
     auto guard = _lock.guard();
     _ds_bus = _ow.busPtrById(OneWireManager::OwBusType::Temp);
@@ -850,6 +856,8 @@ void MeteoController::logMeteoStateChange_(const MeteoController::SensorConfig &
     }
     if (_alarm_cb)
         _alarm_cb(_alarm_ctx, cfg.source_node_id, cfg.id, !st.ok);
+    if (_alarm_cb_secondary)
+        _alarm_cb_secondary(_alarm_ctx_secondary, cfg.source_node_id, cfg.id, !st.ok);
 }
 
 void MeteoController::applyReadResult_(const MeteoController::SensorConfig &cfg, MeteoController::SensorState &st, bool ok, bool has_temp, float temp_c, bool has_hum,

@@ -18,14 +18,12 @@
 #include <utility>
 
 #include "utils/logger.hpp"
-#include "core/network/telegram/telegram.hpp"
 #include "core/network/stack/stack_master.hpp"
 #include "core/network/stack/stack_node.hpp"
 #include "core/network/cloud/cloud_client.hpp"
+#include "core/network/cloud/cloud_http_transport.hpp"
 #include "utils/configs_manager_iface.hpp"
 
-class TelegramBot;
-class TelegramMenu;
 class WifiManager;
 class WebInterface;
 class GsmModem;
@@ -40,24 +38,14 @@ public:
     {
         None = 0,
         Wifi,
-        TelegramClientMissing,
-        TelegramProxyInvalid,
         WebInterfaceFs
     };
 
-    Network(Logger &logs, WifiManager &wifi, GsmModem &gsm, TelegramClient &tgbot, TelegramBot &bot,
-            TelegramMenu &menu, WebInterface &fw, AsyncWebServer &web, WiFiClientSecure &wifi_client,
+    Network(Logger &logs, WifiManager &wifi, GsmModem &gsm, WebInterface &fw, AsyncWebServer &web,
             Controllers &controllers, PlcControl &plc, RTC &rtc);
 
     void setStackConfig(ConfigsManagerIface &cfg);
     void setStackDeviceName(const String &name);
-
-    void setTelegramClient(Client &client);
-    void setTelegramClientKind(TelegramNetCfg::ClientKind kind);
-
-    void setTelegramProxy(const String &host, uint16_t port, const String &path);
-
-    void disableTelegramProxy();
 
     bool begin();
 
@@ -96,25 +84,11 @@ private:
     Logger &_logs;
     WifiManager &_wifi;
     GsmModem &_gsm;
-    TelegramClient &_tgbot;
-    TelegramBot &_bot;
-    TelegramMenu &_menu;
     WebInterface &_fw_upgrade;
     AsyncWebServer &_web;
-    WiFiClientSecure &_wifi_client;
-    Client *_tgbot_ext_client = nullptr;
     ConfigsManagerIface *_stack_cfg = nullptr;
     Error _last_error = Error::None;
-    bool _client_override_set = false;
-    TelegramNetCfg::ClientKind _client_override = TelegramNetCfg::ClientKind::WifiSecure;
-    bool _proxy_override = false;
-    bool _proxy_use = false;
-    String _proxy_host;
-    uint16_t _proxy_port = 0;
-    String _proxy_path;
     bool _started = false;
-    static constexpr uint32_t kTelegramPollIntervalMs = 500;
-    static constexpr uint16_t kTelegramPollTimeoutSec = 2;
 
     static constexpr uint16_t kStackPort = 9010;
     static constexpr uint32_t kStackFallbackDelayMs = 10000;
@@ -123,6 +97,7 @@ private:
     StackMaster _stack_master;
     StackNode _stack_node;
     CloudClient _cloud;
+    CloudHttpTransport _cloud_http_transport;
     CloudClient::Config _cloud_cfg;
     bool _cloud_cfg_set = false;
     ConfigsManagerIface::StackRole _stack_role = ConfigsManagerIface::StackRole::Master;
@@ -140,8 +115,6 @@ private:
         Fallback
     };
     StackTarget _stack_target = StackTarget::Primary;
-
-    bool configureTelegram_(const TelegramNetCfg &cfg);
 
     void beginStack_();
 

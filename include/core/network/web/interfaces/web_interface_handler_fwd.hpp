@@ -29,7 +29,6 @@ class StatusHandler;
 class SepticHandler;
 class RingHandler;
 class SecurityHandler;
-class TelegramHandler;
 class CloudHandler;
 class MeteoHandler;
 class TankHandler;

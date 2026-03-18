@@ -360,11 +360,30 @@
   - совместимости версии протокола.
 - Любые изменения в протоколе должны синхронно отражаться в прошивке и в облаке.
 - `CloudClient` не должен зависеть напрямую от `WebSocketsClient` или `HTTPClient`; transport-специфика выносится в `CloudTransport`.
-- Текущая реализация транспорта: `CloudWsTransport`; `CloudHttpTransport` пока каркасный и предназначен как точка будущего расширения.
+- Текущая рабочая реализация транспорта: `CloudWsTransport`.
+- `CloudHttpTransport` уже участвует в конфиге, CLI и Web как selectable transport, но без серверных device HTTP endpoints остаётся placeholder, а не полноценной заменой WS.
 - При доработке облака разделять слои жёстко:
   - `CloudClient` — protocol/session/business logic;
   - `CloudTransport` — connect/disconnect/send/poll и события транспорта.
 - При смене транспорта нельзя дублировать или форкать cloud-протокол; transport меняется под `CloudClient`, а не наоборот.
+- Если добавляется новый transport, нужно синхронно обновлять:
+  - `ConfigsManager` / runtime apply
+  - Web `/cloud`
+  - CLI `config cloud`
+  - README
+- Контроллеры не должны зависеть от `TelegramBot`/`TelegramAllowedUsersProvider` для cloud-нотификаций.
+- Controller notifications публикуются как доменные `event` через очередь `CloudClient`, а не отправляются из контроллеров напрямую.
+- Telegram-уведомления для cloud-сценариев формируются в `plc-cloud` из `event/last_event`, а не в прошивке.
+- Исключение: локальные GSM/SMS/Call-оповещения (например, `Security`) могут оставаться в прошивке.
+- Для stack-событий master публикует scoped cloud event с `unit: "stack"` и `node_id`; в `payload.data` дополнительно должен быть человекочитаемый `source_name` (имя слейва).
+- Для локальных cloud events `payload.data.source_name` должен содержать имя текущего PLC.
+- Очередь cloud events сейчас `64` элементов; повторяющиеся `sockets.state`/`lights.state` для одного и того же `source + id` нужно схлопывать, а не накапливать.
+- Cloud-диагностика в логах:
+  - `Notify send: ...` — событие реально отправлено в cloud transport;
+  - `Event queue full, drop oldest` — очередь переполнена;
+  - `Stack cmd error: ...` — slave вернул `Err`;
+  - `STACK Master tx busy/short write` и `STACK Unit tx busy/short write` — stack transport не принял frame целиком.
+- Для stack `CmdSet` нельзя считать отправку успешной без проверки результата `sendTo()/write()`: pending/ack нужно регистрировать только после успешной физической отправки frame.
 
 ## Кейс: рассинхрон Thermo (stack web tile) и шаблон для будущих контроллеров
 

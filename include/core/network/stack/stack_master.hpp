@@ -226,7 +226,22 @@ public:
         const size_t frame_len = StackCodec::encode(type, payload_ptr, payload_len, _frame_buf, sizeof(_frame_buf));
         if (frame_len == 0)
             return false;
-        s->client->write((const char *)_frame_buf, frame_len);
+        if (!s->client->canSend())
+        {
+            if (_log)
+                _log->warn(F("STACK"), F("Master tx busy: node_id: 0x%08lX type: %u len: %u"),
+                           (unsigned long)node_id, (unsigned)type, (unsigned)frame_len);
+            return false;
+        }
+        const size_t written = s->client->write((const char *)_frame_buf, frame_len);
+        if (written != frame_len)
+        {
+            if (_log)
+                _log->warn(F("STACK"), F("Master tx short write: node_id: 0x%08lX type: %u wr: %u len: %u"),
+                           (unsigned long)node_id, (unsigned)type,
+                           (unsigned)written, (unsigned)frame_len);
+            return false;
+        }
         return true;
     }
 

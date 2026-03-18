@@ -33,11 +33,14 @@ void RingController::task(){
         handleButton_();
         pollStackHoldTimeout_();
     }
-    if (_pending_hold_notify && _hold_cb)
+    if (_pending_hold_notify)
     {
         const bool on = _pending_hold_on;
         _pending_hold_notify = false;
-        _hold_cb(_hold_ctx, on);
+        if (_hold_cb)
+            _hold_cb(_hold_ctx, on);
+        if (_hold_cb_secondary)
+            _hold_cb_secondary(_hold_ctx_secondary, on);
     }
 }
 
@@ -138,6 +141,12 @@ void RingController::setHoldHandler(RingController::HoldHandler cb, void *ctx){
     auto guard = _lock.guard();
     _hold_cb = cb;
     _hold_ctx = ctx;
+}
+
+void RingController::setHoldHandlerSecondary(RingController::HoldHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _hold_cb_secondary = cb;
+    _hold_ctx_secondary = ctx;
 }
 
 void RingController::setupHardware_(){

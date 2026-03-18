@@ -15,7 +15,6 @@
 #include "core/network/cloud/cloud_client.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/network/network.hpp"
-#include "core/network/telegram/telegram_bot.hpp"
 #include "core/display.hpp"
 #include "core/plc_scan.hpp"
 #include "core/stack/stack_runtime.hpp"
@@ -65,11 +64,10 @@ public:
     using LoopCallback = void (*)(void *ctx);
     using FtestCallback = void (*)(void *ctx);
 
-    TaskBinder(WifiManager &wifi, TelegramBot &tgbot, Extender &ext,
+    TaskBinder(WifiManager &wifi, Extender &ext,
                Controllers &controllers, MeteoHistory &meteo_history,
                Display &display, PlcControl &plc, PlcScanLoop &plc_scan, Logger &logs)
         : _wifi(wifi),
-          _tgbot(tgbot),
           _ext(ext),
           _controllers(controllers),
           _meteo_history(meteo_history),
@@ -85,7 +83,6 @@ public:
         bindWiFiManager();
         bindGsm_();
         bindCloud_();
-        bindTgbot();
         bindExtender();
         bindPlcScan_();
         bindControllersStorage_();
@@ -216,17 +213,6 @@ private:
         }
     }
 
-    void bindTgbot()
-    {
-        if (_tgbot_task == nullptr)
-        {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::telegramTaskEntry_, "tg_bot", 6144, this, 1,
-                                                    &_tgbot_task, tskNO_AFFINITY);
-            if (ok != pdPASS)
-                _logs.error(F("TASK"), F("Bind failed: telegram_bot"));
-        }
-    }
-
     void bindExtender()
     {
         if (_ext_task_rtos == nullptr)
@@ -319,12 +305,6 @@ private:
         }
     }
 
-    void tgbotTask_()
-    {
-        if (_wifi.isConnected())
-            _tgbot.task();
-    }
-
     void plcScanTask_()
     {
         _plc_scan.tick();
@@ -401,23 +381,6 @@ private:
             self->updateRtosDebug_("wifi", dt, hwm, self->_dbg_wifi);
 #endif
             vTaskDelayUntil(&last, pdMS_TO_TICKS(1000));
-        }
-    }
-
-    static void telegramTaskEntry_(void *arg)
-    {
-        auto *self = static_cast<TaskBinder *>(arg);
-        TickType_t last = xTaskGetTickCount();
-        for (;;)
-        {
-            const uint32_t t0 = micros();
-            self->tgbotTask_();
-#if TASK_BINDER_RTOS_DEBUG
-            const uint32_t dt = (uint32_t)(micros() - t0);
-            const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
-            self->updateRtosDebug_("telegram", dt, hwm, self->_dbg_tg);
-#endif
-            vTaskDelayUntil(&last, pdMS_TO_TICKS(200));
         }
     }
 
@@ -656,7 +619,6 @@ private:
     }
 
     WifiManager &_wifi;
-    TelegramBot &_tgbot;
     Extender &_ext;
     Controllers &_controllers;
     MeteoHistory &_meteo_history;
@@ -673,11 +635,7 @@ private:
     FtestCallback _ftest_cb = nullptr;
     void *_ftest_ctx = nullptr;
     volatile bool _ftest_enabled = false;
-    uint32_t _tg_poll_stall_since_ms = 0;
-    uint32_t _tg_wifi_recover_cooldown_until_ms = 0;
-
     TaskHandle_t _wifi_task = nullptr;
-    TaskHandle_t _tgbot_task = nullptr;
     TaskHandle_t _meteo_history_task = nullptr;
     TaskHandle_t _control_task = nullptr;
     TaskHandle_t _plc_scan_task = nullptr;
@@ -697,7 +655,6 @@ private:
 
 #if TASK_BINDER_RTOS_DEBUG
     RtosDebugStats _dbg_wifi{};
-    RtosDebugStats _dbg_tg{};
     RtosDebugStats _dbg_meteo_history{};
     RtosDebugStats _dbg_control{};
     RtosDebugStats _dbg_plc_scan{};

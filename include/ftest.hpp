@@ -41,7 +41,6 @@ private:
     void logEeprom_();
     void initBoardTemp_();
     void logBoardTemp_();
-    void logCPUTemp_();
     void logRtc_();
     void logGpioOuts_();
     void logGpioIns_();

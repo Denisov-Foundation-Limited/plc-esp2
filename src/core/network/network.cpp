@@ -13,8 +13,6 @@
 
 #include "boards/board_profile_base.hpp"
 #include "core/network/gsm_modem.hpp"
-#include "core/network/telegram/telegram_bot.hpp"
-#include "core/network/telegram/telegram_menu.hpp"
 #include "core/network/web/web_interface.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/rtc.hpp"
@@ -39,12 +37,9 @@ uint32_t stackNodeIdFromMac_(uint64_t mac)
 }
 } // namespace
 
-Network::Network(Logger &logs, WifiManager &wifi, GsmModem &gsm, TelegramClient &tgbot, TelegramBot &bot,
-        TelegramMenu &menu, WebInterface &fw, AsyncWebServer &web, WiFiClientSecure &wifi_client,
+Network::Network(Logger &logs, WifiManager &wifi, GsmModem &gsm, WebInterface &fw, AsyncWebServer &web,
         Controllers &controllers, PlcControl &plc, RTC &rtc)
-    : _logs(logs), _wifi(wifi), _gsm(gsm), _tgbot(tgbot), _bot(bot), _menu(menu),
-      _fw_upgrade(fw), _web(web),
-      _wifi_client(wifi_client),
+    : _logs(logs), _wifi(wifi), _gsm(gsm), _fw_upgrade(fw), _web(web),
       _stack_server(kStackPort),
       _stack_master(_stack_server, _logs),
       _stack_node(_logs),
@@ -61,29 +56,6 @@ void Network::setStackConfig(ConfigsManagerIface &cfg)
 }
 void Network::setStackDeviceName(const String &name)
 { _stack_device_name = name; }
-void Network::setTelegramClient(Client &client)
-{ _tgbot_ext_client = &client; }
-void Network::setTelegramClientKind(TelegramNetCfg::ClientKind kind)
-{
-    _client_override = kind;
-    _client_override_set = true;
-}
-void Network::setTelegramProxy(const String &host, uint16_t port, const String &path)
-{
-    _proxy_override = true;
-    _proxy_use = true;
-    _proxy_host = host;
-    _proxy_port = port;
-    _proxy_path = path;
-}
-void Network::disableTelegramProxy()
-{
-    _proxy_override = true;
-    _proxy_use = false;
-    _proxy_host = "";
-    _proxy_port = 0;
-    _proxy_path = "";
-}
 bool Network::begin()
 {
     _last_error = Error::None;
@@ -115,10 +87,6 @@ bool Network::begin()
     _fw_upgrade.registerRoutes();
     _logs.info(F("NET"), F("Start Web server"));
     _web.begin();
-    _logs.info(F("NET"), F("Configure Telegram network"));
-    if (!configureTelegram_(ActiveBoardProfile::TELEGRAM_NET))
-        return false;
-    _logs.info(F("NET"), F("Telegram polling disabled, notifications only"));
     _logs.info(F("NET"), F("Init Stack"));
     beginStack_();
     _started = true;
@@ -138,6 +106,10 @@ void Network::setCloudConfig(const CloudClient::Config &cfg)
 {
     _cloud_cfg = cfg;
     _cloud_cfg_set = _cloud_cfg.host.length() > 0;
+    if (_cloud_cfg.transport == CloudTransportKind::Http)
+        _cloud.setTransport(_cloud_http_transport);
+    else
+        _cloud.useDefaultTransport();
     if (!_cloud_cfg_set)
     {
         _cloud.disconnect();
@@ -158,49 +130,6 @@ void Network::setCloudFirmwareVersion(const String &ver)
 { _cloud.setFirmwareVersion(ver); }
 void Network::setCloudEventIntervalMs(uint32_t ms)
 { _cloud.setAutoEventIntervalMs(ms); }
-bool Network::configureTelegram_(const TelegramNetCfg &cfg)
-{
-    const bool use_proxy = _proxy_override ? _proxy_use : cfg.use_proxy;
-    const char *host = _proxy_override ? _proxy_host.c_str() : cfg.proxy_host;
-    const uint16_t port = _proxy_override ? _proxy_port : cfg.proxy_port;
-    const char *path = _proxy_override ? _proxy_path.c_str() : cfg.proxy_path;
-
-    if (use_proxy)
-    {
-        if (!host || host[0] == '\0')
-        {
-            _last_error = Error::TelegramProxyInvalid;
-            return false;
-        }
-        _tgbot.setProxy(host, port, path);
-    }
-    else
-    {
-        _tgbot.clearProxy();
-    }
-
-    const TelegramNetCfg::ClientKind kind = _client_override_set ? _client_override : cfg.client;
-    switch (kind)
-    {
-    case TelegramNetCfg::ClientKind::WifiSecure:
-#if defined(ESP32)
-        // Reduce TLS RAM footprint for Telegram API calls/uploads.
-        tuneTlsClientBuffers_(_wifi_client);
-#endif
-        _tgbot.setClientSecure(_wifi_client);
-        return true;
-    case TelegramNetCfg::ClientKind::TinyGsm:
-        if (_tgbot_ext_client)
-        {
-            _tgbot.setClient(*_tgbot_ext_client, TelegramClient::ClientKind::TinyGsm, false, nullptr);
-            return true;
-        }
-        _last_error = Error::TelegramClientMissing;
-        return false;
-    default:
-        return true;
-    }
-}
 void Network::beginStack_()
 {
     _stack_role = _stack_cfg ? _stack_cfg->stackRole() : ConfigsManagerIface::StackRole::Master;

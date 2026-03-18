@@ -31,6 +31,10 @@ void CloudHandler::handleCloud(WebInterface &web, AsyncWebServerRequest *request
         page.replace("%CLOUD_FW_LABEL%", String(WebUiRu::CloudPage::kFwVersion) + " ");
         page.replace("%CLOUD_DEVICE_ID_LABEL%", String(WebUiRu::CloudPage::kDeviceId) + " ");
         page.replace("%CLOUD_ENABLE_LABEL%", WebUiRu::CloudPage::kEnableCloud);
+        page.replace("%CLOUD_TRANSPORT_LABEL%", WebUiRu::CloudPage::kTransport);
+        page.replace("%CLOUD_TRANSPORT_WS%", WebUiRu::CloudPage::kTransportWs);
+        page.replace("%CLOUD_TRANSPORT_HTTP%", WebUiRu::CloudPage::kTransportHttp);
+        page.replace("%CLOUD_TRANSPORT_HINT%", WebUiRu::CloudPage::kTransportHint);
         page.replace("%CLOUD_HOST_LABEL%", WebUiRu::CloudPage::kHost);
         page.replace("%CLOUD_PORT_LABEL%", WebUiRu::CloudPage::kPort);
         page.replace("%CLOUD_PATH_LABEL%", WebUiRu::CloudPage::kPath);
@@ -43,6 +47,8 @@ void CloudHandler::handleCloud(WebInterface &web, AsyncWebServerRequest *request
         page.replace("%CLOUD_CONNECTED_CLASS%", connected ? "ok" : "bad");
         page.replace("%CLOUD_CONNECTED_TEXT%", connected ? WebUiRu::CloudPage::kConnected : WebUiRu::CloudPage::kDisconnected);
         page.replace("%CLOUD_ENABLED_CHECKED%", web.cloudEnabled_() ? "checked" : "");
+        page.replace("%CLOUD_TRANSPORT_WS_SELECTED%", web.cloudTransport_() == CloudTransportKind::Http ? "" : "selected");
+        page.replace("%CLOUD_TRANSPORT_HTTP_SELECTED%", web.cloudTransport_() == CloudTransportKind::Http ? "selected" : "");
         page.replace("%CLOUD_HOST%", web.cloudHost_());
         page.replace("%CLOUD_PORT%", web.cloudPort_() ? String(web.cloudPort_()) : String(""));
         page.replace("%CLOUD_PATH%", web.cloudPath_());
@@ -75,6 +81,16 @@ void CloudHandler::handleCloudSave(WebInterface &web, AsyncWebServerRequest *req
         if (enabled != web._configs_manager->cloudEnabled())
         {
             web._configs_manager->setCloudEnabled(enabled);
+            changed = true;
+        }
+
+        String transport = request->hasParam("transport", true) ? request->getParam("transport", true)->value() : String("ws");
+        transport.trim();
+        transport.toLowerCase();
+        const CloudTransportKind transport_kind = (transport == "http") ? CloudTransportKind::Http : CloudTransportKind::WebSocket;
+        if (transport_kind != web._configs_manager->cloudTransport())
+        {
+            web._configs_manager->setCloudTransport(transport_kind);
             changed = true;
         }
 

@@ -26,7 +26,6 @@
 #include "core/cli/cli_console.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/network/stack/stack_cache.hpp"
-#include "core/network/telegram/telegram_bot.hpp"
 #include "core/network/stack/stack_slave_handler.hpp"
 #include "core/network/web/interfaces/web_interface_pages.hpp"
 #include "core/network/web/interfaces/web_interface_handler_fwd.hpp"
@@ -35,8 +34,6 @@
 #include "core/network/web/web_interface_stack_ops.hpp"
 #include "core/rtc.hpp"
 #include "plc/plc_control.hpp"
-#include "core/network/telegram/telegram.hpp"
-#include "core/network/telegram/telegram_menu.hpp"
 #include "utils/logger.hpp"
 #include "utils/configs.hpp"
 #include "utils/users_registry.hpp"
@@ -71,7 +68,7 @@ public:
     ~WebInterface() = default;
 
     WebInterface(AsyncWebServer &server, CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
-                 RTC &rtc, TelegramClient &tgbot, TelegramBot &tgbot_bot, TelegramMenu &tgbot_menu, Logger &logs,
+                 RTC &rtc, Logger &logs,
                  Extender &ext,
                  I2CManager &i2c, OneWireManager &ow, Controllers &controllers, RulesController &rules);
 
@@ -150,7 +147,6 @@ private:
     friend class SepticHandler;
     friend class RingHandler;
     friend class SecurityHandler;
-    friend class TelegramHandler;
     friend class CloudHandler;
     friend class MeteoHandler;
     friend class TankHandler;
@@ -273,6 +269,7 @@ private:
     bool stackSlaveController_() const;
     String stackApiKey_() const;
     bool cloudEnabled_() const;
+    CloudTransportKind cloudTransport_() const;
     String cloudHost_() const;
     uint16_t cloudPort_() const;
     String cloudPath_() const;
@@ -492,9 +489,6 @@ private:
     float boardTemp_() const;
 
 
-    float cpuTemp_() const;
-
-
     String formatTemp_(float temp_c) const;
 
 
@@ -516,7 +510,7 @@ private:
     void notifyRingPress_(bool stack_view, uint32_t node_id);
 
 
-    void sendTelegramNotify_(const String &msg);
+    void sendCloudNotify_(const char *kind, const char *reason, const String &msg);
 
 
     static void appendJsonEscaped_(String &out, const String &value);
@@ -617,9 +611,6 @@ private:
     ConfigsManagerIface *_configs_manager = nullptr;
     PlcControl *_plc = nullptr;
     RTC *_rtc = nullptr;
-    TelegramClient *_tgbot = nullptr;
-    TelegramBot *_tgbot_bot = nullptr;
-    TelegramMenu *_tgbot_menu = nullptr;
     Controllers *_controllers = nullptr;
     RulesController *_rules = nullptr;
     GsmModem *_gsm = nullptr;
@@ -644,7 +635,6 @@ private:
     String _upload_error;
     String _upload_name;
     String _ota_name;
-    String _tgbot_status;
     String _cloud_status;
     String _stack_status;
     String _device_status;

@@ -69,7 +69,6 @@ void UsersHandler::handleUsersSave(WebInterface &web, AsyncWebServerRequest *req
             const String p = String((unsigned)i);
             const String k_enabled = String("u") + p + "_enabled";
             const String k_is_admin = String("u") + p + "_is_admin";
-            const String k_tg_notify = String("u") + p + "_tg_notify";
             const String k_tg_quick_actions = String("u") + p + "_tg_quick_actions";
             const String k_tg_chat_id = String("u") + p + "_tg_chat_id";
             const String k_username = String("u") + p + "_username";
@@ -82,7 +81,6 @@ void UsersHandler::handleUsersSave(WebInterface &web, AsyncWebServerRequest *req
             const String k_rfid = String("u") + p + "_rfid";
             u.enabled = request->hasParam(k_enabled, true);
             u.tg_admin = request->hasParam(k_is_admin, true);
-            u.tg_notify = request->hasParam(k_tg_notify, true);
             u.tg_quick_actions = request->hasParam(k_tg_quick_actions, true);
             u.username = web.paramValue_(request, k_username);
             String web_pass = web.paramValue_(request, k_web_password);
@@ -410,16 +408,6 @@ String UsersHandler::usersCards_(WebInterface &web, bool read_only) {
             out += p;
             out += "_is_admin\"";
             if (u.tg_admin)
-                out += " checked";
-            out += disabled;
-            out += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-
-            out += "<div class=\"form-row\"><label>";
-            out += WebUiRu::Users::kLabelTelegramNotify;
-            out += "</label><label class=\"switch\"><input type=\"checkbox\" name=\"u";
-            out += p;
-            out += "_tg_notify\"";
-            if (u.tg_notify)
                 out += " checked";
             out += disabled;
             out += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";

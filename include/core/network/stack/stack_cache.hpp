@@ -658,6 +658,8 @@ public:
         uint32_t remaining_ms = 0;
         static constexpr size_t kNameLen = 48;
         char name[kNameLen] = {};
+        static constexpr size_t kTankNameLen = 48;
+        char tank_name[kTankNameLen] = {};
     };
     struct StackWateringCache
     {
@@ -807,7 +809,6 @@ public:
         String last_plc_error;
         String last_rtc_error;
         float board_temp = 0.0f;
-        float cpu_temp = 0.0f;
         bool fan_on = false;
         float fan_on_c = 0.0f;
         float fan_hyst_c = 0.0f;
@@ -3091,6 +3092,7 @@ private:
                     dst.paused = item["paused"] | false;
                     dst.remaining_ms = item["remaining_ms"] | 0u;
                     copyStr_(dst.name, sizeof(dst.name), item["name"].as<const char *>());
+                    copyStr_(dst.tank_name, sizeof(dst.tank_name), item["tank_name"].as<const char *>());
                 }
                 watering_cache->has_data = true;
                 watering_cache->last_ok = true;
@@ -3271,7 +3273,6 @@ private:
             {
                 JsonObjectConst data = doc["data"];
                 status_cache->board_temp = data["board_temp"] | 0.0f;
-                status_cache->cpu_temp = data["cpu_temp"] | 0.0f;
                 status_cache->fan_on = data["fan_on"] | false;
                 status_cache->fan_on_c = data["fan_on_c"] | (data["on_c"] | 0.0f);
                 status_cache->fan_hyst_c = data["fan_hyst_c"] | (data["hyst_c"] | 0.0f);

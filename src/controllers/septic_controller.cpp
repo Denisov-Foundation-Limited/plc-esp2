@@ -13,8 +13,8 @@
 
 #include <string.h>
 
-SepticController::SepticController(Gpio &gpio, Logger &logs, TelegramBot &bot, TelegramAllowedUsersProvider &users)
- : _gpio(gpio), _logs(logs), _tgbot(bot), _tgusers(users){
+SepticController::SepticController(Gpio &gpio, Logger &logs)
+ : _gpio(gpio), _logs(logs){
     reset_();
 }
 
@@ -303,6 +303,12 @@ void SepticController::setDetectHandler(SepticController::DetectHandler cb, void
     _detect_ctx = ctx;
 }
 
+void SepticController::setDetectHandlerSecondary(SepticController::DetectHandler cb, void *ctx){
+    auto guard = _lock.guard();
+    _detect_cb_secondary = cb;
+    _detect_ctx_secondary = ctx;
+}
+
 void SepticController::setNotifyEnabled(bool enabled){
     auto guard = _lock.guard();
     _notify_enabled = enabled;
@@ -316,26 +322,11 @@ void SepticController::notifyRemoteLevel(const String &source, uint8_t septic_id
     }
     if (!notify_enabled)
         return;
-    String msg = F("Септик: уровень ");
-    msg += is_alarm ? F("ALARM") : F("WARNING");
-    if (source.length())
-    {
-        msg += F(" [");
-        msg += source;
-        msg += F("]");
-    }
-    if (septic_id > 0)
-    {
-        msg += F(" #");
-        msg += String((unsigned)septic_id);
-    }
-    if (name.length())
-    {
-        msg += F(" (");
-        msg += name;
-        msg += F(")");
-    }
-    sendTgNotify_(msg);
+    (void)source;
+    SepticConfig cfg;
+    cfg.id = septic_id;
+    cfg.name = name;
+    notifyDetectEvent_(cfg, is_alarm);
 }
 
 const SepticController::SepticConfig *SepticController::configByIndex(size_t idx) const{
@@ -472,35 +463,15 @@ void SepticController::logRelayChange_(const SepticController::SepticConfig &cfg
 }
 
 void SepticController::notifyLevel_(const SepticController::SepticConfig &cfg, bool is_alarm){
-    if (!_notify_enabled)
-        return;
-    String msg = F("Септик: уровень ");
-    msg += is_alarm ? F("ALARM") : F("WARNING");
-    if (cfg.name.length())
-    {
-        msg += F(" (");
-        msg += cfg.name;
-        msg += F(")");
-    }
-    sendTgNotify_(msg);
-}
-
-void SepticController::sendTgNotify_(const String &msg){
-    const auto users = _tgusers.allowedUsers();
-    if (users.empty())
-        return;
-    for (size_t i = 0; i < users.size; ++i)
-    {
-        const auto &user = users[i];
-        if (!user.enabled || !user.is_notify || user.chat_id == 0)
-            continue;
-        _tgbot.sendText(user.chat_id, msg);
-    }
+    (void)cfg;
+    (void)is_alarm;
 }
 
 void SepticController::notifyDetectEvent_(const SepticController::SepticConfig &cfg, bool is_alarm){
     if (_detect_cb)
         _detect_cb(_detect_ctx, cfg.id, cfg.name, is_alarm);
+    if (_detect_cb_secondary)
+        _detect_cb_secondary(_detect_ctx_secondary, cfg.id, cfg.name, is_alarm);
 }
 
 bool SepticController::parsePort_(JsonVariantConst v, uint8_t &out){

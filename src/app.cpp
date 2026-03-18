@@ -113,41 +113,35 @@ HardwareContext::HardwareContext(Logger &logs, UartManager &uart)
 CommsContext::CommsContext(Logger &logs, UartManager &uart)
         : wifi(logs),
           sim800l(),
-          gsm(uart, sim800l, logs),
-          telegram_wifi_client(),
-          telegram(logs),
-          telegram_bot(telegram)
+          gsm(uart, sim800l, logs)
 {
 }
 
 ControlContext::ControlContext(CoreContext &core, HardwareContext &hw, CommsContext &comms)
         : users(),
-          telegram_menu(hw.plc, comms.wifi, hw.rtc, comms.telegram_bot, core.configs, core.logs, users),
-          controllers(hw.gpio, hw.ow, hw.eeprom_storage, core.logs, comms.telegram_bot, telegram_menu, comms.gsm,
+          controllers(hw.gpio, hw.ow, hw.eeprom_storage, core.logs, comms.gsm,
                       hw.rtc),
           rules(),
           meteo_history(hw.rtc, controllers.meteo()),
           plc_scan(hw.io),
-          task_binder(comms.wifi, comms.telegram_bot, hw.ext, controllers, meteo_history,
+          task_binder(comms.wifi, hw.ext, controllers, meteo_history,
                       hw.display, hw.plc, plc_scan, core.logs),
           ftest(core.logs, hw.io, hw.ow, hw.ibutton, hw.ds18b20, hw.i2c, hw.rtc, hw.ext, task_binder)
 {
 }
 
 UiContext::UiContext(CoreContext &core, HardwareContext &hw, CommsContext &comms, ControlContext &control)
-        : console(hw.plc, comms.wifi, hw.rtc, control.ftest, hw.i2c, hw.ow, comms.telegram,
-                  control.telegram_menu, core.configs, hw.ext, control.users, control.controllers, nullptr)
+        : console(hw.plc, comms.wifi, hw.rtc, control.ftest, hw.i2c, hw.ow,
+                  core.configs, hw.ext, control.users, control.controllers, nullptr)
 {
 }
 
 NetworkContext::NetworkContext(CoreContext &core, HardwareContext &hw, CommsContext &comms, ControlContext &control, UiContext &ui)
         : web(ActiveBoardProfile::WEB_PORT),
-          fw_upgrade(web, ui.console, comms.wifi, core.configs, hw.plc, hw.rtc, comms.telegram,
-                     comms.telegram_bot, control.telegram_menu, core.logs, hw.ext, hw.i2c, hw.ow,
+          fw_upgrade(web, ui.console, comms.wifi, core.configs, hw.plc, hw.rtc, core.logs, hw.ext, hw.i2c, hw.ow,
                      control.controllers, control.rules),
-          network(core.logs, comms.wifi, comms.gsm, comms.telegram, comms.telegram_bot, control.telegram_menu,
-                  fw_upgrade, web, comms.telegram_wifi_client, control.controllers, hw.plc, hw.rtc),
-          stack_slave(hw.io, hw.ds18b20, hw.ow, hw.i2c, hw.plc, hw.rtc, comms.telegram, core.logs, hw.ext,
+          network(core.logs, comms.wifi, comms.gsm, fw_upgrade, web, control.controllers, hw.plc, hw.rtc),
+          stack_slave(hw.io, hw.ds18b20, hw.ow, hw.i2c, hw.plc, hw.rtc, core.logs, hw.ext,
                       control.controllers.sockets(), control.controllers.meteo(), control.controllers.thermo(),
                       control.controllers.septic(), control.controllers.security(), control.controllers.tanks(),
                       control.controllers.watering(), control.controllers.ring(),
@@ -157,8 +151,8 @@ NetworkContext::NetworkContext(CoreContext &core, HardwareContext &hw, CommsCont
 
 ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContext &comms,
                   ControlContext &control, UiContext &ui, NetworkContext &network)
-        : configs_manager(core.configs, comms.wifi, comms.telegram, network.network, ui.console,
-                          control.telegram_menu, hw.plc, control.controllers, control.rules, comms.gsm, control.users)
+        : configs_manager(core.configs, comms.wifi, network.network, ui.console,
+                          hw.plc, control.controllers, control.rules, comms.gsm, control.users)
 {
 }
 
@@ -177,21 +171,6 @@ ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContex
         ui.console.setStackSlave(&net.stack_slave);
         ui.console.setConfigsManager(cfg.configs_manager);
 
-    control.telegram_menu.setConfigsManager(cfg.configs_manager);
-    control.telegram_menu.setStackMaster(net.network.stackMaster());
-    control.telegram_menu.setStackCache(stack.stackCache());
-    control.telegram_menu.setSockets(control.controllers.sockets());
-    control.telegram_menu.setMeteo(control.controllers.meteo());
-    control.telegram_menu.setThermo(control.controllers.thermo());
-    control.telegram_menu.setTanks(control.controllers.tanks());
-    control.telegram_menu.setSeptic(control.controllers.septic());
-    control.telegram_menu.setSecurity(control.controllers.security());
-    control.telegram_menu.setAvr(control.controllers.avr());
-    control.telegram_menu.setLeak(control.controllers.leak());
-    control.telegram_menu.setRing(control.controllers.ring());
-    control.telegram_menu.setWatering(control.controllers.watering());
-    control.telegram_menu.setRules(control.rules);
-
     net.fw_upgrade.setStackCache(stack.stackCache());
     net.fw_upgrade.setConfigsManager(cfg.configs_manager);
     net.fw_upgrade.setStackMaster(net.network.stackMaster());
@@ -200,6 +179,9 @@ ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContex
     net.fw_upgrade.setCloudClient(net.network.cloudClient());
     net.network.cloudClient().setStackCache(&stack.stackCache());
     net.network.cloudClient().setUsersRegistry(&control.users);
+    net.network.cloudClient().setRulesController(&control.rules);
+    net.network.cloudClient().bindControllerCallbacks();
+    net.network.cloudClient().bindRuleCallbacks();
     net.fw_upgrade.setUsersRegistry(control.users);
     net.fw_upgrade.setRules(control.rules);
 
@@ -441,12 +423,6 @@ bool App::begin()
         {
         case Network::Error::Wifi:
             core.logs.error(F("APP"), F("WIFI Init failed"));
-            break;
-        case Network::Error::TelegramClientMissing:
-            core.logs.error(F("APP"), F("Telegram client missing"));
-            break;
-        case Network::Error::TelegramProxyInvalid:
-            core.logs.error(F("APP"), F("Telegram proxy invalid"));
             break;
         case Network::Error::WebInterfaceFs:
             core.logs.error(F("APP"), F("WebInterface FS mount failed"));

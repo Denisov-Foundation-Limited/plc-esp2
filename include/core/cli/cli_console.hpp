@@ -16,14 +16,11 @@
 
 #include "core/rtc.hpp"
 #include "core/network/wifi_manager.hpp"
-#include "core/network/telegram/telegram.hpp"
-#include "core/network/telegram/telegram_menu.hpp"
 #include "ftest.hpp"
 #include "plc/plc_control.hpp"
 #include "core/cli/cli_config.hpp"
 #include "core/cli/cli_enable.hpp"
 #include "core/cli/modules/cli_stack.hpp"
-#include "core/cli/modules/cli_tgbot.hpp"
 #include "core/cli/modules/cli_socket.hpp"
 #include "core/cli/modules/cli_meteo.hpp"
 #include "core/cli/modules/cli_thermo.hpp"
@@ -52,7 +49,6 @@ public:
     using CLIEnable = CLIEnableT<CliConsole>;
     using CLIConfig = CLIConfigT<CliConsole>;
     using CLIWifi = CLIWifiT<CliConsole>;
-    using CLITgbot = CLITgbotT<CliConsole>;
     using CLIStack = CLIStackT<CliConsole>;
     using CLISocket = CLISocketT<CliConsole>;
     using CLIMeteo = CLIMeteoT<CliConsole>;
@@ -68,7 +64,7 @@ public:
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
-               TelegramClient &tgbot, TelegramMenu &tgbot_menu, Configs &configs, Extender &ext,
+               Configs &configs, Extender &ext,
                UsersRegistry &users,
                Controllers &controllers, StackMaster *stack_master);
 
@@ -94,7 +90,6 @@ public:
     void enterEnable();
     void enterConfig();
     void enterConfigWifi();
-    void enterConfigTgbot();
     void enterConfigTime();
     void enterConfigSocket();
     void enterConfigMeteo();
@@ -122,8 +117,6 @@ public:
     void cmdShowWifi_();
 
     void cmdShowTime_();
-
-    void cmdShowTelegram_();
 
     void cmdShowCloud_();
 
@@ -172,7 +165,6 @@ private:
         Enable,
         Config,
         ConfigWifi,
-        ConfigTgbot,
         ConfigTime,
         ConfigSocket,
         ConfigMeteo,
@@ -275,8 +267,6 @@ private:
     Ftest &_ftest;
     I2CManager &_i2c;
     OneWireManager &_ow;
-    TelegramClient &_tgbot;
-    TelegramMenu &_tgbot_menu;
     Configs &_configs;
     Extender &_ext;
     UsersRegistry &_users;
@@ -302,7 +292,6 @@ private:
     String _history_saved;
 
     CLIWifi _wifi_cli;
-    CLITgbot _tgbot_cli;
     CLIStack _stack_cli;
     CLISocket _socket_cli;
     CLIMeteo _meteo_cli;
@@ -317,7 +306,6 @@ private:
     CLICloud _cloud_cli;
     CLIEnable _enable;
     CLIConfig _config;
-    uint32_t _tgbot_last_update_id = 0;
 
     void printExtList_();
 
@@ -343,7 +331,7 @@ private:
     void printPlcHeader_();
 
     void printPlcRow_(const String &unit, const String &name, bool fan,
-                      float board_c, float cpu_c, float on_c, float hyst_c,
+                      float board_c, float on_c, float hyst_c,
                       const float *rtc_c);
 
     void printRtcHeader_();
@@ -397,8 +385,6 @@ private:
     template <typename>
     friend class CLIWifiT;
     template <typename>
-    friend class CLITgbotT;
-    template <typename>
     friend class CLIStackT;
     template <typename>
     friend class CLISocketT;
@@ -426,4 +412,3 @@ private:
 public:
     void setConfigsManager(ConfigsManagerIface &mgr);
 };
-

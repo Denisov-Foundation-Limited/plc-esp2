@@ -149,8 +149,8 @@ void RulesHandler::handleRulesSave(WebInterface &web, AsyncWebServerRequest *req
         kind.toLowerCase();
         if (kind == "pause" || kind == "delay")
             a->kind = RulesController::ActionKind::Pause;
-        else if (kind == "telegram" || kind == "tg")
-            a->kind = RulesController::ActionKind::Telegram;
+        else if (kind == "notify" || kind == "telegram" || kind == "tg")
+            a->kind = RulesController::ActionKind::Notify;
         else
             a->kind = RulesController::ActionKind::Controller;
         a->delay_ms = (uint32_t)web.paramValue_(request, "delay_ms").toInt();
@@ -1440,8 +1440,8 @@ String RulesHandler::actionsGridHtml_(WebInterface &web, uint8_t rule_id, uint32
             out += WebUiRu::Rules::kActionType;
             if (a.kind == RulesController::ActionKind::Pause)
                 out += WebUiRu::Rules::kPause;
-            else if (a.kind == RulesController::ActionKind::Telegram)
-                out += "telegram";
+            else if (a.kind == RulesController::ActionKind::Notify)
+                out += "notify";
             else
                 out += "controller";
             out += "</span></div>";
@@ -1494,10 +1494,10 @@ String RulesHandler::actionEditHtml_(WebInterface &web, uint8_t rule_id, uint8_t
         if (a->kind == RulesController::ActionKind::Pause)
             out += " selected";
         out += ">pause</option>";
-        out += "<option value=\"telegram\"";
-        if (a->kind == RulesController::ActionKind::Telegram)
+        out += "<option value=\"notify\"";
+        if (a->kind == RulesController::ActionKind::Notify)
             out += " selected";
-        out += ">telegram</option></select></div>";
+        out += ">notify</option></select></div>";
         out += "<div><label>";
         out += WebUiRu::Rules::kLabelDelayMs;
         out += "</label><input type=\"number\" name=\"delay_ms\" min=\"0\" value=\"";

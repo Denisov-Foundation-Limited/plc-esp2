@@ -168,6 +168,15 @@ void StackRuntime::onMeteoAlarm_(void *ctx, uint32_t node_id, uint8_t sensor_id,
     const int unit_idx = self->stackNodeIndex_(node_id);
     if (unit_idx >= 0 && unit_idx < 32)
         self->hw.plc.setAlarmUnit(PlcControl::AlarmModule::Meteo, (uint8_t)unit_idx, alarm);
+    DynamicJsonDocument doc(192);
+    doc["sensor_id"] = sensor_id;
+    doc["alarm"] = alarm;
+    const String unit_name = self->stackNodeLabel_(node_id);
+    if (unit_name.length())
+        doc["unit_name"] = unit_name;
+    String json;
+    serializeJson(doc, json);
+    self->publishCloudStackEvent_(node_id, "meteo.sensor", alarm ? "alarm" : "restore", json);
 }
 
 void StackRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
@@ -199,6 +208,16 @@ void StackRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
                              label.c_str(), (unsigned long)node_id, ip_c, (unsigned)fw_ver);
         self->removeStackBootstrapSync_(node_id);
     }
+    DynamicJsonDocument doc(192);
+    doc["online"] = online;
+    if (label.length())
+        doc["unit_name"] = label;
+    if (ip.length())
+        doc["ip"] = ip;
+    doc["fw"] = fw_ver;
+    String json;
+    serializeJson(doc, json);
+    self->publishCloudStackEvent_(node_id, "stack.node", online ? "online" : "offline", json);
 }
 
 void StackRuntime::onSepticDetect_(void *ctx, uint8_t septic_id, const String &name, bool is_alarm){
@@ -426,43 +445,50 @@ void StackRuntime::notifyRingHold_(){
     {
         const String tg_msg = F("Звонок включен по кнопке");
         core.logs.info(F("RING"), F("Ring enabled by button"));
-        sendTelegramNotify_(tg_msg);
+        sendCloudNotify_("ring.hold", "button", tg_msg);
         return;
     }
     if (src == RingController::Source::Web)
     {
         const String tg_msg = F("Звонок включен из веб-интерфейса");
         core.logs.info(F("RING"), F("Ring enabled from web"));
-        sendTelegramNotify_(tg_msg);
+        sendCloudNotify_("ring.hold", "web", tg_msg);
         return;
     }
     if (src == RingController::Source::Cli)
     {
         const String tg_msg = F("Звонок включен из CLI");
         core.logs.info(F("RING"), F("Ring enabled from CLI"));
-        sendTelegramNotify_(tg_msg);
+        sendCloudNotify_("ring.hold", "cli", tg_msg);
         return;
     }
     if (src == RingController::Source::Stack)
     {
         const String tg_msg = F("Звонок включен из стека");
         core.logs.info(F("RING"), F("Ring enabled from stack"));
-        sendTelegramNotify_(tg_msg);
+        sendCloudNotify_("ring.hold", "stack", tg_msg);
         return;
     }
 }
 
-void StackRuntime::sendTelegramNotify_(const String &msg){
-    const auto users = control.telegram_menu.allowedUsers();
-    if (users.empty())
+void StackRuntime::sendCloudNotify_(const char *kind, const char *reason, const String &msg){
+    CloudClient &cloud = net.network.cloudClient();
+    if (!kind || !kind[0] || !reason || !reason[0])
         return;
-    for (size_t i = 0; i < users.size; ++i)
-    {
-        const auto &user = users[i];
-        if (!user.enabled || !user.is_notify || user.chat_id == 0)
-            continue;
-        comms.telegram_bot.sendText(user.chat_id, msg);
-    }
+    DynamicJsonDocument doc(256);
+    if (msg.length())
+        doc["message"] = msg;
+    String json;
+    serializeJson(doc, json);
+    cloud.publishEvent(kind, reason, json);
+}
+
+void StackRuntime::publishCloudStackEvent_(uint32_t node_id, const char *kind, const char *reason,
+                                           const String &data_json){
+    if (node_id == 0 || !kind || !kind[0] || !reason || !reason[0])
+        return;
+    CloudClient &cloud = net.network.cloudClient();
+    cloud.publishScopedEvent("stack", node_id, kind, reason, data_json);
 }
 
 void StackRuntime::handleStackFrame_(uint32_t node_id, const StackFrame &frame){
@@ -507,6 +533,18 @@ void StackRuntime::handleStackFrame_(uint32_t node_id, const StackFrame &frame){
             control.controllers.security().setAlarmState(true);
             broadcastSecurityAlarm_(true);
             control.controllers.security().notifyRemoteDetect(source, sensor_id, name, silent);
+            DynamicJsonDocument event_doc(224);
+            event_doc["sensor_id"] = sensor_id;
+            if (name.length())
+                event_doc["name"] = name;
+            event_doc["silent"] = silent;
+            event_doc["alarm_on"] = true;
+            if (source.length())
+                event_doc["unit_name"] = source;
+            String event_json;
+            serializeJson(event_doc, event_json);
+            publishCloudStackEvent_(node_id, "security.detect",
+                                    silent ? "silent" : "detect", event_json);
             return;
         }
         if (action == "rfid")
@@ -603,6 +641,16 @@ void StackRuntime::handleSepticFrame_(uint32_t node_id, const String &action, Js
     if (unit_idx >= 0 && unit_idx < 32)
         hw.plc.setAlarmUnit(PlcControl::AlarmModule::Septic, (uint8_t)unit_idx, is_alarm);
     control.controllers.septic().notifyRemoteLevel(source, septic_id, name, is_alarm);
+    DynamicJsonDocument event_doc(224);
+    event_doc["id"] = septic_id;
+    if (name.length())
+        event_doc["name"] = name;
+    event_doc["alarm"] = is_alarm;
+    if (source.length())
+        event_doc["unit_name"] = source;
+    String event_json;
+    serializeJson(event_doc, event_json);
+    publishCloudStackEvent_(node_id, "septic.level", is_alarm ? "alarm" : "warning", event_json);
 }
 
 void StackRuntime::handleTankFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
@@ -625,6 +673,16 @@ void StackRuntime::handleTankFrame_(uint32_t node_id, const String &action, Json
     if (unit_idx >= 0 && unit_idx < 32)
         hw.plc.setAlarmUnit(PlcControl::AlarmModule::Tanks, (uint8_t)unit_idx, true);
     control.controllers.tanks().notifyRemoteEmpty(source, tank_id, name);
+    DynamicJsonDocument event_doc(192);
+    event_doc["id"] = tank_id;
+    if (name.length())
+        event_doc["name"] = name;
+    event_doc["empty"] = true;
+    if (source.length())
+        event_doc["unit_name"] = source;
+    String event_json;
+    serializeJson(event_doc, event_json);
+    publishCloudStackEvent_(node_id, "tanks.level", "empty", event_json);
 }
 
 void StackRuntime::handleWateringFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
@@ -661,6 +719,21 @@ void StackRuntime::handleWateringFrame_(uint32_t node_id, const String &action, 
                    (unsigned)tank_id,
                    (unsigned long)remaining_ms,
                    (unsigned)resume_level);
+    DynamicJsonDocument event_doc(288);
+    event_doc["id"] = rule_id;
+    if (name.length())
+        event_doc["name"] = name;
+    event_doc["port"] = port;
+    event_doc["tank_id"] = tank_id;
+    event_doc["remaining_ms"] = remaining_ms;
+    event_doc["resume_level"] = resume_level;
+    if (reason.length())
+        event_doc["reason_detail"] = reason;
+    if (source.length())
+        event_doc["unit_name"] = source;
+    String event_json;
+    serializeJson(event_doc, event_json);
+    publishCloudStackEvent_(node_id, "watering.rule", event.c_str(), event_json);
 }
 
 void StackRuntime::updateSepticNotifyMode_(){

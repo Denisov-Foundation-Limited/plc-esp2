@@ -97,7 +97,21 @@ bool StackNode::send(uint8_t type, const uint8_t *payload, size_t len)
     const size_t frame_len = StackCodec::encode(type, payload, len, _tx_frame_buf, sizeof(_tx_frame_buf));
     if (frame_len == 0)
         return false;
-    _client.write((const char *)_tx_frame_buf, frame_len);
+    if (!_client.canSend())
+    {
+        if (_log)
+            _log->warn(F("STACK"), F("Unit tx busy: type: %u len: %u"),
+                       (unsigned)type, (unsigned)frame_len);
+        return false;
+    }
+    const size_t written = _client.write((const char *)_tx_frame_buf, frame_len);
+    if (written != frame_len)
+    {
+        if (_log)
+            _log->warn(F("STACK"), F("Unit tx short write: type: %u wr: %u len: %u"),
+                       (unsigned)type, (unsigned)written, (unsigned)frame_len);
+        return false;
+    }
     return true;
 }
 

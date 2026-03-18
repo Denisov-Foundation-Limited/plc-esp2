@@ -67,7 +67,6 @@ public:
         String tg_username;
         int64_t tg_chat_id = 0;
         bool tg_admin = false;
-        bool tg_notify = false;
         bool tg_quick_actions = true;
         String gsm_phone;
         bool gsm_call = false;

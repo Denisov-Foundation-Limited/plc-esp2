@@ -124,7 +124,6 @@ const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
             <tr><td>%INDEX_LABEL_TIME%</td><td><strong id="status-rtc-time">%RTC_TIME%</strong></td></tr>
             <tr><td>%INDEX_LABEL_RTC_TEMP%</td><td><strong id="status-rtc-temp">%RTC_TEMP%</strong></td></tr>
             <tr><td>%INDEX_LABEL_BOARD_TEMP%</td><td><strong id="status-board-temp">%BOARD_TEMP%</strong></td></tr>
-            <tr><td>CPU</td><td><strong id="status-cpu-temp">%CPU_TEMP%</strong></td></tr>
             <tr><td>%INDEX_LABEL_FAN%</td><td id="status-fan">%FAN_STATUS_ICON%</td></tr>
           </tbody>
         </table>
@@ -167,12 +166,11 @@ const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
       rtc_time: null,
       rtc_temp: null,
       board_temp: null,
-      cpu_temp: null,
       fan_html: null
     };
     function rememberIndexState(st) {
       if (!st || typeof st !== 'object') return;
-      ['device_name', 'rtc_date', 'rtc_time', 'rtc_temp', 'board_temp', 'cpu_temp', 'fan_html'].forEach((key) => {
+      ['device_name', 'rtc_date', 'rtc_time', 'rtc_temp', 'board_temp', 'fan_html'].forEach((key) => {
         const val = st[key];
         if (typeof val !== 'string') return;
         if (!val.length || val === '...' || val === 'n/a') return;
@@ -209,7 +207,6 @@ const char kWebInterfaceIndexHtml[] PROGMEM = R"HTML(
         setText('status-rtc-time', indexStateCache.rtc_time || st.rtc_time || 'n/a');
         setText('status-rtc-temp', indexStateCache.rtc_temp || st.rtc_temp || 'n/a');
         setText('status-board-temp', indexStateCache.board_temp || st.board_temp || 'n/a');
-        setText('status-cpu-temp', indexStateCache.cpu_temp || st.cpu_temp || 'n/a');
         const fan = document.getElementById('status-fan');
         const fanHtml = indexStateCache.fan_html || st.fan_html || '';
         if (fan && typeof fanHtml === 'string' && fanHtml.length && fanHtml !== '...') fan.innerHTML = fanHtml;

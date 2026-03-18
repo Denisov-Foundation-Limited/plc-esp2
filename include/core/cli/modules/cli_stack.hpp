@@ -569,7 +569,6 @@ private:
         String device_name;
         bool fan_on = false;
         float board_temp = 0.0f;
-        float cpu_temp = 0.0f;
         float on_c = 0.0f;
         float hyst_c = 0.0f;
         float rtc_temp = 0.0f;
@@ -1688,7 +1687,6 @@ private:
             }
             _plc_pending[idx].fan_on = doc["data"]["fan_on"] | false;
             _plc_pending[idx].board_temp = doc["data"]["board_temp"] | 0.0f;
-            _plc_pending[idx].cpu_temp = doc["data"]["cpu_temp"] | 0.0f;
             _plc_pending[idx].on_c = doc["data"]["on_c"] | 0.0f;
             _plc_pending[idx].hyst_c = doc["data"]["hyst_c"] | 0.0f;
             _plc_pending[idx].got_plc = true;
@@ -1724,7 +1722,7 @@ private:
         row.done = true;
         if (row.plc_ok && row.rtc_ok)
             _c.printPlcRow_(stackNodeLabel_(row.node_id), row.device_name, row.fan_on,
-                            row.board_temp, row.cpu_temp, row.on_c, row.hyst_c,
+                            row.board_temp, row.on_c, row.hyst_c,
                             &row.rtc_temp);
         finishStackPlcRow_();
     }

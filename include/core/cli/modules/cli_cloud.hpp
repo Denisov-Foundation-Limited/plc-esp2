@@ -27,6 +27,7 @@ public:
     void printHelpContextLines() const
     {
         _c._io->println(F("    enable on|off           - enable/disable Cloud"));
+        _c._io->println(F("    transport ws|http       - set transport"));
         _c._io->println(F("    host <value>            - set host"));
         _c._io->println(F("    port <num>              - set port"));
         _c._io->println(F("    path <value>            - set path"));
@@ -90,6 +91,26 @@ public:
             String v = cmd.substring(5);
             v.trim();
             _c._configs_manager->setCloudHost(v);
+            _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return true;
+        }
+
+        if (lower.startsWith("transport "))
+        {
+            String v = cmd.substring(10);
+            v.trim();
+            v.toLowerCase();
+            if (v == "ws" || v == "websocket")
+                _c._configs_manager->setCloudTransport(CloudTransportKind::WebSocket);
+            else if (v == "http")
+                _c._configs_manager->setCloudTransport(CloudTransportKind::Http);
+            else
+            {
+                _c._io->println(F("Invalid transport value"));
+                _c.printPrompt_();
+                return true;
+            }
             _c._io->println(F("OK"));
             _c.printPrompt_();
             return true;

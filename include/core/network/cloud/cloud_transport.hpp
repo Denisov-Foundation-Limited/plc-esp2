@@ -13,6 +13,12 @@
 
 #include <Arduino.h>
 
+enum class CloudTransportKind : uint8_t
+{
+    WebSocket = 0,
+    Http = 1
+};
+
 class CloudTransport
 {
 public:
@@ -33,6 +39,7 @@ public:
         String path = "/";
         bool use_ssl = false;
         uint32_t reconnect_ms = 2000;
+        CloudTransportKind transport = CloudTransportKind::WebSocket;
     };
 
     virtual ~CloudTransport() = default;
@@ -46,4 +53,3 @@ public:
     virtual bool isConnected() const = 0;
     virtual bool sendText(const String &text) = 0;
 };
-

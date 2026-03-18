@@ -29,7 +29,6 @@ private:
         String rtc_time;
         String rtc_temp;
         String board_temp;
-        String cpu_temp;
         String fan_html;
     };
 

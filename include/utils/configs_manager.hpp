@@ -17,8 +17,6 @@
 
 #include "core/cli/cli_console.hpp"
 #include "core/network/network.hpp"
-#include "core/network/telegram/telegram.hpp"
-#include "core/network/telegram/telegram_menu.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/network/gsm_modem.hpp"
 #include "controllers/controllers.hpp"
@@ -36,18 +34,15 @@ public:
     static constexpr size_t kDisplaySlotCount = 8;
     static constexpr size_t kGroupCount = 16;
 
-    ConfigsManager(Configs &configs, WifiManager &wifi, TelegramClient &telegram,
-                   Network &network, CliConsole &console, TelegramMenu &telegram_menu, PlcControl &plc,
-                   Controllers &controllers, RulesController &rules, GsmModem &gsm, UsersRegistry &users);StackRole stackRole() const override;String stackMasterHost() const override;String stackApiKey() const override;bool stackFallbackEnabled() const override;String stackFallbackHost() const override;bool stackSlaveController() const override;bool cloudEnabled() const override;String cloudHost() const override;uint16_t cloudPort() const override;String cloudPath() const override;bool cloudUseSsl() const override;uint32_t cloudReconnectMs() const override;uint32_t cloudEventIntervalMs() const override;String cloudApiKey() const override;String cloudFirmwareVersion() const override;bool eepromSaveEnabled() const override;bool eepromLoadEnabled() const override;size_t groupCount() const override;bool groupByIndex(size_t idx, GroupConfig &out) const override;bool setGroup(uint8_t id, const String &name, uint16_t sort) override;bool removeGroup(uint8_t id) override;uint8_t allocateGroupId() const override;size_t displaySlotCount() const override;bool displaySlot(size_t idx, DisplaySlotConfig &out) const override;void setStackRole(StackRole role) override;void setStackMasterHost(const String &host) override;void setStackApiKey(const String &key) override;void setStackFallbackEnabled(bool enabled) override;void setStackFallbackHost(const String &host) override;void setStackSlaveController(bool controller) override;void setCloudEnabled(bool enabled) override;void setCloudHost(const String &host) override;void setCloudPort(uint16_t port) override;void setCloudPath(const String &path) override;void setCloudUseSsl(bool use_ssl) override;void setCloudReconnectMs(uint32_t ms) override;void setCloudEventIntervalMs(uint32_t ms) override;void setCloudApiKey(const String &key) override;void setCloudFirmwareVersion(const String &ver) override;void setEepromSaveEnabled(bool enabled) override;void setEepromLoadEnabled(bool enabled) override;void setDisplaySlot(size_t idx, const DisplaySlotConfig &slot) override;bool loadConfigs();bool save() override;bool save(const JsonDocument &doc) override;private:
+    ConfigsManager(Configs &configs, WifiManager &wifi, Network &network, CliConsole &console, PlcControl &plc,
+                   Controllers &controllers, RulesController &rules, GsmModem &gsm, UsersRegistry &users);StackRole stackRole() const override;String stackMasterHost() const override;String stackApiKey() const override;bool stackFallbackEnabled() const override;String stackFallbackHost() const override;bool stackSlaveController() const override;bool cloudEnabled() const override;CloudTransportKind cloudTransport() const override;String cloudHost() const override;uint16_t cloudPort() const override;String cloudPath() const override;bool cloudUseSsl() const override;uint32_t cloudReconnectMs() const override;uint32_t cloudEventIntervalMs() const override;String cloudApiKey() const override;String cloudFirmwareVersion() const override;bool eepromSaveEnabled() const override;bool eepromLoadEnabled() const override;size_t groupCount() const override;bool groupByIndex(size_t idx, GroupConfig &out) const override;bool setGroup(uint8_t id, const String &name, uint16_t sort) override;bool removeGroup(uint8_t id) override;uint8_t allocateGroupId() const override;size_t displaySlotCount() const override;bool displaySlot(size_t idx, DisplaySlotConfig &out) const override;void setStackRole(StackRole role) override;void setStackMasterHost(const String &host) override;void setStackApiKey(const String &key) override;void setStackFallbackEnabled(bool enabled) override;void setStackFallbackHost(const String &host) override;void setStackSlaveController(bool controller) override;void setCloudEnabled(bool enabled) override;void setCloudTransport(CloudTransportKind kind) override;void setCloudHost(const String &host) override;void setCloudPort(uint16_t port) override;void setCloudPath(const String &path) override;void setCloudUseSsl(bool use_ssl) override;void setCloudReconnectMs(uint32_t ms) override;void setCloudEventIntervalMs(uint32_t ms) override;void setCloudApiKey(const String &key) override;void setCloudFirmwareVersion(const String &ver) override;void setEepromSaveEnabled(bool enabled) override;void setEepromLoadEnabled(bool enabled) override;void setDisplaySlot(size_t idx, const DisplaySlotConfig &slot) override;bool loadConfigs();bool save() override;bool save(const JsonDocument &doc) override;private:
     static constexpr const char *kUsersPath = "/users.json";
     static constexpr const char *kRulesPath = "/rules.json";
 
     bool hasAnyWebLoginUser_() const;void ensureDefaultUsers_();void ensureDefaultRules_();bool loadUsersFromFs_();bool saveUsersToFs_();bool loadRulesFromFs_();bool saveRulesToFs_();void applyConfig_(const JsonDocument &doc);void clearGroupRefs_(uint8_t group_id);static String sanitizeUtf8_(const String &in);static bool isValidUtf8_(const String &in);static void appendUtf8_(String &out, uint16_t code);static String cp1251ToUtf8_(const String &in);Configs &_configs;
     WifiManager &_wifi;
-    TelegramClient &_telegram;
     Network &_network;
     CliConsole &_console;
-    TelegramMenu &_telegram_menu;
     PlcControl &_plc;
     Controllers &_controllers;
     RulesController &_rules;
@@ -59,6 +54,7 @@ public:
     bool _stack_fallback_enabled = false;
     String _stack_fallback_host;
     bool _stack_slave_controller = true;
+    CloudTransportKind _cloud_transport = CloudTransportKind::WebSocket;
     String _cloud_host;
     uint16_t _cloud_port = 0;
     String _cloud_path = "/";

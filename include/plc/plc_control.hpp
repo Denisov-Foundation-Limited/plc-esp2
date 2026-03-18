@@ -51,7 +51,6 @@ public:
     void task();
 
     float boardTemp() const;
-    float cpuTemp() const;
     bool fanStatus() const;
     const String &deviceName() const;
     void setDeviceName(const String &name);
@@ -96,7 +95,6 @@ private:
     }
 
     void setFans_(bool on);
-    static float readCpuTemp_();
     void setAlarmModule_(uint8_t module, bool has_alarm);
     void setAlarmDetail_(AlarmModule module, uint8_t bit_index, bool has_alarm);
     void ensureAlarmLed_();
@@ -113,10 +111,8 @@ private:
     float _fan_on_c = 0.0f;
     float _fan_hyst_c = 0.0f;
     float _last_temp_c = 0.0f;
-    float _last_cpu_temp_c = 0.0f;
     float _last_rtc_temp_c = 0.0f;
     bool _temp_valid = false;
-    bool _cpu_temp_valid = false;
     bool _rtc_temp_valid = false;
     String _device_name;
     uint32_t _sample_interval_ms = 1000;

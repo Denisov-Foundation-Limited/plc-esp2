@@ -25,7 +25,7 @@ public:
     {
         Controller = 0,
         Pause = 1,
-        Telegram = 2
+        Notify = 2
     };
 
     struct RuleAction
@@ -55,6 +55,8 @@ public:
         std::array<RuleAction, kActionCount> actions = {};
     };
 
+    using TriggerHandler = void (*)(void *ctx, const Rule &rule);
+
     RulesController();
 
     ~RulesController();
@@ -80,6 +82,8 @@ public:
 
     void serialize(JsonArray out) const;
 
+    void setTriggerHandler(TriggerHandler cb, void *ctx);
+
     bool triggerRule(uint8_t id);
 
     uint8_t lastTriggeredRuleId() const;
@@ -94,4 +98,6 @@ private:
     bool _dirty = false;
     uint8_t _last_triggered_rule_id = 0;
     uint32_t _last_triggered_ms = 0;
+    TriggerHandler _trigger_handler = nullptr;
+    void *_trigger_ctx = nullptr;
 };

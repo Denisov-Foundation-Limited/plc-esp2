@@ -47,6 +47,8 @@ public:
 
     using LightConfig = SocketConfig;
     using LightState = SocketState;
+    using EventHandler = void (*)(void *ctx, bool lights, uint8_t id, const String &name,
+                                  bool state_on, const char *source);
 
     SocketController(Gpio &gpio, Logger &logs);
     void applyConfig(JsonArrayConst sockets, bool legacy_lights = false);
@@ -98,6 +100,7 @@ public:
     void setLightsEnabled(bool enabled);
     bool takeLightsDirty();
     uint32_t lightChangeSeq(uint32_t timeout_ms = 0xFFFFFFFFu) const;
+    void setEventHandler(EventHandler cb, void *ctx);
     LockGuard lockGuard(uint32_t timeout_ms = 0xFFFFFFFFu) const { return _lock.guard(timeout_ms); }
 private:
     struct PendingAction
@@ -123,10 +126,13 @@ private:
     PendingAction _pending_actions[kPendingActionCount];
     size_t _pending_action_count = 0;
     Logger &_logs;
+    EventHandler _event_cb = nullptr;
+    void *_event_ctx = nullptr;
     mutable RtosRecursiveLock _lock;
 
     bool dequeueRelayAction_(PendingAction &out, uint32_t timeout_ms = 0xFFFFFFFFu);
     void resetSockets_();void resetLights_();bool indexById_(uint8_t id, size_t &out) const;bool lightIndexById_(uint8_t id, size_t &out) const;static bool parsePort_(JsonVariantConst v, uint8_t &out);bool setupButton_(const SocketConfig &cfg, SocketState &st);bool setupRelay_(const SocketConfig &cfg, SocketState &st);bool syncButtonState_(const SocketConfig &cfg, SocketState &st);bool writeRelay_(const SocketConfig &cfg, bool on, uint32_t timeout_ms = 0xFFFFFFFFu);static constexpr bool kButtonInvert = true;
+    void notifyEvent_(bool lights, uint8_t id, const String &name, bool state_on, const char *source);
     static constexpr bool kRelayInvert = false;
     static constexpr bool kButtonPullup = true;
     static constexpr uint32_t kButtonCooldownMs = 500;

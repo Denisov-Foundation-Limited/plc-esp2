@@ -32,7 +32,7 @@ const char kText7[] = " | <a href=\"/wifi\">Сеть</a>";
 const char kText8[] = " | <a href=\"/manage\">Прошивка и файлы</a> | <a href=\"/ports\">Порты</a> | <a href=\"/buses\">Шины</a>";
 const char kText9[] = " | <a href=\"/stack\">Стек</a> | <a href=\"/users\">Пользователи</a> | <a href=\"/display\">Дисплей</a>";
 const char kText10[] = " | <a href=\"/rules\">Правила</a>";
-const char kTelegram[] = " | <a href=\"/telegram\">Telegram</a> | <a href=\"/cloud\">Облако</a>";
+const char kTelegram[] = " | <a href=\"/cloud\">Облако</a>";
 const char kLogs[] = " | <a href=\"/admin\">Система</a> | <a href=\"/logs\">Logs</a>";
 } // namespace Controllers
 
@@ -592,6 +592,10 @@ const char kDisconnected[] = "Отключен";
 const char kFwVersion[] = "Версия FW:";
 const char kDeviceId[] = "ID устройства:";
 const char kEnableCloud[] = "Включить облако";
+const char kTransport[] = "Транспорт";
+const char kTransportWs[] = "WebSocket";
+const char kTransportHttp[] = "HTTP";
+const char kTransportHint[] = "HTTP пока заготовка: переключатель добавлен для будущего серверного транспорта";
 const char kHost[] = "Хост";
 const char kPort[] = "Порт";
 const char kPath[] = "Путь";

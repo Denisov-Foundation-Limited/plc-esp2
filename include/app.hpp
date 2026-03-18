@@ -22,9 +22,6 @@
 #include "core/network/gsm_modem.hpp"
 #include "core/rtc.hpp"
 #include "core/display.hpp"
-#include "core/network/telegram/telegram.hpp"
-#include "core/network/telegram/telegram_bot.hpp"
-#include "core/network/telegram/telegram_menu.hpp"
 #include "core/eeprom_storage.hpp"
 #include "core/network/network.hpp"
 #include "core/network/stack/stack_slave_handler.hpp"
@@ -107,17 +104,12 @@ struct CommsContext
     Sim800l sim800l;
     GsmModem gsm;
 
-    WiFiClientSecure telegram_wifi_client;
-    TelegramClient telegram;
-    TelegramBot telegram_bot;
-
     CommsContext(Logger &logs, UartManager &uart);
 };
 
 struct ControlContext
 {
     UsersRegistry users;
-    TelegramMenu telegram_menu;
     Controllers controllers;
     RulesController rules;
     MeteoHistory meteo_history;

@@ -130,7 +130,6 @@ void IndexHandler::handleIndexState(WebInterface &web, AsyncWebServerRequest *re
         doc["rtc_time"] = st.rtc_time;
         doc["rtc_temp"] = st.rtc_temp;
         doc["board_temp"] = st.board_temp;
-        doc["cpu_temp"] = st.cpu_temp;
         doc["fan_html"] = st.fan_html;
         String body;
         serializeJson(doc, body);
@@ -167,7 +166,6 @@ String IndexHandler::buildIndexPage_(WebInterface &web, uint32_t node_id, bool s
         const String loading = "...";
         page.replace("%STATUS_DEVICE_NAME%", loading);
         page.replace("%BOARD_TEMP%", loading);
-        page.replace("%CPU_TEMP%", loading);
         page.replace("%RTC_DATE%", loading);
         page.replace("%RTC_TIME%", loading);
         page.replace("%RTC_TEMP%", loading);
@@ -183,7 +181,6 @@ IndexHandler::IndexState IndexHandler::collectIndexState_(WebInterface &web, uin
         out.rtc_time = web.rtcTimeOnlyStr_();
         out.rtc_temp = web.formatTemp_(web.rtcTemp_());
         out.board_temp = web.formatTemp_(web.boardTemp_());
-        out.cpu_temp = web.formatTemp_(web.cpuTemp_());
         out.fan_html = web.fanStatusIcon_();
 
         if (!stack_view)
@@ -193,7 +190,6 @@ IndexHandler::IndexState IndexHandler::collectIndexState_(WebInterface &web, uin
         out.rtc_time = "n/a";
         out.rtc_temp = "n/a";
         out.board_temp = "n/a";
-        out.cpu_temp = "n/a";
         out.fan_html = "n/a";
         if (web._stack_cache)
         {
@@ -208,7 +204,6 @@ IndexHandler::IndexState IndexHandler::collectIndexState_(WebInterface &web, uin
                 out.rtc_time = has_rtc ? cache->rtc_time : "n/a";
                 out.rtc_temp = has_rtc ? web.formatTemp_(cache->rtc_temp) : "n/a";
                 out.board_temp = has_plc ? web.formatTemp_(cache->board_temp) : "n/a";
-                out.cpu_temp = has_plc ? web.formatTemp_(cache->cpu_temp) : "n/a";
                 out.fan_html = has_plc ? web.fanStatusIcon_(cache->fan_on) : "n/a";
             }
         }

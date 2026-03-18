@@ -14,6 +14,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
+#include "core/network/cloud/cloud_transport.hpp"
 #include "core/display_slots.hpp"
 
 class ConfigsManagerIface
@@ -40,6 +41,7 @@ public:
     virtual String stackFallbackHost() const = 0;
     virtual bool stackSlaveController() const = 0;
     virtual bool cloudEnabled() const = 0;
+    virtual CloudTransportKind cloudTransport() const = 0;
     virtual String cloudHost() const = 0;
     virtual uint16_t cloudPort() const = 0;
     virtual String cloudPath() const = 0;
@@ -64,6 +66,7 @@ public:
     virtual void setStackFallbackHost(const String &host) = 0;
     virtual void setStackSlaveController(bool controller) = 0;
     virtual void setCloudEnabled(bool enabled) = 0;
+    virtual void setCloudTransport(CloudTransportKind kind) = 0;
     virtual void setCloudHost(const String &host) = 0;
     virtual void setCloudPort(uint16_t port) = 0;
     virtual void setCloudPath(const String &path) = 0;

@@ -145,6 +145,8 @@ public:
 
     bool cloudEnabled_() const;
 
+    CloudTransportKind cloudTransport_() const;
+
     String cloudHost_() const;
 
     uint16_t cloudPort_() const;
