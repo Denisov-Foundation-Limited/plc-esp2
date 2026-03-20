@@ -12,12 +12,12 @@
 #pragma once
 
 #include <Arduino.h>
-#include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <type_traits>
 #include <utility>
 
 #include "utils/logger.hpp"
+#include "core/network/stack/stack_async_tcp_transport.hpp"
 #include "core/network/stack/stack_master.hpp"
 #include "core/network/stack/stack_node.hpp"
 #include "core/network/cloud/cloud_client.hpp"
@@ -93,7 +93,8 @@ private:
     static constexpr uint16_t kStackPort = 9010;
     static constexpr uint32_t kStackFallbackDelayMs = 10000;
     static constexpr uint32_t kStackFallbackRetryPrimaryMs = 30000;
-    AsyncServer _stack_server;
+    AsyncTcpStackServerTransport _stack_server;
+    AsyncTcpStackClientTransport _stack_client;
     StackMaster _stack_master;
     StackNode _stack_node;
     CloudClient _cloud;
@@ -109,6 +110,9 @@ private:
     String _stack_fallback_host;
     uint32_t _stack_disconnect_ms = 0;
     uint32_t _stack_last_primary_try_ms = 0;
+    uint32_t _last_network_stall_recovery_ms = 0;
+    uint32_t _last_seen_stack_reset_ms = 0;
+    uint32_t _last_seen_stack_reset_count = 0;
     enum class StackTarget : uint8_t
     {
         Primary = 0,
@@ -123,6 +127,7 @@ private:
     void switchStackTarget_(StackTarget target);
 
     void updateStackFallback_();
+    void detectNetworkStall_();
 
 public:
     StackNode &stackNode();

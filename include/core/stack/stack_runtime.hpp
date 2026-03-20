@@ -78,6 +78,7 @@ private:
     void updateMeteoAlarms_();
 
     void pollStackCaches_();
+    bool shouldPollStackFeature_(uint32_t node_id, uint8_t feature, uint32_t now) const;
 
     void logLocalInventory_();
     bool requestStackPollFeature_(uint32_t node_id, uint8_t feature);
@@ -232,7 +233,6 @@ private:
     void clearInventoryLogState_(uint32_t node_id);
 
     static constexpr uint32_t kPreArmFreshMs = 8000;
-    static constexpr uint32_t kPreArmWaitMs = 2500;
     static constexpr uint32_t kPreArmPollMs = 1000;
     static constexpr uint32_t kStackNodeStaleMs = 15000;
     static constexpr uint32_t kDisplayNoDataErrMs = 30000;
@@ -262,11 +262,13 @@ private:
 
     void sendSecurityClearToNode_(uint32_t node_id);
 
-    static constexpr uint32_t kStackPollMs = 2000;
+    static constexpr uint32_t kStackPollMs = 10000;
     static constexpr uint32_t kStackBootstrapPollMs = 250;
     static constexpr uint32_t kStackBootstrapTimeoutMs = 25000;
     static constexpr uint8_t kStackBootstrapPasses = 2;
     static constexpr uint8_t kStackPollFeatureCount = 15;
+    static constexpr uint8_t kStackPollBackpressureDepth = 1;
+    static constexpr uint32_t kStackRegularRefreshMs = 60000;
 
     CoreContext &core;
     HardwareContext &hw;

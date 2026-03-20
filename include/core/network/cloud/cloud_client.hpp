@@ -77,6 +77,8 @@ public:
     void begin(const Config &cfg);
 
     void loop();
+    uint8_t txFailStreak() const { return _tx_fail_streak; }
+    uint32_t lastTxFailMs() const { return _last_tx_fail_ms; }
 
 private:
     static constexpr uint8_t kProtoVersion = 1;
@@ -84,13 +86,20 @@ private:
     static constexpr uint16_t kStackCmdIdMax = 0xFFFE;
     static constexpr uint8_t kMaxPending = 6;
     static constexpr uint8_t kMaxStackCmds = 32;
+    static constexpr uint8_t kMaxQueuedStackCmds = 24;
     static constexpr uint8_t kMaxQueuedEvents = 64;
+    static constexpr uint8_t kMaxInFlightStackCmdsPerNode = 4;
     static constexpr uint32_t kStackTimeoutMs = 1500;
+    static constexpr uint32_t kStackCmdRetryMs = 80;
+    static constexpr uint8_t kStackCmdMaxAttempts = 8;
     static constexpr size_t kWsDocCapacity = 8192;
     static constexpr uint32_t kHelloRetryMs = 10000;
     static constexpr uint32_t kHelloSessionTimeoutMs = 60000;
     static constexpr uint32_t kWsSilentTimeoutMs = 180000;
     static constexpr uint32_t kWsReinitDisconnectedMs = 60000;
+    static constexpr uint32_t kTxFailWindowMs = 90000;
+    static constexpr uint32_t kTxRxAliveWindowMs = 1500;
+    static constexpr uint32_t kTxDeadWhileRxAliveMs = 5000;
     static constexpr uint32_t kSnapshotLockTimeoutMs = 250;
     static constexpr uint32_t kSnapshotWarnIntervalMs = 5000;
     static constexpr uint32_t kFastReconnectMs = 2000;
@@ -159,6 +168,20 @@ private:
         String data_json;
     };
 
+    struct QueuedStackCmd
+    {
+        bool used = false;
+        uint32_t node_id = 0;
+        StackMsgType type = StackMsgType::CmdGet;
+        StackFeature feature = StackFeature::System;
+        StackPart part = StackPart::None;
+        uint8_t pending_idx = 0xFF;
+        uint8_t attempts = 0;
+        uint32_t next_retry_ms = 0;
+        String action;
+        String params_json;
+    };
+
     Logger &_log;
     Controllers &_controllers;
     PlcControl &_plc;
@@ -187,9 +210,13 @@ private:
     bool _disconnect_reported = false;
     uint32_t _reconnect_backoff_until_ms = 0;
     uint8_t _reconnect_fail_streak = 0;
+    uint8_t _tx_fail_streak = 0;
+    uint32_t _last_tx_fail_ms = 0;
+    uint32_t _last_tx_ok_ms = 0;
     PendingRequest _pending[kMaxPending] = {};
     PendingStackCmd _stack_cmds[kMaxStackCmds] = {};
     uint16_t _next_stack_cmd_id = kStackCmdIdBase;
+    QueuedStackCmd _stack_send_queue[kMaxQueuedStackCmds] = {};
     QueuedEvent _event_queue[kMaxQueuedEvents] = {};
     uint8_t _event_head = 0;
     uint8_t _event_count = 0;
@@ -203,6 +230,7 @@ private:
     void sendHello_();
 
     void maintainConnectionHealth_();
+    void flushQueuedStackCmds_();
     void flushQueuedEvents_();
     bool enqueueEvent_(const String &kind, const String &reason, const String &data_json,
                        const String &unit = String(), uint32_t node_id = 0);
@@ -212,6 +240,8 @@ private:
                                  const String &unit, uint32_t node_id);
     static bool isCoalescibleStateEvent_(const String &kind);
     static uint32_t eventItemId_(const String &data_json);
+    int findDroppableQueuedEventIndex_() const;
+    bool dropQueuedEventAt_(uint8_t idx);
     void logEvent_(const __FlashStringHelper *stage, const String &kind, const String &reason,
                    const String &unit = String(), uint32_t node_id = 0);
 
@@ -270,6 +300,11 @@ private:
     bool sendStackCmdSimple_(uint32_t node_id, StackMsgType type, StackFeature feature,
                              const char *action, const DynamicJsonDocument &params,
                              PendingRequest *p = nullptr);
+    bool enqueueStackCmdRetry_(uint32_t node_id, StackMsgType type, StackFeature feature, StackPart part,
+                               PendingRequest *p, const char *action, const String &params_json);
+    bool trySendStackCmdNow_(uint32_t node_id, StackMsgType type, StackFeature feature, StackPart part,
+                             PendingRequest *p, const char *action, const String &params_json);
+    void onStackCmdScheduleFailed_(PendingRequest *p, StackPart part, const char *action);
 
     static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame);
 
@@ -350,12 +385,19 @@ private:
                         JsonObjectConst args, uint32_t node_id) const;
 
     void clearPending_();
+    void clearQueuedStackCmds_();
+    void clearQueuedStackCmdsForPending_(uint8_t pending_idx);
+    bool hasQueuedStackCmdsForPending_(uint8_t pending_idx) const;
+    uint8_t countInflightStackCmdsForNode_(uint32_t node_id) const;
+    bool hasFreeStackCmdSlot_() const;
+    void extendPendingDeadline_(PendingRequest *p);
 
     void ensurePendingDoc_(PendingRequest *p);
+    uint8_t pendingIndex_(PendingRequest *p) const;
 
     PendingRequest *findPendingByNode_(uint32_t node_id);
 
-    void registerStackCmd_(uint16_t cmd_id, PendingRequest *p, StackPart part);
+    bool registerStackCmd_(uint16_t cmd_id, PendingRequest *p, StackPart part);
 
     PendingStackCmd *findStackCmd_(uint16_t cmd_id);
 

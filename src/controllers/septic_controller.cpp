@@ -368,7 +368,9 @@ void SepticController::setupInput_(uint8_t port){
     if (port == kInvalidPort)
         return;
     const PortIO::PortMode mode = kLevelPullup ? PortIO::PortMode::InputPullUp : PortIO::PortMode::Input;
-    _gpio.pinModeDyn(port, mode);
+    if (!_gpio.pinModeDyn(port, mode))
+        _logs.warn(F("SEPTIC"), F("input setup failed: port: %u mode: %s"),
+                   (unsigned)port, kLevelPullup ? "input_pullup" : "input");
 }
 
 void SepticController::setupOutputs_(const SepticController::SepticConfig &cfg, SepticController::SepticState &st){
@@ -386,8 +388,33 @@ void SepticController::setupRelay_(uint8_t port, bool &state){
 }
 
 void SepticController::readLevels_(const SepticController::SepticConfig &cfg, SepticController::SepticState &st){
-    st.warning = readInput_(cfg.warning_port);
-    st.alarm = readInput_(cfg.alarm_port);
+    bool warning = false;
+    bool alarm = false;
+    const bool ok_warning = readInput_(cfg.warning_port, warning);
+    const bool ok_alarm = readInput_(cfg.alarm_port, alarm);
+    if (ok_warning)
+        st.warning = warning;
+    if (ok_alarm)
+        st.alarm = alarm;
+    st.levels_ok = ok_warning && ok_alarm;
+    if (!st.levels_ok)
+    {
+        if (st.levels_ok_prev)
+        {
+            _logs.warn(F("SEPTIC"),
+                       F("id: %u level read failed (warning:%u port:%u alarm:%u port:%u)"),
+                       (unsigned)cfg.id,
+                       ok_warning ? 1u : 0u,
+                       (unsigned)cfg.warning_port,
+                       ok_alarm ? 1u : 0u,
+                       (unsigned)cfg.alarm_port);
+        }
+    }
+    else if (!st.levels_ok_prev)
+    {
+        _logs.info(F("SEPTIC"), F("id: %u level read ok"), (unsigned)cfg.id);
+    }
+    st.levels_ok_prev = st.levels_ok;
 }
 
 bool SepticController::setLevelPort_(size_t id, uint8_t port, uint8_t SepticConfig::*field){
@@ -421,13 +448,14 @@ bool SepticController::setRelayPort_(size_t id, uint8_t port, uint8_t SepticConf
     return true;
 }
 
-bool SepticController::readInput_(uint8_t port){
+bool SepticController::readInput_(uint8_t port, bool &out){
     if (port == kInvalidPort)
         return false;
     bool raw = false;
     if (!_gpio.readDyn(port, raw))
         return false;
-    return raw;
+    out = raw;
+    return true;
 }
 
 void SepticController::updateRelays_(const SepticController::SepticConfig &cfg, SepticController::SepticState &st){

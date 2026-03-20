@@ -450,7 +450,7 @@ void Extender::write(uint8_t dev, uint8_t pin, bool level)
     }
 }
 
-bool Extender::read(uint8_t dev, uint8_t pin) const
+bool Extender::read(uint8_t dev, uint8_t pin, bool &out) const
 {
     if (dev >= _dev_count || !_i2c)
         return false;
@@ -472,7 +472,10 @@ bool Extender::read(uint8_t dev, uint8_t pin) const
             const uint8_t bit = (uint8_t)(pin & 0x0F);
             const uint16_t mask = (uint16_t)(1u << bit);
             if (_mcp_cache_valid[dev] & mask)
-                return (_mcp_cache[dev] & mask) != 0;
+            {
+                out = (_mcp_cache[dev] & mask) != 0;
+                return true;
+            }
             return false;
         }
         if (pin <= 15)
@@ -484,7 +487,8 @@ bool Extender::read(uint8_t dev, uint8_t pin) const
                 _mcp_cache[dev] &= (uint16_t)~mask;
             _mcp_cache_valid[dev] |= mask;
         }
-        return v;
+        out = v;
+        return true;
     }
     if (cfg.type == Type::PCF8574)
     {
@@ -498,7 +502,10 @@ bool Extender::read(uint8_t dev, uint8_t pin) const
             const uint8_t bit = (uint8_t)(pin & 0x07);
             const uint8_t mask = (uint8_t)(1u << bit);
             if (_pcf_cache_valid[dev] & mask)
-                return (_pcf_cache[dev] & mask) != 0;
+            {
+                out = (_pcf_cache[dev] & mask) != 0;
+                return true;
+            }
             return false;
         }
         if (pin <= 7)
@@ -510,9 +517,18 @@ bool Extender::read(uint8_t dev, uint8_t pin) const
                 _pcf_cache[dev] &= (uint8_t)~mask;
             _pcf_cache_valid[dev] |= mask;
         }
-        return v;
+        out = v;
+        return true;
     }
     return false;
+}
+
+bool Extender::read(uint8_t dev, uint8_t pin) const
+{
+    bool out = false;
+    if (!read(dev, pin, out))
+        return false;
+    return out;
 }
 
 void Extender::flushAll()

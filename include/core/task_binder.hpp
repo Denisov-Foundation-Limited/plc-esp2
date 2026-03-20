@@ -135,7 +135,7 @@ public:
             _stack_evt_queue = xQueueCreate(1, sizeof(uint8_t));
         if (_stack_evt_task == nullptr)
         {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::stackEventTaskEntry_, "stack_evt", 4096, this, 3,
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::stackEventTaskEntry_, "stack_evt", 8192, this, 3,
                                                     &_stack_evt_task, tskNO_AFFINITY);
             if (ok != pdPASS)
                 _logs.error(F("TASK"), F("Bind failed: stack_evt"));
@@ -287,7 +287,7 @@ private:
     {
         if (_display_task_rtos == nullptr)
         {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::displayTaskEntry_, "display", 3072, this, 1,
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::displayTaskEntry_, "display", 6144, this, 1,
                                                     &_display_task_rtos, tskNO_AFFINITY);
             if (ok != pdPASS)
                 _logs.error(F("TASK"), F("Bind failed: display"));

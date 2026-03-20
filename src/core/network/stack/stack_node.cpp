@@ -12,7 +12,7 @@
 #include "core/network/stack/stack_node.hpp"
 #include "core/network/stack/stack_types.hpp"
 
-StackNode::StackNode(Logger &log) : _log(&log) {}
+StackNode::StackNode(StackTransportClient &client, Logger &log) : _log(&log), _client(&client) {}
 
 void StackNode::setFrameHandler(FrameHandler cb, void *ctx)
 {
@@ -46,8 +46,8 @@ void StackNode::setStatusProvider(StatusProvider cb, void *ctx)
 
 void StackNode::disconnect()
 {
-    if (_client.connected())
-        _client.close(true);
+    if (_client && _client->connected())
+        _client->close(true);
 }
 
 const String &StackNode::host() const { return _host; }
@@ -70,7 +70,9 @@ void StackNode::begin()
 
 void StackNode::loop()
 {
-    if (_client.connected())
+    flushQueuedTx_();
+    logTxStats_();
+    if (_client && _client->connected())
     {
         const uint32_t now = millis();
         if ((now - _last_hello_ms) >= _hello_interval_ms)
@@ -92,32 +94,23 @@ void StackNode::loop()
 
 bool StackNode::send(uint8_t type, const uint8_t *payload, size_t len)
 {
-    if (!_client.connected())
-        return false;
-    const size_t frame_len = StackCodec::encode(type, payload, len, _tx_frame_buf, sizeof(_tx_frame_buf));
-    if (frame_len == 0)
-        return false;
-    if (!_client.canSend())
-    {
-        if (_log)
-            _log->warn(F("STACK"), F("Unit tx busy: type: %u len: %u"),
-                       (unsigned)type, (unsigned)frame_len);
-        return false;
-    }
-    const size_t written = _client.write((const char *)_tx_frame_buf, frame_len);
-    if (written != frame_len)
-    {
-        if (_log)
-            _log->warn(F("STACK"), F("Unit tx short write: type: %u wr: %u len: %u"),
-                       (unsigned)type, (unsigned)written, (unsigned)frame_len);
-        return false;
-    }
-    return true;
+    if (sendNow_(type, payload, len))
+        return true;
+    return enqueueTx_(type, payload, len);
 }
 
-bool StackNode::connected() const { return _client.connected(); }
+bool StackNode::connected() const { return _client && _client->connected(); }
 
 bool StackNode::helloSentCurrentConnection() const { return _hello_sent_current_connection; }
+
+StackNode::TxStats StackNode::txStats() const
+{
+    TxStats st = _tx_stats;
+    for (const auto &q : _queued_tx)
+        if (q.used && st.depth < 0xFF)
+            ++st.depth;
+    return st;
+}
 
 bool StackNode::sendHello(uint16_t fw_ver, uint32_t caps)
 {
@@ -131,43 +124,142 @@ bool StackNode::sendHello(uint16_t fw_ver, uint32_t caps)
     if (payload_len == 0)
         return false;
     const bool ok = send((uint8_t)StackMsgType::Hello, _tx_payload_buf, payload_len);
-    if (ok && _client.connected())
+    if (ok && _client && _client->connected())
         _hello_sent_current_connection = true;
     return ok;
 }
 
 void StackNode::setupClient_()
 {
-    _client.onData(
-        [](void *arg, AsyncClient *, void *data, size_t len) {
-            StackNode *self = static_cast<StackNode *>(arg);
-            self->onData_((const uint8_t *)data, len);
+    if (!_client)
+        return;
+    _client->setDataHandler(
+        [](void *ctx, StackTransportConnection *, const uint8_t *data, size_t len) {
+            if (!ctx)
+                return;
+            static_cast<StackNode *>(ctx)->onData_(data, len);
         },
         this);
-    _client.onConnect(
-        [](void *arg, AsyncClient *) {
-            StackNode *self = static_cast<StackNode *>(arg);
-            self->onConnect_();
+    _client->setConnectHandler(
+        [](void *ctx, StackTransportConnection *) {
+            if (!ctx)
+                return;
+            static_cast<StackNode *>(ctx)->onConnect_();
         },
         this);
-    _client.onDisconnect(
-        [](void *arg, AsyncClient *) {
-            StackNode *self = static_cast<StackNode *>(arg);
-            self->onDisconnect_();
+    _client->setDisconnectHandler(
+        [](void *ctx, StackTransportConnection *) {
+            if (!ctx)
+                return;
+            static_cast<StackNode *>(ctx)->onDisconnect_();
         },
         this);
-    _client.onError(
-        [](void *arg, AsyncClient *, int8_t) {
-            StackNode *self = static_cast<StackNode *>(arg);
-            self->onDisconnect_();
+    _client->setErrorHandler(
+        [](void *ctx, StackTransportConnection *, int8_t) {
+            if (!ctx)
+                return;
+            static_cast<StackNode *>(ctx)->onDisconnect_();
         },
         this);
+}
+
+bool StackNode::sendNow_(uint8_t type, const uint8_t *payload, size_t len)
+{
+    if (!_client || !_client->connected())
+        return false;
+    const size_t frame_len = StackCodec::encode(type, payload, len, _tx_frame_buf, sizeof(_tx_frame_buf));
+    if (frame_len == 0)
+        return false;
+    if (!_client->canSend())
+    {
+        if (_log)
+            _log->warn(F("STACK"), F("Unit tx busy: type: %u len: %u"),
+                       (unsigned)type, (unsigned)frame_len);
+        return false;
+    }
+    const size_t written = _client->write(_tx_frame_buf, frame_len);
+    if (written != frame_len)
+    {
+        if (_log)
+            _log->warn(F("STACK"), F("Unit tx short write: type: %u wr: %u len: %u"),
+                       (unsigned)type, (unsigned)written, (unsigned)frame_len);
+        return false;
+    }
+    return true;
+}
+
+bool StackNode::enqueueTx_(uint8_t type, const uint8_t *payload, size_t len)
+{
+    if (!payload || len == 0 || len > StackCodec::kMaxPayload)
+        return false;
+    for (auto &q : _queued_tx)
+    {
+        if (!q.used)
+            continue;
+        if (q.type != type || q.len != len)
+            continue;
+        if (memcmp(q.payload, payload, len) != 0)
+            continue;
+        ++_tx_stats.coalesced;
+        q.attempts = 1;
+        q.next_retry_ms = millis() + kTxRetryMs;
+        return true;
+    }
+    for (auto &q : _queued_tx)
+    {
+        if (q.used)
+            continue;
+        q.used = true;
+        q.type = type;
+        q.len = (uint16_t)len;
+        q.attempts = 1;
+        q.next_retry_ms = millis() + kTxRetryMs;
+        memcpy(q.payload, payload, len);
+        ++_tx_stats.queued;
+        return true;
+    }
+    if (_log)
+        _log->warn(F("STACK"), F("Unit tx queue full: type: %u len: %u"),
+                   (unsigned)type, (unsigned)len);
+    ++_tx_stats.queue_full;
+    return false;
+}
+
+void StackNode::flushQueuedTx_()
+{
+    if (!_client || !_client->connected())
+        return;
+    const uint32_t now = millis();
+    for (auto &q : _queued_tx)
+    {
+        if (!q.used)
+            continue;
+        if ((int32_t)(now - q.next_retry_ms) < 0)
+            continue;
+        if (sendNow_(q.type, q.payload, q.len))
+        {
+            q = QueuedTx{};
+            continue;
+        }
+        ++q.attempts;
+        ++_tx_stats.retries;
+        if (q.attempts >= kTxMaxAttempts)
+        {
+            if (_log)
+                _log->warn(F("STACK"), F("Unit tx dropped: type: %u"), (unsigned)q.type);
+            ++_tx_stats.dropped;
+            q = QueuedTx{};
+            continue;
+        }
+        q.next_retry_ms = now + kTxRetryMs;
+    }
 }
 
 void StackNode::connect_()
 {
     _last_connect_ms = millis();
-    _client.connect(_host.c_str(), _port);
+    if (_client)
+        _client->connect(_host.c_str(), _port);
 }
 
 void StackNode::onConnect_()
@@ -180,7 +272,11 @@ void StackNode::onConnect_()
     sendStatus_();
 }
 
-void StackNode::onDisconnect_() { _hello_sent_current_connection = false; }
+void StackNode::onDisconnect_()
+{
+    _hello_sent_current_connection = false;
+    _codec.clear();
+}
 
 void StackNode::onData_(const uint8_t *data, size_t len)
 {
@@ -212,4 +308,31 @@ void StackNode::sendStatus_()
     }
     if (payload_len > 0)
         send((uint8_t)StackMsgType::Status, _tx_payload_buf, payload_len);
+}
+
+void StackNode::logTxStats_()
+{
+    if (!_log)
+        return;
+    const uint32_t now = millis();
+    if ((uint32_t)(now - _last_stats_log_ms) < kStatsLogMs)
+        return;
+    _last_stats_log_ms = now;
+    const auto st = txStats();
+    if (st.depth == _last_logged_tx_stats.depth &&
+        st.queued == _last_logged_tx_stats.queued &&
+        st.retries == _last_logged_tx_stats.retries &&
+        st.coalesced == _last_logged_tx_stats.coalesced &&
+        st.dropped == _last_logged_tx_stats.dropped &&
+        st.queue_full == _last_logged_tx_stats.queue_full)
+        return;
+    _last_logged_tx_stats = st;
+    _log->debug(F("STACK"),
+                F("Unit tx stats: depth: %u queued: %lu retries: %lu coalesced: %lu dropped: %lu full: %lu"),
+                (unsigned)st.depth,
+                (unsigned long)st.queued,
+                (unsigned long)st.retries,
+                (unsigned long)st.coalesced,
+                (unsigned long)st.dropped,
+                (unsigned long)st.queue_full);
 }

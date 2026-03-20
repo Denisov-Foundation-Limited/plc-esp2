@@ -41,6 +41,20 @@ static constexpr uint16_t kStackBootstrapCoreFeatureMask =
     (uint16_t)((1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4) |
                (1u << 5) | (1u << 6) | (1u << 7) | (1u << 8) | (1u << 9) |
                (1u << 10) | (1u << 13) | (1u << 14));
+static constexpr uint8_t kStackRegularPollFeatures[] = {
+    0,  // plc
+    1,  // rtc
+    2,  // sockets
+    3,  // lights
+    4,  // security
+    6,  // thermo
+    7,  // septic
+    8,  // tanks
+    9,  // meteo
+    10, // watering
+    11, // avr
+    12  // leak
+};
 }
 
 StackRuntime::StackRuntime(CoreContext &core, HardwareContext &hw, CommsContext &comms,
@@ -230,6 +244,86 @@ bool StackRuntime::requestStackPollFeature_(uint32_t node_id, uint8_t feature){
     default: return false;
     }
 }
+bool StackRuntime::shouldPollStackFeature_(uint32_t node_id, uint8_t feature, uint32_t now) const
+{
+    switch (feature)
+    {
+    case 0:
+    {
+        const auto *c = _stack_cache.statusCache(node_id);
+        return !c || !c->has_plc || !c->plc_updated_ms ||
+               (uint32_t)(now - c->plc_updated_ms) >= kStackRegularRefreshMs;
+    }
+    case 1:
+    {
+        const auto *c = _stack_cache.statusCache(node_id);
+        return !c || !c->has_rtc || !c->rtc_updated_ms ||
+               (uint32_t)(now - c->rtc_updated_ms) >= kStackRegularRefreshMs;
+    }
+    case 2:
+    {
+        const auto *c = _stack_cache.socketsCache(node_id);
+        return !c || !c->has_data || !c->updated_ms ||
+               (uint32_t)(now - c->updated_ms) >= kStackRegularRefreshMs;
+    }
+    case 3:
+    {
+        const auto *c = _stack_cache.lightsCache(node_id);
+        return !c || !c->has_data || !c->updated_ms ||
+               (uint32_t)(now - c->updated_ms) >= kStackRegularRefreshMs;
+    }
+    case 4:
+    {
+        const auto *c = _stack_cache.securityCache(node_id);
+        return !c || !c->has_data || !c->updated_ms ||
+               (uint32_t)(now - c->updated_ms) >= kStackRegularRefreshMs;
+    }
+    case 6:
+    {
+        const auto *c = _stack_cache.thermoCache(node_id);
+        return !c || !c->has_data || !c->updated_ms ||
+               (uint32_t)(now - c->updated_ms) >= kStackRegularRefreshMs;
+    }
+    case 7:
+    {
+        const auto *c = _stack_cache.septicCache(node_id);
+        return !c || !c->has_data || !c->updated_ms ||
+               (uint32_t)(now - c->updated_ms) >= kStackRegularRefreshMs;
+    }
+    case 8:
+    {
+        const auto *c = _stack_cache.tanksCache(node_id);
+        return !c || !c->has_data || !c->updated_ms ||
+               (uint32_t)(now - c->updated_ms) >= kStackRegularRefreshMs;
+    }
+    case 9:
+    {
+        const auto *c = _stack_cache.meteoCache(node_id);
+        return !c || !c->has_data || !c->updated_ms ||
+               (uint32_t)(now - c->updated_ms) >= kStackRegularRefreshMs;
+    }
+    case 10:
+    {
+        const auto *c = _stack_cache.wateringCache(node_id);
+        return !c || !c->has_data || !c->updated_ms ||
+               (uint32_t)(now - c->updated_ms) >= kStackRegularRefreshMs;
+    }
+    case 11:
+    {
+        const auto *c = _stack_cache.avrCache(node_id);
+        return !c || !c->has_data || !c->updated_ms ||
+               (uint32_t)(now - c->updated_ms) >= kStackRegularRefreshMs;
+    }
+    case 12:
+    {
+        const auto *c = _stack_cache.leakCache(node_id);
+        return !c || !c->has_data || !c->updated_ms ||
+               (uint32_t)(now - c->updated_ms) >= kStackRegularRefreshMs;
+    }
+    default:
+        return false;
+    }
+}
 
 bool StackRuntime::bootstrapSyncCompleted_(uint32_t node_id) const{
     if (node_id == 0)
@@ -389,6 +483,13 @@ void StackRuntime::pollStackCaches_(){
             else
             {
                 node_id = bs_node;
+                const uint8_t node_qdepth = master.queueDepth(node_id);
+                if (node_qdepth > 0)
+                {
+                    STACK_BOOTSTRAP_DBG((*this), "Bootstrap wait queue: id: 0x%08lX depth:%u",
+                                        (unsigned long)node_id, (unsigned)node_qdepth);
+                    return;
+                }
                 feature = (uint8_t)(_stack_bootstrap_feature_index % kStackPollFeatureCount);
                 _stack_bootstrap_feature_index =
                     (uint8_t)((_stack_bootstrap_feature_index + 1) % kStackPollFeatureCount);
@@ -414,6 +515,9 @@ void StackRuntime::pollStackCaches_(){
 
     if (!use_bootstrap)
     {
+        const auto tx_stats = master.txStats();
+        if (tx_stats.depth >= kStackPollBackpressureDepth)
+            return;
         if (_stack_poll_index >= count)
             _stack_poll_index = 0;
         node_id = master.nodeIdAt(_stack_poll_index++);
@@ -421,9 +525,25 @@ void StackRuntime::pollStackCaches_(){
             return;
         if (!master.nodeIsOnline(node_id, kStackNodeStaleMs))
             return;
+        if (master.queueDepth(node_id) > 0)
+            return;
         logStackNodeInventory_(node_id);
-        feature = (uint8_t)(_stack_poll_feature_index % kStackPollFeatureCount);
-        _stack_poll_feature_index = (uint8_t)((_stack_poll_feature_index + 1) % kStackPollFeatureCount);
+        constexpr uint8_t kRegularFeatureCount =
+            (uint8_t)(sizeof(kStackRegularPollFeatures) / sizeof(kStackRegularPollFeatures[0]));
+        bool found = false;
+        for (uint8_t pass = 0; pass < kRegularFeatureCount; ++pass)
+        {
+            const uint8_t idx = (uint8_t)((_stack_poll_feature_index + pass) % kRegularFeatureCount);
+            const uint8_t candidate = kStackRegularPollFeatures[idx];
+            if (!shouldPollStackFeature_(node_id, candidate, now))
+                continue;
+            feature = candidate;
+            _stack_poll_feature_index = (uint8_t)((idx + 1) % kRegularFeatureCount);
+            found = true;
+            break;
+        }
+        if (!found)
+            return;
     }
 
     const bool sent = requestStackPollFeature_(node_id, feature);

@@ -33,6 +33,7 @@ public:
     void scanInputs();
     void applyOutputs();
     bool write(uint8_t id, bool logicalLevel, uint32_t timeout_ms = 0xFFFFFFFFu);
+    bool tryRead(uint8_t id, bool &outLogical, uint32_t timeout_ms = 0xFFFFFFFFu) const;
     bool read(uint8_t id, uint32_t timeout_ms = 0xFFFFFFFFu) const;
     const PortIO::PortDesc &desc(uint8_t id) const;
     bool lastState(uint8_t id, bool &outLogical) const;
@@ -48,6 +49,7 @@ private:
     bool _applied[PORT_COUNT] = {};
     bool _dirty[PORT_COUNT] = {};
     bool _raw_inputs[PORT_COUNT] = {};
+    bool _input_valid[PORT_COUNT] = {};
     uint32_t _last_change_ms[PORT_COUNT] = {};
     mutable RtosRecursiveLock _lock;
 };

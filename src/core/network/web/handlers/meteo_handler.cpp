@@ -292,14 +292,36 @@ void MeteoHandler::handleMeteoState(WebInterface &web, AsyncWebServerRequest *re
                 return;
             }
             MeteoController &meteo = web._controllers->meteo();
+            struct MeteoStateRow
+            {
+                bool present = false;
+                MeteoController::SensorConfig cfg{};
+                MeteoController::SensorState st{};
+            };
+            MeteoStateRow rows[MeteoController::kSensorCount] = {};
             auto meteo_guard = meteo.lockGuard();
-            const uint32_t now = millis();
+            if (!meteo_guard.locked())
+            {
+                web.sendText_(request, 503, "text/plain", "Meteo busy", set_cookie);
+                return;
+            }
             for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
             {
                 const auto *cfg = meteo.configByIndex(i);
                 const auto *st = meteo.stateByIndex(i);
                 if (!cfg || !st)
                     continue;
+                rows[i].present = true;
+                rows[i].cfg = *cfg;
+                rows[i].st = *st;
+            }
+            const uint32_t now = millis();
+            for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+            {
+                if (!rows[i].present)
+                    continue;
+                const auto *cfg = &rows[i].cfg;
+                const auto *st = &rows[i].st;
                 if (!web.webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg->id))
                     continue;
                 JsonObject o = items.add<JsonObject>();

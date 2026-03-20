@@ -131,6 +131,7 @@ public:
     PinType type(PortId id) const;
     void pinMode(PortId id, PortMode mode);
     void write(PortId id, bool logicalLevel);
+    bool tryRead(PortId id, bool &outLogicalLevel) const;
     bool read(PortId id) const;
     int adcRead(PortId id);
     void pwmWrite(PortId id, uint32_t duty);

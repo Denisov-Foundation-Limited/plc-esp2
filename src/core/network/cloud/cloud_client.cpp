@@ -68,6 +68,7 @@ CloudClient::CloudClient(Logger &log, Controllers &controllers, PlcControl &plc,
       _wifi(wifi),
       _rtc(rtc)
 {
+    _default_transport.setLogger(&_log);
     setTransport(_default_transport);
 }
 void CloudClient::setGsm(GsmModem *gsm)
@@ -90,6 +91,7 @@ void CloudClient::setTransport(CloudTransport &transport)
 }
 void CloudClient::useDefaultTransport()
 {
+    _default_transport.setLogger(&_log);
     setTransport(_default_transport);
 }
 void CloudClient::bindControllerCallbacks()
@@ -213,6 +215,7 @@ void CloudClient::loop()
     }
     _transport->loop();
     maintainConnectionHealth_();
+    flushQueuedStackCmds_();
     handlePendingTimeouts_();
     flushQueuedEvents_();
     if (_event_interval_ms)
@@ -242,9 +245,12 @@ void CloudClient::handleTransportEvent_(CloudTransport::Event event, const uint8
         _session_id = "";
         _last_connect_ms = millis();
         _last_rx_ms = _last_connect_ms;
+        _last_tx_ok_ms = _last_connect_ms;
         _last_disconnect_ms = 0;
         _reconnect_backoff_until_ms = 0;
         _reconnect_fail_streak = 0;
+        _tx_fail_streak = 0;
+        _last_tx_fail_ms = 0;
         _disconnect_reported = false;
         _log.info(F("CLOUD"), F("%s connected: path: %s"), transportName_(), _cfg.path.c_str());
         sendHello_();
@@ -299,6 +305,7 @@ void CloudClient::handleTransportEvent_(CloudTransport::Event event, const uint8
             _disconnect_reported = true;
         }
         _session_id = "";
+        _last_tx_ok_ms = 0;
         break;
     }
     default:
@@ -463,9 +470,15 @@ bool CloudClient::enqueueEvent_(const String &kind, const String &reason, const 
         return true;
     if (_event_count >= kMaxQueuedEvents)
     {
-        _log.warn(F("CLOUD"), F("Event queue full, drop oldest"));
-        _event_head = (uint8_t)((_event_head + 1u) % kMaxQueuedEvents);
-        --_event_count;
+        const int drop_idx = findDroppableQueuedEventIndex_();
+        if (drop_idx >= 0 && dropQueuedEventAt_((uint8_t)drop_idx))
+            _log.warn(F("CLOUD"), F("Event queue full, drop coalescible"));
+        else
+        {
+            _log.warn(F("CLOUD"), F("Event queue full, drop oldest"));
+            _event_head = (uint8_t)((_event_head + 1u) % kMaxQueuedEvents);
+            --_event_count;
+        }
     }
     const uint8_t idx = (uint8_t)((_event_head + _event_count) % kMaxQueuedEvents);
     QueuedEvent &slot = _event_queue[idx];
@@ -506,7 +519,9 @@ bool CloudClient::tryCoalesceQueuedEvent_(const String &kind, const String &reas
 
 bool CloudClient::isCoalescibleStateEvent_(const String &kind)
 {
-    return kind == "sockets.state" || kind == "lights.state";
+    return kind == "sockets.state" ||
+           kind == "lights.state" ||
+           kind == "thermo.power";
 }
 
 uint32_t CloudClient::eventItemId_(const String &data_json)
@@ -526,7 +541,45 @@ uint32_t CloudClient::eventItemId_(const String &data_json)
         const int v = id.as<int>();
         return v > 0 ? (uint32_t)v : 0;
     }
+    JsonVariantConst sensor_id = doc["sensor_id"];
+    if (sensor_id.is<uint32_t>())
+        return sensor_id.as<uint32_t>();
+    if (sensor_id.is<unsigned>())
+        return (uint32_t)sensor_id.as<unsigned>();
     return 0;
+}
+
+int CloudClient::findDroppableQueuedEventIndex_() const
+{
+    for (uint8_t i = 0; i < _event_count; ++i)
+    {
+        const uint8_t idx = (uint8_t)((_event_head + i) % kMaxQueuedEvents);
+        const QueuedEvent &slot = _event_queue[idx];
+        if (!slot.used)
+            continue;
+        if (isCoalescibleStateEvent_(slot.kind))
+            return (int)idx;
+    }
+    return -1;
+}
+
+bool CloudClient::dropQueuedEventAt_(uint8_t idx)
+{
+    if (_event_count == 0 || idx >= kMaxQueuedEvents || !_event_queue[idx].used)
+        return false;
+    uint8_t pos = _event_head;
+    while (pos != idx)
+        pos = (uint8_t)((pos + 1u) % kMaxQueuedEvents);
+    while (pos != (uint8_t)((_event_head + _event_count - 1u) % kMaxQueuedEvents))
+    {
+        const uint8_t next = (uint8_t)((pos + 1u) % kMaxQueuedEvents);
+        _event_queue[pos] = _event_queue[next];
+        pos = next;
+    }
+    const uint8_t tail = (uint8_t)((_event_head + _event_count - 1u) % kMaxQueuedEvents);
+    _event_queue[tail] = QueuedEvent{};
+    --_event_count;
+    return true;
 }
 
 bool CloudClient::sendEvent_(const String &kind, const String &reason, const String &data_json,
@@ -1041,14 +1094,10 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
         finalizePending_(p, false, "stack send failed");
         return;
     }
-    // Force fast cache refresh for relay-like controllers so cloud UI does not wait for background poll.
-    if (_stack_cache)
-    {
-        if (force_refresh_sockets)
-            _stack_cache->requestSockets(node_id);
-        if (force_refresh_lights)
-            _stack_cache->requestLights(node_id);
-    }
+    // Stack cache refresh is initiated by the caller/UI side.
+    // Forcing an extra request here creates duplicate CmdGet bursts after CmdSet.
+    (void)force_refresh_sockets;
+    (void)force_refresh_lights;
 }
 bool CloudClient::handleCmdSockets_(SocketController &s, const String &action, JsonObjectConst args, bool lights,
                                     const ActorInfo &actor)
@@ -1275,10 +1324,14 @@ void CloudClient::scheduleStackSystem_(CloudClient::PendingRequest *p)
     p->pending_mask |= maskFor_(StackPart::PlcStatus);
     p->pending_mask |= maskFor_(StackPart::FanStatus);
     p->pending_mask |= maskFor_(StackPart::RtcTime);
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::System, "get_info");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::PlcStatus, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Fan, "get_status");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Rtc, "get_time");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::System, "get_info", p))
+        onStackCmdScheduleFailed_(p, StackPart::SystemInfo, "get_info");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::PlcStatus, "get", p))
+        onStackCmdScheduleFailed_(p, StackPart::PlcStatus, "get");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Fan, "get_status", p))
+        onStackCmdScheduleFailed_(p, StackPart::FanStatus, "get_status");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Rtc, "get_time", p))
+        onStackCmdScheduleFailed_(p, StackPart::RtcTime, "get_time");
 }
 void CloudClient::scheduleStackControllers_(CloudClient::PendingRequest *p)
 {
@@ -1299,81 +1352,195 @@ void CloudClient::scheduleStackControllers_(CloudClient::PendingRequest *p)
     p->pending_mask |= maskFor_(StackPart::Avr);
     p->pending_mask |= maskFor_(StackPart::Leak);
 
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Sockets, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Sockets, "get_lights");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Meteo, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Thermo, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Tanks, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Septic, "get");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Sockets, "get", p))
+        onStackCmdScheduleFailed_(p, StackPart::Sockets, "get");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Sockets, "get_lights", p))
+        onStackCmdScheduleFailed_(p, StackPart::Lights, "get_lights");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Meteo, "get", p))
+        onStackCmdScheduleFailed_(p, StackPart::Meteo, "get");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Thermo, "get", p))
+        onStackCmdScheduleFailed_(p, StackPart::Thermo, "get");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Tanks, "get", p))
+        onStackCmdScheduleFailed_(p, StackPart::Tanks, "get");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Septic, "get", p))
+        onStackCmdScheduleFailed_(p, StackPart::Septic, "get");
     DynamicJsonDocument watering_params(64);
     watering_params["offset"] = 0;
     watering_params["limit"] = (unsigned)WateringController::kRuleCount;
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Watering, "get", watering_params);
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Security, "status");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Security, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Groups, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Ring, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Avr, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Leak, "get");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Watering, "get", watering_params, p))
+        onStackCmdScheduleFailed_(p, StackPart::Watering, "get");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Security, "status", p))
+        onStackCmdScheduleFailed_(p, StackPart::SecurityStatus, "status");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Security, "get", p))
+        onStackCmdScheduleFailed_(p, StackPart::SecuritySensors, "get");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Groups, "get", p))
+        onStackCmdScheduleFailed_(p, StackPart::Groups, "get");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Ring, "get", p))
+        onStackCmdScheduleFailed_(p, StackPart::Ring, "get");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Avr, "get", p))
+        onStackCmdScheduleFailed_(p, StackPart::Avr, "get");
+    if (!sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Leak, "get", p))
+        onStackCmdScheduleFailed_(p, StackPart::Leak, "get");
 }
 bool CloudClient::sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
                    const char *action, PendingRequest *p)
 {
-    if (!_stack_master)
-        return false;
-    DynamicJsonDocument doc(1024);
-    const uint16_t cmd_id = nextStackCmdId_();
-    doc["cmd_id"] = cmd_id;
-    doc["feature"] = (uint8_t)feature;
-    doc["action"] = action;
-    uint8_t buf[StackCodec::kMaxPayload] = {};
-    const size_t len = serializeJson(doc, reinterpret_cast<char *>(buf), sizeof(buf));
-    if (len == 0 || len > sizeof(buf))
-        return false;
-    if (!_stack_master->sendTo(node_id, (uint8_t)type, buf, len))
-        return false;
-    registerStackCmd_(cmd_id, p ? p : findPendingByNode_(node_id), partFrom_(feature, action));
-    return true;
+    return trySendStackCmdNow_(node_id, type, feature, partFrom_(feature, action), p, action, String());
 }
 bool CloudClient::sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
                    const char *action, const DynamicJsonDocument &params, PendingRequest *p)
 {
-    if (!_stack_master)
-        return false;
-    DynamicJsonDocument doc(1024);
-    const uint16_t cmd_id = nextStackCmdId_();
-    doc["cmd_id"] = cmd_id;
-    doc["feature"] = (uint8_t)feature;
-    doc["action"] = action;
-    doc["params"] = params.as<JsonVariantConst>();
-    uint8_t buf[StackCodec::kMaxPayload] = {};
-    const size_t len = serializeJson(doc, reinterpret_cast<char *>(buf), sizeof(buf));
-    if (len == 0 || len > sizeof(buf))
-        return false;
-    if (!_stack_master->sendTo(node_id, (uint8_t)type, buf, len))
-        return false;
-    registerStackCmd_(cmd_id, p ? p : findPendingByNode_(node_id), partFrom_(feature, action));
-    return true;
+    String params_json;
+    serializeJson(params, params_json);
+    return trySendStackCmdNow_(node_id, type, feature, partFrom_(feature, action), p, action, params_json);
 }
 bool CloudClient::sendStackCmdSimple_(uint32_t node_id, StackMsgType type, StackFeature feature,
                          const char *action, const DynamicJsonDocument &params, PendingRequest *p)
 {
+    String params_json;
+    serializeJson(params, params_json);
+    return trySendStackCmdNow_(node_id, type, feature, StackPart::None, p, action, params_json);
+}
+bool CloudClient::trySendStackCmdNow_(uint32_t node_id, StackMsgType type, StackFeature feature, StackPart part,
+                                      PendingRequest *p, const char *action, const String &params_json)
+{
     if (!_stack_master)
         return false;
+    PendingRequest *target = p ? p : findPendingByNode_(node_id);
+    const bool allow_untracked = (part == StackPart::None && target == nullptr);
+    if (!allow_untracked && !target)
+        return false;
+    if (!hasFreeStackCmdSlot_() || countInflightStackCmdsForNode_(node_id) >= kMaxInFlightStackCmdsPerNode)
+        return enqueueStackCmdRetry_(node_id, type, feature, part, target, action, params_json);
     DynamicJsonDocument doc(1024);
     const uint16_t cmd_id = nextStackCmdId_();
     doc["cmd_id"] = cmd_id;
     doc["feature"] = (uint8_t)feature;
-    doc["action"] = action;
-    doc["params"] = params.as<JsonVariantConst>();
+    doc["action"] = action ? action : "";
+    if (params_json.length())
+    {
+        DynamicJsonDocument tmp(1024);
+        if (!deserializeJson(tmp, params_json))
+            doc["params"] = tmp.as<JsonVariantConst>();
+    }
     uint8_t buf[StackCodec::kMaxPayload] = {};
     const size_t len = serializeJson(doc, reinterpret_cast<char *>(buf), sizeof(buf));
     if (len == 0 || len > sizeof(buf))
         return false;
-    if (!_stack_master->sendTo(node_id, (uint8_t)type, buf, len))
+    if (_stack_master->sendTo(node_id, (uint8_t)type, buf, len))
+    {
+        if (allow_untracked)
+            return true;
+        if (registerStackCmd_(cmd_id, target, part))
+        {
+            extendPendingDeadline_(target);
+            return true;
+        }
+        _log.warn(F("CLOUD"), F("Stack cmd tracking failed after send: node_id: %lu action: %s"),
+                  (unsigned long)node_id, action ? action : "-");
+        onStackCmdScheduleFailed_(target, part, action);
         return false;
-    registerStackCmd_(cmd_id, p ? p : findPendingByNode_(node_id), StackPart::None);
-    return true;
+    }
+    return enqueueStackCmdRetry_(node_id, type, feature, part, target, action, params_json);
+}
+bool CloudClient::enqueueStackCmdRetry_(uint32_t node_id, StackMsgType type, StackFeature feature, StackPart part,
+                                        PendingRequest *p, const char *action, const String &params_json)
+{
+    for (auto &q : _stack_send_queue)
+    {
+        if (q.used)
+            continue;
+        q.used = true;
+        q.node_id = node_id;
+        q.type = type;
+        q.feature = feature;
+        q.part = part;
+        q.pending_idx = pendingIndex_(p);
+        q.attempts = 1;
+        q.next_retry_ms = millis() + kStackCmdRetryMs;
+        q.action = action ? action : "";
+        q.params_json = params_json;
+        return true;
+    }
+    _log.warn(F("CLOUD"), F("Stack cmd queue full: node_id: %lu feature: %u action: %s"),
+              (unsigned long)node_id, (unsigned)feature, action ? action : "-");
+    return false;
+}
+void CloudClient::flushQueuedStackCmds_()
+{
+    const uint32_t now = millis();
+    for (auto &q : _stack_send_queue)
+    {
+        if (!q.used)
+            continue;
+        if ((int32_t)(now - q.next_retry_ms) < 0)
+            continue;
+        PendingRequest *p = (q.pending_idx != 0xFF && q.pending_idx < kMaxPending) ? &_pending[q.pending_idx] : nullptr;
+        if (q.pending_idx != 0xFF && (!p || !p->used))
+        {
+            q = QueuedStackCmd{};
+            continue;
+        }
+        if (!hasFreeStackCmdSlot_() || countInflightStackCmdsForNode_(q.node_id) >= kMaxInFlightStackCmdsPerNode)
+        {
+            q.next_retry_ms = now + kStackCmdRetryMs;
+            continue;
+        }
+        DynamicJsonDocument doc(1024);
+        const uint16_t cmd_id = nextStackCmdId_();
+        doc["cmd_id"] = cmd_id;
+        doc["feature"] = (uint8_t)q.feature;
+        doc["action"] = q.action;
+        if (q.params_json.length())
+        {
+            DynamicJsonDocument tmp(1024);
+            if (!deserializeJson(tmp, q.params_json))
+                doc["params"] = tmp.as<JsonVariantConst>();
+        }
+        uint8_t buf[StackCodec::kMaxPayload] = {};
+        const size_t len = serializeJson(doc, reinterpret_cast<char *>(buf), sizeof(buf));
+        if (len > 0 && len <= sizeof(buf) && _stack_master && _stack_master->sendTo(q.node_id, (uint8_t)q.type, buf, len))
+        {
+            PendingRequest *target = p ? p : findPendingByNode_(q.node_id);
+            const bool allow_untracked = (q.part == StackPart::None && target == nullptr);
+            if (allow_untracked)
+            {
+                q = QueuedStackCmd{};
+                continue;
+            }
+            if (registerStackCmd_(cmd_id, target, q.part))
+            {
+                extendPendingDeadline_(target);
+                q = QueuedStackCmd{};
+                continue;
+            }
+            _log.warn(F("CLOUD"), F("Stack cmd tracking failed after queued send: node_id: %lu action: %s"),
+                      (unsigned long)q.node_id, q.action.c_str());
+            onStackCmdScheduleFailed_(target, q.part, q.action.c_str());
+            q = QueuedStackCmd{};
+            continue;
+        }
+        ++q.attempts;
+        if (q.attempts >= kStackCmdMaxAttempts)
+        {
+            _log.warn(F("CLOUD"), F("Stack cmd dropped after retries: node_id: %lu feature: %u action: %s"),
+                      (unsigned long)q.node_id, (unsigned)q.feature, q.action.c_str());
+            onStackCmdScheduleFailed_(p, q.part, q.action.c_str());
+            q = QueuedStackCmd{};
+            continue;
+        }
+        q.next_retry_ms = now + kStackCmdRetryMs;
+    }
+}
+void CloudClient::onStackCmdScheduleFailed_(PendingRequest *p, StackPart part, const char *action)
+{
+    if (!p)
+        return;
+    p->pending_mask &= ~maskFor_(part);
+    _log.warn(F("CLOUD"), F("Stack cmd schedule failed: node_id: %lu action: %s"),
+              (unsigned long)p->node_id, action ? action : "-");
+    if (p->pending_mask == 0)
+        finalizePending_(p, false, "stack send failed");
 }
 void CloudClient::onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame)
 {
@@ -2464,8 +2631,6 @@ bool CloudClient::fillStackCachedSystem_(JsonObject out, uint32_t node_id)
     if (!_stack_cache)
         return false;
     bool has_any = false;
-    const uint32_t now = millis();
-    const uint32_t stale_ms = 15000;
     out["device_name"] = stackNodeName_(node_id);
     const auto *status = _stack_cache->statusCache(node_id);
     if (status && status->has_plc)
@@ -2487,12 +2652,6 @@ bool CloudClient::fillStackCachedSystem_(JsonObject out, uint32_t node_id)
         rtc["temp_c"] = status->rtc_temp;
         has_any = true;
     }
-    const bool stale_plc = status && status->has_plc && (int32_t)(now - status->plc_updated_ms) >= (int32_t)stale_ms;
-    const bool stale_rtc = status && status->has_rtc && (int32_t)(now - status->rtc_updated_ms) >= (int32_t)stale_ms;
-    if (!status || !status->has_plc || stale_plc)
-        _stack_cache->requestPlcStatus(node_id);
-    if (!status || !status->has_rtc || stale_rtc)
-        _stack_cache->requestRtcStatus(node_id);
     return has_any;
 }
 bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
@@ -2500,8 +2659,6 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
     if (!_stack_cache)
         return false;
     bool has_any = false;
-    const uint32_t now = millis();
-    const uint32_t stale_ms = 10000;
 
     const auto *groups = _stack_cache->groupsCache(node_id);
     if (groups && groups->has_data)
@@ -2522,8 +2679,6 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         }
         has_any = true;
     }
-    if (!groups || !groups->has_data || (groups->updated_ms && (int32_t)(now - groups->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestGroups(node_id);
 
     const auto *sockets = _stack_cache->socketsCache(node_id);
     if (sockets && sockets->has_data && sockets->items)
@@ -2546,8 +2701,6 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         }
         has_any = true;
     }
-    if (!sockets || !sockets->has_data || (sockets->updated_ms && (int32_t)(now - sockets->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestSockets(node_id);
 
     const auto *lights = _stack_cache->lightsCache(node_id);
     if (lights && lights->has_data && lights->items)
@@ -2570,8 +2723,6 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         }
         has_any = true;
     }
-    if (!lights || !lights->has_data || (lights->updated_ms && (int32_t)(now - lights->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestLights(node_id);
 
     const auto *meteo = _stack_cache->meteoCache(node_id);
     if (meteo && meteo->has_data && meteo->items)
@@ -2602,8 +2753,6 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         }
         has_any = true;
     }
-    if (!meteo || !meteo->has_data || (meteo->updated_ms && (int32_t)(now - meteo->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestMeteo(node_id);
 
     const auto *thermo = _stack_cache->thermoCache(node_id);
     const auto *local_meteo = _stack_cache->meteoCache(node_id);
@@ -2656,8 +2805,6 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         }
         has_any = true;
     }
-    if (!thermo || !thermo->has_data || (thermo->updated_ms && (int32_t)(now - thermo->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestThermo(node_id);
 
     const auto *tanks = _stack_cache->tanksCache(node_id);
     if (tanks && tanks->has_data && tanks->items)
@@ -2695,8 +2842,6 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         }
         has_any = true;
     }
-    if (!tanks || !tanks->has_data || (tanks->updated_ms && (int32_t)(now - tanks->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestTanks(node_id);
 
     const auto *septic = _stack_cache->septicCache(node_id);
     if (septic && septic->has_data && septic->items)
@@ -2725,8 +2870,6 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         }
         has_any = true;
     }
-    if (!septic || !septic->has_data || (septic->updated_ms && (int32_t)(now - septic->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestSeptic(node_id);
 
     const auto *watering = _stack_cache->wateringCache(node_id);
     if (watering && watering->has_data && watering->items)
@@ -2778,8 +2921,6 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         }
         has_any = true;
     }
-    if (!watering || !watering->has_data || (watering->updated_ms && (int32_t)(now - watering->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestWatering(node_id);
 
     const auto *security = _stack_cache->securityCache(node_id);
     if (security && security->has_data)
@@ -2812,8 +2953,6 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         }
         has_any = true;
     }
-    if (!security || !security->has_data || (security->updated_ms && (int32_t)(now - security->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestSecurity(node_id);
 
     const auto *avr = _stack_cache->avrCache(node_id);
     if (avr && avr->has_data)
@@ -2845,8 +2984,6 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         obj["transfer"] = avr->transfer;
         has_any = true;
     }
-    if (!avr || !avr->has_data || (avr->updated_ms && (int32_t)(now - avr->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestAvr(node_id);
 
     const auto *leak = _stack_cache->leakCache(node_id);
     if (leak && leak->has_data && leak->items)
@@ -2873,9 +3010,6 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         }
         has_any = true;
     }
-    if (!leak || !leak->has_data || (leak->updated_ms && (int32_t)(now - leak->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestLeak(node_id);
-
     return has_any;
 }
 void CloudClient::maybeSendPeriodicEvent_()
@@ -2907,6 +3041,11 @@ void CloudClient::handlePendingTimeouts_()
     {
         if (!p.used)
             continue;
+        if (hasQueuedStackCmdsForPending_(pendingIndex_(&p)))
+        {
+            extendPendingDeadline_(&p);
+            continue;
+        }
         if ((int32_t)(now - p.deadline_ms) < 0)
             continue;
         finalizePending_(&p, false, "timeout");
@@ -2931,10 +3070,36 @@ CloudClient::PendingRequest *CloudClient::allocPending_(const String &ws_id, uin
     }
     return nullptr;
 }
+uint8_t CloudClient::countInflightStackCmdsForNode_(uint32_t node_id) const
+{
+    uint8_t count = 0;
+    for (const auto &c : _stack_cmds)
+    {
+        if (!c.used || c.pending_idx >= kMaxPending)
+            continue;
+        const PendingRequest &p = _pending[c.pending_idx];
+        if (p.used && p.node_id == node_id)
+            ++count;
+    }
+    return count;
+}
+bool CloudClient::hasFreeStackCmdSlot_() const
+{
+    for (const auto &c : _stack_cmds)
+        if (!c.used)
+            return true;
+    return false;
+}
+void CloudClient::extendPendingDeadline_(PendingRequest *p)
+{
+    if (p && p->used)
+        p->deadline_ms = millis() + kStackTimeoutMs;
+}
 void CloudClient::freePending_(CloudClient::PendingRequest *p)
 {
     if (!p)
         return;
+    clearQueuedStackCmdsForPending_(pendingIndex_(p));
     if (p->doc)
     {
         delete p->doc;
@@ -2949,6 +3114,7 @@ void CloudClient::clearPending_()
             freePending_(&p);
     for (auto &c : _stack_cmds)
         c.used = false;
+    clearQueuedStackCmds_();
 }
 void CloudClient::ensurePendingDoc_(CloudClient::PendingRequest *p)
 {
@@ -2957,6 +3123,12 @@ void CloudClient::ensurePendingDoc_(CloudClient::PendingRequest *p)
     if (!p->doc)
         p->doc = new DynamicJsonDocument(kWsDocCapacity);
 }
+uint8_t CloudClient::pendingIndex_(PendingRequest *p) const
+{
+    if (!p)
+        return 0xFF;
+    return (uint8_t)(p - _pending);
+}
 CloudClient::PendingRequest *CloudClient::findPendingByNode_(uint32_t node_id)
 {
     for (auto &p : _pending)
@@ -2964,10 +3136,34 @@ CloudClient::PendingRequest *CloudClient::findPendingByNode_(uint32_t node_id)
             return &p;
     return nullptr;
 }
-void CloudClient::registerStackCmd_(uint16_t cmd_id, CloudClient::PendingRequest *p, CloudClient::StackPart part)
+void CloudClient::clearQueuedStackCmds_()
+{
+    for (auto &q : _stack_send_queue)
+        q = QueuedStackCmd{};
+}
+void CloudClient::clearQueuedStackCmdsForPending_(uint8_t pending_idx)
+{
+    for (auto &q : _stack_send_queue)
+    {
+        if (q.used && q.pending_idx == pending_idx)
+            q = QueuedStackCmd{};
+    }
+}
+bool CloudClient::hasQueuedStackCmdsForPending_(uint8_t pending_idx) const
+{
+    if (pending_idx == 0xFF)
+        return false;
+    for (const auto &q : _stack_send_queue)
+    {
+        if (q.used && q.pending_idx == pending_idx)
+            return true;
+    }
+    return false;
+}
+bool CloudClient::registerStackCmd_(uint16_t cmd_id, CloudClient::PendingRequest *p, CloudClient::StackPart part)
 {
     if (!p)
-        return;
+        return false;
     for (auto &c : _stack_cmds)
     {
         if (!c.used)
@@ -2977,9 +3173,12 @@ void CloudClient::registerStackCmd_(uint16_t cmd_id, CloudClient::PendingRequest
             c.pending_idx = (uint8_t)(p - _pending);
             c.part = part;
             c.started = false;
-            return;
+            return true;
         }
     }
+    _log.warn(F("CLOUD"), F("Stack cmd slots full: node_id: %lu cmd_id: %u"),
+              (unsigned long)p->node_id, (unsigned)cmd_id);
+    return false;
 }
 CloudClient::PendingStackCmd *CloudClient::findStackCmd_(uint16_t cmd_id)
 {
@@ -3126,15 +3325,52 @@ void CloudClient::sendJson_(JsonDocument &doc)
 {
     String out;
     serializeJson(doc, out);
-    if (out.length())
-    {
-        if (!_transport || !_transport->sendText(out))
-            _log.warn(F("CLOUD"), F("Transport tx failed"));
-    }
-    else
+    if (!out.length())
     {
         _log.warn(F("CLOUD"), F("WS tx skipped: empty json"));
+        return;
     }
+
+    if (!_transport || !_transport->sendText(out))
+    {
+        const uint32_t now = millis();
+        if (_last_tx_fail_ms == 0 || (uint32_t)(now - _last_tx_fail_ms) > kTxFailWindowMs)
+            _tx_fail_streak = 0;
+        _last_tx_fail_ms = now;
+        if (_tx_fail_streak < 0xFF)
+            ++_tx_fail_streak;
+
+        _log.warn(F("CLOUD"), F("Transport tx failed: streak: %u"), (unsigned)_tx_fail_streak);
+
+        const uint32_t rx_idle_ms = _last_rx_ms ? (uint32_t)(now - _last_rx_ms) : 0xFFFFFFFFu;
+        const uint32_t tx_ok_idle_ms = _last_tx_ok_ms ? (uint32_t)(now - _last_tx_ok_ms) : 0xFFFFFFFFu;
+        const bool rx_alive = (_last_rx_ms != 0) && (rx_idle_ms <= kTxRxAliveWindowMs);
+        const bool tx_dead_while_rx_alive = rx_alive &&
+                                            (_last_tx_ok_ms != 0) &&
+                                            (tx_ok_idle_ms >= kTxDeadWhileRxAliveMs);
+        const bool repeated_tx_stall = rx_alive && (_tx_fail_streak >= 2);
+
+        if ((tx_dead_while_rx_alive || repeated_tx_stall) && _transport)
+        {
+            _log.warn(F("CLOUD"),
+                      F("Transport reset on tx stall: streak: %u rx_idle_ms: %lu tx_idle_ms: %lu len: %u"),
+                      (unsigned)_tx_fail_streak,
+                      (unsigned long)rx_idle_ms,
+                      (unsigned long)tx_ok_idle_ms,
+                      (unsigned)out.length());
+            _transport->disconnect();
+        }
+        else if (_tx_fail_streak >= 3 && _transport)
+        {
+            _log.warn(F("CLOUD"), F("Transport reset after tx failures"));
+            _transport->disconnect();
+        }
+        return;
+    }
+
+    _last_tx_ok_ms = millis();
+    _tx_fail_streak = 0;
+    _last_tx_fail_ms = 0;
 }
 bool CloudClient::parseActor_(JsonObjectConst payload, CloudClient::ActorInfo &out) const
 {

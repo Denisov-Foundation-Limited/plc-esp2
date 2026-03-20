@@ -195,11 +195,12 @@ void StackRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
         self->comms.wifi.task();
         self->core.logs.info(F("STACK"), F("Unit online: %s id: 0x%08lX ip: %s fw: %u"),
                              label.c_str(), (unsigned long)node_id, ip_c, (unsigned)fw_ver);
-        self->_stack_cache.requestPlcStatus(node_id);
-        self->_stack_cache.requestRtcStatus(node_id);
         auto &sec = self->control.controllers.security();
         auto sec_guard = sec.lockGuard();
-        self->sendSecurityStateToNode_(node_id, sec.armed(), true);
+        const bool armed = sec.armed();
+        const bool alarm_on = sec.alarmOn();
+        if (armed || alarm_on)
+            self->sendSecurityStateToNode_(node_id, armed, true);
         self->enqueueStackBootstrapSync_(node_id);
     }
     else
@@ -435,8 +436,13 @@ void StackRuntime::broadcastRingHold_(bool on){
     if (len == 0)
         return;
     for (size_t i = 0; i < count; ++i)
-        master.sendTo(master.nodeIdAt(i), (uint8_t)StackMsgType::CmdSet,
-                      reinterpret_cast<const uint8_t *>(payload), len);
+    {
+        const uint32_t node_id = master.nodeIdAt(i);
+        if (!master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                           reinterpret_cast<const uint8_t *>(payload), len))
+            core.logs.warn(F("STACK"), F("Ring broadcast send failed: node_id: 0x%08lX"),
+                           (unsigned long)node_id);
+    }
 }
 
 void StackRuntime::notifyRingHold_(){

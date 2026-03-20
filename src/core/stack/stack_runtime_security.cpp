@@ -147,8 +147,15 @@ void StackRuntime::sendSecurityStateToNode_(uint32_t node_id, bool armed, bool f
     const size_t len = serializeJson(doc, payload, sizeof(payload));
     if (len == 0)
         return;
-    master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                  reinterpret_cast<const uint8_t *>(payload), len);
+    const bool queued_only = !force && master.queueDepth(node_id) > 0;
+    const bool ok = queued_only
+                        ? master.enqueueTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                           reinterpret_cast<const uint8_t *>(payload), len)
+                        : master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                                        reinterpret_cast<const uint8_t *>(payload), len);
+    if (!ok)
+        core.logs.warn(F("STACK"), F("Security state send failed: node_id: 0x%08lX"),
+                       (unsigned long)node_id);
 }
 
 void StackRuntime::sendSecurityDetectToMaster_(uint8_t sensor_id, const String &name, bool silent){
@@ -338,8 +345,10 @@ void StackRuntime::sendRfidResultToNode_(uint32_t node_id, const String &uid, bo
     const size_t len = serializeJson(doc, payload, sizeof(payload));
     if (len == 0)
         return;
-    master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                  reinterpret_cast<const uint8_t *>(payload), len);
+    if (!master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                       reinterpret_cast<const uint8_t *>(payload), len))
+        core.logs.warn(F("STACK"), F("RFID result send failed: node_id: 0x%08lX"),
+                       (unsigned long)node_id);
 }
 
 void StackRuntime::sendIButtonResultToNode_(uint32_t node_id, const String &serial, bool matched,
@@ -363,8 +372,10 @@ void StackRuntime::sendIButtonResultToNode_(uint32_t node_id, const String &seri
     const size_t len = serializeJson(doc, payload, sizeof(payload));
     if (len == 0)
         return;
-    master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                  reinterpret_cast<const uint8_t *>(payload), len);
+    if (!master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                       reinterpret_cast<const uint8_t *>(payload), len))
+        core.logs.warn(F("STACK"), F("IButton result send failed: node_id: 0x%08lX"),
+                       (unsigned long)node_id);
 }
 
 void StackRuntime::pollSecurityStatusFromMaster_(){
@@ -385,8 +396,9 @@ void StackRuntime::pollSecurityStatusFromMaster_(){
     const size_t len = serializeJson(doc, payload, sizeof(payload));
     if (len == 0)
         return;
-    node.send((uint8_t)StackMsgType::CmdSet,
-              reinterpret_cast<const uint8_t *>(payload), len);
+    if (!node.send((uint8_t)StackMsgType::CmdSet,
+                   reinterpret_cast<const uint8_t *>(payload), len))
+        core.logs.warn(F("STACK"), F("Security status req send failed"));
 }
 
 bool StackRuntime::collectRemoteSecurityDetections_(String &out, String *plain_out){
@@ -429,31 +441,6 @@ bool StackRuntime::collectRemoteSecurityDetections_(String &out, String *plain_o
                 pending_req_ms[pending_count] = millis();
                 ++pending_count;
             }
-        }
-    }
-    if (pending_count)
-    {
-        const uint32_t wait_until = millis() + kPreArmWaitMs;
-        bool any_pending = true;
-        while (any_pending && (int32_t)(millis() - wait_until) < 0)
-        {
-            any_pending = false;
-            for (size_t i = 0; i < pending_count; ++i)
-            {
-                const uint32_t node_id = pending_nodes[i];
-                if (node_id == 0)
-                    continue;
-                const auto *cache = _stack_cache.securityPrearmCache(node_id);
-                if (!cache)
-                    continue;
-                if (cache->pending || !cache->has_data || !cache->items || !cache->last_ok ||
-                    cache->updated_ms < pending_req_ms[i])
-                {
-                    any_pending = true;
-                }
-            }
-            if (any_pending)
-                delay(20);
         }
     }
     for (size_t i = 0; i < count; ++i)
@@ -586,6 +573,12 @@ void StackRuntime::sendSecurityAlarmToNode_(uint32_t node_id, bool alarm_on){
     const size_t len = serializeJson(doc, payload, sizeof(payload));
     if (len == 0)
         return;
+    if (master.queueDepth(node_id) > 0)
+    {
+        master.enqueueTo(node_id, (uint8_t)StackMsgType::CmdSet,
+                         reinterpret_cast<const uint8_t *>(payload), len);
+        return;
+    }
     master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
                   reinterpret_cast<const uint8_t *>(payload), len);
 }

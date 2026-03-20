@@ -29,11 +29,14 @@ bool Gpio::writeDyn(uint8_t port, bool v, uint32_t timeout_ms) {
 }
 
 bool Gpio::readDyn(uint8_t port, bool& out, uint32_t timeout_ms) const {
+  return tryReadDyn(port, out, timeout_ms);
+}
+
+bool Gpio::tryReadDyn(uint8_t port, bool& out, uint32_t timeout_ms) const {
   if (port >= PortIO::PORT_COUNT) return false;
   const Cap caps = ActiveBoardProfile::PORTS[port].caps;
   if (!has(caps, Cap::Input)) return false;
-  out = _io.read(port, timeout_ms);
-  return true;
+  return _io.tryRead(port, out, timeout_ms);
 }
 
 bool Gpio::pinModeDyn(uint8_t port, PortIO::PortMode mode) {

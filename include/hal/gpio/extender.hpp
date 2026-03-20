@@ -63,6 +63,7 @@ public:
 
     void pinMode(uint8_t dev, uint8_t pin, uint8_t mode);
     void write(uint8_t dev, uint8_t pin, bool level);
+    bool read(uint8_t dev, uint8_t pin, bool &out) const;
     bool read(uint8_t dev, uint8_t pin) const;
     void flushAll();
 

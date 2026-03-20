@@ -137,8 +137,7 @@ bool PlcControl::portState(uint8_t id, bool &out) const{
     const auto &p = _io.desc(id);
     if (p.caps == Cap::None)
         return false;
-    out = _io.read(id);
-    return true;
+    return _io.tryRead(id, out);
 }
 
 void PlcControl::setFanAuto(){ _fan_manual = false; }

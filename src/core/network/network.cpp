@@ -11,6 +11,8 @@
 
 #include "core/network/network.hpp"
 
+#include <WiFi.h>
+
 #include "boards/board_profile_base.hpp"
 #include "core/network/gsm_modem.hpp"
 #include "core/network/web/web_interface.hpp"
@@ -42,7 +44,7 @@ Network::Network(Logger &logs, WifiManager &wifi, GsmModem &gsm, WebInterface &f
     : _logs(logs), _wifi(wifi), _gsm(gsm), _fw_upgrade(fw), _web(web),
       _stack_server(kStackPort),
       _stack_master(_stack_server, _logs),
-      _stack_node(_logs),
+      _stack_node(_stack_client, _logs),
       _cloud(_logs, controllers, plc, wifi, rtc)
 {
     _cloud.setGsm(&gsm);
@@ -101,6 +103,7 @@ void Network::loop()
 {
     _stack_node.loop();
     updateStackFallback_();
+    detectNetworkStall_();
 }
 void Network::setCloudConfig(const CloudClient::Config &cfg)
 {
@@ -233,6 +236,49 @@ void Network::updateStackFallback_()
             }
         }
     }
+}
+
+void Network::detectNetworkStall_()
+{
+    static constexpr uint32_t kStallWindowMs = 15000;
+    static constexpr uint32_t kRecoveryCooldownMs = 60000;
+
+    if (!_wifi.staEnabled())
+        return;
+    if (!_stack_master.nodeCount())
+        return;
+
+    const uint32_t now = millis();
+    const StackMaster::TxStats st = _stack_master.txStats();
+    if (st.session_resets != _last_seen_stack_reset_count)
+    {
+        _last_seen_stack_reset_count = st.session_resets;
+        _last_seen_stack_reset_ms = st.last_reset_ms;
+    }
+    if (_last_seen_stack_reset_ms == 0 || st.session_resets < 2)
+        return;
+    if ((uint32_t)(now - _last_seen_stack_reset_ms) > kStallWindowMs)
+        return;
+    if (_cloud.lastTxFailMs() == 0 || (uint32_t)(now - _cloud.lastTxFailMs()) > kStallWindowMs)
+        return;
+    if (_cloud.txFailStreak() == 0)
+        return;
+    if (_last_network_stall_recovery_ms != 0 &&
+        (uint32_t)(now - _last_network_stall_recovery_ms) < kRecoveryCooldownMs)
+        return;
+
+    const wl_status_t wifi_st = WiFi.status();
+    const int32_t rssi = (wifi_st == WL_CONNECTED) ? WiFi.RSSI() : 0;
+    _logs.warn(F("NET"),
+               F("Network stall recovery: stack_resets: %lu cloud_tx_fail_streak: %u wifi: %d rssi: %ld heap: %lu"),
+               (unsigned long)st.session_resets,
+               (unsigned)_cloud.txFailStreak(),
+               (int)wifi_st,
+               (long)rssi,
+               (unsigned long)ESP.getFreeHeap());
+    _cloud.disconnect();
+    _wifi.restart();
+    _last_network_stall_recovery_ms = now;
 }
 StackNode &Network::stackNode()
 { return _stack_node; }

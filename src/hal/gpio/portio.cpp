@@ -190,7 +190,7 @@ void PortIO::write(PortId id, bool logicalLevel)
     }
 }
 
-bool PortIO::read(PortId id) const
+bool PortIO::tryRead(PortId id, bool &outLogicalLevel) const
 {
     auto guard = _lock.guard();
     if (id >= PORT_COUNT)
@@ -207,16 +207,27 @@ bool PortIO::read(PortId id) const
         v = (::digitalRead(p.u.esp.gpio) != 0);
         if (p.u.esp.inverted)
             v = !v;
-        return v;
+        outLogicalLevel = v;
+        return true;
     }
     if (_ext)
     {
-        v = _ext->read(p.u.ext.dev, p.u.ext.pin);
+        if (!_ext->read(p.u.ext.dev, p.u.ext.pin, v))
+            return false;
         if (p.u.ext.inverted)
             v = !v;
-        return v;
+        outLogicalLevel = v;
+        return true;
     }
     return false;
+}
+
+bool PortIO::read(PortId id) const
+{
+    bool out = false;
+    if (!tryRead(id, out))
+        return false;
+    return out;
 }
 
 int PortIO::adcRead(PortId id)

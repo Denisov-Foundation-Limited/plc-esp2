@@ -376,6 +376,7 @@ public:
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
         uint32_t pending_since_ms = 0;
+        uint32_t cooldown_until_ms = 0;
         uint16_t pending_cmd_id = 0;
         bool pending = false;
         bool has_data = false;
@@ -389,6 +390,7 @@ public:
             node_id = 0;
             updated_ms = 0;
             pending_since_ms = 0;
+            cooldown_until_ms = 0;
             pending_cmd_id = 0;
             pending = false;
             has_data = false;
@@ -3492,6 +3494,7 @@ private:
 
     bool requestStackSecurityPrearm_(uint32_t node_id, bool force)
     {
+        static constexpr uint32_t kPrearmPendingTimeoutMs = 15000u;
         if (!_stack_master)
             return false;
         if (stackRole_() != ConfigsManagerIface::StackRole::Master)
@@ -3500,9 +3503,11 @@ private:
         if (!cache)
             return false;
         const uint32_t now = millis();
+        if (cache->cooldown_until_ms != 0 && (int32_t)(now - cache->cooldown_until_ms) < 0)
+            return false;
         if (cache->pending)
         {
-            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > 6000u)
+            if (cache->pending_since_ms && (uint32_t)(now - cache->pending_since_ms) > kPrearmPendingTimeoutMs)
             {
                 cache->pending = false;
                 cache->pending_cmd_id = 0;
@@ -3513,6 +3518,11 @@ private:
                 return false;
             }
         }
+        if (_stack_master->hasQueuedCommand(node_id, (uint8_t)StackMsgType::CmdGet,
+                                            StackFeature::Security, "prearm"))
+            return false;
+        if (_stack_master->queueDepth(node_id) > 0)
+            return false;
         if (!force && cache->has_data && (uint32_t)(now - cache->updated_ms) < 1500u)
             return false;
         const uint16_t cmd_id = nextStackCmdId_();
@@ -3526,10 +3536,14 @@ private:
             return false;
         if (!_stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdGet,
                                    (const uint8_t *)payload, len))
+        {
+            cache->cooldown_until_ms = now + 10000u;
             return false;
+        }
         cache->pending = true;
         cache->pending_cmd_id = cmd_id;
         cache->pending_since_ms = now;
+        cache->cooldown_until_ms = 0;
         return true;
     }
 

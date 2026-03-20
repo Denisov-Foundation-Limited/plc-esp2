@@ -11,6 +11,42 @@
 
 #include "core/network/web/web_interface.hpp"
 
+namespace
+{
+struct MeteoLocalSnapshotItem
+{
+    bool present = false;
+    MeteoController::SensorConfig cfg{};
+    MeteoController::SensorState st{};
+};
+
+struct MeteoLocalSnapshot
+{
+    MeteoLocalSnapshotItem items[MeteoController::kSensorCount] = {};
+    char ds18_list[32][17] = {};
+    size_t ds18_count = 0;
+};
+
+bool buildMeteoLocalSnapshot_(MeteoController &meteo, MeteoLocalSnapshot &snapshot)
+{
+    auto guard = meteo.lockGuard();
+    if (!guard.locked())
+        return false;
+    meteo.listDs18b20Serials(snapshot.ds18_list, 32, snapshot.ds18_count);
+    for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+    {
+        const auto *cfg = meteo.configByIndex(i);
+        const auto *st = meteo.stateByIndex(i);
+        if (!cfg || !st)
+            continue;
+        snapshot.items[i].present = true;
+        snapshot.items[i].cfg = *cfg;
+        snapshot.items[i].st = *st;
+    }
+    return true;
+}
+}
+
 size_t WebInterfaceControllersMeteoHelper::meteoLocalRenderCount_(const WebInterface &web) {
         if (!web._controllers)
             return 0;
@@ -385,19 +421,18 @@ String WebInterfaceControllersMeteoHelper::listMeteoHtml_(WebInterface &web, siz
         String items;
         items.reserve(16384);
         MeteoController &meteo = web._controllers->meteo();
-        auto guard = meteo.lockGuard();
+        MeteoLocalSnapshot snapshot;
+        if (!buildMeteoLocalSnapshot_(meteo, snapshot))
+            return "Controller busy";
         const uint32_t now = millis();
-        static constexpr size_t kDs18Max = 32;
-        char ds18_list[kDs18Max][17] = {};
-        size_t ds18_count = 0;
-        meteo.listDs18b20Serials(ds18_list, kDs18Max, ds18_count);
         char ds18_used[MeteoController::kSensorCount][17] = {};
         size_t ds18_used_count = 0;
         for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
         {
-            const auto *cfg = meteo.configByIndex(i);
-            if (!cfg)
+            const auto &item = snapshot.items[i];
+            if (!item.present)
                 continue;
+            const auto *cfg = &item.cfg;
             if (cfg->type != MeteoController::SensorType::Ds18b20 || !cfg->ds18_addr_set)
                 continue;
             char hex[17] = {};
@@ -583,29 +618,29 @@ String WebInterfaceControllersMeteoHelper::listMeteoHtml_(WebInterface &web, siz
             items += ">";
             items += "<option value=\"\">-</option>";
             bool addr_found = false;
-            for (size_t i = 0; i < ds18_count; ++i)
+            for (size_t i = 0; i < snapshot.ds18_count; ++i)
             {
                 bool used = false;
                 for (size_t j = 0; j < ds18_used_count; ++j)
                 {
-                    if (strcmp(ds18_used[j], ds18_list[i]) == 0)
+                    if (strcmp(ds18_used[j], snapshot.ds18_list[i]) == 0)
                     {
                         used = true;
                         break;
                     }
                 }
-                if (used && (!addr.length() || addr != ds18_list[i]))
+                if (used && (!addr.length() || addr != snapshot.ds18_list[i]))
                     continue;
                 items += "<option value=\"";
-                items += ds18_list[i];
+                items += snapshot.ds18_list[i];
                 items += "\"";
-                if (addr.length() && addr == ds18_list[i])
+                if (addr.length() && addr == snapshot.ds18_list[i])
                 {
                     items += " selected";
                     addr_found = true;
                 }
                 items += ">";
-                items += ds18_list[i];
+                items += snapshot.ds18_list[i];
                 items += "</option>";
             }
             if (addr.length() && !addr_found)
@@ -636,10 +671,11 @@ String WebInterfaceControllersMeteoHelper::listMeteoHtml_(WebInterface &web, siz
         {
             if (rendered >= page_limit)
                 break;
-            const auto *cfg = meteo.configByIndex(i);
-            const auto *st = meteo.stateByIndex(i);
-            if (!cfg || !st)
+            const auto &item = snapshot.items[i];
+            if (!item.present)
                 continue;
+            const auto *cfg = &item.cfg;
+            const auto *st = &item.st;
             if (!web.webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg->id))
                 continue;
             if (!can_view_disabled && !cfg->enabled)

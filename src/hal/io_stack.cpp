@@ -22,6 +22,7 @@ IoStack::IoStack(PortIO &portio)
         _applied[i] = false;
         _dirty[i] = false;
         _raw_inputs[i] = false;
+        _input_valid[i] = false;
         _last_change_ms[i] = 0;
     }
 }
@@ -54,10 +55,18 @@ void IoStack::initImages()
             continue;
         if (has(p.caps, Cap::Input))
         {
-            const bool v = _portio.read(i);
-            _inputs[i] = v;
-            _raw_inputs[i] = v;
-            _last_change_ms[i] = 0;
+            bool v = false;
+            if (_portio.tryRead(i, v))
+            {
+                _inputs[i] = v;
+                _raw_inputs[i] = v;
+                _input_valid[i] = true;
+                _last_change_ms[i] = 0;
+            }
+            else
+            {
+                _input_valid[i] = false;
+            }
         }
         if (has(p.caps, Cap::Output) && !has(p.caps, Cap::InputOnly))
         {
@@ -82,8 +91,11 @@ void IoStack::scanInputs()
             continue;
         if (has(p.caps, Cap::Input))
         {
-            const bool raw = _portio.read(i);
+            bool raw = false;
+            if (!_portio.tryRead(i, raw))
+                continue;
             auto guard = _lock.guard();
+            _input_valid[i] = true;
             if (raw != _raw_inputs[i])
             {
                 _raw_inputs[i] = raw;
@@ -146,7 +158,7 @@ bool IoStack::write(uint8_t id, bool logicalLevel, uint32_t timeout_ms)
     return true;
 }
 
-bool IoStack::read(uint8_t id, uint32_t timeout_ms) const
+bool IoStack::tryRead(uint8_t id, bool &outLogical, uint32_t timeout_ms) const
 {
     auto guard = _lock.guard(timeout_ms);
     if (!guard.locked())
@@ -157,10 +169,26 @@ bool IoStack::read(uint8_t id, uint32_t timeout_ms) const
     if (p.caps == Cap::None)
         return false;
     if (has(p.caps, Cap::Output))
-        return _outputs[id];
+    {
+        outLogical = _outputs[id];
+        return true;
+    }
     if (has(p.caps, Cap::Input))
-        return _inputs[id];
+    {
+        if (!_input_valid[id])
+            return false;
+        outLogical = _inputs[id];
+        return true;
+    }
     return false;
+}
+
+bool IoStack::read(uint8_t id, uint32_t timeout_ms) const
+{
+    bool out = false;
+    if (!tryRead(id, out, timeout_ms))
+        return false;
+    return out;
 }
 
 const PortIO::PortDesc &IoStack::desc(uint8_t id) const
