@@ -18,8 +18,7 @@
 #include <utility>
 
 #include "utils/logger.hpp"
-#include "core/network/stack/stack_master.hpp"
-#include "core/network/stack/stack_node.hpp"
+#include "core/compat/stack_stub.hpp"
 #include "core/network/cloud/cloud_client.hpp"
 #include "core/network/cloud/cloud_http_transport.hpp"
 #include "utils/configs_manager_iface.hpp"

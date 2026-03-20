@@ -14,8 +14,7 @@
 
 #include <ArduinoJson.h>
 
-#include "core/network/stack/stack_features.hpp"
-#include "core/network/stack/stack_protocol.hpp"
+#include "core/compat/stack_stub.hpp"
 
 class GroupsHandler
 {

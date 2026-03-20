@@ -46,16 +46,15 @@ Network::Network(Logger &logs, WifiManager &wifi, GsmModem &gsm, WebInterface &f
       _cloud(_logs, controllers, plc, wifi, rtc)
 {
     _cloud.setGsm(&gsm);
-    _cloud.setStackMaster(&_stack_master);
 }
 void Network::setStackConfig(ConfigsManagerIface &cfg)
 {
-    _stack_cfg = &cfg;
-    _stack_master.setConfigsManager(cfg);
-    _cloud.setConfigsManager(&cfg);
+    (void)cfg;
 }
 void Network::setStackDeviceName(const String &name)
-{ _stack_device_name = name; }
+{
+    (void)name;
+}
 bool Network::begin()
 {
     _last_error = Error::None;
@@ -87,8 +86,6 @@ bool Network::begin()
     _fw_upgrade.registerRoutes();
     _logs.info(F("NET"), F("Start Web server"));
     _web.begin();
-    _logs.info(F("NET"), F("Init Stack"));
-    beginStack_();
     _started = true;
     if (_cloud_cfg_set && _cloud.enabled())
         _cloud.begin(_cloud_cfg);
@@ -99,8 +96,6 @@ Network::Error Network::lastError() const
 { return _last_error; }
 void Network::loop()
 {
-    _stack_node.loop();
-    updateStackFallback_();
 }
 void Network::setCloudConfig(const CloudClient::Config &cfg)
 {
@@ -241,10 +236,14 @@ StackMaster &Network::stackMaster()
 CloudClient &Network::cloudClient()
 { return _cloud; }
 ConfigsManagerIface::StackRole Network::stackRole() const
-{ return _stack_role; }
+{
+    return ConfigsManagerIface::StackRole::Master;
+}
 bool Network::stackFallbackActive() const
-{ return _stack_fallback_active; }
+{
+    return false;
+}
 bool Network::stackMasterActive() const
 {
-    return _stack_role == ConfigsManagerIface::StackRole::Master || _stack_fallback_active;
+    return false;
 }

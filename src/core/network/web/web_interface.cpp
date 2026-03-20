@@ -21,9 +21,9 @@
 void WebInterface::registerRoutes()
 {
     WebInterfaceSystemRoutes::registerPrimary(*this, _server);
-    WebInterfaceStackRoutes::registerRoutes(*this, _server);
     WebInterfaceSystemRoutes::registerSecondary(*this, _server);
     WebInterfaceDevicesRoutes::registerRoutes(*this, _server);
+    WebInterfaceStackRoutes::registerRoutes(*this, _server);
     WebInterfaceSystemRoutes::registerTail(*this, _server);
     WebInterfaceApiRoutes::registerRoutes(*this, _server);
     WebInterfaceSystemRoutes::registerDisplay(*this, _server);

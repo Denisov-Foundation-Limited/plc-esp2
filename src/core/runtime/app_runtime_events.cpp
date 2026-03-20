@@ -9,8 +9,10 @@
 /*                                                                    */
 /**********************************************************************/
 
+#include "core/runtime/app_runtime.hpp"
+
 #include "app.hpp"
-void StackRuntime::updateTankAlarms_(){
+void AppRuntime::updateTankAlarms_(){
     TankController &tanks = control.controllers.tanks();
     auto tanks_guard = tanks.lockGuard();
     uint32_t detail_mask = 0;
@@ -60,7 +62,7 @@ void StackRuntime::updateTankAlarms_(){
     hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Tanks, unit_mask);
 }
 
-void StackRuntime::updateSepticAlarms_(){
+void AppRuntime::updateSepticAlarms_(){
     SepticController &septic = control.controllers.septic();
     auto septic_guard = septic.lockGuard();
     uint32_t detail_mask = 0;
@@ -108,7 +110,7 @@ void StackRuntime::updateSepticAlarms_(){
     hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Septic, unit_mask);
 }
 
-void StackRuntime::updateMeteoAlarms_(){
+void AppRuntime::updateMeteoAlarms_(){
     MeteoController &meteo = control.controllers.meteo();
     auto meteo_guard = meteo.lockGuard();
     uint32_t detail_mask = 0;
@@ -156,10 +158,10 @@ void StackRuntime::updateMeteoAlarms_(){
     hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Meteo, unit_mask);
 }
 
-void StackRuntime::onMeteoAlarm_(void *ctx, uint32_t node_id, uint8_t sensor_id, bool alarm){
+void AppRuntime::onMeteoAlarm_(void *ctx, uint32_t node_id, uint8_t sensor_id, bool alarm){
     if (!ctx || sensor_id == 0 || sensor_id > 32)
         return;
-    StackRuntime *self = static_cast<StackRuntime *>(ctx);
+    AppRuntime *self = static_cast<AppRuntime *>(ctx);
     if (node_id != 0 && self->stackSlaveActive_())
         return;
     self->hw.plc.setAlarmDetail(PlcControl::AlarmModule::Meteo, (uint8_t)(sensor_id - 1), alarm);
@@ -179,10 +181,10 @@ void StackRuntime::onMeteoAlarm_(void *ctx, uint32_t node_id, uint8_t sensor_id,
     self->publishCloudStackEvent_(node_id, "meteo.sensor", alarm ? "alarm" : "restore", json);
 }
 
-void StackRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
+void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
     if (!ctx || node_id == 0)
         return;
-    StackRuntime *self = static_cast<StackRuntime *>(ctx);
+    AppRuntime *self = static_cast<AppRuntime *>(ctx);
     self->clearInventoryLogState_(node_id);
     String name;
     String ip;
@@ -220,35 +222,35 @@ void StackRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
     self->publishCloudStackEvent_(node_id, "stack.node", online ? "online" : "offline", json);
 }
 
-void StackRuntime::onSepticDetect_(void *ctx, uint8_t septic_id, const String &name, bool is_alarm){
+void AppRuntime::onSepticDetect_(void *ctx, uint8_t septic_id, const String &name, bool is_alarm){
     if (!ctx)
         return;
-    StackRuntime *self = static_cast<StackRuntime *>(ctx);
+    AppRuntime *self = static_cast<AppRuntime *>(ctx);
     if (is_alarm && septic_id > 0 && septic_id <= 32)
         self->hw.plc.setAlarmDetail(PlcControl::AlarmModule::Septic, (uint8_t)(septic_id - 1), true);
     self->sendSepticDetectToMaster_(septic_id, name, is_alarm);
 }
 
-void StackRuntime::onTankEmpty_(void *ctx, uint8_t tank_id, const String &name, bool empty){
+void AppRuntime::onTankEmpty_(void *ctx, uint8_t tank_id, const String &name, bool empty){
     if (!ctx)
         return;
     if (!empty)
         return;
-    static_cast<StackRuntime *>(ctx)->sendTankEmptyToMaster_(tank_id, name);
+    static_cast<AppRuntime *>(ctx)->sendTankEmptyToMaster_(tank_id, name);
 }
 
-void StackRuntime::onWateringEvent_(void *ctx, WateringController::Event ev,
+void AppRuntime::onWateringEvent_(void *ctx, WateringController::Event ev,
                              const WateringController::RuleConfig &cfg,
                              const WateringController::RuleState &st){
     if (!ctx)
         return;
-    static_cast<StackRuntime *>(ctx)->sendWateringEventToMaster_(ev, cfg, st);
+    static_cast<AppRuntime *>(ctx)->sendWateringEventToMaster_(ev, cfg, st);
 }
 
-void StackRuntime::onRingHold_(void *ctx, bool on){
+void AppRuntime::onRingHold_(void *ctx, bool on){
     if (!ctx)
         return;
-    StackRuntime *self = static_cast<StackRuntime *>(ctx);
+    AppRuntime *self = static_cast<AppRuntime *>(ctx);
     const RingController::Source src = self->control.controllers.ring().lastSource();
     if (src == RingController::Source::Button && self->stackSlaveActive_())
     {
@@ -263,13 +265,13 @@ void StackRuntime::onRingHold_(void *ctx, bool on){
         self->notifyRingHold_();
 }
 
-void StackRuntime::onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame){
+void AppRuntime::onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame){
     if (!ctx || node_id == 0)
         return;
-    static_cast<StackRuntime *>(ctx)->handleStackFrame_(node_id, frame);
+    static_cast<AppRuntime *>(ctx)->handleStackFrame_(node_id, frame);
 }
 
-void StackRuntime::sendSepticDetectToMaster_(uint8_t septic_id, const String &name, bool is_alarm){
+void AppRuntime::sendSepticDetectToMaster_(uint8_t septic_id, const String &name, bool is_alarm){
     if (!stackSlaveActive_())
         return;
     StackNode &node = net.network.stackNode();
@@ -306,7 +308,7 @@ void StackRuntime::sendSepticDetectToMaster_(uint8_t septic_id, const String &na
     }
 }
 
-void StackRuntime::sendTankEmptyToMaster_(uint8_t tank_id, const String &name){
+void AppRuntime::sendTankEmptyToMaster_(uint8_t tank_id, const String &name){
     if (!stackSlaveActive_())
         return;
     StackNode &node = net.network.stackNode();
@@ -340,7 +342,7 @@ void StackRuntime::sendTankEmptyToMaster_(uint8_t tank_id, const String &name){
     }
 }
 
-void StackRuntime::sendWateringEventToMaster_(WateringController::Event ev,
+void AppRuntime::sendWateringEventToMaster_(WateringController::Event ev,
                                 const WateringController::RuleConfig &cfg,
                                 const WateringController::RuleState &st){
     if (!stackSlaveActive_())
@@ -412,7 +414,7 @@ void StackRuntime::sendWateringEventToMaster_(WateringController::Event ev,
     }
 }
 
-void StackRuntime::broadcastRingHold_(bool on){
+void AppRuntime::broadcastRingHold_(bool on){
     if (!stackMasterActive_())
         return;
     StackMaster &master = net.network.stackMaster();
@@ -439,7 +441,7 @@ void StackRuntime::broadcastRingHold_(bool on){
                       reinterpret_cast<const uint8_t *>(payload), len);
 }
 
-void StackRuntime::notifyRingHold_(){
+void AppRuntime::notifyRingHold_(){
     const RingController::Source src = control.controllers.ring().lastSource();
     if (src == RingController::Source::Button)
     {
@@ -471,7 +473,7 @@ void StackRuntime::notifyRingHold_(){
     }
 }
 
-void StackRuntime::sendCloudNotify_(const char *kind, const char *reason, const String &msg){
+void AppRuntime::sendCloudNotify_(const char *kind, const char *reason, const String &msg){
     CloudClient &cloud = net.network.cloudClient();
     if (!kind || !kind[0] || !reason || !reason[0])
         return;
@@ -483,7 +485,7 @@ void StackRuntime::sendCloudNotify_(const char *kind, const char *reason, const 
     cloud.publishEvent(kind, reason, json);
 }
 
-void StackRuntime::publishCloudStackEvent_(uint32_t node_id, const char *kind, const char *reason,
+void AppRuntime::publishCloudStackEvent_(uint32_t node_id, const char *kind, const char *reason,
                                            const String &data_json){
     if (node_id == 0 || !kind || !kind[0] || !reason || !reason[0])
         return;
@@ -491,7 +493,7 @@ void StackRuntime::publishCloudStackEvent_(uint32_t node_id, const char *kind, c
     cloud.publishScopedEvent("stack", node_id, kind, reason, data_json);
 }
 
-void StackRuntime::handleStackFrame_(uint32_t node_id, const StackFrame &frame){
+void AppRuntime::handleStackFrame_(uint32_t node_id, const StackFrame &frame){
     if (!stackMasterActive_())
         return;
     // Always feed shared stack cache with Ack/Err/Cmd* frames from slaves.
@@ -611,7 +613,7 @@ void StackRuntime::handleStackFrame_(uint32_t node_id, const StackFrame &frame){
     }
 }
 
-void StackRuntime::handleSepticFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
+void AppRuntime::handleSepticFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
     if (action != "level")
         return;
     const String level = params["level"] | "";
@@ -653,7 +655,7 @@ void StackRuntime::handleSepticFrame_(uint32_t node_id, const String &action, Js
     publishCloudStackEvent_(node_id, "septic.level", is_alarm ? "alarm" : "warning", event_json);
 }
 
-void StackRuntime::handleTankFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
+void AppRuntime::handleTankFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
     if (action != "empty")
         return;
     const bool empty = params["empty"].is<bool>() ? params["empty"].as<bool>()
@@ -685,7 +687,7 @@ void StackRuntime::handleTankFrame_(uint32_t node_id, const String &action, Json
     publishCloudStackEvent_(node_id, "tanks.level", "empty", event_json);
 }
 
-void StackRuntime::handleWateringFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
+void AppRuntime::handleWateringFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
     if (action != "event")
         return;
     const String event = params["event"] | "";
@@ -736,15 +738,15 @@ void StackRuntime::handleWateringFrame_(uint32_t node_id, const String &action, 
     publishCloudStackEvent_(node_id, "watering.rule", event.c_str(), event_json);
 }
 
-void StackRuntime::updateSepticNotifyMode_(){
+void AppRuntime::updateSepticNotifyMode_(){
     control.controllers.septic().setNotifyEnabled(stackMasterActive_());
 }
 
-void StackRuntime::updateTanksNotifyMode_(){
+void AppRuntime::updateTanksNotifyMode_(){
     control.controllers.tanks().setNotifyEnabled(stackMasterActive_());
 }
 
-void StackRuntime::flushPendingSepticDetect_(){
+void AppRuntime::flushPendingSepticDetect_(){
     if (!_pending_septic_detect)
         return;
     if (!stackSlaveActive_())
@@ -756,7 +758,7 @@ void StackRuntime::flushPendingSepticDetect_(){
     sendSepticDetectToMaster_(_pending_septic_id, _pending_septic_name, _pending_septic_alarm);
 }
 
-void StackRuntime::flushPendingTankEmpty_(){
+void AppRuntime::flushPendingTankEmpty_(){
     if (!_pending_tank_empty)
         return;
     if (!stackSlaveActive_())
@@ -768,7 +770,7 @@ void StackRuntime::flushPendingTankEmpty_(){
     sendTankEmptyToMaster_(_pending_tank_id, _pending_tank_name);
 }
 
-void StackRuntime::flushPendingWateringEvent_(){
+void AppRuntime::flushPendingWateringEvent_(){
     if (!_pending_watering_event)
         return;
     if (!stackSlaveActive_())
@@ -781,7 +783,7 @@ void StackRuntime::flushPendingWateringEvent_(){
                                _pending_watering_event_state);
 }
 
-void StackRuntime::flushPendingRingButton_(){
+void AppRuntime::flushPendingRingButton_(){
     if (!_pending_ring_button)
         return;
     if (!stackSlaveActive_())
@@ -793,7 +795,7 @@ void StackRuntime::flushPendingRingButton_(){
     sendRingButtonToMaster_(_pending_ring_button_pressed);
 }
 
-bool StackRuntime::sendRingButtonToMaster_(bool pressed){
+bool AppRuntime::sendRingButtonToMaster_(bool pressed){
     if (!stackSlaveActive_())
         return false;
     StackNode &node = net.network.stackNode();
@@ -813,8 +815,8 @@ bool StackRuntime::sendRingButtonToMaster_(bool pressed){
                      reinterpret_cast<const uint8_t *>(payload), len);
 }
 
-String StackRuntime::stackNodeLabel_(uint32_t node_id) const{
-    StackMaster &master = const_cast<StackRuntime *>(this)->net.network.stackMaster();
+String AppRuntime::stackNodeLabel_(uint32_t node_id) const{
+    StackMaster &master = const_cast<AppRuntime *>(this)->net.network.stackMaster();
     const size_t count = master.nodeCount();
     for (size_t i = 0; i < count; ++i)
     {
@@ -830,7 +832,7 @@ String StackRuntime::stackNodeLabel_(uint32_t node_id) const{
     return String(buf);
 }
 
-String StackRuntime::escapeHtml_(const String &in){
+String AppRuntime::escapeHtml_(const String &in){
     String out;
     out.reserve(in.length() + 8);
     for (size_t i = 0; i < in.length(); ++i)
@@ -861,8 +863,8 @@ String StackRuntime::escapeHtml_(const String &in){
     return out;
 }
 
-int StackRuntime::stackNodeIndex_(uint32_t node_id) const{
-    StackMaster &master = const_cast<StackRuntime *>(this)->net.network.stackMaster();
+int AppRuntime::stackNodeIndex_(uint32_t node_id) const{
+    StackMaster &master = const_cast<AppRuntime *>(this)->net.network.stackMaster();
     const size_t count = master.nodeCount();
     for (size_t i = 0; i < count; ++i)
     {
@@ -872,7 +874,7 @@ int StackRuntime::stackNodeIndex_(uint32_t node_id) const{
     return -1;
 }
 
-void StackRuntime::logStackNodeInventory_(uint32_t node_id){
+void AppRuntime::logStackNodeInventory_(uint32_t node_id){
     if (node_id == 0 || !stackMasterActive_())
         return;
     if (!net.network.stackMaster().nodeIsOnline(node_id, kStackNodeStaleMs))
@@ -1090,7 +1092,7 @@ void StackRuntime::logStackNodeInventory_(uint32_t node_id){
     }
 }
 
-StackRuntime::StackInventoryLogState *StackRuntime::inventoryLogState_(uint32_t node_id, bool create){
+AppRuntime::StackInventoryLogState *AppRuntime::inventoryLogState_(uint32_t node_id, bool create){
     if (node_id == 0)
         return nullptr;
     for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
@@ -1116,7 +1118,7 @@ StackRuntime::StackInventoryLogState *StackRuntime::inventoryLogState_(uint32_t 
     return &_stack_inventory_log[0];
 }
 
-void StackRuntime::clearInventoryLogState_(uint32_t node_id){
+void AppRuntime::clearInventoryLogState_(uint32_t node_id){
     if (node_id == 0)
         return;
     for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)

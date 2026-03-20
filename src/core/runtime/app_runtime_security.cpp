@@ -9,8 +9,10 @@
 /*                                                                    */
 /**********************************************************************/
 
+#include "core/runtime/app_runtime.hpp"
+
 #include "app.hpp"
-void StackRuntime::updateSecurityAlarms_(){
+void AppRuntime::updateSecurityAlarms_(){
     SecurityController &sec = control.controllers.security();
     auto sec_guard = sec.lockGuard();
     uint32_t detail_mask = 0;
@@ -58,58 +60,58 @@ void StackRuntime::updateSecurityAlarms_(){
     hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Security, unit_mask);
 }
 
-void StackRuntime::onSecurityArmState_(void *ctx, bool armed){
+void AppRuntime::onSecurityArmState_(void *ctx, bool armed){
     if (!ctx)
         return;
-    StackRuntime *self = static_cast<StackRuntime *>(ctx);
+    AppRuntime *self = static_cast<AppRuntime *>(ctx);
     self->broadcastSecurityState_(armed);
     if (!armed)
         self->broadcastSecurityAlarm_(false);
 }
 
-bool StackRuntime::onSecurityPreArmCheck_(void *ctx, String &out, String *plain_out){
+bool AppRuntime::onSecurityPreArmCheck_(void *ctx, String &out, String *plain_out){
     if (!ctx)
         return false;
-    return static_cast<StackRuntime *>(ctx)->collectRemoteSecurityDetections_(out, plain_out);
+    return static_cast<AppRuntime *>(ctx)->collectRemoteSecurityDetections_(out, plain_out);
 }
 
-void StackRuntime::onSecurityAlarmState_(void *ctx, bool alarm_on){
+void AppRuntime::onSecurityAlarmState_(void *ctx, bool alarm_on){
     if (!ctx)
         return;
-    static_cast<StackRuntime *>(ctx)->broadcastSecurityAlarm_(alarm_on);
+    static_cast<AppRuntime *>(ctx)->broadcastSecurityAlarm_(alarm_on);
 }
 
-void StackRuntime::onSecurityClearDetect_(void *ctx){
+void AppRuntime::onSecurityClearDetect_(void *ctx){
     if (!ctx)
         return;
-    StackRuntime *self = static_cast<StackRuntime *>(ctx);
+    AppRuntime *self = static_cast<AppRuntime *>(ctx);
     self->hw.plc.setAlarmDetailMask(PlcControl::AlarmModule::Security, 0);
     self->hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Security, 0);
     self->broadcastSecurityClear_();
 }
 
-void StackRuntime::onSecurityDetect_(void *ctx, uint8_t sensor_id, const String &name, bool silent){
+void AppRuntime::onSecurityDetect_(void *ctx, uint8_t sensor_id, const String &name, bool silent){
     if (!ctx)
         return;
-    StackRuntime *self = static_cast<StackRuntime *>(ctx);
+    AppRuntime *self = static_cast<AppRuntime *>(ctx);
     if (!silent && sensor_id > 0 && sensor_id <= 32)
         self->hw.plc.setAlarmDetail(PlcControl::AlarmModule::Security, (uint8_t)(sensor_id - 1), true);
     self->sendSecurityDetectToMaster_(sensor_id, name, silent);
 }
 
-bool StackRuntime::onSecurityRfidUid_(void *ctx, const String &uid){
+bool AppRuntime::onSecurityRfidUid_(void *ctx, const String &uid){
     if (!ctx)
         return false;
-    return static_cast<StackRuntime *>(ctx)->handleSecurityRfidUid_(uid);
+    return static_cast<AppRuntime *>(ctx)->handleSecurityRfidUid_(uid);
 }
 
-bool StackRuntime::onSecurityIButtonSerial_(void *ctx, const String &serial){
+bool AppRuntime::onSecurityIButtonSerial_(void *ctx, const String &serial){
     if (!ctx)
         return false;
-    return static_cast<StackRuntime *>(ctx)->handleSecurityIButtonSerial_(serial);
+    return static_cast<AppRuntime *>(ctx)->handleSecurityIButtonSerial_(serial);
 }
 
-void StackRuntime::broadcastSecurityState_(bool armed){
+void AppRuntime::broadcastSecurityState_(bool armed){
     if (!stackMasterActive_())
         return;
     StackMaster &master = net.network.stackMaster();
@@ -118,13 +120,13 @@ void StackRuntime::broadcastSecurityState_(bool armed){
         sendSecurityStateToNode_(master.nodeIdAt(i), armed, false);
 }
 
-void StackRuntime::sendSecurityStateToNode_(uint32_t node_id){
+void AppRuntime::sendSecurityStateToNode_(uint32_t node_id){
     auto &sec = control.controllers.security();
     auto sec_guard = sec.lockGuard();
     sendSecurityStateToNode_(node_id, sec.armed(), false);
 }
 
-void StackRuntime::sendSecurityStateToNode_(uint32_t node_id, bool armed, bool force){
+void AppRuntime::sendSecurityStateToNode_(uint32_t node_id, bool armed, bool force){
     if (node_id == 0)
         return;
     if (!stackMasterActive_())
@@ -151,7 +153,7 @@ void StackRuntime::sendSecurityStateToNode_(uint32_t node_id, bool armed, bool f
                   reinterpret_cast<const uint8_t *>(payload), len);
 }
 
-void StackRuntime::sendSecurityDetectToMaster_(uint8_t sensor_id, const String &name, bool silent){
+void AppRuntime::sendSecurityDetectToMaster_(uint8_t sensor_id, const String &name, bool silent){
     if (!stackSlaveActive_())
         return;
     StackNode &node = net.network.stackNode();
@@ -189,11 +191,11 @@ void StackRuntime::sendSecurityDetectToMaster_(uint8_t sensor_id, const String &
     }
 }
 
-void StackRuntime::updateSecurityNotifyMode_(){
+void AppRuntime::updateSecurityNotifyMode_(){
     control.controllers.security().setNotifyEnabled(stackMasterActive_());
 }
 
-void StackRuntime::flushPendingSecurityDetect_(){
+void AppRuntime::flushPendingSecurityDetect_(){
     if (!_pending_detect)
         return;
     if (!stackSlaveActive_())
@@ -205,7 +207,7 @@ void StackRuntime::flushPendingSecurityDetect_(){
     sendSecurityDetectToMaster_(_pending_sensor_id, _pending_sensor_name, _pending_sensor_silent);
 }
 
-void StackRuntime::flushPendingRfid_(){
+void AppRuntime::flushPendingRfid_(){
     if (!_pending_rfid)
         return;
     if (!stackSlaveActive_())
@@ -217,7 +219,7 @@ void StackRuntime::flushPendingRfid_(){
     sendRfidToMaster_(_pending_rfid_uid, hw.plc.deviceName());
 }
 
-void StackRuntime::flushPendingIButton_(){
+void AppRuntime::flushPendingIButton_(){
     if (!_pending_ibutton)
         return;
     if (!stackSlaveActive_())
@@ -229,7 +231,7 @@ void StackRuntime::flushPendingIButton_(){
     sendIButtonToMaster_(_pending_ibutton_serial, hw.plc.deviceName());
 }
 
-bool StackRuntime::handleSecurityRfidUid_(const String &uid_str){
+bool AppRuntime::handleSecurityRfidUid_(const String &uid_str){
     if (!stackSlaveActive_())
         return false;
     if (uid_str.length() == 0)
@@ -251,7 +253,7 @@ bool StackRuntime::handleSecurityRfidUid_(const String &uid_str){
     return true;
 }
 
-bool StackRuntime::handleSecurityIButtonSerial_(const String &serial){
+bool AppRuntime::handleSecurityIButtonSerial_(const String &serial){
     if (!stackSlaveActive_())
         return false;
     if (serial.length() == 0)
@@ -273,7 +275,7 @@ bool StackRuntime::handleSecurityIButtonSerial_(const String &serial){
     return true;
 }
 
-bool StackRuntime::sendRfidToMaster_(const String &uid, const String &name){
+bool AppRuntime::sendRfidToMaster_(const String &uid, const String &name){
     if (!stackSlaveActive_())
         return false;
     StackNode &node = net.network.stackNode();
@@ -295,7 +297,7 @@ bool StackRuntime::sendRfidToMaster_(const String &uid, const String &name){
                      reinterpret_cast<const uint8_t *>(payload), len);
 }
 
-bool StackRuntime::sendIButtonToMaster_(const String &serial, const String &name){
+bool AppRuntime::sendIButtonToMaster_(const String &serial, const String &name){
     if (!stackSlaveActive_())
         return false;
     StackNode &node = net.network.stackNode();
@@ -317,7 +319,7 @@ bool StackRuntime::sendIButtonToMaster_(const String &serial, const String &name
                      reinterpret_cast<const uint8_t *>(payload), len);
 }
 
-void StackRuntime::sendRfidResultToNode_(uint32_t node_id, const String &uid, bool matched,
+void AppRuntime::sendRfidResultToNode_(uint32_t node_id, const String &uid, bool matched,
                            const String &result, bool armed){
     if (node_id == 0)
         return;
@@ -342,7 +344,7 @@ void StackRuntime::sendRfidResultToNode_(uint32_t node_id, const String &uid, bo
                   reinterpret_cast<const uint8_t *>(payload), len);
 }
 
-void StackRuntime::sendIButtonResultToNode_(uint32_t node_id, const String &serial, bool matched,
+void AppRuntime::sendIButtonResultToNode_(uint32_t node_id, const String &serial, bool matched,
                               const String &result, bool armed){
     if (node_id == 0)
         return;
@@ -367,7 +369,7 @@ void StackRuntime::sendIButtonResultToNode_(uint32_t node_id, const String &seri
                   reinterpret_cast<const uint8_t *>(payload), len);
 }
 
-void StackRuntime::pollSecurityStatusFromMaster_(){
+void AppRuntime::pollSecurityStatusFromMaster_(){
     if (!stackSlaveActive_())
         return;
     StackNode &node = net.network.stackNode();
@@ -389,7 +391,7 @@ void StackRuntime::pollSecurityStatusFromMaster_(){
               reinterpret_cast<const uint8_t *>(payload), len);
 }
 
-bool StackRuntime::collectRemoteSecurityDetections_(String &out, String *plain_out){
+bool AppRuntime::collectRemoteSecurityDetections_(String &out, String *plain_out){
     if (!stackMasterActive_())
         return false;
     StackMaster &master = net.network.stackMaster();
@@ -559,7 +561,7 @@ bool StackRuntime::collectRemoteSecurityDetections_(String &out, String *plain_o
     return any;
 }
 
-void StackRuntime::broadcastSecurityAlarm_(bool alarm_on){
+void AppRuntime::broadcastSecurityAlarm_(bool alarm_on){
     if (!stackMasterActive_())
         return;
     StackMaster &master = net.network.stackMaster();
@@ -568,7 +570,7 @@ void StackRuntime::broadcastSecurityAlarm_(bool alarm_on){
         sendSecurityAlarmToNode_(master.nodeIdAt(i), alarm_on);
 }
 
-void StackRuntime::sendSecurityAlarmToNode_(uint32_t node_id, bool alarm_on){
+void AppRuntime::sendSecurityAlarmToNode_(uint32_t node_id, bool alarm_on){
     if (node_id == 0)
         return;
     if (!stackMasterActive_())
@@ -590,7 +592,7 @@ void StackRuntime::sendSecurityAlarmToNode_(uint32_t node_id, bool alarm_on){
                   reinterpret_cast<const uint8_t *>(payload), len);
 }
 
-void StackRuntime::sendSecurityBeepToNode_(uint32_t node_id, const char *kind){
+void AppRuntime::sendSecurityBeepToNode_(uint32_t node_id, const char *kind){
     if (node_id == 0)
         return;
     if (!stackMasterActive_())
@@ -612,7 +614,7 @@ void StackRuntime::sendSecurityBeepToNode_(uint32_t node_id, const char *kind){
                   reinterpret_cast<const uint8_t *>(payload), len);
 }
 
-void StackRuntime::pollSecurityPrearmWarmup_(){
+void AppRuntime::pollSecurityPrearmWarmup_(){
     if (!stackMasterActive_())
         return;
     const uint32_t now = millis();
@@ -635,7 +637,7 @@ void StackRuntime::pollSecurityPrearmWarmup_(){
     }
 }
 
-void StackRuntime::broadcastSecurityClear_(){
+void AppRuntime::broadcastSecurityClear_(){
     if (!stackMasterActive_())
         return;
     StackMaster &master = net.network.stackMaster();
@@ -644,7 +646,7 @@ void StackRuntime::broadcastSecurityClear_(){
         sendSecurityClearToNode_(master.nodeIdAt(i));
 }
 
-void StackRuntime::sendSecurityClearToNode_(uint32_t node_id){
+void AppRuntime::sendSecurityClearToNode_(uint32_t node_id){
     if (node_id == 0)
         return;
     if (!stackMasterActive_())

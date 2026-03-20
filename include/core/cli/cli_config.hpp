@@ -77,15 +77,6 @@ public:
             _c._io->println(F("    eeprom show             - show EEPROM save/load flags"));
             _c._io->println(F("    eeprom save <on|off>    - enable/disable EEPROM periodic save"));
             _c._io->println(F("    eeprom load <on|off>    - enable/disable EEPROM load on boot"));
-            _c._io->println(F("  Stack:"));
-            _c._io->println(F("    stack role <master|slave> - set device role"));
-            _c._io->println(F("    stack master <host>       - set master host/IP"));
-            _c._io->println(F("    stack fallback <on|off>   - enable fallback master mode"));
-            _c._io->println(F("    stack fallback_host <host> - set fallback host/IP"));
-            _c._io->println(F("    stack slave_controller <on|off> - mark slave as controller"));
-            _c._io->println(F("    stack api_key <value>     - set stack api_key"));
-            _c._io->println(F("    stack api_key clear       - clear stack api_key"));
-            _c._io->println(F("    stack api_key gen         - generate stack api_key"));
             _c._io->println(F("  Wi-Fi:"));
             _c._io->println(F("    wifi                     - enter Wi-Fi context"));
             _c._io->println(F("  Time:"));
@@ -942,6 +933,12 @@ private:
 
     void handleStack_(const String &cmd, const String &lower)
     {
+        (void)cmd;
+        (void)lower;
+        _c._io->println(F("Stack removed"));
+        _c.printPrompt_();
+        return;
+
         if (lower.startsWith("stack role "))
         {
             String role = cmd.substring(11);

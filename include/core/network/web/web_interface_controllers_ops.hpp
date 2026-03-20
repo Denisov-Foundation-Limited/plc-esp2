@@ -14,7 +14,7 @@
 #include <Arduino.h>
 
 #include "core/display_slots.hpp"
-#include "core/network/stack/stack_cache.hpp"
+#include "core/compat/stack_stub.hpp"
 #include "controllers/meteo_controller.hpp"
 #include "controllers/security_controller.hpp"
 #include "controllers/thermo_controller.hpp"

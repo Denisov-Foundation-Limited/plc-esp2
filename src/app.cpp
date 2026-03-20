@@ -160,43 +160,42 @@ ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContex
             : core(),
               hw(core.logs, core.uart),
               comms(core.logs, core.uart),
-          control(core, hw, comms),
-          ui(core, hw, comms, control),
-          net(core, hw, comms, control, ui),
+              control(core, hw, comms),
+              ui(core, hw, comms, control),
+              net(core, hw, comms, control, ui),
               cfg(core, hw, comms, control, ui, net),
-              stack(core, hw, comms, control, ui, net, cfg)
+              runtime(core, hw, comms, control, ui, net, cfg)
     {
         comms.wifi.setIo(hw.io);
+        ui.console.setConfigsManager(cfg.configs_manager);
         ui.console.setStackMaster(&net.network.stackMaster());
         ui.console.setStackSlave(&net.stack_slave);
-        ui.console.setConfigsManager(cfg.configs_manager);
 
-    net.fw_upgrade.setStackCache(stack.stackCache());
-    net.fw_upgrade.setConfigsManager(cfg.configs_manager);
-    net.fw_upgrade.setStackMaster(net.network.stackMaster());
-    net.fw_upgrade.setStackSlave(&net.stack_slave);
-    net.fw_upgrade.setGsmModem(comms.gsm);
-    net.fw_upgrade.setCloudClient(net.network.cloudClient());
-    net.network.cloudClient().setStackCache(&stack.stackCache());
-    net.network.cloudClient().setUsersRegistry(&control.users);
-    net.network.cloudClient().setRulesController(&control.rules);
-    net.network.cloudClient().bindControllerCallbacks();
-    net.network.cloudClient().bindRuleCallbacks();
-    net.fw_upgrade.setUsersRegistry(control.users);
-    net.fw_upgrade.setRules(control.rules);
+        net.fw_upgrade.setConfigsManager(cfg.configs_manager);
+        net.fw_upgrade.setGsmModem(comms.gsm);
+        net.fw_upgrade.setCloudClient(net.network.cloudClient());
+        net.fw_upgrade.setStackCache(runtime.stackCache());
+        net.fw_upgrade.setStackMaster(net.network.stackMaster());
+        net.fw_upgrade.setStackSlave(&net.stack_slave);
+        net.network.cloudClient().setConfigsManager(&cfg.configs_manager);
+        net.network.cloudClient().setUsersRegistry(&control.users);
+        net.network.cloudClient().setRulesController(&control.rules);
+        net.network.cloudClient().bindControllerCallbacks();
+        net.network.cloudClient().bindRuleCallbacks();
+        net.fw_upgrade.setUsersRegistry(control.users);
+        net.fw_upgrade.setRules(control.rules);
 
-    net.network.setStackConfig(cfg.configs_manager);
-    control.task_binder.setGsmModem(comms.gsm);
-    control.task_binder.setCloudClient(net.network.cloudClient());
-    control.task_binder.setNetwork(net.network);
-    control.task_binder.setConsoleLoop(&appConsoleLoopCb_, &ui.console);
+        control.task_binder.setGsmModem(comms.gsm);
+        control.task_binder.setCloudClient(net.network.cloudClient());
+        control.task_binder.setNetwork(net.network);
+        control.task_binder.setConsoleLoop(&appConsoleLoopCb_, &ui.console);
 
-    control.controllers.security().setRfidI2c(&hw.i2c);
-    control.controllers.security().setUsersRegistry(control.users);
-    control.controllers.security().setPlcControl(hw.plc);
+        control.controllers.security().setRfidI2c(&hw.i2c);
+        control.controllers.security().setUsersRegistry(control.users);
+        control.controllers.security().setPlcControl(hw.plc);
 
-    stack.bindCallbacks();
-}
+        runtime.bindCallbacks();
+    }
 
 bool App::begin()
 {
@@ -206,9 +205,6 @@ bool App::begin()
         core.logs.begin(Serial);
         core.logs.error(F("APP"), F("LOG Auto bind failed, fallback to USB"));
     }
-
-    stack.init();
-
     delay(1000);
     ui.console.begin(Serial);
 
@@ -286,8 +282,8 @@ bool App::begin()
             }
         }
     }
-
-    stack.applyLoadedConfig();
+    runtime.init();
+    runtime.applyLoadedConfig();
 
     cfg.configs_manager.setCloudFirmwareVersion(BuildInfo::kFwVersion);
     net.network.setCloudFirmwareVersion(BuildInfo::kFwVersion);
@@ -451,8 +447,8 @@ bool App::begin()
         core.logs.error(F("APP"), F("Application init [FAIL]"));
 
     control.task_binder.bindFtest(control.ftest);
+    control.task_binder.bindRuntime(runtime);
     control.task_binder.bindAll();
-    control.task_binder.bindStack(stack);
     if (rtc_ok)
         core.logs.setRtc(hw.rtc);
 
@@ -461,7 +457,7 @@ bool App::begin()
 
 void App::loop()
 {
-    control.task_binder.runStackPre(stack);
+    control.task_binder.runRuntimePre(runtime);
 
 #if APP_GPIO_SCAN_METRICS
     {

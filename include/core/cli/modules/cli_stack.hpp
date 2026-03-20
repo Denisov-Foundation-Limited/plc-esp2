@@ -17,10 +17,7 @@
 #include <string.h>
 #include <string.h>
 
-#include "core/network/stack/stack_master.hpp"
-#include "core/network/stack/stack_slave_handler.hpp"
-#include "core/network/stack/stack_features.hpp"
-#include "core/network/stack/stack_protocol.hpp"
+#include "core/compat/stack_stub.hpp"
 #include "controllers/meteo_controller.hpp"
 #include "controllers/septic_controller.hpp"
 #include "controllers/socket_controller.hpp"

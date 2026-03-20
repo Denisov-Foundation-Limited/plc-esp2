@@ -473,11 +473,10 @@ void CliConsole::cmdShowI2c_()
                 printI2cRow_("CPU", bus, addr_buf);
             }
     }
-    _stack_cli.requestStackI2cScan_();
 }
 void CliConsole::cmdShowStack_()
 {
-    _stack_cli.cmdShowStack_();
+    _io->println(F("Stack removed"));
 }
 void CliConsole::cmdShowOw_()
 {
@@ -502,7 +501,6 @@ void CliConsole::cmdShowOw_()
             printOwRow_("CPU", i, owBusName_(cfg.bus_id), hex);
         }
     }
-    _stack_cli.requestStackOwScan_();
 }
 void CliConsole::cmdShowConfig_()
 {
@@ -564,7 +562,8 @@ void CliConsole::cmdWifiRestart_()
 }
 void CliConsole::cmdStack_(const String &line)
 {
-    _stack_cli.cmdStack_(line);
+    (void)line;
+    _io->println(F("Stack removed"));
 }
 void CliConsole::cmdRestart_()
 {
@@ -695,7 +694,6 @@ void CliConsole::showHelpTopic_(const String &topic)
         _io->println(F("  show time       - RTC date/time"));
         _io->println(F("  show i2c        - I2C device list"));
         _io->println(F("  show ow         - OneWire device list"));
-        _io->println(F("  show stack      - stack role settings"));
         _io->println(F("  show cloud      - Cloud settings"));
         _io->println(F("  show config     - configuration file contents"));
         _io->println(F("  show port <id>  - port details"));
@@ -824,14 +822,13 @@ void CliConsole::handleTab_()
 {
     if (!_io || _state != State::LoggedIn)
         return;
-    static const std::array<const char *, 81> kEnableCmds = {{
+    static const std::array<const char *, 70> kEnableCmds = {{
         "show plc",
         "show board",
         "show wifi",
         "show time",
         "show i2c",
         "show ow",
-        "show stack",
         "show cloud",
         "show config",
         "show ext",
@@ -869,16 +866,6 @@ void CliConsole::handleTab_()
         "ftest",
         "copy tftp://<ip>/firmware.bin firmware",
         "copy http://<ip>/firmware.bin firmware",
-        "stack nodes",
-        "stack trace",
-        "stack trace on",
-        "stack trace off",
-        "stack send <id> <get|set> <json>",
-        "stack socket <unit> <on|off|toggle> <id>",
-        "stack thermo <unit> <on|off|toggle> <id>",
-        "stack septic <unit> <status|get>",
-        "stack security <unit> <arm|disarm|status|clear>",
-        "stack ring <unit> <on|off>",
         "wifi restart",
         "reload",
         "reset",
@@ -907,20 +894,12 @@ void CliConsole::handleTab_()
         "help avr",
         "help leak"}};
 
-    static const std::array<const char *, 48> kConfigCmds = {{
+    static const std::array<const char *, 37> kConfigCmds = {{
         "password <pass>",
         "admin password <pass>",
         "eeprom show",
         "eeprom save <on|off>",
         "eeprom load <on|off>",
-        "stack role <master|slave>",
-        "stack master <host>",
-        "stack fallback <on|off>",
-        "stack fallback_host <host>",
-        "stack slave_controller <on|off>",
-        "stack api_key <value>",
-        "stack api_key clear",
-        "stack api_key gen",
         "wifi",
         "cloud",
         "time",

@@ -183,6 +183,8 @@ bool WebInterfaceStackOps::isStackPortsView_(uint32_t node_id) const
 
 uint32_t WebInterfaceStackOps::parseStackNodeIdParam_(AsyncWebServerRequest *request) const
 {
+    if (!_web._stack_master || _web._stack_master->nodeCount() == 0)
+        return 0;
     String node = _web.paramValueAny_(request, "node_id");
     if (node.length() == 0)
         node = _web.paramValueAny_(request, "node");

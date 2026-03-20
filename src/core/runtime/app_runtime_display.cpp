@@ -9,6 +9,8 @@
 /*                                                                    */
 /**********************************************************************/
 
+#include "core/runtime/app_runtime.hpp"
+
 #include "app.hpp"
 
 namespace
@@ -72,13 +74,13 @@ void advanceDisplayDateTime_(Ds3231Mz::DateTime &dt, uint32_t delta_sec)
 }
 } // namespace
 
-bool StackRuntime::onDisplaySlot_(void *ctx, const DisplaySlotConfig &slot, char out[5]){
+bool AppRuntime::onDisplaySlot_(void *ctx, const DisplaySlotConfig &slot, char out[5]){
     if (!ctx)
         return false;
-    return static_cast<StackRuntime *>(ctx)->renderDisplaySlot_(slot, out);
+    return static_cast<AppRuntime *>(ctx)->renderDisplaySlot_(slot, out);
 }
 
-void StackRuntime::updateDisplayLayout_(){
+void AppRuntime::updateDisplayLayout_(){
     const size_t count = cfg.configs_manager.displaySlotCount();
     for (size_t i = 0; i < Display::kSlotCount && i < count; ++i)
     {
@@ -93,7 +95,7 @@ void StackRuntime::updateDisplayLayout_(){
     }
 }
 
-bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
+bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
     if (!out)
         return false;
     const uint32_t node_id = slot.node_id;
@@ -868,7 +870,7 @@ bool StackRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]
     }
 }
 
-void StackRuntime::formatTemp3_(char out[5], int t){
+void AppRuntime::formatTemp3_(char out[5], int t){
     if (!out)
         return;
     if (t <= -10)
@@ -877,7 +879,7 @@ void StackRuntime::formatTemp3_(char out[5], int t){
         snprintf(out, 5, "%2d%c", t, Display::kDegreeChar);
 }
 
-bool StackRuntime::displaySlotEqual_(const DisplaySlotConfig &a, const DisplaySlotConfig &b){
+bool AppRuntime::displaySlotEqual_(const DisplaySlotConfig &a, const DisplaySlotConfig &b){
     if (a.kind != b.kind || a.node_id != b.node_id || a.index != b.index || a.field != b.field)
         return false;
     return strncmp(a.text, b.text, sizeof(a.text)) == 0;

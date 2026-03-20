@@ -1037,84 +1037,7 @@ sendRedirect_(request, "/", set_cookie);
             return;
         if (!requireWebAdmin_(request, &set_cookie))
             return;
-        if (!_configs_manager)
-        {
-            _stack_status = "Config manager missing";
-            sendRedirect_(request, "/", set_cookie);
-            return;
-        }
-
-        bool changed = false;
-        if (request->hasParam("role", true))
-        {
-            String role = request->getParam("role", true)->value();
-            role.trim();
-            role.toLowerCase();
-            const auto new_role = (role == "slave") ? ConfigsManagerIface::StackRole::Slave
-                                                    : ConfigsManagerIface::StackRole::Master;
-            if (new_role != _configs_manager->stackRole())
-            {
-                _configs_manager->setStackRole(new_role);
-                changed = true;
-            }
-        }
-
-        String host = request->hasParam("master_host", true)
-                          ? request->getParam("master_host", true)->value()
-                          : String("");
-        host.trim();
-        if (host != _configs_manager->stackMasterHost())
-        {
-            _configs_manager->setStackMasterHost(host);
-            changed = true;
-        }
-
-        const bool fallback_enabled = request->hasParam("fallback_enabled", true);
-        if (fallback_enabled != _configs_manager->stackFallbackEnabled())
-        {
-            _configs_manager->setStackFallbackEnabled(fallback_enabled);
-            changed = true;
-        }
-
-        String fallback_host = request->hasParam("fallback_host", true)
-                                   ? request->getParam("fallback_host", true)->value()
-                                   : String("");
-        fallback_host.trim();
-        if (fallback_host != _configs_manager->stackFallbackHost())
-        {
-            _configs_manager->setStackFallbackHost(fallback_host);
-            changed = true;
-        }
-
-        const bool slave_controller = request->hasParam("slave_controller", true);
-        if (slave_controller != _configs_manager->stackSlaveController())
-        {
-            _configs_manager->setStackSlaveController(slave_controller);
-            changed = true;
-        }
-
-        String api_key = request->hasParam("api_key", true)
-                             ? request->getParam("api_key", true)->value()
-                             : String("");
-        api_key.trim();
-        if (!WebInterface::isMaskedSecret_(api_key, _configs_manager->stackApiKey()) &&
-            api_key != _configs_manager->stackApiKey())
-        {
-            _configs_manager->setStackApiKey(api_key);
-            changed = true;
-        }
-
-        bool save_ok = true;
-        if (changed)
-            save_ok = saveWifiConfig_();
-
-        if (!changed)
-            _stack_status = "No changes";
-        else if (!save_ok)
-            _stack_status = "Save failed";
-        else
-            _stack_status = "Saved";
-
+        _stack_status = "Stack disabled";
         sendRedirect_(request, "/stack", set_cookie);
     }
 
@@ -1127,25 +1050,7 @@ sendRedirect_(request, "/", set_cookie);
             return;
         if (!requireWebAdmin_(request, &set_cookie))
             return;
-        if (!_configs_manager)
-        {
-            sendText_(request, 500, "text/plain", "Config manager missing", set_cookie);
-            return;
-        }
-        if (_configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
-        {
-            sendText_(request, 403, "text/plain", "Stack role is slave", set_cookie);
-            return;
-        }
-        const String key = genApiKey_();
-        _configs_manager->setStackApiKey(key);
-        if (!_configs_manager->save())
-        {
-            sendText_(request, 500, "text/plain", "Save failed", set_cookie);
-            return;
-        }
-        _stack_status = "Saved";
-        sendText_(request, 200, "text/plain", key, set_cookie);
+        sendText_(request, 200, "text/plain", "stack-disabled", set_cookie);
     }
 
 
@@ -1698,7 +1603,6 @@ String WebInterfaceControllersOps::navHtml_() const
             appendNavLink(nav, F("/manage"), F("Прошивка и файлы"));
             appendNavLink(nav, F("/ports"), F("Порты"));
             appendNavLink(nav, F("/buses"), F("Шины"));
-            appendNavLink(nav, F("/stack"), F("Стек"));
             appendNavLink(nav, F("/users"), F("Пользователи"));
             appendNavLink(nav, F("/display"), F("Дисплей"));
             appendNavLink(nav, F("/rules"), F("Правила"));
@@ -1709,7 +1613,6 @@ String WebInterfaceControllersOps::navHtml_() const
         }
         nav += F("</div></div>");
         nav += F(R"HTML(
-<div id="global-stack-toast-wrap" style="position:fixed;left:16px;top:16px;display:flex;flex-direction:column;gap:8px;z-index:9999;pointer-events:none"></div>
 <script>
 (function(){
   const currentPath = window.location.pathname || '/';
@@ -1720,90 +1623,9 @@ String WebInterfaceControllersOps::navHtml_() const
       link.classList.add('fc-nav__active');
     }
   });
-  const wrap = document.getElementById('global-stack-toast-wrap');
-  if (!wrap) return;
-  const TOAST_SLAVE_CONNECTED_PREFIX = '%TOAST_SLAVE_CONNECTED_PREFIX%';
-  const TOAST_SLAVE_DISCONNECTED_PREFIX = '%TOAST_SLAVE_DISCONNECTED_PREFIX%';
-  const TOAST_SLAVE_SYNC_COMPLETE_PREFIX = '%TOAST_SLAVE_SYNC_COMPLETE_PREFIX%';
-  function makeToastEl(kind){
-    const el = document.createElement('div');
-    const ok = kind !== 'error';
-    const border = ok ? 'rgba(34,197,94,0.45)' : 'rgba(239,68,68,0.50)';
-    const bg = ok ? 'rgba(6,33,23,.94)' : 'rgba(46,12,12,.94)';
-    const color = ok ? '#d1fae5' : '#fee2e2';
-    el.style.cssText = 'min-width:220px;max-width:340px;padding:10px 12px;border-radius:10px;border:1px solid ' + border + ';background:' + bg + ';color:' + color + ';font-size:13px;box-shadow:0 8px 20px rgba(0,0,0,.35);opacity:0;transform:translateY(8px);transition:opacity .18s ease,transform .18s ease';
-    return { el, ok };
-  }
-  function showToast(msg, kind){
-    const { el } = makeToastEl(kind);
-    el.textContent = msg;
-    wrap.appendChild(el);
-    requestAnimationFrame(()=>{ el.style.opacity='1'; el.style.transform='translateY(0)'; });
-    setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(8px)'; setTimeout(()=>{ if(el.parentNode) el.parentNode.removeChild(el); },220); },3200);
-  }
-  function showToastName(prefix, name, kind){
-    const { el, ok } = makeToastEl(kind);
-    const pre = document.createElement('span');
-    pre.textContent = prefix;
-    const who = document.createElement('span');
-    who.textContent = name || '-';
-    who.style.fontWeight = '700';
-    who.style.color = ok ? '#86efac' : '#fecaca';
-    el.appendChild(pre);
-    el.appendChild(who);
-    wrap.appendChild(el);
-    requestAnimationFrame(()=>{ el.style.opacity='1'; el.style.transform='translateY(0)'; });
-    setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(8px)'; setTimeout(()=>{ if(el.parentNode) el.parentNode.removeChild(el); },220); },3200);
-  }
-  let known = null;
-  const syncShown = new Set();
-  async function poll(){
-    try{
-      const r = await fetch('/stack/online_snapshot', {cache:'no-store', credentials:'same-origin'});
-      if(!r.ok) return;
-      const data = await r.json();
-      const next = new Map();
-      if(Array.isArray(data)){
-        data.forEach((n)=>{
-          const id = String((n && n.id != null) ? n.id : '').trim();
-          if(!id) return;
-          const name = String((n && n.name) ? n.name : id);
-          const sync = !!(n && (n.sync === 1 || n.sync === true || n.sync === '1'));
-          next.set(id, { name, sync });
-        });
-      }
-      if (known === null){
-        next.forEach((cur,id)=>{
-          if(cur && cur.sync) syncShown.add(id);
-        });
-        known = next;
-        return;
-      }
-      next.forEach((cur,id)=>{
-        const prev = known.get(id);
-        if(!prev) showToastName(TOAST_SLAVE_CONNECTED_PREFIX, cur.name, 'success');
-        if(cur.sync && !syncShown.has(id)){
-          showToastName(TOAST_SLAVE_SYNC_COMPLETE_PREFIX, cur.name, 'success');
-          syncShown.add(id);
-        }
-      });
-      known.forEach((prev,id)=>{
-        if(!next.has(id)){
-          showToastName(TOAST_SLAVE_DISCONNECTED_PREFIX, prev.name, 'error');
-          syncShown.delete(id);
-        }
-      });
-      known = next;
-    }catch(e){}
-  }
-  poll();
-  setInterval(poll, 3000);
 })();
 </script>
 )HTML");
-        nav.replace("%TOAST_SLAVE_CONNECTED_PREFIX%", WebUiRu::Common::kToastSlaveConnectedPrefix);
-        nav.replace("%TOAST_SLAVE_DISCONNECTED_PREFIX%", WebUiRu::Common::kToastSlaveDisconnectedPrefix);
-        nav.replace("%TOAST_SLAVE_SYNC_COMPLETE_PREFIX%", WebUiRu::Common::kToastSlaveSyncCompletePrefix);
         return nav;
     }
 
@@ -1820,8 +1642,6 @@ String WebInterfaceControllersOps::navHtml_() const
 
     ConfigsManagerIface::StackRole WebInterfaceControllersOps::stackRole_() const
 {
-        if (_configs_manager)
-            return _configs_manager->stackRole();
         return ConfigsManagerIface::StackRole::Master;
     }
 
@@ -1829,8 +1649,6 @@ String WebInterfaceControllersOps::navHtml_() const
 
     String WebInterfaceControllersOps::stackMasterHost_() const
 {
-        if (_configs_manager)
-            return _configs_manager->stackMasterHost();
         return "";
     }
 
@@ -1838,8 +1656,6 @@ String WebInterfaceControllersOps::navHtml_() const
 
     bool WebInterfaceControllersOps::stackFallbackEnabled_() const
 {
-        if (_configs_manager)
-            return _configs_manager->stackFallbackEnabled();
         return false;
     }
 
@@ -1847,8 +1663,6 @@ String WebInterfaceControllersOps::navHtml_() const
 
     String WebInterfaceControllersOps::stackFallbackHost_() const
 {
-        if (_configs_manager)
-            return _configs_manager->stackFallbackHost();
         return "";
     }
 
@@ -1856,8 +1670,6 @@ String WebInterfaceControllersOps::navHtml_() const
 
     bool WebInterfaceControllersOps::stackSlaveController_() const
 {
-        if (_configs_manager)
-            return _configs_manager->stackSlaveController();
         return true;
     }
 
@@ -1865,8 +1677,6 @@ String WebInterfaceControllersOps::navHtml_() const
 
     String WebInterfaceControllersOps::stackApiKey_() const
 {
-        if (_configs_manager)
-            return _configs_manager->stackApiKey();
         return "";
     }
 

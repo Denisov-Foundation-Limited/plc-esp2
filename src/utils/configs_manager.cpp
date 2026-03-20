@@ -30,17 +30,17 @@ ConfigsManager::ConfigsManager(Configs &configs, WifiManager &wifi, Network &net
       _users(users){
 }
 
-CfgMgrStackRole ConfigsManager::stackRole() const{ return _stack_role; }
+CfgMgrStackRole ConfigsManager::stackRole() const{ return CfgMgrStackRole::Master; }
 
-String ConfigsManager::stackMasterHost() const{ return _stack_master_host; }
+String ConfigsManager::stackMasterHost() const{ return ""; }
 
-String ConfigsManager::stackApiKey() const{ return _stack_api_key; }
+String ConfigsManager::stackApiKey() const{ return ""; }
 
-bool ConfigsManager::stackFallbackEnabled() const{ return _stack_fallback_enabled; }
+bool ConfigsManager::stackFallbackEnabled() const{ return false; }
 
-String ConfigsManager::stackFallbackHost() const{ return _stack_fallback_host; }
+String ConfigsManager::stackFallbackHost() const{ return ""; }
 
-bool ConfigsManager::stackSlaveController() const{ return _stack_slave_controller; }
+bool ConfigsManager::stackSlaveController() const{ return true; }
 
 bool ConfigsManager::cloudEnabled() const{ return _cloud_enabled; }
 
@@ -173,17 +173,17 @@ bool ConfigsManager::displaySlot(size_t idx, DisplaySlotConfig &out) const{
     return true;
 }
 
-void ConfigsManager::setStackRole(StackRole role){ _stack_role = role; }
+void ConfigsManager::setStackRole(StackRole role){ (void)role; }
 
-void ConfigsManager::setStackMasterHost(const String &host){ _stack_master_host = host; }
+void ConfigsManager::setStackMasterHost(const String &host){ (void)host; }
 
-void ConfigsManager::setStackApiKey(const String &key){ _stack_api_key = key; }
+void ConfigsManager::setStackApiKey(const String &key){ (void)key; }
 
-void ConfigsManager::setStackFallbackEnabled(bool enabled){ _stack_fallback_enabled = enabled; }
+void ConfigsManager::setStackFallbackEnabled(bool enabled){ (void)enabled; }
 
-void ConfigsManager::setStackFallbackHost(const String &host){ _stack_fallback_host = host; }
+void ConfigsManager::setStackFallbackHost(const String &host){ (void)host; }
 
-void ConfigsManager::setStackSlaveController(bool controller){ _stack_slave_controller = controller; }
+void ConfigsManager::setStackSlaveController(bool controller){ (void)controller; }
 
 void ConfigsManager::setCloudEnabled(bool enabled){
     if (enabled == _cloud_enabled)
@@ -335,14 +335,6 @@ bool ConfigsManager::save(){
     eeprom["save"] = _eeprom_save_enabled;
     eeprom["load"] = _eeprom_load_enabled;
 
-    JsonObject s = _doc["stack"].to<JsonObject>();
-    s["role"] = (_stack_role == StackRole::Master) ? "master" : "slave";
-    s["master_host"] = _stack_master_host;
-    s["api_key"] = _stack_api_key;
-    s["fallback_enabled"] = _stack_fallback_enabled;
-    s["fallback_host"] = _stack_fallback_host;
-    s["slave_controller"] = _stack_slave_controller;
-
     JsonObject ctrl = _doc["controllers"].to<JsonObject>();
     _controllers.serialize(ctrl);
 
@@ -421,6 +413,7 @@ bool ConfigsManager::save(const JsonDocument &doc){
     {
         _rules.applyConfig(doc["rules"].as<JsonArrayConst>());
     }
+    tmp.remove("stack");
     tmp.remove("users");
     tmp.remove("rules");
     if (!_configs.save(tmp))
@@ -782,27 +775,6 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
         }
         if (p["buzzer"].is<bool>())
             _plc.setBuzzerEnabled(p["buzzer"].as<bool>());
-    }
-
-    if (doc["stack"].is<JsonObjectConst>())
-    {
-        JsonObjectConst s = doc["stack"].as<JsonObjectConst>();
-        if (s["role"].is<const char *>())
-        {
-            String role = s["role"].as<const char *>();
-            role.toLowerCase();
-            _stack_role = (role == "slave") ? StackRole::Slave : StackRole::Master;
-        }
-        if (s["master_host"].is<const char *>())
-            _stack_master_host = s["master_host"].as<const char *>();
-        if (s["api_key"].is<const char *>())
-            _stack_api_key = s["api_key"].as<const char *>();
-        if (s["fallback_enabled"].is<bool>())
-            _stack_fallback_enabled = s["fallback_enabled"].as<bool>();
-        if (s["fallback_host"].is<const char *>())
-            _stack_fallback_host = s["fallback_host"].as<const char *>();
-        if (s["slave_controller"].is<bool>())
-            _stack_slave_controller = s["slave_controller"].as<bool>();
     }
 
     if (doc["display"].is<JsonObjectConst>())

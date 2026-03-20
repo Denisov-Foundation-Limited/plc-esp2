@@ -17,7 +17,7 @@
 #include "core/network/network.hpp"
 #include "core/display.hpp"
 #include "core/plc_scan.hpp"
-#include "core/stack/stack_runtime.hpp"
+#include "core/runtime/app_runtime.hpp"
 #include "hal/gpio/extender.hpp"
 #include "controllers/controllers.hpp"
 #include "utils/meteo_history.hpp"
@@ -126,46 +126,48 @@ public:
         _console_loop_ctx = ctx;
     }
 
-    void bindStack(StackRuntime &stack)
+public:
+    void bindRuntime(AppRuntime &stack)
     {
-        _stack_runtime = &stack;
-        if (_stack_phase_mtx == nullptr)
-            _stack_phase_mtx = xSemaphoreCreateMutex();
-        if (_stack_evt_queue == nullptr)
-            _stack_evt_queue = xQueueCreate(1, sizeof(uint8_t));
-        if (_stack_evt_task == nullptr)
+        _app_runtime = &stack;
+        if (_runtime_phase_mtx == nullptr)
+            _runtime_phase_mtx = xSemaphoreCreateMutex();
+        if (_runtime_evt_queue == nullptr)
+            _runtime_evt_queue = xQueueCreate(1, sizeof(uint8_t));
+        if (_runtime_evt_task == nullptr)
         {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::stackEventTaskEntry_, "stack_evt", 4096, this, 3,
-                                                    &_stack_evt_task, tskNO_AFFINITY);
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::runtimeEventTaskEntry_, "runtime_evt", 4096, this, 3,
+                                                    &_runtime_evt_task, tskNO_AFFINITY);
             if (ok != pdPASS)
-                _logs.error(F("TASK"), F("Bind failed: stack_evt"));
+                _logs.error(F("TASK"), F("Bind failed: runtime_evt"));
         }
     }
 
-    void runStackPre(StackRuntime &stack)
+public:
+    void runRuntimePre(AppRuntime &stack)
     {
-        _stack_runtime = &stack;
-        if (_stack_phase_mtx)
-            xSemaphoreTake(_stack_phase_mtx, portMAX_DELAY);
-        stack.setTaskPhase(StackRuntime::TaskPhase::PreNetwork);
+        _app_runtime = &stack;
+        if (_runtime_phase_mtx)
+            xSemaphoreTake(_runtime_phase_mtx, portMAX_DELAY);
+        stack.setTaskPhase(AppRuntime::TaskPhase::PreNetwork);
         stack.taskPre();
-        stack.setTaskPhase(StackRuntime::TaskPhase::Idle);
-        if (_stack_phase_mtx)
-            xSemaphoreGive(_stack_phase_mtx);
-    }
-
-    void notifyStackPostNetwork()
-    {
-        if (_stack_evt_queue == nullptr)
-            return;
-        bool expected = false;
-        if (!_stack_evt_pending.compare_exchange_strong(expected, true))
-            return;
-        uint8_t evt = 1;
-        xQueueOverwrite(_stack_evt_queue, &evt);
+        stack.setTaskPhase(AppRuntime::TaskPhase::Idle);
+        if (_runtime_phase_mtx)
+            xSemaphoreGive(_runtime_phase_mtx);
     }
 
 private:
+    void notifyRuntimePostNetwork()
+    {
+        if (_runtime_evt_queue == nullptr)
+            return;
+        bool expected = false;
+        if (!_runtime_evt_pending.compare_exchange_strong(expected, true))
+            return;
+        uint8_t evt = 1;
+        xQueueOverwrite(_runtime_evt_queue, &evt);
+    }
+
     struct RtosDebugStats
     {
         uint32_t last_exec_us = 0;
@@ -540,7 +542,7 @@ private:
         {
             const uint32_t t0 = micros();
             self->networkLoopTask_();
-            self->notifyStackPostNetwork();
+            self->notifyRuntimePostNetwork();
 #if TASK_BINDER_RTOS_DEBUG
             const uint32_t dt = (uint32_t)(micros() - t0);
             const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
@@ -584,36 +586,36 @@ private:
         }
     }
 
-    static void stackEventTaskEntry_(void *arg)
+    static void runtimeEventTaskEntry_(void *arg)
     {
         auto *self = static_cast<TaskBinder *>(arg);
         for (;;)
         {
             uint8_t evt = 0;
-            if (self->_stack_evt_queue == nullptr)
+            if (self->_runtime_evt_queue == nullptr)
             {
                 vTaskDelay(pdMS_TO_TICKS(100));
                 continue;
             }
-            if (xQueueReceive(self->_stack_evt_queue, &evt, portMAX_DELAY) != pdTRUE)
+            if (xQueueReceive(self->_runtime_evt_queue, &evt, portMAX_DELAY) != pdTRUE)
                 continue;
-            if (evt != 1 || self->_stack_runtime == nullptr)
+            if (evt != 1 || self->_app_runtime == nullptr)
                 continue;
-            self->_stack_evt_pending.store(false);
+            self->_runtime_evt_pending.store(false);
 
             const uint32_t t0 = micros();
-            if (self->_stack_phase_mtx)
-                xSemaphoreTake(self->_stack_phase_mtx, portMAX_DELAY);
-            self->_stack_runtime->setTaskPhase(StackRuntime::TaskPhase::PostNetwork);
-            self->_stack_runtime->taskPost();
-            self->_stack_runtime->taskFlush();
-            self->_stack_runtime->setTaskPhase(StackRuntime::TaskPhase::Idle);
-            if (self->_stack_phase_mtx)
-                xSemaphoreGive(self->_stack_phase_mtx);
+            if (self->_runtime_phase_mtx)
+                xSemaphoreTake(self->_runtime_phase_mtx, portMAX_DELAY);
+            self->_app_runtime->setTaskPhase(AppRuntime::TaskPhase::PostNetwork);
+            self->_app_runtime->taskPost();
+            self->_app_runtime->taskFlush();
+            self->_app_runtime->setTaskPhase(AppRuntime::TaskPhase::Idle);
+            if (self->_runtime_phase_mtx)
+                xSemaphoreGive(self->_runtime_phase_mtx);
 #if TASK_BINDER_RTOS_DEBUG
             const uint32_t dt = (uint32_t)(micros() - t0);
             const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
-            self->updateRtosDebug_("stack_evt", dt, hwm, self->_dbg_stack_evt);
+            self->updateRtosDebug_("runtime_evt", dt, hwm, self->_dbg_runtime_evt);
 #endif
         }
     }
@@ -644,14 +646,14 @@ private:
     TaskHandle_t _plc_task_rtos = nullptr;
     TaskHandle_t _gsm_task_rtos = nullptr;
     TaskHandle_t _cloud_task_rtos = nullptr;
-    TaskHandle_t _stack_evt_task = nullptr;
+    TaskHandle_t _runtime_evt_task = nullptr;
     TaskHandle_t _network_task_rtos = nullptr;
     TaskHandle_t _console_task_rtos = nullptr;
     TaskHandle_t _ftest_task = nullptr;
-    QueueHandle_t _stack_evt_queue = nullptr;
-    SemaphoreHandle_t _stack_phase_mtx = nullptr;
-    StackRuntime *_stack_runtime = nullptr;
-    std::atomic<bool> _stack_evt_pending{false};
+    QueueHandle_t _runtime_evt_queue = nullptr;
+    SemaphoreHandle_t _runtime_phase_mtx = nullptr;
+    AppRuntime *_app_runtime = nullptr;
+    std::atomic<bool> _runtime_evt_pending{false};
 
 #if TASK_BINDER_RTOS_DEBUG
     RtosDebugStats _dbg_wifi{};
@@ -663,7 +665,7 @@ private:
     RtosDebugStats _dbg_plc{};
     RtosDebugStats _dbg_gsm{};
     RtosDebugStats _dbg_cloud{};
-    RtosDebugStats _dbg_stack_evt{};
+    RtosDebugStats _dbg_runtime_evt{};
     RtosDebugStats _dbg_network{};
     RtosDebugStats _dbg_console{};
     RtosDebugStats _dbg_ftest{};

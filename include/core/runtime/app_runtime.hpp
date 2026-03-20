@@ -18,8 +18,7 @@
 #include "controllers/controllers.hpp"
 #include "core/display.hpp"
 #include "hal/ds3231mz.hpp"
-#include "core/network/stack/stack_cache.hpp"
-#include "core/network/stack/stack_protocol.hpp"
+#include "core/compat/stack_stub.hpp"
 
 struct CoreContext;
 struct HardwareContext;
@@ -30,7 +29,7 @@ struct NetworkContext;
 struct ConfigContext;
 class TaskBinder;
 
-class StackRuntime
+class AppRuntime
 {
 public:
     enum class TaskPhase : uint8_t
@@ -40,7 +39,7 @@ public:
         PostNetwork
     };
 
-    StackRuntime(CoreContext &core, HardwareContext &hw, CommsContext &comms,
+    AppRuntime(CoreContext &core, HardwareContext &hw, CommsContext &comms,
                  ControlContext &control, UiContext &ui, NetworkContext &net,
                  ConfigContext &cfg);
 

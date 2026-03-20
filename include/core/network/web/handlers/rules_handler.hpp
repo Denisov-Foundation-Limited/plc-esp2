@@ -21,8 +21,7 @@
 #include "controllers/tank_controller.hpp"
 #include "controllers/septic_controller.hpp"
 #include "controllers/security_controller.hpp"
-#include "core/network/stack/stack_master.hpp"
-#include "core/network/stack/stack_cache.hpp"
+#include "core/compat/stack_stub.hpp"
 
 
 class RulesHandler

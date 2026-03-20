@@ -18,8 +18,7 @@
 #include "boards/board_profile.hpp"
 #include "controllers/controllers.hpp"
 #include "core/network/gsm_modem.hpp"
-#include "core/network/stack/stack_cache.hpp"
-#include "core/network/stack/stack_master.hpp"
+#include "core/compat/stack_stub.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/rtc.hpp"
 #include "core/rules_controller.hpp"
@@ -389,25 +388,6 @@ void CloudClient::sendHello_()
     payload["mac"] = WiFi.macAddress();
     payload["ip"] = localIp_();
 
-    JsonObject stack = payload["stack"].to<JsonObject>();
-    stack["role"] = stackRoleName_();
-    stack["node_id"] = deviceId_();
-    JsonArray nodes = stack["nodes"].to<JsonArray>();
-    if (isStackMaster_() && _stack_master)
-    {
-        const size_t count = _stack_master->nodeCount();
-        for (size_t i = 0; i < count; ++i)
-        {
-            if (!_stack_master->nodeIsControllerAt(i))
-                continue;
-            JsonObject n = nodes.add<JsonObject>();
-            n["node_id"] = _stack_master->nodeIdAt(i);
-            n["name"] = _stack_master->nodeNameAt(i);
-            n["online"] = true;
-            n["last_seen_ms"] = 0;
-        }
-    }
-
     sendJson_(doc);
 }
 void CloudClient::maintainConnectionHealth_()
@@ -637,13 +617,7 @@ void CloudClient::handleGet_(const String &req_id, JsonDocument &doc)
     JsonArrayConst what = doc["payload"]["what"].as<JsonArrayConst>();
     if (unit == "stack")
     {
-        const uint32_t node_id = parseNodeId_(doc["node_id"]);
-        if (!node_id)
-        {
-            sendError_(req_id, "missing node_id");
-            return;
-        }
-        handleGetStack_(req_id, node_id, what);
+        sendError_(req_id, "stack removed");
         return;
     }
     handleGetLocal_(req_id, what);
@@ -664,8 +638,6 @@ void CloudClient::handleGetLocal_(const String &req_id, JsonArrayConst what)
         fillSystemInfo_(data.createNestedObject("system"));
     if (hasWhat_(what, "controllers"))
         fillControllersInfo_(data.createNestedObject("controllers"));
-    if (hasWhat_(what, "stack"))
-        fillStackInfo_(data.createNestedObject("stack"));
     if (hasWhat_(what, "authz"))
         fillAuthzInfo_(data.createNestedObject("authz"));
 
@@ -736,21 +708,7 @@ void CloudClient::handleCmd_(const String &req_id, JsonDocument &doc)
     }
     if (unit == "stack")
     {
-        const uint32_t node_id = parseNodeId_(doc["node_id"]);
-        if (!node_id)
-        {
-            sendError_(req_id, "missing node_id");
-            return;
-        }
-        if (!aclCanControl_(actor, ctrl, action, args, node_id))
-        {
-            _log.warn(F("CLOUD"), F("Cmd rejected: ctrl: %s action: %s user: %s acl deny"),
-                      ctrl.c_str(), action.c_str(),
-                      actor.resolved_user.length() ? actor.resolved_user.c_str() : "-");
-            sendError_(req_id, "acl deny");
-            return;
-        }
-        handleCmdStack_(req_id, node_id, ctrl, action, args, actor);
+        sendError_(req_id, "stack removed");
         return;
     }
     if (!aclCanControl_(actor, ctrl, action, args, 0))

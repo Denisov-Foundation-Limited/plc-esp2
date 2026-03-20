@@ -15,7 +15,7 @@
 #include <ArduinoJson.h>
 
 #include "controllers/avr_controller.hpp"
-#include "core/network/stack/stack_cache.hpp"
+#include "core/compat/stack_stub.hpp"
 
 class AvrHandler
 {
