@@ -13,106 +13,106 @@
 
 #include "core/network/web/web_interface.hpp"
 
-String WebInterfaceStackOps::indexDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
+namespace
 {
-    if (_web.stackRole_() != ConfigsManagerIface::StackRole::Master || !_web._stack_master)
+void appendHtmlEscapedLocal_(String &out, const char *in)
+{
+    if (!in)
+        return;
+    while (*in)
+    {
+        switch (*in)
+        {
+        case '&':
+            out += "&amp;";
+            break;
+        case '<':
+            out += "&lt;";
+            break;
+        case '>':
+            out += "&gt;";
+            break;
+        case '"':
+            out += "&quot;";
+            break;
+        case '\'':
+            out += "&#39;";
+            break;
+        default:
+            out += *in;
+            break;
+        }
+        ++in;
+    }
+}
+
+String stackNodeIdHexLocal_(uint32_t value)
+{
+    char buf[16] = {};
+    snprintf(buf, sizeof(buf), "0x%08lX", (unsigned long)value);
+    return String(buf);
+}
+
+bool hasOnlineNode_(const WebInterface &web, uint32_t node_id)
+{
+    if (node_id == 0 || !web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+        return false;
+    StackDeviceRegistry::DeviceInfo device{};
+    return web.network()->stackDeviceSnapshotByNodeId(node_id, device) && device.online && device.node_id != 0;
+}
+
+String deviceSelectHtml_(const WebInterface &web, const char *select_id, uint32_t selected_node_id, bool stack_view,
+                         const char *span_class)
+{
+    if (!web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
         return "";
     String html;
     html.reserve(512);
     html += "<div class=\"row\" style=\"margin: 6px 0 10px;\">";
-    html += String("<span class=\"status\">") + WebUiRu::kDevice + "</span>";
-    html += "<select id=\"index-device\" class=\"mini\">";
+    html += String("<span class=\"") + span_class + "\">" + WebUiRu::kDevice + "</span>";
+    html += "<select id=\"";
+    html += select_id;
+    html += "\" class=\"mini\">";
     html += "<option value=\"local\"";
     if (!stack_view)
         html += " selected";
     html += ">local</option>";
-    const size_t count = _web._stack_master->nodeCount();
+    const size_t count = web.network()->stackOnlineDeviceCount();
     for (size_t i = 0; i < count; ++i)
     {
-        const uint32_t id = _web._stack_master->nodeIdAt(i);
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!web.network()->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+            continue;
         html += "<option value=\"";
-        html += String((unsigned long)id);
+        html += String((unsigned long)device.node_id);
         html += "\"";
-        if (stack_view && id == selected_node_id)
+        if (stack_view && device.node_id == selected_node_id)
             html += " selected";
         html += ">";
-        String name = _web._stack_master->nodeNameAt(i);
-        if (name.length() > 0)
-            _web.appendHtmlEscaped_(html, name.c_str());
+        if (device.name[0])
+            appendHtmlEscapedLocal_(html, device.name);
         else
-            html += _web.stackNodeIdHex_(id);
+            html += stackNodeIdHexLocal_(device.node_id);
         html += "</option>";
     }
     html += "</select></div>";
     return html;
+}
+}
+
+String WebInterfaceStackOps::indexDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
+{
+    return deviceSelectHtml_(_web, "index-device", selected_node_id, stack_view, "status");
 }
 
 String WebInterfaceStackOps::busesDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
 {
-    if (_web.stackRole_() != ConfigsManagerIface::StackRole::Master || !_web._stack_master)
-        return "";
-    String html;
-    html.reserve(512);
-    html += "<div class=\"row\" style=\"margin-bottom:10px;\">";
-    html += String("<span class=\"muted\">") + WebUiRu::kDevice + "</span>";
-    html += "<select id=\"buses-device\" class=\"mini\">";
-    html += "<option value=\"0\"";
-    if (!stack_view)
-        html += " selected";
-    html += ">local</option>";
-    const size_t count = _web._stack_master->nodeCount();
-    for (size_t i = 0; i < count; ++i)
-    {
-        const uint32_t id = _web._stack_master->nodeIdAt(i);
-        html += "<option value=\"";
-        html += String((unsigned long)id);
-        html += "\"";
-        if (stack_view && id == selected_node_id)
-            html += " selected";
-        html += ">";
-        String name = _web._stack_master->nodeNameAt(i);
-        if (name.length() > 0)
-            _web.appendHtmlEscaped_(html, name.c_str());
-        else
-            html += _web.stackNodeIdHex_(id);
-        html += "</option>";
-    }
-    html += "</select></div>";
-    return html;
+    return deviceSelectHtml_(_web, "buses-device", selected_node_id, stack_view, "muted");
 }
 
 String WebInterfaceStackOps::portsDeviceSelectHtml_(uint32_t selected_node_id, bool stack_view) const
 {
-    if (_web.stackRole_() != ConfigsManagerIface::StackRole::Master || !_web._stack_master)
-        return "";
-    String html;
-    html.reserve(512);
-    html += "<div class=\"row\" style=\"margin-bottom:10px;\">";
-    html += String("<span class=\"muted\">") + WebUiRu::kDevice + "</span>";
-    html += "<select id=\"ports-device\" class=\"mini\">";
-    html += "<option value=\"0\"";
-    if (!stack_view)
-        html += " selected";
-    html += ">local</option>";
-    const size_t count = _web._stack_master->nodeCount();
-    for (size_t i = 0; i < count; ++i)
-    {
-        const uint32_t id = _web._stack_master->nodeIdAt(i);
-        html += "<option value=\"";
-        html += String((unsigned long)id);
-        html += "\"";
-        if (stack_view && id == selected_node_id)
-            html += " selected";
-        html += ">";
-        String name = _web._stack_master->nodeNameAt(i);
-        if (name.length() > 0)
-            _web.appendHtmlEscaped_(html, name.c_str());
-        else
-            html += _web.stackNodeIdHex_(id);
-        html += "</option>";
-    }
-    html += "</select></div>";
-    return html;
+    return deviceSelectHtml_(_web, "ports-device", selected_node_id, stack_view, "muted");
 }
 
 String WebInterfaceStackOps::stackBusesStatusText_(uint32_t node_id) const
@@ -183,7 +183,7 @@ bool WebInterfaceStackOps::isStackPortsView_(uint32_t node_id) const
 
 uint32_t WebInterfaceStackOps::parseStackNodeIdParam_(AsyncWebServerRequest *request) const
 {
-    if (!_web._stack_master || _web._stack_master->nodeCount() == 0)
+    if (_web.stackRole_() != ConfigsManagerIface::StackRole::Master || !_web.network())
         return 0;
     String node = _web.paramValueAny_(request, "node_id");
     if (node.length() == 0)
@@ -194,7 +194,8 @@ uint32_t WebInterfaceStackOps::parseStackNodeIdParam_(AsyncWebServerRequest *req
     const unsigned long value = strtoul(node.c_str(), &end, 0);
     if (!end || end == node.c_str())
         return 0;
-    return (uint32_t)value;
+    const uint32_t node_id = (uint32_t)value;
+    return hasOnlineNode_(_web, node_id) ? node_id : 0;
 }
 
 void WebInterfaceStackOps::handleStackFrame_(uint32_t node_id, const StackFrame &frame)
@@ -262,6 +263,29 @@ bool WebInterfaceStackOps::refreshStackTempSensors_(uint32_t node_id)
         cache->updated_ms = 0;
     }
     return _web._stack_cache->requestTempSensors(node_id);
+}
+
+bool WebInterfaceStackOps::requestStackIndexState_(uint32_t node_id)
+{
+    if (!_web.network() || node_id == 0)
+        return false;
+    const uint32_t now = millis();
+    StackUnitSnapshot::Snapshot snapshot{};
+    if (_web.network()->stackIndexStateSnapshot(node_id, snapshot))
+    {
+        const bool fresh_plc = snapshot.has_plc && (uint32_t)(now - snapshot.updated_ms) < 5000u;
+        const bool fresh_rtc = snapshot.has_rtc && (uint32_t)(now - snapshot.updated_ms) < 5000u;
+        if ((fresh_plc && fresh_rtc) || (snapshot.pending && (uint32_t)(now - snapshot.request_started_ms) < 1500u))
+            return true;
+    }
+    if (!_web.network()->prepareStackIndexStateRequest(node_id, now, 5000u, 1500u))
+        return false;
+
+    const uint16_t cmd_id = nextStackCmdId_();
+    DynamicJsonDocument doc(64);
+    doc["cmd_id"] = cmd_id;
+    return _web.network()->stackRoute().sendRequest(node_id, "web", "index_state_req", &doc, StackRouteAdapter::Mode::Json,
+                                                    true);
 }
 
 bool WebInterfaceStackOps::requestStackPlcStatus_(uint32_t node_id)

@@ -38,6 +38,7 @@ public:
     bool requestStackOw_(uint32_t node_id, bool run);
     bool requestStackTempSensors_(uint32_t node_id);
     bool refreshStackTempSensors_(uint32_t node_id);
+    bool requestStackIndexState_(uint32_t node_id);
     bool requestStackPlcStatus_(uint32_t node_id);
     bool requestStackRtcStatus_(uint32_t node_id);
     uint16_t nextStackCmdId_();

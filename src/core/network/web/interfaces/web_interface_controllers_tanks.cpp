@@ -30,7 +30,7 @@ size_t WebInterfaceControllersTanksHelper::tanksLocalRenderCount_(const WebInter
     }
 
 String WebInterfaceControllersTanksHelper::tanksDeviceSelectHtml_(const WebInterface &web, uint32_t selected_node_id, bool stack_view) {
-        if (web.stackRole_() != ConfigsManagerIface::StackRole::Master || !web._stack_master)
+        if (!web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
             return "";
         String html;
         html.reserve(512);
@@ -41,17 +41,20 @@ String WebInterfaceControllersTanksHelper::tanksDeviceSelectHtml_(const WebInter
         if (!stack_view)
             html += " selected";
         html += ">local</option>";
-        const size_t count = web._stack_master->nodeCount();
+        const size_t count = web.network()->stackOnlineDeviceCount();
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t id = web._stack_master->nodeIdAt(i);
+            StackDeviceRegistry::DeviceInfo device{};
+            if (!web.network()->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+                continue;
+            const uint32_t id = device.node_id;
             html += "<option value=\"";
             html += String((unsigned long)id);
             html += "\"";
             if (stack_view && id == selected_node_id)
                 html += " selected";
             html += ">";
-            String name = web._stack_master->nodeNameAt(i);
+            String name = device.name[0] ? String(device.name) : String();
             if (name.length() > 0)
                 web.appendHtmlEscaped_(html, name.c_str());
             else
@@ -80,8 +83,10 @@ String WebInterfaceControllersTanksHelper::stackTanksStatusText_(const WebInterf
     }
 
 bool WebInterfaceControllersTanksHelper::isStackTanksView_(const WebInterface &web, uint32_t node_id) {
-        return node_id != 0 && web._stack_master &&
-               web.stackRole_() == ConfigsManagerIface::StackRole::Master;
+        if (node_id == 0 || !web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackDeviceRegistry::DeviceInfo device{};
+        return web.network()->stackDeviceSnapshotByNodeId(node_id, device) && device.online;
     }
 
 bool WebInterfaceControllersTanksHelper::requestStackTanks_(WebInterface &web, uint32_t node_id) {

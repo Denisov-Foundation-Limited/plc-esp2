@@ -10,6 +10,7 @@
 /**********************************************************************/
 
 #include "core/cli/cli_console.hpp"
+#include "core/network/network.hpp"
 
 #include <ArduinoJson.h>
 #include <string.h>
@@ -26,7 +27,7 @@
 CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
            Configs &configs, Extender &ext,
            UsersRegistry &users,
-           Controllers &controllers, StackMaster *stack_master)
+           Controllers &controllers)
     : _plc(plc),
       _wifi(wifi),
       _rtc(rtc),
@@ -38,7 +39,6 @@ CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftes
       _users(users),
       _controllers(controllers),
       _wifi_cli(*this),
-      _stack_cli(*this),
       _socket_cli(*this, controllers.sockets()),
       _meteo_cli(*this, controllers.meteo()),
       _thermo_cli(*this, controllers.thermo(), controllers.meteo()),
@@ -54,7 +54,6 @@ CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftes
       _config(*this, _wifi_cli, _socket_cli, _meteo_cli, _thermo_cli, _tank_cli, _septic_cli,
               _security_cli, _ring_cli, _avr_cli, _leak_cli, _watering_cli, _cloud_cli)
 {
-    _stack_cli.bind(stack_master);
 }
 void CliConsole::begin(Stream &io)
 {
@@ -65,10 +64,6 @@ void CliConsole::begin(Stream &io)
     _user_input = "";
     printPrompt_();
 }
-void CliConsole::setStackMaster(StackMaster *master)
-{ _stack_cli.bind(master); }
-void CliConsole::setStackSlave(StackSlaveHandler *slave)
-{ _stack_cli.bindSlave(slave); }
 void CliConsole::loop()
 {
     if (!_io)
@@ -206,7 +201,6 @@ void CliConsole::cmdShowPlc_()
     const bool rtc_ok = _rtc.readTemp(rtc_t);
     printPlcRow_("CPU", String(ActiveBoardProfile::UI_NAME), fan, board_t,
                  on_c, hyst_c, rtc_ok ? &rtc_t : nullptr);
-    _stack_cli.requestStackPlc_();
 }
 void CliConsole::cmdShowBoard_()
 {
@@ -256,7 +250,6 @@ void CliConsole::cmdShowPorts_()
         }
         printPortRow_("CPU", i, p);
     }
-    _stack_cli.requestStackPorts_();
 }
 void CliConsole::cmdShowWifi_()
 {
@@ -284,8 +277,6 @@ void CliConsole::cmdShowTime_()
     snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
              (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
     printRtcRow_("CPU", date_buf, time_buf, (unsigned)dt.day_of_week);
-
-    _stack_cli.requestStackRtc_();
 }
 void CliConsole::cmdShowCloud_()
 {
@@ -476,7 +467,58 @@ void CliConsole::cmdShowI2c_()
 }
 void CliConsole::cmdShowStack_()
 {
-    _io->println(F("Stack removed"));
+    if (!_configs_manager)
+    {
+        _io->println(F("Config manager missing"));
+        return;
+    }
+    _io->println(F("Stack:"));
+    printKeyValue_(F("role"), _configs_manager->stackRole() == ConfigsManagerIface::StackRole::Slave ? F("slave") : F("master"), 13);
+    printKeyValue_(F("master_host"), _configs_manager->stackMasterHost(), 13);
+    const __FlashStringHelper *policy = F("auto");
+    if (_configs_manager->stackExchangePolicy() == ConfigsManagerIface::StackExchangePolicy::Direct)
+        policy = F("direct");
+    else if (_configs_manager->stackExchangePolicy() == ConfigsManagerIface::StackExchangePolicy::Poll)
+        policy = F("poll");
+    printKeyValue_(F("policy"), policy, 13);
+    printKeyValue_(F("transport"),
+                   _configs_manager->stackTransport() == ConfigsManagerIface::StackTransportKind::Rs485 ? F("rs485")
+                                                                                                         : F("websocket"),
+                   13);
+    const __FlashStringHelper *payload = F("auto");
+    if (_configs_manager->stackPayloadMode() == ConfigsManagerIface::StackPayloadMode::Json)
+        payload = F("json");
+    else if (_configs_manager->stackPayloadMode() == ConfigsManagerIface::StackPayloadMode::Binary)
+        payload = F("binary");
+    printKeyValue_(F("payload"), payload, 13);
+    printKeyValue_(F("fallback"), _configs_manager->stackFallbackEnabled() ? F("true") : F("false"), 13);
+    printKeyValue_(F("fallback_host"), _configs_manager->stackFallbackHost(), 13);
+    printKeyValue_(F("controller"), _configs_manager->stackSlaveController() ? F("true") : F("false"), 13);
+    printKeyValue_(F("api_key"), _configs_manager->stackApiKey().length() ? F("***") : F(""), 13);
+    if (_network)
+    {
+        const Network::StackDiagnostics diag = _network->stackDiagnostics();
+        _io->println(F("Stack runtime:"));
+        printKeyValue_(F("state"), String(diag.runtime_state), 13);
+        printKeyValue_(F("master_active"), diag.master_active ? F("true") : F("false"), 13);
+        printKeyValue_(F("fallback_active"), diag.fallback_active ? F("true") : F("false"), 13);
+        printKeyValue_(F("online"), String((unsigned)diag.online_devices), 13);
+        printKeyValue_(F("net_lock_ms"), String((unsigned long)diag.network_lock_held_ms), 13);
+        printKeyValue_(F("rt_lock_ms"), String((unsigned long)diag.exchange.lock_held_ms), 13);
+        printKeyValue_(F("xchg_slave_q"), String((unsigned)diag.exchange.slave_outbox_used), 13);
+        printKeyValue_(F("xchg_master_q"), String((unsigned)diag.exchange.master_inbox_used), 13);
+        printKeyValue_(F("notify_q"), String((unsigned)diag.exchange.notify_outbox_used), 13);
+        printKeyValue_(F("retried"), String((unsigned long)diag.exchange.retried), 13);
+        printKeyValue_(F("expired"), String((unsigned long)diag.exchange.expired), 13);
+        printKeyValue_(F("dropped"), String((unsigned long)diag.exchange.dropped), 13);
+        printKeyValue_(F("rs485_state"), String((unsigned)diag.rs485.bus_state), 13);
+        printKeyValue_(F("rs485_tx_q"), String((unsigned)diag.rs485.tx_queue_used), 13);
+        printKeyValue_(F("rs485_pending"), String((unsigned)diag.rs485.pending_used), 13);
+        printKeyValue_(F("rs485_timeouts"), String((unsigned long)diag.rs485.request_timeouts), 13);
+        printKeyValue_(F("rs485_tx_drop"), String((unsigned long)diag.rs485.tx_queue_drops), 13);
+        printKeyValue_(F("rs485_pend_drop"), String((unsigned long)diag.rs485.pending_full_drops), 13);
+        printKeyValue_(F("rs485_lock_ms"), String((unsigned long)diag.rs485.lock_held_ms), 13);
+    }
 }
 void CliConsole::cmdShowOw_()
 {
@@ -560,11 +602,6 @@ void CliConsole::cmdWifiRestart_()
     else
         _io->println(F("Wi-Fi restart failed"));
 }
-void CliConsole::cmdStack_(const String &line)
-{
-    (void)line;
-    _io->println(F("Stack removed"));
-}
 void CliConsole::cmdRestart_()
 {
 #if defined(ESP32)
@@ -615,6 +652,11 @@ bool CliConsole::setStackRole_(ConfigsManagerIface::StackRole role)
     _configs_manager->setStackRole(role);
     return true;
 }
+
+void CliConsole::setNetwork(Network &network)
+{
+    _network = &network;
+}
 bool CliConsole::setStackMasterHost_(const String &host)
 {
     if (!_configs_manager)
@@ -627,6 +669,27 @@ bool CliConsole::setStackApiKey_(const String &key)
     if (!_configs_manager)
         return false;
     _configs_manager->setStackApiKey(key);
+    return true;
+}
+bool CliConsole::setStackExchangePolicy_(ConfigsManagerIface::StackExchangePolicy policy)
+{
+    if (!_configs_manager)
+        return false;
+    _configs_manager->setStackExchangePolicy(policy);
+    return true;
+}
+bool CliConsole::setStackTransport_(ConfigsManagerIface::StackTransportKind kind)
+{
+    if (!_configs_manager)
+        return false;
+    _configs_manager->setStackTransport(kind);
+    return true;
+}
+bool CliConsole::setStackPayloadMode_(ConfigsManagerIface::StackPayloadMode mode)
+{
+    if (!_configs_manager)
+        return false;
+    _configs_manager->setStackPayloadMode(mode);
     return true;
 }
 bool CliConsole::setStackFallbackEnabled_(bool enabled)
@@ -741,6 +804,15 @@ void CliConsole::showHelpTopic_(const String &topic)
         _io->println(F("Admin commands:"));
         _io->println(F("  password <pass>         - set admin password"));
         _io->println(F("  admin password <pass>   - set admin password"));
+        _io->println(F("  stack role <master|slave>"));
+        _io->println(F("  stack master <host>"));
+        _io->println(F("  stack policy <auto|direct|poll>"));
+        _io->println(F("  stack transport <websocket|rs485>"));
+        _io->println(F("  stack payload <auto|json|binary>"));
+        _io->println(F("  stack fallback <on|off>"));
+        _io->println(F("  stack fallback_host <host>"));
+        _io->println(F("  stack slave_controller <on|off>"));
+        _io->println(F("  stack api_key <value|clear|gen>"));
         return;
     }
     if (t == "eeprom")
@@ -894,9 +966,18 @@ void CliConsole::handleTab_()
         "help avr",
         "help leak"}};
 
-    static const std::array<const char *, 37> kConfigCmds = {{
+    static const std::array<const char *, 46> kConfigCmds = {{
         "password <pass>",
         "admin password <pass>",
+        "stack role <master|slave>",
+        "stack master <host>",
+        "stack policy <auto|direct|poll>",
+        "stack transport <websocket|rs485>",
+        "stack payload <auto|json|binary>",
+        "stack fallback <on|off>",
+        "stack fallback_host <host>",
+        "stack slave_controller <on|off>",
+        "stack api_key <value>",
         "eeprom show",
         "eeprom save <on|off>",
         "eeprom load <on|off>",
@@ -1643,22 +1724,6 @@ bool CliConsole::cliAclAnyView_(UsersRegistry::AclController ctrl, uint16_t max_
             return true;
     return false;
 }
-bool CliConsole::parseStackAclUnit_(const String &raw_unit, uint8_t &out_unit) const
-{
-    String unit = raw_unit;
-    unit.trim();
-    unit.toLowerCase();
-    if (unit.startsWith("unit"))
-        unit = unit.substring(4);
-    unit.trim();
-    if (unit.length() == 0)
-        return false;
-    const uint32_t idx = (uint32_t)strtoul(unit.c_str(), nullptr, 10);
-    if (idx == 0 || idx >= (uint32_t)UsersRegistry::kAclUnitCount)
-        return false;
-    out_unit = (uint8_t)idx; // 1..7 are stack units, 0 is local
-    return true;
-}
 bool CliConsole::denyAcl_()
 {
     _io->println(F("ACL deny"));
@@ -1757,97 +1822,6 @@ bool CliConsole::enforceAclEnable_(const String &line)
         return cliAclAnyView_(UsersRegistry::AclController::Security, 72);
     if (low == "security arm" || low == "security disarm")
         return cliAclCanControlItem_(UsersRegistry::AclController::Security, 1);
-    if (startsWith_(low, "stack send "))
-        return false;
-    if (startsWith_(low, "stack socket "))
-    {
-        String rest = cmd.substring(13);
-        rest.trim();
-        const int sp1 = rest.indexOf(' ');
-        if (sp1 <= 0)
-            return true;
-        const String unit_str = rest.substring(0, sp1);
-        rest = rest.substring(sp1 + 1);
-        rest.trim();
-        const int sp2 = rest.indexOf(' ');
-        if (sp2 <= 0)
-            return true;
-        const String id_str = rest.substring(sp2 + 1);
-        uint8_t unit = 0;
-        uint16_t id = 0;
-        if (!parseStackAclUnit_(unit_str, unit) || !parseUint_(id_str, id))
-            return true;
-        return cliAclCanControlItem_(UsersRegistry::AclController::Sockets, id, unit);
-    }
-    if (startsWith_(low, "stack thermo "))
-    {
-        String rest = cmd.substring(13);
-        rest.trim();
-        const int sp1 = rest.indexOf(' ');
-        if (sp1 <= 0)
-            return true;
-        const String unit_str = rest.substring(0, sp1);
-        rest = rest.substring(sp1 + 1);
-        rest.trim();
-        const int sp2 = rest.indexOf(' ');
-        if (sp2 <= 0)
-            return true;
-        const String id_str = rest.substring(sp2 + 1);
-        uint8_t unit = 0;
-        uint16_t id = 0;
-        if (!parseStackAclUnit_(unit_str, unit) || !parseUint_(id_str, id))
-            return true;
-        return cliAclCanControlItem_(UsersRegistry::AclController::Thermo, id, unit);
-    }
-    if (startsWith_(low, "stack security "))
-    {
-        String rest = cmd.substring(15);
-        rest.trim();
-        const int sp1 = rest.indexOf(' ');
-        if (sp1 <= 0)
-            return true;
-        const String unit_str = rest.substring(0, sp1);
-        String action = rest.substring(sp1 + 1);
-        action.trim();
-        action.toLowerCase();
-        uint8_t unit = 0;
-        if (!parseStackAclUnit_(unit_str, unit))
-            return true;
-        if (action == "status")
-            return cliAclCanViewItem_(UsersRegistry::AclController::Security, 1, unit);
-        return cliAclCanControlItem_(UsersRegistry::AclController::Security, 1, unit);
-    }
-    if (startsWith_(low, "stack septic "))
-    {
-        String rest = cmd.substring(13);
-        rest.trim();
-        const int sp1 = rest.indexOf(' ');
-        if (sp1 <= 0)
-            return true;
-        const String unit_str = rest.substring(0, sp1);
-        String action = rest.substring(sp1 + 1);
-        action.trim();
-        action.toLowerCase();
-        uint8_t unit = 0;
-        if (!parseStackAclUnit_(unit_str, unit))
-            return true;
-        if (action == "status" || action == "get")
-            return cliAclCanViewItem_(UsersRegistry::AclController::Septic, 1, unit);
-        return cliAclCanControlItem_(UsersRegistry::AclController::Septic, 1, unit);
-    }
-    if (startsWith_(low, "stack ring "))
-    {
-        String rest = cmd.substring(11);
-        rest.trim();
-        const int sp1 = rest.indexOf(' ');
-        if (sp1 <= 0)
-            return true;
-        const String unit_str = rest.substring(0, sp1);
-        uint8_t unit = 0;
-        if (!parseStackAclUnit_(unit_str, unit))
-            return true;
-        return cliAclCanControlItem_(UsersRegistry::AclController::Ring, 1, unit);
-    }
     if (startsWith_(low, "configure terminal") || startsWith_(low, "conf t"))
         return false;
     if (low == "write" || low == "erase" || low == "reload" || low == "reset" || startsWith_(low, "copy "))
@@ -2330,7 +2304,6 @@ void CliConsole::bytesToHex_(const uint8_t in[32], char out[65])
 void CliConsole::printExtList_()
 {
     const auto *devs = _ext.devs();
-    const bool has_stack = _stack_cli.canRequestStackExt_();
     bool any = false;
     if (devs)
     {
@@ -2346,34 +2319,14 @@ void CliConsole::printExtList_()
             any = true;
             char addr_buf[8] = {};
             snprintf(addr_buf, sizeof(addr_buf), "0x%02X", d.i2c_addr);
-            printExtRow_("CPU", i, d.bus_num, addr_buf, extTypeName_(d.type), nullptr);
+                printExtRow_("CPU", i, d.bus_num, addr_buf, extTypeName_(d.type), nullptr);
         }
     }
-    if (has_stack && !any)
-        printExtHeader_();
-    if (!any && !has_stack)
+    if (!any)
     {
         _io->println(F("Extenders: none"));
         return;
     }
-    if (has_stack)
-        _stack_cli.requestStackExtList_();
-}
-void CliConsole::onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame)
-{
-    if (!ctx)
-        return;
-    static_cast<CliConsole *>(ctx)->_stack_cli.handleStackFrame_(node_id, frame);
-}
-String CliConsole::payloadToString_(const uint8_t *data, size_t len)
-{
-    String out;
-    if (!data || len == 0)
-        return out;
-    out.reserve(len + 1);
-    for (size_t i = 0; i < len; ++i)
-        out += (char)data[i];
-    return out;
 }
 void CliConsole::printExtHeader_()
 {

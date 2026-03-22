@@ -933,12 +933,6 @@ private:
 
     void handleStack_(const String &cmd, const String &lower)
     {
-        (void)cmd;
-        (void)lower;
-        _c._io->println(F("Stack removed"));
-        _c.printPrompt_();
-        return;
-
         if (lower.startsWith("stack role "))
         {
             String role = cmd.substring(11);
@@ -965,6 +959,73 @@ private:
             String host = cmd.substring(13);
             host.trim();
             if (!_c.setStackMasterHost_(host))
+                _c._io->println(F("Config manager missing"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower.startsWith("stack policy "))
+        {
+            String value = cmd.substring(13);
+            value.trim();
+            value.toLowerCase();
+            ConfigsManagerIface::StackExchangePolicy policy = ConfigsManagerIface::StackExchangePolicy::Auto;
+            if (value == "direct")
+                policy = ConfigsManagerIface::StackExchangePolicy::Direct;
+            else if (value == "poll")
+                policy = ConfigsManagerIface::StackExchangePolicy::Poll;
+            else if (value != "auto")
+            {
+                _c._io->println(F("Invalid policy"));
+                _c.printPrompt_();
+                return;
+            }
+            if (!_c.setStackExchangePolicy_(policy))
+                _c._io->println(F("Config manager missing"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower.startsWith("stack transport "))
+        {
+            String value = cmd.substring(16);
+            value.trim();
+            value.toLowerCase();
+            ConfigsManagerIface::StackTransportKind kind = ConfigsManagerIface::StackTransportKind::WebSocket;
+            if (value == "rs485")
+                kind = ConfigsManagerIface::StackTransportKind::Rs485;
+            else if (value != "websocket" && value != "ws")
+            {
+                _c._io->println(F("Invalid transport"));
+                _c.printPrompt_();
+                return;
+            }
+            if (!_c.setStackTransport_(kind))
+                _c._io->println(F("Config manager missing"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower.startsWith("stack payload "))
+        {
+            String value = cmd.substring(14);
+            value.trim();
+            value.toLowerCase();
+            ConfigsManagerIface::StackPayloadMode mode = ConfigsManagerIface::StackPayloadMode::Auto;
+            if (value == "json")
+                mode = ConfigsManagerIface::StackPayloadMode::Json;
+            else if (value == "binary" || value == "bin")
+                mode = ConfigsManagerIface::StackPayloadMode::Binary;
+            else if (value != "auto")
+            {
+                _c._io->println(F("Invalid payload"));
+                _c.printPrompt_();
+                return;
+            }
+            if (!_c.setStackPayloadMode_(mode))
                 _c._io->println(F("Config manager missing"));
             else
                 _c._io->println(F("OK"));

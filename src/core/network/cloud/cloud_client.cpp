@@ -18,6 +18,7 @@
 #include "boards/board_profile.hpp"
 #include "controllers/controllers.hpp"
 #include "core/network/gsm_modem.hpp"
+#include "core/network/network.hpp"
 #include "core/compat/stack_stub.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/rtc.hpp"
@@ -71,8 +72,15 @@ CloudClient::CloudClient(Logger &log, Controllers &controllers, PlcControl &plc,
 }
 void CloudClient::setGsm(GsmModem *gsm)
 { _gsm = gsm; }
+void CloudClient::setNetwork(Network *network)
+{ _network = network; }
 void CloudClient::setStackMaster(StackMaster *master)
 { _stack_master = master; }
+void CloudClient::setStackNodeNameProvider(StackNodeNameProvider cb, void *ctx)
+{
+    _stack_node_name_cb = cb;
+    _stack_node_name_ctx = ctx;
+}
 void CloudClient::setStackCache(StackCache *cache)
 { _stack_cache = cache; }
 void CloudClient::setConfigsManager(ConfigsManagerIface *cfg)
@@ -369,7 +377,7 @@ void CloudClient::handleMessage_(const uint8_t *payload, size_t len)
 void CloudClient::sendHello_()
 {
     _last_hello_ms = millis();
-    DynamicJsonDocument doc(2048);
+    DynamicJsonDocument doc(kWsDocCapacity);
     doc["v"] = kProtoVersion;
     doc["type"] = "hello";
     doc["id"] = nextWsId_();
@@ -387,6 +395,7 @@ void CloudClient::sendHello_()
     payload["uptime_s"] = (uint32_t)(millis() / 1000u);
     payload["mac"] = WiFi.macAddress();
     payload["ip"] = localIp_();
+    fillStackInfo_(payload.createNestedObject("stack"));
 
     sendJson_(doc);
 }
@@ -552,6 +561,11 @@ void CloudClient::logEvent_(const __FlashStringHelper *stage, const String &kind
 {
     if (kind == "periodic" && reason == "periodic")
         return;
+    if (unit == "stack" && kind == "stack.snapshot" && reason == "update")
+        return;
+    if (unit == "stack" && kind == "stack.node" &&
+        (reason == "online" || reason == "offline"))
+        return;
     if (unit.length())
     {
         if (unit == "stack" && node_id != 0)
@@ -614,10 +628,16 @@ void CloudClient::sendPong_(const String &reply_to, JsonVariantConst payload)
 void CloudClient::handleGet_(const String &req_id, JsonDocument &doc)
 {
     const String unit = doc["unit"] | "local";
+    const uint32_t node_id = parseNodeId_(doc["node_id"]);
     JsonArrayConst what = doc["payload"]["what"].as<JsonArrayConst>();
     if (unit == "stack")
     {
-        sendError_(req_id, "stack removed");
+        if (node_id == 0)
+        {
+            sendError_(req_id, "missing node_id");
+            return;
+        }
+        handleGetStack_(req_id, node_id, what);
         return;
     }
     handleGetLocal_(req_id, what);
@@ -638,6 +658,8 @@ void CloudClient::handleGetLocal_(const String &req_id, JsonArrayConst what)
         fillSystemInfo_(data.createNestedObject("system"));
     if (hasWhat_(what, "controllers"))
         fillControllersInfo_(data.createNestedObject("controllers"));
+    if (hasWhat_(what, "stack"))
+        fillStackInfo_(data.createNestedObject("stack"));
     if (hasWhat_(what, "authz"))
         fillAuthzInfo_(data.createNestedObject("authz"));
 
@@ -648,6 +670,26 @@ void CloudClient::handleGetStack_(const String &req_id, uint32_t node_id, JsonAr
     if (!isStackMaster_())
     {
         sendError_(req_id, "stack role is slave");
+        return;
+    }
+    if (_network)
+    {
+        DynamicJsonDocument out(kWsDocCapacity);
+        out["v"] = kProtoVersion;
+        out["type"] = "result";
+        out["id"] = nextWsId_();
+        out["reply_to"] = req_id;
+        out["unit"] = "stack";
+        out["node_id"] = node_id;
+        if (_session_id.length())
+            out["session_id"] = _session_id;
+        out["payload"]["ok"] = true;
+        JsonObject data = out["payload"]["data"].to<JsonObject>();
+        if (hasWhat_(what, "system"))
+            fillStackCachedSystem_(data.createNestedObject("system"), node_id);
+        if (hasWhat_(what, "controllers"))
+            fillStackCachedControllers_(data.createNestedObject("controllers"), node_id);
+        sendJson_(out);
         return;
     }
     if (_stack_cache)
@@ -2401,9 +2443,29 @@ void CloudClient::fillLeak_(JsonArray out)
 void CloudClient::fillStackInfo_(JsonObject out)
 {
     out["role"] = stackRoleName_();
-    out["node_id"] = deviceId_();
+    out["node_id"] = _network ? _network->stackLocalNodeId() : deviceId_();
     JsonArray nodes = out["nodes"].to<JsonArray>();
-    if (!isStackMaster_() || !_stack_master)
+    if (!isStackMaster_())
+        return;
+    if (_network)
+    {
+        const size_t count = _network->stackOnlineDeviceCount();
+        for (size_t i = 0; i < count; ++i)
+        {
+            StackDeviceRegistry::DeviceInfo device{};
+            if (!_network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+                continue;
+            if ((device.caps & StackCapController) == 0)
+                continue;
+            JsonObject n = nodes.add<JsonObject>();
+            n["node_id"] = device.node_id;
+            n["name"] = device.name;
+            n["online"] = true;
+            n["last_seen_ms"] = device.last_seen_ms;
+        }
+        return;
+    }
+    if (!_stack_master)
         return;
     const size_t count = _stack_master->nodeCount();
     for (size_t i = 0; i < count; ++i)
@@ -2419,12 +2481,47 @@ void CloudClient::fillStackInfo_(JsonObject out)
 }
 bool CloudClient::fillStackCachedSystem_(JsonObject out, uint32_t node_id)
 {
-    if (!_stack_cache)
-        return false;
-    bool has_any = false;
     const uint32_t now = millis();
     const uint32_t stale_ms = 15000;
     out["device_name"] = stackNodeName_(node_id);
+    if (_network)
+    {
+        bool has_any = false;
+        bool has_snapshot = false;
+        StackUnitSnapshot::Snapshot status{};
+        if (_network->stackIndexStateSnapshot(node_id, status))
+        {
+            has_snapshot = true;
+            if (status.has_plc)
+            {
+                JsonObject plc = out["plc"].to<JsonObject>();
+                plc["board_temp"] = status.board_temp;
+                JsonObject fan = out["fan"].to<JsonObject>();
+                fan["fan_on"] = status.fan_on;
+                has_any = true;
+            }
+            if (status.has_rtc)
+            {
+                JsonObject rtc = out["rtc"].to<JsonObject>();
+                rtc["date"] = status.rtc_date;
+                rtc["time"] = status.rtc_time;
+                rtc["temp_c"] = status.rtc_temp;
+                has_any = true;
+            }
+        }
+        const bool request_ready = _network->prepareStackIndexStateRequest(node_id, now, stale_ms, kStackTimeoutMs);
+        if (request_ready)
+        {
+            const bool sent = _network->stackRoute().sendRequest(node_id, "web", "index_state_req", nullptr,
+                                                                 StackRouteAdapter::Mode::Json, true);
+            if (!sent)
+                _network->clearStackIndexStatePending(node_id);
+        }
+        return has_any;
+    }
+    if (!_stack_cache)
+        return false;
+    bool has_any = false;
     const auto *status = _stack_cache->statusCache(node_id);
     if (status && status->has_plc)
     {
@@ -3045,6 +3142,18 @@ String CloudClient::localIp_() const
 }
 String CloudClient::stackNodeName_(uint32_t node_id) const
 {
+    if (_stack_node_name_cb)
+    {
+        String out;
+        if (_stack_node_name_cb(_stack_node_name_ctx, node_id, out) && out.length())
+            return out;
+    }
+    if (_network)
+    {
+        StackDeviceRegistry::DeviceInfo device{};
+        if (_network->stackDeviceSnapshotByNodeId(node_id, device) && device.name[0])
+            return String(device.name);
+    }
     if (!_stack_master)
         return String();
     const size_t count = _stack_master->nodeCount();

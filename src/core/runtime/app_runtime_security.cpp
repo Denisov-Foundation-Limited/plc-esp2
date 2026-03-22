@@ -30,11 +30,13 @@ void AppRuntime::updateSecurityAlarms_(){
     }
     if (stackMasterActive_())
     {
-        StackMaster &master = net.network.stackMaster();
-        const size_t count = master.nodeCount();
+        const size_t count = net.network.stackOnlineDeviceCount();
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t node_id = master.nodeIdAt(i);
+            StackDeviceRegistry::DeviceInfo device{};
+            if (!net.network.stackDeviceSnapshotAt(i, device))
+                continue;
+            const uint32_t node_id = device.node_id;
             if (node_id == 0)
                 continue;
             const auto *cache = _stack_cache.securityCache(node_id);
@@ -114,10 +116,14 @@ bool AppRuntime::onSecurityIButtonSerial_(void *ctx, const String &serial){
 void AppRuntime::broadcastSecurityState_(bool armed){
     if (!stackMasterActive_())
         return;
-    StackMaster &master = net.network.stackMaster();
-    const size_t count = master.nodeCount();
+    const size_t count = net.network.stackOnlineDeviceCount();
     for (size_t i = 0; i < count; ++i)
-        sendSecurityStateToNode_(master.nodeIdAt(i), armed, false);
+    {
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!net.network.stackDeviceSnapshotAt(i, device))
+            continue;
+        sendSecurityStateToNode_(device.node_id, armed, false);
+    }
 }
 
 void AppRuntime::sendSecurityStateToNode_(uint32_t node_id){
@@ -131,58 +137,27 @@ void AppRuntime::sendSecurityStateToNode_(uint32_t node_id, bool armed, bool for
         return;
     if (!stackMasterActive_())
         return;
-    StackMaster &master = net.network.stackMaster();
-
     StaticJsonDocument<128> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Security;
-    doc["action"] = "set";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["armed"] = armed;
+    doc["armed"] = armed;
     auto &sec = control.controllers.security();
     auto sec_guard = sec.lockGuard();
-    params["alarm"] = armed ? sec.alarmOn() : false;
+    doc["alarm"] = armed ? sec.alarmOn() : false;
     if (force && armed)
-        params["force"] = true;
-
-    char payload[128] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return;
-    master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                  reinterpret_cast<const uint8_t *>(payload), len);
+        doc["force"] = true;
+    net.network.stackRoute().sendEvent(node_id, "security", "set", &doc, StackRouteAdapter::Mode::Json);
 }
 
 void AppRuntime::sendSecurityDetectToMaster_(uint8_t sensor_id, const String &name, bool silent){
     if (!stackSlaveActive_())
         return;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-    {
-        _pending_detect = true;
-        _pending_sensor_id = sensor_id;
-        _pending_sensor_name = name;
-        _pending_sensor_silent = silent;
-        return;
-    }
     StaticJsonDocument<192> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Security;
-    doc["action"] = "alarm";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["alarm"] = true;
-    params["sensor_id"] = sensor_id;
+    doc["alarm"] = true;
+    doc["sensor_id"] = sensor_id;
     if (name.length())
-        params["name"] = name;
+        doc["name"] = name;
     if (silent)
-        params["silent"] = true;
-
-    char payload[160] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return;
-    if (!node.send((uint8_t)StackMsgType::CmdSet,
-                   reinterpret_cast<const uint8_t *>(payload), len))
+        doc["silent"] = true;
+    if (!net.network.stackRoute().sendEvent(0, "security", "alarm", &doc, StackRouteAdapter::Mode::Json))
     {
         _pending_detect = true;
         _pending_sensor_id = sensor_id;
@@ -200,9 +175,6 @@ void AppRuntime::flushPendingSecurityDetect_(){
         return;
     if (!stackSlaveActive_())
         return;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-        return;
     _pending_detect = false;
     sendSecurityDetectToMaster_(_pending_sensor_id, _pending_sensor_name, _pending_sensor_silent);
 }
@@ -212,9 +184,6 @@ void AppRuntime::flushPendingRfid_(){
         return;
     if (!stackSlaveActive_())
         return;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-        return;
     _pending_rfid = false;
     sendRfidToMaster_(_pending_rfid_uid, hw.plc.deviceName());
 }
@@ -223,9 +192,6 @@ void AppRuntime::flushPendingIButton_(){
     if (!_pending_ibutton)
         return;
     if (!stackSlaveActive_())
-        return;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
         return;
     _pending_ibutton = false;
     sendIButtonToMaster_(_pending_ibutton_serial, hw.plc.deviceName());
@@ -237,13 +203,6 @@ bool AppRuntime::handleSecurityRfidUid_(const String &uid_str){
     if (uid_str.length() == 0)
         return false;
     const String name = hw.plc.deviceName();
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-    {
-        _pending_rfid = true;
-        _pending_rfid_uid = uid_str;
-        return true;
-    }
     if (!sendRfidToMaster_(uid_str, name))
     {
         _pending_rfid = true;
@@ -259,13 +218,6 @@ bool AppRuntime::handleSecurityIButtonSerial_(const String &serial){
     if (serial.length() == 0)
         return false;
     const String name = hw.plc.deviceName();
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-    {
-        _pending_ibutton = true;
-        _pending_ibutton_serial = serial;
-        return true;
-    }
     if (!sendIButtonToMaster_(serial, name))
     {
         _pending_ibutton = true;
@@ -278,45 +230,21 @@ bool AppRuntime::handleSecurityIButtonSerial_(const String &serial){
 bool AppRuntime::sendRfidToMaster_(const String &uid, const String &name){
     if (!stackSlaveActive_())
         return false;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-        return false;
     StaticJsonDocument<128> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Security;
-    doc["action"] = "rfid";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["uid"] = uid;
+    doc["uid"] = uid;
     if (name.length())
-        params["name"] = name;
-    char payload[128] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return false;
-    return node.send((uint8_t)StackMsgType::CmdSet,
-                     reinterpret_cast<const uint8_t *>(payload), len);
+        doc["name"] = name;
+    return net.network.stackRoute().sendEvent(0, "security", "rfid", &doc, StackRouteAdapter::Mode::Json);
 }
 
 bool AppRuntime::sendIButtonToMaster_(const String &serial, const String &name){
     if (!stackSlaveActive_())
         return false;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-        return false;
     StaticJsonDocument<128> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Security;
-    doc["action"] = "ibutton";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["serial"] = serial;
+    doc["serial"] = serial;
     if (name.length())
-        params["name"] = name;
-    char payload[128] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return false;
-    return node.send((uint8_t)StackMsgType::CmdSet,
-                     reinterpret_cast<const uint8_t *>(payload), len);
+        doc["name"] = name;
+    return net.network.stackRoute().sendEvent(0, "security", "ibutton", &doc, StackRouteAdapter::Mode::Json);
 }
 
 void AppRuntime::sendRfidResultToNode_(uint32_t node_id, const String &uid, bool matched,
@@ -325,23 +253,13 @@ void AppRuntime::sendRfidResultToNode_(uint32_t node_id, const String &uid, bool
         return;
     if (!stackMasterActive_())
         return;
-    StackMaster &master = net.network.stackMaster();
     StaticJsonDocument<160> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Security;
-    doc["action"] = "rfid_result";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["uid"] = uid;
-    params["match"] = matched;
+    doc["uid"] = uid;
+    doc["match"] = matched;
     if (result.length())
-        params["result"] = result;
-    params["armed"] = armed;
-    char payload[160] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return;
-    master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                  reinterpret_cast<const uint8_t *>(payload), len);
+        doc["result"] = result;
+    doc["armed"] = armed;
+    net.network.stackRoute().sendEvent(node_id, "security", "rfid_result", &doc, StackRouteAdapter::Mode::Json);
 }
 
 void AppRuntime::sendIButtonResultToNode_(uint32_t node_id, const String &serial, bool matched,
@@ -350,52 +268,30 @@ void AppRuntime::sendIButtonResultToNode_(uint32_t node_id, const String &serial
         return;
     if (!stackMasterActive_())
         return;
-    StackMaster &master = net.network.stackMaster();
     StaticJsonDocument<176> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Security;
-    doc["action"] = "ibutton_result";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["serial"] = serial;
-    params["match"] = matched;
+    doc["serial"] = serial;
+    doc["match"] = matched;
     if (result.length())
-        params["result"] = result;
-    params["armed"] = armed;
-    char payload[176] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return;
-    master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                  reinterpret_cast<const uint8_t *>(payload), len);
+        doc["result"] = result;
+    doc["armed"] = armed;
+    net.network.stackRoute().sendEvent(node_id, "security", "ibutton_result", &doc, StackRouteAdapter::Mode::Json);
 }
 
 void AppRuntime::pollSecurityStatusFromMaster_(){
     if (!stackSlaveActive_())
-        return;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
         return;
     const uint32_t now = millis();
     if ((uint32_t)(now - _last_rfid_status_ms) < 5000u)
         return;
     _last_rfid_status_ms = now;
     StaticJsonDocument<128> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Security;
-    doc["action"] = "status_req";
-    char payload[128] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return;
-    node.send((uint8_t)StackMsgType::CmdSet,
-              reinterpret_cast<const uint8_t *>(payload), len);
+    net.network.stackRoute().sendRequest(0, "security", "status_req", &doc, StackRouteAdapter::Mode::Json, false);
 }
 
 bool AppRuntime::collectRemoteSecurityDetections_(String &out, String *plain_out){
     if (!stackMasterActive_())
         return false;
-    StackMaster &master = net.network.stackMaster();
-    const size_t count = master.nodeCount();
+    const size_t count = net.network.stackOnlineDeviceCount();
     bool any = false;
     bool missing = false;
     uint32_t beep_nodes[StackMaster::MAX_SESSIONS] = {};
@@ -415,10 +311,11 @@ bool AppRuntime::collectRemoteSecurityDetections_(String &out, String *plain_out
     const uint32_t now = millis();
     for (size_t i = 0; i < count; ++i)
     {
-        const uint32_t node_id = master.nodeIdAt(i);
-        if (node_id == 0)
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!net.network.stackDeviceSnapshotAt(i, device))
             continue;
-        if (!master.nodeIsOnline(node_id, kStackNodeStaleMs))
+        const uint32_t node_id = device.node_id;
+        if (node_id == 0 || !device.online || (uint32_t)(now - device.last_seen_ms) > kStackNodeStaleMs)
             continue;
         const auto *cache = _stack_cache.securityPrearmCache(node_id);
         const bool stale = cache && cache->has_data && (uint32_t)(now - cache->updated_ms) > kPreArmFreshMs;
@@ -460,10 +357,11 @@ bool AppRuntime::collectRemoteSecurityDetections_(String &out, String *plain_out
     }
     for (size_t i = 0; i < count; ++i)
     {
-        const uint32_t node_id = master.nodeIdAt(i);
-        if (node_id == 0)
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!net.network.stackDeviceSnapshotAt(i, device))
             continue;
-        if (!master.nodeIsOnline(node_id, kStackNodeStaleMs))
+        const uint32_t node_id = device.node_id;
+        if (node_id == 0 || !device.online || (uint32_t)(millis() - device.last_seen_ms) > kStackNodeStaleMs)
             continue;
         const auto *cache = _stack_cache.securityPrearmCache(node_id);
         const uint32_t now2 = millis();
@@ -564,10 +462,14 @@ bool AppRuntime::collectRemoteSecurityDetections_(String &out, String *plain_out
 void AppRuntime::broadcastSecurityAlarm_(bool alarm_on){
     if (!stackMasterActive_())
         return;
-    StackMaster &master = net.network.stackMaster();
-    const size_t count = master.nodeCount();
+    const size_t count = net.network.stackOnlineDeviceCount();
     for (size_t i = 0; i < count; ++i)
-        sendSecurityAlarmToNode_(master.nodeIdAt(i), alarm_on);
+    {
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!net.network.stackDeviceSnapshotAt(i, device))
+            continue;
+        sendSecurityAlarmToNode_(device.node_id, alarm_on);
+    }
 }
 
 void AppRuntime::sendSecurityAlarmToNode_(uint32_t node_id, bool alarm_on){
@@ -575,21 +477,9 @@ void AppRuntime::sendSecurityAlarmToNode_(uint32_t node_id, bool alarm_on){
         return;
     if (!stackMasterActive_())
         return;
-    StackMaster &master = net.network.stackMaster();
-
     StaticJsonDocument<128> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Security;
-    doc["action"] = "set";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["alarm"] = alarm_on;
-
-    char payload[128] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return;
-    master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                  reinterpret_cast<const uint8_t *>(payload), len);
+    doc["alarm"] = alarm_on;
+    net.network.stackRoute().sendEvent(node_id, "security", "set", &doc, StackRouteAdapter::Mode::Json);
 }
 
 void AppRuntime::sendSecurityBeepToNode_(uint32_t node_id, const char *kind){
@@ -597,21 +487,9 @@ void AppRuntime::sendSecurityBeepToNode_(uint32_t node_id, const char *kind){
         return;
     if (!stackMasterActive_())
         return;
-    StackMaster &master = net.network.stackMaster();
-
     StaticJsonDocument<96> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Security;
-    doc["action"] = "set";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["beep"] = kind ? kind : "reject";
-
-    char payload[96] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return;
-    master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                  reinterpret_cast<const uint8_t *>(payload), len);
+    doc["beep"] = kind ? kind : "reject";
+    net.network.stackRoute().sendEvent(node_id, "security", "set", &doc, StackRouteAdapter::Mode::Json);
 }
 
 void AppRuntime::pollSecurityPrearmWarmup_(){
@@ -621,14 +499,16 @@ void AppRuntime::pollSecurityPrearmWarmup_(){
     if ((uint32_t)(now - _last_prearm_poll_ms) < kPreArmPollMs)
         return;
     _last_prearm_poll_ms = now;
-    StackMaster &master = net.network.stackMaster();
-    const size_t count = master.nodeCount();
+    const size_t count = net.network.stackOnlineDeviceCount();
     for (size_t i = 0; i < count; ++i)
     {
-        const uint32_t node_id = master.nodeIdAt(i);
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!net.network.stackDeviceSnapshotAt(i, device))
+            continue;
+        const uint32_t node_id = device.node_id;
         if (node_id == 0)
             continue;
-        if (!master.nodeIsOnline(node_id, kStackNodeStaleMs))
+        if (!device.online || (uint32_t)(now - device.last_seen_ms) > kStackNodeStaleMs)
             continue;
         const auto *cache = _stack_cache.securityPrearmCache(node_id);
         const bool stale = cache && cache->has_data && (uint32_t)(now - cache->updated_ms) > kPreArmFreshMs;
@@ -640,10 +520,14 @@ void AppRuntime::pollSecurityPrearmWarmup_(){
 void AppRuntime::broadcastSecurityClear_(){
     if (!stackMasterActive_())
         return;
-    StackMaster &master = net.network.stackMaster();
-    const size_t count = master.nodeCount();
+    const size_t count = net.network.stackOnlineDeviceCount();
     for (size_t i = 0; i < count; ++i)
-        sendSecurityClearToNode_(master.nodeIdAt(i));
+    {
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!net.network.stackDeviceSnapshotAt(i, device))
+            continue;
+        sendSecurityClearToNode_(device.node_id);
+    }
 }
 
 void AppRuntime::sendSecurityClearToNode_(uint32_t node_id){
@@ -651,20 +535,8 @@ void AppRuntime::sendSecurityClearToNode_(uint32_t node_id){
         return;
     if (!stackMasterActive_())
         return;
-    StackMaster &master = net.network.stackMaster();
-
     StaticJsonDocument<96> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Security;
-    doc["action"] = "set";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["clear"] = true;
-
-    char payload[96] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return;
-    master.sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                  reinterpret_cast<const uint8_t *>(payload), len);
+    doc["clear"] = true;
+    net.network.stackRoute().sendEvent(node_id, "security", "set", &doc, StackRouteAdapter::Mode::Json);
 }
 

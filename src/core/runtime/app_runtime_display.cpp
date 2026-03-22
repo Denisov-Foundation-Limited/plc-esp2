@@ -576,7 +576,11 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
                 _stack_cache.requestTanks(node_id);
                 return false;
             }
-            const bool node_online = net.network.stackMaster().nodeIsOnline(node_id, kStackNodeStaleMs);
+            StackDeviceRegistry::DeviceInfo device{};
+            const bool node_online =
+                net.network.stackDeviceSnapshotByNodeId(node_id, device) &&
+                device.online &&
+                (uint32_t)(millis() - device.last_seen_ms) <= kStackNodeStaleMs;
             const uint32_t now = millis();
             const uint32_t age_ms = (uint32_t)(now - cache->updated_ms);
             if (age_ms > 3000u)
@@ -629,7 +633,10 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             net.stack_slave.requestRemoteTanks(node_id);
             return false;
         }
-        const bool master_connected = net.network.stackNode().connected();
+        const Network::StackRuntimeState stack_state = net.network.stackRuntimeState();
+        const bool master_connected =
+            stack_state == Network::StackRuntimeState::Online ||
+            stack_state == Network::StackRuntimeState::AuthPending;
         const uint32_t now = millis();
         const uint32_t age_ms = (uint32_t)(now - rcache->updated_ms);
         if (age_ms > 3000u)

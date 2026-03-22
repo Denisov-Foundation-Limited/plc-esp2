@@ -68,6 +68,8 @@ StackCache &AppRuntime::stackCache()
 
 void AppRuntime::bindCallbacks()
 {
+    net.network.stackRoute().setJsonRouteHandler(&AppRuntime::onStackRoute_, this);
+    net.network.setStackNodeEventHandler(&AppRuntime::onStackNodeEvent_, this);
     control.controllers.thermo().setRemoteMeteoProvider(&AppRuntime::onRemoteMeteo_, this);
     control.controllers.meteo().setRemoteMeteoProvider(&AppRuntime::onRemoteMeteoProxy_, this);
     control.controllers.meteo().setRemoteNodeNameProvider(&AppRuntime::onRemoteNodeName_, this);
@@ -156,11 +158,12 @@ void AppRuntime::taskFlush()
 }
 
 bool AppRuntime::stackMasterActive_() const{
-    return false;
+    return net.network.stackMasterActive();
 }
 
 bool AppRuntime::stackSlaveActive_() const{
-    return false;
+    return net.network.stackRole() == ConfigsManagerIface::StackRole::Slave &&
+           !net.network.stackFallbackActive();
 }
 
 void AppRuntime::updateMasterLed_(bool master_active){
@@ -328,8 +331,7 @@ void AppRuntime::pollStackCaches_(){
     if (!stackMasterActive_())
         return;
     logLocalInventory_();
-    StackMaster &master = net.network.stackMaster();
-    const size_t count = master.nodeCount();
+    const size_t count = net.network.stackOnlineDeviceCount();
     if (count == 0)
     {
         if (_stack_bootstrap_node_id != 0)
@@ -351,7 +353,9 @@ void AppRuntime::pollStackCaches_(){
     if (bootstrap_active)
     {
         const uint32_t bs_node = _stack_bootstrap_node_id;
-        if (!master.nodeIsOnline(bs_node, kStackNodeStaleMs))
+        StackDeviceRegistry::DeviceInfo bootstrap_device{};
+        if (!net.network.stackDeviceSnapshotByNodeId(bs_node, bootstrap_device) ||
+            !bootstrap_device.online || (uint32_t)(now - bootstrap_device.last_seen_ms) > kStackNodeStaleMs)
         {
             stopStackBootstrapSync_(false);
         }
@@ -398,10 +402,11 @@ void AppRuntime::pollStackCaches_(){
     {
         if (_stack_poll_index >= count)
             _stack_poll_index = 0;
-        node_id = master.nodeIdAt(_stack_poll_index++);
-        if (node_id == 0)
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!net.network.stackDeviceSnapshotAt(_stack_poll_index++, device))
             return;
-        if (!master.nodeIsOnline(node_id, kStackNodeStaleMs))
+        node_id = device.node_id;
+        if (node_id == 0 || !device.online || (uint32_t)(now - device.last_seen_ms) > kStackNodeStaleMs)
             return;
         logStackNodeInventory_(node_id);
         feature = (uint8_t)(_stack_poll_feature_index % kStackPollFeatureCount);
@@ -790,4 +795,3 @@ bool AppRuntime::onRemoteSensorType_(void *ctx, uint32_t node_id, uint8_t sensor
     }
     return false;
 }
-

@@ -95,8 +95,11 @@ public:
     void setStackSlave(StackSlaveHandler *slave);
 
     void setCloudClient(CloudClient &client);
+    void setNetwork(class Network &network);
 
     void setRules(RulesController &rules);
+
+    class Network *network() const;
 
 
     StackCache &stackCache();
@@ -208,6 +211,7 @@ private:
     bool requestStackOw_(uint32_t node_id, bool run);
     bool requestStackTempSensors_(uint32_t node_id);
     bool refreshStackTempSensors_(uint32_t node_id);
+    bool requestStackIndexState_(uint32_t node_id);
     bool requestStackPlcStatus_(uint32_t node_id);
     bool requestStackRtcStatus_(uint32_t node_id);
     uint16_t nextStackCmdId_();
@@ -261,6 +265,9 @@ private:
     String deviceName_() const;
     ConfigsManagerIface::StackRole stackRole_() const;
     String stackMasterHost_() const;
+    ConfigsManagerIface::StackExchangePolicy stackExchangePolicy_() const;
+    ConfigsManagerIface::StackTransportKind stackTransport_() const;
+    ConfigsManagerIface::StackPayloadMode stackPayloadMode_() const;
     bool stackFallbackEnabled_() const;
     String stackFallbackHost_() const;
     bool stackSlaveController_() const;
@@ -666,6 +673,7 @@ private:
     StackSlaveHandler *_stack_slave = nullptr;
     StackCache *_stack_cache = nullptr;
     CloudClient *_cloud = nullptr;
+    class Network *_network = nullptr;
     UsersRegistry *_users = nullptr;
     String _session_token;
     uint32_t _session_expire_ms = 0;
@@ -675,11 +683,6 @@ private:
     bool _ota_set_cookie = false;
     bool _ota_in_progress = false;
 };
-
-
-
-
-
 
 
 

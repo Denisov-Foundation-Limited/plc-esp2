@@ -11,6 +11,7 @@
 
 #include "core/network/web/web_interface_controllers_ops.hpp"
 
+#include "core/network/network.hpp"
 #include "core/network/web/web_interface.hpp"
 
 #define _allowed_exts _web._allowed_exts
@@ -392,28 +393,31 @@ String WebInterfaceControllersOps::listStackNodesStatusHtml_() const
 
 String WebInterfaceControllersOps::listStackNodesHtml_() const
 {
-    if (!_stack_master)
-        return WebUiRu::Controllers::kText3;
-    const size_t count = _stack_master->nodeCount();
+    if (!_web._network)
+        return !_stack_master ? WebUiRu::Controllers::kText3 : WebUiRu::Controllers::kText4;
+    const size_t count = _web._network->stackOnlineDeviceCount();
     if (count == 0)
         return WebUiRu::Controllers::kText4;
     String items;
     items.reserve(1024);
     for (size_t i = 0; i < count; ++i)
     {
-        const uint32_t id = _stack_master->nodeIdAt(i);
-        const String name = _stack_master->nodeNameAt(i);
-        const String ip = _stack_master->nodeIpAt(i);
+        StackDeviceRegistry::DeviceInfo device;
+        if (!_web._network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+            continue;
         items += "<tr data-node=\"";
-        items += String((unsigned long)id);
+        items += String((unsigned long)device.node_id);
         items += "\"><td><strong>";
-        appendHtmlEscaped_(items, name);
+        if (device.name[0])
+            appendHtmlEscaped_(items, device.name);
+        else
+            items += "-";
         items += "</strong></td><td><strong>";
-        items += stackNodeIdHex_(id);
+        items += stackNodeIdHex_(device.node_id);
         items += "</strong></td><td><strong>";
-        appendHtmlEscaped_(items, ip);
+        appendHtmlEscaped_(items, device.ip);
         items += "</strong></td><td><strong>";
-        items += _stack_master->nodeIsControllerAt(i) ? WebUiRu::Controllers::kText5 : WebUiRu::Controllers::kText6;
+        items += (device.caps & StackCapController) ? WebUiRu::Controllers::kText5 : WebUiRu::Controllers::kText6;
         items += "</strong></td></tr>";
     }
     return items;
@@ -1037,7 +1041,70 @@ sendRedirect_(request, "/", set_cookie);
             return;
         if (!requireWebAdmin_(request, &set_cookie))
             return;
-        _stack_status = "Stack disabled";
+        if (!_configs_manager)
+        {
+            _stack_status = "Config manager missing";
+            sendRedirect_(request, "/stack", set_cookie);
+            return;
+        }
+
+        const String role_value = request->hasParam("role", true) ? request->getParam("role", true)->value() : "master";
+        String role = role_value;
+        role.trim();
+        role.toLowerCase();
+        _configs_manager->setStackRole(role == "slave" ? ConfigsManagerIface::StackRole::Slave
+                                                        : ConfigsManagerIface::StackRole::Master);
+
+        String host = request->hasParam("master_host", true) ? request->getParam("master_host", true)->value() : "";
+        host.trim();
+        _configs_manager->setStackMasterHost(host);
+
+        String policy_value =
+            request->hasParam("exchange_policy", true) ? request->getParam("exchange_policy", true)->value() : "auto";
+        policy_value.trim();
+        policy_value.toLowerCase();
+        ConfigsManagerIface::StackExchangePolicy policy = ConfigsManagerIface::StackExchangePolicy::Auto;
+        if (policy_value == "direct")
+            policy = ConfigsManagerIface::StackExchangePolicy::Direct;
+        else if (policy_value == "poll")
+            policy = ConfigsManagerIface::StackExchangePolicy::Poll;
+        _configs_manager->setStackExchangePolicy(policy);
+
+        String transport_value =
+            request->hasParam("transport", true) ? request->getParam("transport", true)->value() : "websocket";
+        transport_value.trim();
+        transport_value.toLowerCase();
+        _configs_manager->setStackTransport(transport_value == "rs485" ? ConfigsManagerIface::StackTransportKind::Rs485
+                                                                       : ConfigsManagerIface::StackTransportKind::WebSocket);
+
+        String payload_value =
+            request->hasParam("payload_mode", true) ? request->getParam("payload_mode", true)->value() : "auto";
+        payload_value.trim();
+        payload_value.toLowerCase();
+        ConfigsManagerIface::StackPayloadMode payload_mode = ConfigsManagerIface::StackPayloadMode::Auto;
+        if (payload_value == "json")
+            payload_mode = ConfigsManagerIface::StackPayloadMode::Json;
+        else if (payload_value == "binary")
+            payload_mode = ConfigsManagerIface::StackPayloadMode::Binary;
+        _configs_manager->setStackPayloadMode(payload_mode);
+
+        _configs_manager->setStackFallbackEnabled(request->hasParam("fallback_enabled", true));
+
+        String fallback_host =
+            request->hasParam("fallback_host", true) ? request->getParam("fallback_host", true)->value() : "";
+        fallback_host.trim();
+        _configs_manager->setStackFallbackHost(fallback_host);
+
+        _configs_manager->setStackSlaveController(request->hasParam("slave_controller", true));
+
+        String api_key = request->hasParam("api_key", true) ? request->getParam("api_key", true)->value() : "";
+        api_key.trim();
+        if (api_key == WebInterface::maskSecretValue_(_configs_manager->stackApiKey()))
+            api_key = _configs_manager->stackApiKey();
+        _configs_manager->setStackApiKey(api_key);
+
+        const bool saved = _configs_manager->save();
+        _stack_status = saved ? "Stack updated" : "Stack applied, save failed";
         sendRedirect_(request, "/stack", set_cookie);
     }
 
@@ -1050,7 +1117,7 @@ sendRedirect_(request, "/", set_cookie);
             return;
         if (!requireWebAdmin_(request, &set_cookie))
             return;
-        sendText_(request, 200, "text/plain", "stack-disabled", set_cookie);
+        sendText_(request, 200, "text/plain", genApiKey_(), set_cookie);
     }
 
 
@@ -1642,42 +1709,63 @@ String WebInterfaceControllersOps::navHtml_() const
 
     ConfigsManagerIface::StackRole WebInterfaceControllersOps::stackRole_() const
 {
-        return ConfigsManagerIface::StackRole::Master;
+        return _configs_manager ? _configs_manager->stackRole() : ConfigsManagerIface::StackRole::Master;
     }
 
 
 
     String WebInterfaceControllersOps::stackMasterHost_() const
 {
-        return "";
+        return _configs_manager ? _configs_manager->stackMasterHost() : String();
+    }
+
+
+
+    ConfigsManagerIface::StackExchangePolicy WebInterfaceControllersOps::stackExchangePolicy_() const
+{
+        return _configs_manager ? _configs_manager->stackExchangePolicy() : ConfigsManagerIface::StackExchangePolicy::Auto;
+    }
+
+
+
+    ConfigsManagerIface::StackTransportKind WebInterfaceControllersOps::stackTransport_() const
+{
+        return _configs_manager ? _configs_manager->stackTransport() : ConfigsManagerIface::StackTransportKind::WebSocket;
+    }
+
+
+
+    ConfigsManagerIface::StackPayloadMode WebInterfaceControllersOps::stackPayloadMode_() const
+{
+        return _configs_manager ? _configs_manager->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Auto;
     }
 
 
 
     bool WebInterfaceControllersOps::stackFallbackEnabled_() const
 {
-        return false;
+        return _configs_manager ? _configs_manager->stackFallbackEnabled() : false;
     }
 
 
 
     String WebInterfaceControllersOps::stackFallbackHost_() const
 {
-        return "";
+        return _configs_manager ? _configs_manager->stackFallbackHost() : String();
     }
 
 
 
     bool WebInterfaceControllersOps::stackSlaveController_() const
 {
-        return true;
+        return _configs_manager ? _configs_manager->stackSlaveController() : true;
     }
 
 
 
     String WebInterfaceControllersOps::stackApiKey_() const
 {
-        return "";
+        return _configs_manager ? _configs_manager->stackApiKey() : String();
     }
 
 

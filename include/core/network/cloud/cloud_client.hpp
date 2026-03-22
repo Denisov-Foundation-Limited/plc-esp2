@@ -34,9 +34,12 @@ class GsmModem;
 class StackMaster;
 class StackCache;
 class ConfigsManagerIface;
+class Network;
 class CloudClient
 {
 public:
+    using StackNodeNameProvider = bool (*)(void *ctx, uint32_t node_id, String &out);
+
     struct Config
     {
         String host;
@@ -50,7 +53,9 @@ public:
     CloudClient(Logger &log, Controllers &controllers, PlcControl &plc, WifiManager &wifi, RTC &rtc);
 
     void setGsm(GsmModem *gsm);
+    void setNetwork(Network *network);
     void setStackMaster(StackMaster *master);
+    void setStackNodeNameProvider(StackNodeNameProvider cb, void *ctx);
     void setStackCache(StackCache *cache);
     void setConfigsManager(ConfigsManagerIface *cfg);
     void setUsersRegistry(UsersRegistry *users);
@@ -164,7 +169,10 @@ private:
     WifiManager &_wifi;
     RTC &_rtc;
     GsmModem *_gsm = nullptr;
+    Network *_network = nullptr;
     StackMaster *_stack_master = nullptr;
+    StackNodeNameProvider _stack_node_name_cb = nullptr;
+    void *_stack_node_name_ctx = nullptr;
     StackCache *_stack_cache = nullptr;
     ConfigsManagerIface *_configs = nullptr;
     UsersRegistry *_users = nullptr;

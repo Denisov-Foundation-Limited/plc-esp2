@@ -14,6 +14,7 @@
 #include <Arduino.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <atomic>
 #include <type_traits>
 #include <utility>
 
@@ -21,7 +22,14 @@
 #include "core/compat/stack_stub.hpp"
 #include "core/network/cloud/cloud_client.hpp"
 #include "core/network/cloud/cloud_http_transport.hpp"
+#include "core/network/stack/stack_route_adapter.hpp"
+#include "core/network/stack/stack_device_registry.hpp"
+#include "core/network/stack/stack_master_server.hpp"
+#include "core/network/stack/stack_rs485_server.hpp"
+#include "core/network/stack/stack_slave_client.hpp"
+#include "core/network/stack/stack_unit_snapshot.hpp"
 #include "utils/configs_manager_iface.hpp"
+#include "utils/rtos_lock.hpp"
 
 class WifiManager;
 class WebInterface;
@@ -33,6 +41,8 @@ class PlcControl;
 class Network
 {
 public:
+    using StackNodeEventHandler = void (*)(void *ctx, uint32_t node_id, bool online);
+
     enum class Error : uint8_t
     {
         None = 0,
@@ -40,17 +50,50 @@ public:
         WebInterfaceFs
     };
 
+    enum class StackRuntimeState : uint8_t
+    {
+        Stopped = 0,
+        Starting,
+        AuthPending,
+        Online,
+        Degraded,
+        FallbackMaster
+    };
+
+    enum class StackCommand : uint8_t
+    {
+        None = 0,
+        Reconfigure = 1 << 0,
+        Restart = 1 << 1,
+        Stop = 1 << 2,
+        SwitchTargetPrimary = 1 << 3,
+        SwitchTargetFallback = 1 << 4
+    };
+
+    struct StackDiagnostics
+    {
+        const char *runtime_state = "unknown";
+        bool fallback_active = false;
+        bool master_active = false;
+        uint16_t online_devices = 0;
+        uint32_t network_lock_held_ms = 0;
+        StackRouteAdapter::ExchangeDiagnostics exchange{};
+        StackRs485Transport::Diagnostics rs485{};
+    };
+
     Network(Logger &logs, WifiManager &wifi, GsmModem &gsm, WebInterface &fw, AsyncWebServer &web,
             Controllers &controllers, PlcControl &plc, RTC &rtc);
 
     void setStackConfig(ConfigsManagerIface &cfg);
     void setStackDeviceName(const String &name);
+    void setStackNodeEventHandler(StackNodeEventHandler cb, void *ctx);
 
     bool begin();
 
     Error lastError() const;
 
     void loop();
+    void stackLoop();
 
     void setCloudConfig(const CloudClient::Config &cfg);
     void setCloudEnabled(bool enabled);
@@ -95,6 +138,10 @@ private:
     AsyncServer _stack_server;
     StackMaster _stack_master;
     StackNode _stack_node;
+    StackMasterServer _stack_master_server;
+    StackRs485Server _stack_rs485_server;
+    StackSlaveClient _stack_slave_client;
+    StackRouteAdapter _stack_route;
     CloudClient _cloud;
     CloudHttpTransport _cloud_http_transport;
     CloudClient::Config _cloud_cfg;
@@ -116,18 +163,59 @@ private:
     StackTarget _stack_target = StackTarget::Primary;
 
     void beginStack_();
+    void stopStack_();
+    void processStackCommands_();
+    void requestStackCommand_(StackCommand cmd);
+    bool stackWsNetworkReady_() const;
+    void maintainStackWsReadiness_();
 
     void ensureStackMasterStarted_();
+    void ensureStackSlaveStarted_();
 
     void switchStackTarget_(StackTarget target);
 
     void updateStackFallback_();
+    static void onStackNotify_(void *ctx, uint32_t source_node, const StackJsonProtocol::NotifyMessage &notify);
+    void handleStackNotify_(uint32_t source_node, const StackJsonProtocol::NotifyMessage &notify);
+    static void onStackNodeEvent_(void *ctx, uint32_t node_id, bool online);
+    void handleStackNodeEvent_(uint32_t node_id, bool online);
+    static bool provideCloudStackNodeName_(void *ctx, uint32_t node_id, String &out);
+    bool cloudStackNodeName_(uint32_t node_id, String &out) const;
 
 public:
     StackNode &stackNode();
     StackMaster &stackMaster();
+    StackRs485Server &stackRs485Server();
+    StackRouteAdapter &stackRoute();
     CloudClient &cloudClient();
     ConfigsManagerIface::StackRole stackRole() const;
+    StackRuntimeState stackRuntimeState() const;
+    const char *stackRuntimeStateText() const;
+    uint32_t stackLocalNodeId() const;
+    size_t stackOnlineDeviceCount() const;
+    bool stackDeviceSnapshotAt(size_t idx, StackDeviceRegistry::DeviceInfo &out) const;
+    bool stackDeviceSnapshotByNodeId(uint32_t node_id, StackDeviceRegistry::DeviceInfo &out) const;
+    bool prepareStackIndexStateRequest(uint32_t node_id, uint32_t now_ms, uint32_t fresh_ms, uint32_t pending_ms);
+    bool stackIndexStateSnapshot(uint32_t node_id, StackUnitSnapshot::Snapshot &out) const;
+    void clearStackIndexStatePending(uint32_t node_id);
+    void updateStackIndexState(uint32_t node_id, const StackUnitSnapshot::Snapshot &state);
+    void invalidateStackIndexState(uint32_t node_id);
+    bool stackSlaveSendResponse(uint32_t target_node, const char *feature, const char *action, uint32_t reply_to,
+                                const JsonDocument *payload = nullptr);
     bool stackFallbackActive() const;
     bool stackMasterActive() const;
+    StackDiagnostics stackDiagnostics() const;
+
+private:
+    void setStackRuntimeState_(StackRuntimeState state);
+    void refreshStackRuntimeState_();
+
+private:
+    mutable RtosRecursiveLock _stack_lock;
+    StackUnitSnapshot _stack_unit_snapshot;
+    std::atomic<uint8_t> _stack_cmd_pending{(uint8_t)StackCommand::None};
+    std::atomic<uint8_t> _stack_runtime_state_raw{(uint8_t)StackRuntimeState::Stopped};
+    bool _stack_ws_start_deferred = false;
+    StackNodeEventHandler _stack_node_event_cb = nullptr;
+    void *_stack_node_event_ctx = nullptr;
 };

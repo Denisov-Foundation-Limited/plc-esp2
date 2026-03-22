@@ -30,17 +30,23 @@ ConfigsManager::ConfigsManager(Configs &configs, WifiManager &wifi, Network &net
       _users(users){
 }
 
-CfgMgrStackRole ConfigsManager::stackRole() const{ return CfgMgrStackRole::Master; }
+CfgMgrStackRole ConfigsManager::stackRole() const{ return _stack_role; }
 
-String ConfigsManager::stackMasterHost() const{ return ""; }
+String ConfigsManager::stackMasterHost() const{ return _stack_master_host; }
 
-String ConfigsManager::stackApiKey() const{ return ""; }
+String ConfigsManager::stackApiKey() const{ return _stack_api_key; }
 
-bool ConfigsManager::stackFallbackEnabled() const{ return false; }
+ConfigsManagerIface::StackExchangePolicy ConfigsManager::stackExchangePolicy() const{ return _stack_exchange_policy; }
 
-String ConfigsManager::stackFallbackHost() const{ return ""; }
+ConfigsManagerIface::StackTransportKind ConfigsManager::stackTransport() const{ return _stack_transport; }
 
-bool ConfigsManager::stackSlaveController() const{ return true; }
+ConfigsManagerIface::StackPayloadMode ConfigsManager::stackPayloadMode() const{ return _stack_payload_mode; }
+
+bool ConfigsManager::stackFallbackEnabled() const{ return _stack_fallback_enabled; }
+
+String ConfigsManager::stackFallbackHost() const{ return _stack_fallback_host; }
+
+bool ConfigsManager::stackSlaveController() const{ return _stack_slave_controller; }
 
 bool ConfigsManager::cloudEnabled() const{ return _cloud_enabled; }
 
@@ -173,17 +179,68 @@ bool ConfigsManager::displaySlot(size_t idx, DisplaySlotConfig &out) const{
     return true;
 }
 
-void ConfigsManager::setStackRole(StackRole role){ (void)role; }
+void ConfigsManager::setStackRole(StackRole role){
+    if (role == _stack_role)
+        return;
+    _stack_role = role;
+    _network.setStackConfig(*this);
+}
 
-void ConfigsManager::setStackMasterHost(const String &host){ (void)host; }
+void ConfigsManager::setStackMasterHost(const String &host){
+    if (host == _stack_master_host)
+        return;
+    _stack_master_host = host;
+    _network.setStackConfig(*this);
+}
 
-void ConfigsManager::setStackApiKey(const String &key){ (void)key; }
+void ConfigsManager::setStackApiKey(const String &key){
+    if (key == _stack_api_key)
+        return;
+    _stack_api_key = key;
+    _network.setStackConfig(*this);
+}
 
-void ConfigsManager::setStackFallbackEnabled(bool enabled){ (void)enabled; }
+void ConfigsManager::setStackExchangePolicy(StackExchangePolicy policy){
+    if (policy == _stack_exchange_policy)
+        return;
+    _stack_exchange_policy = policy;
+    _network.setStackConfig(*this);
+}
 
-void ConfigsManager::setStackFallbackHost(const String &host){ (void)host; }
+void ConfigsManager::setStackTransport(StackTransportKind kind){
+    if (kind == _stack_transport)
+        return;
+    _stack_transport = kind;
+    _network.setStackConfig(*this);
+}
 
-void ConfigsManager::setStackSlaveController(bool controller){ (void)controller; }
+void ConfigsManager::setStackPayloadMode(StackPayloadMode mode){
+    if (mode == _stack_payload_mode)
+        return;
+    _stack_payload_mode = mode;
+    _network.setStackConfig(*this);
+}
+
+void ConfigsManager::setStackFallbackEnabled(bool enabled){
+    if (enabled == _stack_fallback_enabled)
+        return;
+    _stack_fallback_enabled = enabled;
+    _network.setStackConfig(*this);
+}
+
+void ConfigsManager::setStackFallbackHost(const String &host){
+    if (host == _stack_fallback_host)
+        return;
+    _stack_fallback_host = host;
+    _network.setStackConfig(*this);
+}
+
+void ConfigsManager::setStackSlaveController(bool controller){
+    if (controller == _stack_slave_controller)
+        return;
+    _stack_slave_controller = controller;
+    _network.setStackConfig(*this);
+}
 
 void ConfigsManager::setCloudEnabled(bool enabled){
     if (enabled == _cloud_enabled)
@@ -352,6 +409,28 @@ bool ConfigsManager::save(){
     JsonObject g = _doc["gsm"].to<JsonObject>();
     g["enabled"] = _gsm.enabled();
 
+    JsonObject s = _doc["stack"].to<JsonObject>();
+    s["role"] = (_stack_role == StackRole::Slave) ? "slave" : "master";
+    s["host"] = _stack_master_host;
+    if (_stack_api_key.length())
+        s["api_key"] = _stack_api_key;
+    const char *policy = "auto";
+    if (_stack_exchange_policy == StackExchangePolicy::Direct)
+        policy = "direct";
+    else if (_stack_exchange_policy == StackExchangePolicy::Poll)
+        policy = "poll";
+    s["exchange_policy"] = policy;
+    s["transport"] = (_stack_transport == StackTransportKind::Rs485) ? "rs485" : "websocket";
+    const char *payload_mode = "auto";
+    if (_stack_payload_mode == StackPayloadMode::Json)
+        payload_mode = "json";
+    else if (_stack_payload_mode == StackPayloadMode::Binary)
+        payload_mode = "binary";
+    s["payload_mode"] = payload_mode;
+    s["fallback"] = _stack_fallback_enabled;
+    s["fallback_host"] = _stack_fallback_host;
+    s["slave_controller"] = _stack_slave_controller;
+
     JsonObject disp = _doc["display"].to<JsonObject>();
     JsonArray slots = disp["slots"].to<JsonArray>();
     for (size_t i = 0; i < kDisplaySlotCount; ++i)
@@ -413,7 +492,6 @@ bool ConfigsManager::save(const JsonDocument &doc){
     {
         _rules.applyConfig(doc["rules"].as<JsonArrayConst>());
     }
-    tmp.remove("stack");
     tmp.remove("users");
     tmp.remove("rules");
     if (!_configs.save(tmp))
@@ -724,6 +802,38 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
         JsonObjectConst g = doc["gsm"].as<JsonObjectConst>();
         if (g["enabled"].is<bool>())
             _gsm.setEnabled(g["enabled"].as<bool>());
+    }
+
+    if (doc["stack"].is<JsonObjectConst>())
+    {
+        JsonObjectConst s = doc["stack"].as<JsonObjectConst>();
+        String role = s["role"] | "master";
+        role.toLowerCase();
+        _stack_role = (role == "slave") ? StackRole::Slave : StackRole::Master;
+        _stack_master_host = s["host"] | "";
+        _stack_api_key = s["api_key"] | "";
+        String policy = s["exchange_policy"] | "auto";
+        policy.toLowerCase();
+        if (policy == "direct")
+            _stack_exchange_policy = StackExchangePolicy::Direct;
+        else if (policy == "poll")
+            _stack_exchange_policy = StackExchangePolicy::Poll;
+        else
+            _stack_exchange_policy = StackExchangePolicy::Auto;
+        String transport = s["transport"] | "websocket";
+        transport.toLowerCase();
+        _stack_transport = (transport == "rs485") ? StackTransportKind::Rs485 : StackTransportKind::WebSocket;
+        String payload_mode = s["payload_mode"] | "auto";
+        payload_mode.toLowerCase();
+        if (payload_mode == "json")
+            _stack_payload_mode = StackPayloadMode::Json;
+        else if (payload_mode == "binary")
+            _stack_payload_mode = StackPayloadMode::Binary;
+        else
+            _stack_payload_mode = StackPayloadMode::Auto;
+        _stack_fallback_enabled = s["fallback"] | false;
+        _stack_fallback_host = s["fallback_host"] | "";
+        _stack_slave_controller = s["slave_controller"] | true;
     }
 
     if (doc["cloud"].is<JsonObjectConst>())

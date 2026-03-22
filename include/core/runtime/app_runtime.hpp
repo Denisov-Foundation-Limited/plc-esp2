@@ -19,6 +19,7 @@
 #include "core/display.hpp"
 #include "hal/ds3231mz.hpp"
 #include "core/compat/stack_stub.hpp"
+#include "core/network/stack/stack_json_protocol.hpp"
 
 struct CoreContext;
 struct HardwareContext;
@@ -123,7 +124,7 @@ private:
 
     static void onRingHold_(void *ctx, bool on);
 
-    static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame);
+    static void onStackRoute_(void *ctx, uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
 
     static bool onSecurityRfidUid_(void *ctx, const String &uid);
 
@@ -155,7 +156,7 @@ private:
     void publishCloudStackEvent_(uint32_t node_id, const char *kind, const char *reason,
                                  const String &data_json);
 
-    void handleStackFrame_(uint32_t node_id, const StackFrame &frame);
+    void handleStackRoute_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
 
     void handleSepticFrame_(uint32_t node_id, const String &action, JsonVariantConst params);
 

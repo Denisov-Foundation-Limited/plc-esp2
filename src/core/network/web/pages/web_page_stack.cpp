@@ -100,7 +100,7 @@ const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
     <div class="card">
       %NAV%
       <h1>%STACK_TITLE%</h1>
-      <div class="row" id="slave-link-field" style="%STACK_SLAVE_STYLE%">
+      <div class="row" id="slave-link-field" style="%STACK_LINK_STYLE%">
         <span class="badge %STACK_SLAVE_LINK_CLASS%">%STACK_SLAVE_LINK_TEXT%</span>
       </div>
       <div class="section">
@@ -116,6 +116,29 @@ const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
             <div id="master-host-field" style="%STACK_SLAVE_STYLE%">
               <label>%STACK_LABEL_MASTER_HOST%</label>
               <input type="text" name="master_host" value="%STACK_MASTER_HOST%" placeholder="192.168.1.10">
+            </div>
+            <div>
+              <label>%STACK_LABEL_EXCHANGE_POLICY%</label>
+              <select name="exchange_policy">
+                <option value="auto" %STACK_POLICY_AUTO_SEL%>%STACK_POLICY_AUTO_TEXT%</option>
+                <option value="direct" %STACK_POLICY_DIRECT_SEL%>%STACK_POLICY_DIRECT_TEXT%</option>
+                <option value="poll" %STACK_POLICY_POLL_SEL%>%STACK_POLICY_POLL_TEXT%</option>
+              </select>
+            </div>
+            <div>
+              <label>%STACK_LABEL_TRANSPORT%</label>
+              <select name="transport">
+                <option value="websocket" %STACK_TRANSPORT_WS_SEL%>%STACK_TRANSPORT_WS_TEXT%</option>
+                <option value="rs485" %STACK_TRANSPORT_RS485_SEL%>%STACK_TRANSPORT_RS485_TEXT%</option>
+              </select>
+            </div>
+            <div>
+              <label>%STACK_LABEL_PAYLOAD_MODE%</label>
+              <select name="payload_mode">
+                <option value="auto" %STACK_PAYLOAD_AUTO_SEL%>%STACK_PAYLOAD_AUTO_TEXT%</option>
+                <option value="json" %STACK_PAYLOAD_JSON_SEL%>%STACK_PAYLOAD_JSON_TEXT%</option>
+                <option value="binary" %STACK_PAYLOAD_BINARY_SEL%>%STACK_PAYLOAD_BINARY_TEXT%</option>
+              </select>
             </div>
             <div id="fallback-enabled-field" style="%STACK_SLAVE_STYLE%">
               <label>%STACK_LABEL_FALLBACK_MASTER%</label>
@@ -149,6 +172,7 @@ const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
           </div>
         </form>
       </div>
+      %STACK_DIAG_BLOCK%
       %STACK_NODES_BLOCK%
     </div>
   </div>

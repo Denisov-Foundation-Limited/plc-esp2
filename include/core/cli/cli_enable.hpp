@@ -189,12 +189,6 @@ public:
             _c.printPrompt_();
             return;
         }
-        if (startsWith_(cmd, "stack "))
-        {
-            _c.cmdStack_(cmd);
-            _c.printPrompt_();
-            return;
-        }
         if (eq_(cmd, "ring on") || eq_(cmd, "ring off"))
         {
             const bool on = eq_(cmd, "ring on");

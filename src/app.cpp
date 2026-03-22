@@ -132,7 +132,7 @@ ControlContext::ControlContext(CoreContext &core, HardwareContext &hw, CommsCont
 
 UiContext::UiContext(CoreContext &core, HardwareContext &hw, CommsContext &comms, ControlContext &control)
         : console(hw.plc, comms.wifi, hw.rtc, control.ftest, hw.i2c, hw.ow,
-                  core.configs, hw.ext, control.users, control.controllers, nullptr)
+                  core.configs, hw.ext, control.users, control.controllers)
 {
 }
 
@@ -168,12 +168,12 @@ ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContex
     {
         comms.wifi.setIo(hw.io);
         ui.console.setConfigsManager(cfg.configs_manager);
-        ui.console.setStackMaster(&net.network.stackMaster());
-        ui.console.setStackSlave(&net.stack_slave);
+        ui.console.setNetwork(net.network);
 
         net.fw_upgrade.setConfigsManager(cfg.configs_manager);
         net.fw_upgrade.setGsmModem(comms.gsm);
         net.fw_upgrade.setCloudClient(net.network.cloudClient());
+        net.fw_upgrade.setNetwork(net.network);
         net.fw_upgrade.setStackCache(runtime.stackCache());
         net.fw_upgrade.setStackMaster(net.network.stackMaster());
         net.fw_upgrade.setStackSlave(&net.stack_slave);
@@ -285,6 +285,8 @@ bool App::begin()
     runtime.init();
     runtime.applyLoadedConfig();
 
+    net.network.setStackConfig(cfg.configs_manager);
+    net.network.setStackDeviceName(hw.plc.deviceName());
     cfg.configs_manager.setCloudFirmwareVersion(BuildInfo::kFwVersion);
     net.network.setCloudFirmwareVersion(BuildInfo::kFwVersion);
     switch (comms.wifi.mode())

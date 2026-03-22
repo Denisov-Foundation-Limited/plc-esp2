@@ -20,7 +20,6 @@
 #include "plc/plc_control.hpp"
 #include "core/cli/cli_config.hpp"
 #include "core/cli/cli_enable.hpp"
-#include "core/cli/modules/cli_stack.hpp"
 #include "core/cli/modules/cli_socket.hpp"
 #include "core/cli/modules/cli_meteo.hpp"
 #include "core/cli/modules/cli_thermo.hpp"
@@ -36,7 +35,6 @@
 #include "hal/bus/onewire.hpp"
 #include "hal/gpio/extender.hpp"
 #include "hal/gpio/portio.hpp"
-#include "core/compat/stack_stub.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/users_registry.hpp"
@@ -47,7 +45,6 @@ public:
     using CLIEnable = CLIEnableT<CliConsole>;
     using CLIConfig = CLIConfigT<CliConsole>;
     using CLIWifi = CLIWifiT<CliConsole>;
-    using CLIStack = CLIStackT<CliConsole>;
     using CLISocket = CLISocketT<CliConsole>;
     using CLIMeteo = CLIMeteoT<CliConsole>;
     using CLIThermo = CLIThermoT<CliConsole>;
@@ -64,12 +61,11 @@ public:
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
                Configs &configs, Extender &ext,
                UsersRegistry &users,
-               Controllers &controllers, StackMaster *stack_master);
+               Controllers &controllers);
 
     void begin(Stream &io);
 
-    void setStackMaster(StackMaster *master);
-    void setStackSlave(StackSlaveHandler *slave);
+    void setNetwork(class Network &network);
 
     void loop();
 
@@ -136,8 +132,6 @@ public:
 
     void cmdWifiRestart_();
 
-    void cmdStack_(const String &line);
-
     void cmdRestart_();
 
     void cmdWriteConfig_();
@@ -147,6 +141,12 @@ public:
     bool setStackMasterHost_(const String &host);
 
     bool setStackApiKey_(const String &key);
+
+    bool setStackExchangePolicy_(ConfigsManagerIface::StackExchangePolicy policy);
+
+    bool setStackTransport_(ConfigsManagerIface::StackTransportKind kind);
+
+    bool setStackPayloadMode_(ConfigsManagerIface::StackPayloadMode mode);
 
     bool setStackFallbackEnabled_(bool enabled);
 
@@ -209,8 +209,6 @@ private:
 
     bool cliAclAnyView_(UsersRegistry::AclController ctrl, uint16_t max_item_id, uint8_t unit = 0) const;
 
-    bool parseStackAclUnit_(const String &raw_unit, uint8_t &out_unit) const;
-
     bool denyAcl_();
 
     bool enforceAclShow_(String what);
@@ -270,6 +268,7 @@ private:
     UsersRegistry &_users;
     Controllers &_controllers;
     ConfigsManagerIface *_configs_manager = nullptr;
+    class Network *_network = nullptr;
 
     Stream *_io = nullptr;
     String _line;
@@ -290,7 +289,6 @@ private:
     String _history_saved;
 
     CLIWifi _wifi_cli;
-    CLIStack _stack_cli;
     CLISocket _socket_cli;
     CLIMeteo _meteo_cli;
     CLIThermo _thermo_cli;
@@ -306,10 +304,6 @@ private:
     CLIConfig _config;
 
     void printExtList_();
-
-    static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame);
-
-    static String payloadToString_(const uint8_t *data, size_t len);
 
     void printExtHeader_();
 
@@ -382,8 +376,6 @@ private:
     friend class CLIConfigT;
     template <typename>
     friend class CLIWifiT;
-    template <typename>
-    friend class CLIStackT;
     template <typename>
     friend class CLISocketT;
     template <typename>

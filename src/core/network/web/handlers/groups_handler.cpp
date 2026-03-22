@@ -170,8 +170,10 @@ void GroupsHandler::handleGroupsSave(WebInterface &web, AsyncWebServerRequest *r
     }
 
 bool GroupsHandler::isStackGroupsView_(WebInterface &web, uint32_t node_id) {
-        return node_id != 0 && web._stack_master &&
-               web.stackRole_() == ConfigsManagerIface::StackRole::Master;
+        if (node_id == 0 || !web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackDeviceRegistry::DeviceInfo device{};
+        return web.network()->stackDeviceSnapshotByNodeId(node_id, device) && device.online;
     }
 
 String GroupsHandler::groupsPath_(uint32_t node_id, bool stack_view) {

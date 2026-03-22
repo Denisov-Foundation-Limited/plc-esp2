@@ -38,8 +38,8 @@
 #define TASK_BINDER_PLC_SCAN_TICK_MS 1
 #endif
 
-#ifndef TASK_BINDER_NETWORK_LOOP_TICK_MS
-#define TASK_BINDER_NETWORK_LOOP_TICK_MS 10
+#ifndef TASK_BINDER_STACK_LOOP_TICK_MS
+#define TASK_BINDER_STACK_LOOP_TICK_MS 10
 #endif
 
 #ifndef TASK_BINDER_CONSOLE_LOOP_TICK_MS
@@ -87,7 +87,7 @@ public:
         bindPlcScan_();
         bindControllersStorage_();
         bindMeteoHistory_();
-        bindNetworkLoop_();
+        bindStackLoop_();
         bindConsoleLoop_();
         bindDisplay_();
         bindPlc_();
@@ -263,14 +263,14 @@ private:
         }
     }
 
-    void bindNetworkLoop_()
+    void bindStackLoop_()
     {
-        if (_network_task_rtos == nullptr)
+        if (_stack_task_rtos == nullptr)
         {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::networkTaskEntry_, "network_loop", 4096, this, 3,
-                                                    &_network_task_rtos, tskNO_AFFINITY);
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::stackTaskEntry_, "stack_loop", 6144, this, 3,
+                                                    &_stack_task_rtos, tskNO_AFFINITY);
             if (ok != pdPASS)
-                _logs.error(F("TASK"), F("Bind failed: network_loop"));
+                _logs.error(F("TASK"), F("Bind failed: stack_loop"));
         }
     }
 
@@ -312,10 +312,10 @@ private:
         _plc_scan.tick();
     }
 
-    void networkLoopTask_()
+    void stackLoopTask_()
     {
         if (_network)
-            _network->loop();
+            _network->stackLoop();
     }
 
     void consoleLoopTask_()
@@ -534,21 +534,21 @@ private:
         }
     }
 
-    static void networkTaskEntry_(void *arg)
+    static void stackTaskEntry_(void *arg)
     {
         auto *self = static_cast<TaskBinder *>(arg);
         TickType_t last = xTaskGetTickCount();
         for (;;)
         {
             const uint32_t t0 = micros();
-            self->networkLoopTask_();
+            self->stackLoopTask_();
             self->notifyRuntimePostNetwork();
 #if TASK_BINDER_RTOS_DEBUG
             const uint32_t dt = (uint32_t)(micros() - t0);
             const UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
-            self->updateRtosDebug_("network", dt, hwm, self->_dbg_network);
+            self->updateRtosDebug_("stack", dt, hwm, self->_dbg_stack);
 #endif
-            vTaskDelayUntil(&last, pdMS_TO_TICKS(TASK_BINDER_NETWORK_LOOP_TICK_MS));
+            vTaskDelayUntil(&last, pdMS_TO_TICKS(TASK_BINDER_STACK_LOOP_TICK_MS));
         }
     }
 
@@ -647,7 +647,7 @@ private:
     TaskHandle_t _gsm_task_rtos = nullptr;
     TaskHandle_t _cloud_task_rtos = nullptr;
     TaskHandle_t _runtime_evt_task = nullptr;
-    TaskHandle_t _network_task_rtos = nullptr;
+    TaskHandle_t _stack_task_rtos = nullptr;
     TaskHandle_t _console_task_rtos = nullptr;
     TaskHandle_t _ftest_task = nullptr;
     QueueHandle_t _runtime_evt_queue = nullptr;
@@ -666,7 +666,7 @@ private:
     RtosDebugStats _dbg_gsm{};
     RtosDebugStats _dbg_cloud{};
     RtosDebugStats _dbg_runtime_evt{};
-    RtosDebugStats _dbg_network{};
+    RtosDebugStats _dbg_stack{};
     RtosDebugStats _dbg_console{};
     RtosDebugStats _dbg_ftest{};
 #endif

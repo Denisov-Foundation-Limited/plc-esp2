@@ -17,6 +17,7 @@
 #include "core/network/web/web_interface_stack_routes.hpp"
 #include "core/network/web/web_interface_system_routes.hpp"
 #include "core/network/web/interfaces/web_interface_controllers_ring.hpp"
+#include "core/network/network.hpp"
 
 void WebInterface::registerRoutes()
 {
@@ -129,9 +130,17 @@ void WebInterface::registerRoutes()
 { _cloud = &client; }
 
 
+    void WebInterface::setNetwork(Network &network)
+{ _network = &network; }
+
+
     void WebInterface::setRules(RulesController &rules)
 { _rules = &rules; }
 
+
+    Network *WebInterface::network() const
+{ return _network; }
+ 
 
 
     StackCache &WebInterface::stackCache()
@@ -521,6 +530,11 @@ bool WebInterface::requestStackTempSensors_(uint32_t node_id)
 bool WebInterface::refreshStackTempSensors_(uint32_t node_id)
 {
     return _stack_ops.refreshStackTempSensors_(node_id);
+}
+
+bool WebInterface::requestStackIndexState_(uint32_t node_id)
+{
+    return _stack_ops.requestStackIndexState_(node_id);
 }
 
 bool WebInterface::requestStackPlcStatus_(uint32_t node_id)
@@ -1079,6 +1093,27 @@ String WebInterface::topFiltersBackHtml_() const
     String WebInterface::stackMasterHost_() const
 {
     return _controllers_ops.stackMasterHost_();
+}
+
+
+
+    ConfigsManagerIface::StackExchangePolicy WebInterface::stackExchangePolicy_() const
+{
+    return _controllers_ops.stackExchangePolicy_();
+}
+
+
+
+    ConfigsManagerIface::StackTransportKind WebInterface::stackTransport_() const
+{
+    return _controllers_ops.stackTransport_();
+}
+
+
+
+    ConfigsManagerIface::StackPayloadMode WebInterface::stackPayloadMode_() const
+{
+    return _controllers_ops.stackPayloadMode_();
 }
 
 
@@ -2028,6 +2063,12 @@ int32_t WebInterface::scaled10_(float value)
             hashAdd_(hash, stackRoleName_(stackRole_()));
             hashAdd_(hash, stackMasterHost_());
             hashAdd_(hash, stackApiKey_());
+            hashAdd_(hash, (uint32_t)stackExchangePolicy_());
+            hashAdd_(hash, (uint32_t)stackTransport_());
+            hashAdd_(hash, (uint32_t)stackPayloadMode_());
+            hashAdd_(hash, stackFallbackEnabled_() ? 1u : 0u);
+            hashAdd_(hash, stackFallbackHost_());
+            hashAdd_(hash, stackSlaveController_() ? 1u : 0u);
             hashAdd_(hash, listStackNodesHtml_());
             if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
             {

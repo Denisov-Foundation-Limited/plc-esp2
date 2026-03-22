@@ -135,6 +135,12 @@ public:
 
     String stackMasterHost_() const;
 
+    ConfigsManagerIface::StackExchangePolicy stackExchangePolicy_() const;
+
+    ConfigsManagerIface::StackTransportKind stackTransport_() const;
+
+    ConfigsManagerIface::StackPayloadMode stackPayloadMode_() const;
+
     bool stackFallbackEnabled_() const;
 
     String stackFallbackHost_() const;

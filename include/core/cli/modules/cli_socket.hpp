@@ -78,8 +78,7 @@ public:
             _c.printSocketRow_("CPU", cfg->id, cfg->enabled,
                                cfg->name.c_str(), button, relay, st->relay_on);
         }
-        const bool requested = _c._stack_cli.requestStackSockets_();
-        if (!any && !requested)
+        if (!any)
             _c._io->println(F("  none"));
     }
 

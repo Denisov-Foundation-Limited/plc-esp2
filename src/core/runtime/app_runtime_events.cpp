@@ -31,11 +31,13 @@ void AppRuntime::updateTankAlarms_(){
     }
     if (stackMasterActive_())
     {
-        StackMaster &master = net.network.stackMaster();
-        const size_t count = master.nodeCount();
+        const size_t count = net.network.stackOnlineDeviceCount();
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t node_id = master.nodeIdAt(i);
+            StackDeviceRegistry::DeviceInfo device{};
+            if (!net.network.stackDeviceSnapshotAt(i, device))
+                continue;
+            const uint32_t node_id = device.node_id;
             if (node_id == 0)
                 continue;
             const auto *cache = _stack_cache.tanksCache(node_id);
@@ -80,11 +82,13 @@ void AppRuntime::updateSepticAlarms_(){
     }
     if (stackMasterActive_())
     {
-        StackMaster &master = net.network.stackMaster();
-        const size_t count = master.nodeCount();
+        const size_t count = net.network.stackOnlineDeviceCount();
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t node_id = master.nodeIdAt(i);
+            StackDeviceRegistry::DeviceInfo device{};
+            if (!net.network.stackDeviceSnapshotAt(i, device))
+                continue;
+            const uint32_t node_id = device.node_id;
             if (node_id == 0)
                 continue;
             const auto *cache = _stack_cache.septicCache(node_id);
@@ -128,11 +132,13 @@ void AppRuntime::updateMeteoAlarms_(){
     }
     if (stackMasterActive_())
     {
-        StackMaster &master = net.network.stackMaster();
-        const size_t count = master.nodeCount();
+        const size_t count = net.network.stackOnlineDeviceCount();
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t node_id = master.nodeIdAt(i);
+            StackDeviceRegistry::DeviceInfo device{};
+            if (!net.network.stackDeviceSnapshotAt(i, device))
+                continue;
+            const uint32_t node_id = device.node_id;
             if (node_id == 0)
                 continue;
             const auto *cache = _stack_cache.meteoCache(node_id);
@@ -189,14 +195,17 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
     String name;
     String ip;
     uint16_t fw_ver = 0;
-    self->net.network.stackMaster().nodeInfo(node_id, name, ip, fw_ver);
+    StackDeviceRegistry::DeviceInfo device{};
+    if (self->net.network.stackDeviceSnapshotByNodeId(node_id, device))
+    {
+        name = device.name;
+        ip = device.ip;
+        fw_ver = device.fw_version;
+    }
     const String label = name.length() ? name : self->stackNodeLabel_(node_id);
-    const char *ip_c = ip.length() ? ip.c_str() : "n/a";
     if (online)
     {
         self->comms.wifi.task();
-        self->core.logs.info(F("STACK"), F("Unit online: %s id: 0x%08lX ip: %s fw: %u"),
-                             label.c_str(), (unsigned long)node_id, ip_c, (unsigned)fw_ver);
         self->_stack_cache.requestPlcStatus(node_id);
         self->_stack_cache.requestRtcStatus(node_id);
         auto &sec = self->control.controllers.security();
@@ -206,8 +215,6 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
     }
     else
     {
-        self->core.logs.warn(F("STACK"), F("Unit offline: %s id: 0x%08lX ip: %s fw: %u"),
-                             label.c_str(), (unsigned long)node_id, ip_c, (unsigned)fw_ver);
         self->removeStackBootstrapSync_(node_id);
     }
     DynamicJsonDocument doc(192);
@@ -265,41 +272,22 @@ void AppRuntime::onRingHold_(void *ctx, bool on){
         self->notifyRingHold_();
 }
 
-void AppRuntime::onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame){
-    if (!ctx || node_id == 0)
+void AppRuntime::onStackRoute_(void *ctx, uint32_t source_node, const StackJsonProtocol::RouteMessage &route){
+    if (!ctx || source_node == 0)
         return;
-    static_cast<AppRuntime *>(ctx)->handleStackFrame_(node_id, frame);
+    static_cast<AppRuntime *>(ctx)->handleStackRoute_(source_node, route);
 }
 
 void AppRuntime::sendSepticDetectToMaster_(uint8_t septic_id, const String &name, bool is_alarm){
     if (!stackSlaveActive_())
         return;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-    {
-        _pending_septic_detect = true;
-        _pending_septic_id = septic_id;
-        _pending_septic_name = name;
-        _pending_septic_alarm = is_alarm;
-        return;
-    }
     StaticJsonDocument<192> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Septic;
-    doc["action"] = "level";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["id"] = septic_id;
-    params["alarm"] = is_alarm;
-    params["level"] = is_alarm ? "alarm" : "warning";
+    doc["id"] = septic_id;
+    doc["alarm"] = is_alarm;
+    doc["level"] = is_alarm ? "alarm" : "warning";
     if (name.length())
-        params["name"] = name;
-
-    char payload[160] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return;
-    if (!node.send((uint8_t)StackMsgType::CmdSet,
-                   reinterpret_cast<const uint8_t *>(payload), len))
+        doc["name"] = name;
+    if (!net.network.stackRoute().sendEvent(0, "septic", "level", &doc, StackRouteAdapter::Mode::Json))
     {
         _pending_septic_detect = true;
         _pending_septic_id = septic_id;
@@ -311,30 +299,12 @@ void AppRuntime::sendSepticDetectToMaster_(uint8_t septic_id, const String &name
 void AppRuntime::sendTankEmptyToMaster_(uint8_t tank_id, const String &name){
     if (!stackSlaveActive_())
         return;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-    {
-        _pending_tank_empty = true;
-        _pending_tank_id = tank_id;
-        _pending_tank_name = name;
-        return;
-    }
     StaticJsonDocument<160> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Tanks;
-    doc["action"] = "empty";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["id"] = tank_id;
-    params["empty"] = true;
+    doc["id"] = tank_id;
+    doc["empty"] = true;
     if (name.length())
-        params["name"] = name;
-
-    char payload[140] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return;
-    if (!node.send((uint8_t)StackMsgType::CmdSet,
-                   reinterpret_cast<const uint8_t *>(payload), len))
+        doc["name"] = name;
+    if (!net.network.stackRoute().sendEvent(0, "tanks", "empty", &doc, StackRouteAdapter::Mode::Json))
     {
         _pending_tank_empty = true;
         _pending_tank_id = tank_id;
@@ -347,31 +317,18 @@ void AppRuntime::sendWateringEventToMaster_(WateringController::Event ev,
                                 const WateringController::RuleState &st){
     if (!stackSlaveActive_())
         return;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-    {
-        _pending_watering_event = true;
-        _pending_watering_event_type = ev;
-        _pending_watering_event_cfg = cfg;
-        _pending_watering_event_state = st;
-        return;
-    }
     StaticJsonDocument<256> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Watering;
-    doc["action"] = "event";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["id"] = cfg.id;
+    doc["id"] = cfg.id;
     if (cfg.name.length())
-        params["name"] = cfg.name;
+        doc["name"] = cfg.name;
     if (cfg.port != WateringController::kInvalidPort)
-        params["port"] = cfg.port;
+        doc["port"] = cfg.port;
     if (cfg.tank_id)
-        params["tank"] = cfg.tank_id;
+        doc["tank"] = cfg.tank_id;
     if (cfg.resume_after_refill)
-        params["resume"] = true;
-    params["resume_level"] = cfg.resume_level;
-    params["remaining_ms"] = st.remaining_ms;
+        doc["resume"] = true;
+    doc["resume_level"] = cfg.resume_level;
+    doc["remaining_ms"] = st.remaining_ms;
     const char *event_str = "stop";
     switch (ev)
     {
@@ -380,32 +337,26 @@ void AppRuntime::sendWateringEventToMaster_(WateringController::Event ev,
         break;
     case WateringController::Event::PauseEmpty:
         event_str = "pause";
-        params["reason"] = "empty";
+        doc["reason"] = "empty";
         break;
     case WateringController::Event::Resume:
         event_str = "resume";
         break;
     case WateringController::Event::StopDone:
         event_str = "stop";
-        params["reason"] = "done";
+        doc["reason"] = "done";
         break;
     case WateringController::Event::StopEmpty:
         event_str = "stop";
-        params["reason"] = "empty";
+        doc["reason"] = "empty";
         break;
     case WateringController::Event::Stop:
     default:
         event_str = "stop";
         break;
     }
-    params["event"] = event_str;
-
-    char payload[224] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return;
-    if (!node.send((uint8_t)StackMsgType::CmdSet,
-                   reinterpret_cast<const uint8_t *>(payload), len))
+    doc["event"] = event_str;
+    if (!net.network.stackRoute().sendEvent(0, "watering", "event", &doc, StackRouteAdapter::Mode::Json))
     {
         _pending_watering_event = true;
         _pending_watering_event_type = ev;
@@ -417,28 +368,19 @@ void AppRuntime::sendWateringEventToMaster_(WateringController::Event ev,
 void AppRuntime::broadcastRingHold_(bool on){
     if (!stackMasterActive_())
         return;
-    StackMaster &master = net.network.stackMaster();
-    const size_t count = master.nodeCount();
+    const size_t count = net.network.stackOnlineDeviceCount();
     if (count == 0)
         return;
 
-    StaticJsonDocument<128> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Ring;
-    doc["action"] = "set";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["state"] = on;
-    const String key = cfg.configs_manager.stackApiKey();
-    if (key.length())
-        doc["api_key"] = key;
-
-    char payload[128] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return;
+    StaticJsonDocument<64> doc;
+    doc["state"] = on;
     for (size_t i = 0; i < count; ++i)
-        master.sendTo(master.nodeIdAt(i), (uint8_t)StackMsgType::CmdSet,
-                      reinterpret_cast<const uint8_t *>(payload), len);
+    {
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!net.network.stackDeviceSnapshotAt(i, device))
+            continue;
+        net.network.stackRoute().sendEvent(device.node_id, "ring", "set", &doc, StackRouteAdapter::Mode::Json);
+    }
 }
 
 void AppRuntime::notifyRingHold_(){
@@ -493,25 +435,25 @@ void AppRuntime::publishCloudStackEvent_(uint32_t node_id, const char *kind, con
     cloud.publishScopedEvent("stack", node_id, kind, reason, data_json);
 }
 
-void AppRuntime::handleStackFrame_(uint32_t node_id, const StackFrame &frame){
-    if (!stackMasterActive_())
+void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::RouteMessage &route){
+    if (!stackMasterActive_() && !stackSlaveActive_())
         return;
-    // Always feed shared stack cache with Ack/Err/Cmd* frames from slaves.
-    StackCache::onStackFrame_(&_stack_cache, node_id, frame);
-    if (frame.type != (uint8_t)StackMsgType::CmdSet)
-        return;
-    DynamicJsonDocument doc(512);
-    DeserializationError err = deserializeJson(doc, frame.payload, frame.payload_len);
-    if (err)
-        return;
-    const uint8_t feature = (uint8_t)(doc["feature"] | 0);
-    String action = doc["action"] | "";
+    String action = route.action;
     action.toLowerCase();
-    if (feature == (uint8_t)StackFeature::Security)
+    if (!route.feature[0])
+        return;
+    DynamicJsonDocument payload_doc(512);
+    JsonVariantConst params;
+    if (route.payload.length())
+    {
+        if (deserializeJson(payload_doc, route.payload))
+            return;
+        params = payload_doc.as<JsonVariantConst>();
+    }
+    if (strcmp(route.feature, "security") == 0)
     {
         if (action == "alarm")
         {
-            JsonObjectConst params = doc["params"];
             const bool alarm = params["alarm"].is<bool>() ? params["alarm"].as<bool>()
                                                           : (params["alarm"].as<int>() != 0);
             if (!alarm)
@@ -551,7 +493,6 @@ void AppRuntime::handleStackFrame_(uint32_t node_id, const StackFrame &frame){
         }
         if (action == "rfid")
         {
-            JsonObjectConst params = doc["params"];
             const String uid = params["uid"] | "";
             if (!uid.length())
                 return;
@@ -566,7 +507,6 @@ void AppRuntime::handleStackFrame_(uint32_t node_id, const StackFrame &frame){
         }
         if (action == "ibutton")
         {
-            JsonObjectConst params = doc["params"];
             const String serial = params["serial"] | "";
             if (!serial.length())
                 return;
@@ -584,31 +524,139 @@ void AppRuntime::handleStackFrame_(uint32_t node_id, const StackFrame &frame){
             sendSecurityStateToNode_(node_id);
             return;
         }
-        return;
-    }
-    if (feature == (uint8_t)StackFeature::Ring)
-    {
-        if (action != "button")
+        if (action == "set")
+        {
+            auto &sec = control.controllers.security();
+            if (params["armed"].is<bool>() || params["armed"].is<int>())
+            {
+                if (params["armed"].as<bool>())
+                    sec.armForcedFrom("stack", stackNodeLabel_(node_id));
+                else
+                    sec.disarmFrom("stack", stackNodeLabel_(node_id), true);
+            }
+            if (params["alarm"].is<bool>() || params["alarm"].is<int>())
+                sec.setAlarmState(params["alarm"].as<bool>());
+            if (params["clear"].is<bool>() && params["clear"].as<bool>())
+                sec.clearDetect();
+            const char *beep = params["beep"] | "";
+            (void)beep;
             return;
-        JsonObjectConst params = doc["params"];
-        const bool pressed = params["pressed"].is<bool>() ? params["pressed"].as<bool>()
-                                                          : (params["pressed"].as<int>() != 0);
-        control.controllers.ring().setHoldRelayWithSource(pressed, RingController::Source::Stack);
+        }
+        if (action == "rfid_result" || action == "ibutton_result")
+            return;
         return;
     }
-    if (feature == (uint8_t)StackFeature::Septic)
+    if (strcmp(route.feature, "web") == 0)
     {
-        handleSepticFrame_(node_id, action, doc["params"]);
+        if (action == "index_state_req")
+        {
+            DynamicJsonDocument doc(256);
+            Ds3231Mz::DateTime dt{};
+            char date_buf[16] = {};
+            char time_buf[16] = {};
+            float rtc_temp_c = 0.0f;
+            const bool rtc_time_ok = hw.rtc.Time(dt);
+            const bool rtc_temp_ok = hw.rtc.readTemp(rtc_temp_c);
+
+            if (rtc_time_ok)
+            {
+                snprintf(date_buf, sizeof(date_buf), "%04u-%02u-%02u", (unsigned)dt.year, (unsigned)dt.month,
+                         (unsigned)dt.day);
+                snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u", (unsigned)dt.hour, (unsigned)dt.minute,
+                         (unsigned)dt.second);
+            }
+
+            doc["device_name"] = hw.plc.deviceName();
+            doc["rtc_date"] = rtc_time_ok ? String(date_buf) : String("n/a");
+            doc["rtc_time"] = rtc_time_ok ? String(time_buf) : String("n/a");
+            doc["rtc_temp"] = rtc_temp_ok ? rtc_temp_c : 0.0f;
+            doc["rtc_temp_ok"] = rtc_temp_ok;
+            doc["board_temp"] = hw.plc.boardTemp();
+            doc["fan_on"] = hw.plc.fanStatus();
+            doc["fan_html"] = hw.plc.fanStatus()
+                                  ? "<span class=\"status-dot status-on\" title=\"enabled\"></span>"
+                                  : "<span class=\"status-dot status-off\" title=\"disabled\"></span>";
+            net.network.stackSlaveSendResponse(route.source_node, "web", "index_state",
+                                               route.meta.request_id, &doc);
+            return;
+        }
+        if (action == "index_state")
+        {
+            StackUnitSnapshot::Snapshot state{};
+            state.node_id = node_id;
+            state.updated_ms = millis();
+            state.pending = false;
+            state.has_plc = true;
+            state.has_rtc = true;
+            strlcpy(state.rtc_date, params["rtc_date"] | "", sizeof(state.rtc_date));
+            strlcpy(state.rtc_time, params["rtc_time"] | "", sizeof(state.rtc_time));
+            state.rtc_temp_ok = params["rtc_temp_ok"].as<bool>();
+            state.rtc_temp = state.rtc_temp_ok
+                                 ? (params["rtc_temp"].is<float>() ? params["rtc_temp"].as<float>()
+                                                                   : (float)(params["rtc_temp"] | 0.0))
+                                 : 0.0f;
+            state.board_temp =
+                params["board_temp"].is<float>() ? params["board_temp"].as<float>() : (float)(params["board_temp"] | 0.0);
+            state.fan_on = params["fan_on"].is<bool>() ? params["fan_on"].as<bool>() : ((int)(params["fan_on"] | 0) != 0);
+            if (state.rtc_date[0] == '\0' || state.rtc_time[0] == '\0')
+                state.has_rtc = false;
+            net.network.updateStackIndexState(node_id, state);
+
+            DynamicJsonDocument doc(256);
+            doc["device_name"] = params["device_name"] | "";
+            JsonObject system = doc["system"].to<JsonObject>();
+            if (state.has_plc)
+            {
+                JsonObject plc = system["plc"].to<JsonObject>();
+                plc["board_temp"] = state.board_temp;
+                JsonObject fan = system["fan"].to<JsonObject>();
+                fan["fan_on"] = state.fan_on;
+            }
+            if (state.has_rtc)
+            {
+                JsonObject rtc = system["rtc"].to<JsonObject>();
+                rtc["date"] = state.rtc_date;
+                rtc["time"] = state.rtc_time;
+                rtc["temp_c"] = state.rtc_temp;
+            }
+            String json;
+            serializeJson(doc, json);
+            publishCloudStackEvent_(node_id, "stack.snapshot", "update", json);
+            return;
+        }
         return;
     }
-    if (feature == (uint8_t)StackFeature::Tanks)
+    if (strcmp(route.feature, "ring") == 0)
     {
-        handleTankFrame_(node_id, action, doc["params"]);
+        if (action == "button")
+        {
+            const bool pressed = params["pressed"].is<bool>() ? params["pressed"].as<bool>()
+                                                              : (params["pressed"].as<int>() != 0);
+            control.controllers.ring().setHoldRelayWithSource(pressed, RingController::Source::Stack);
+            return;
+        }
+        if (action == "set")
+        {
+            const bool state = params["state"].is<bool>() ? params["state"].as<bool>()
+                                                          : (params["state"].as<int>() != 0);
+            control.controllers.ring().setHoldRelayWithSource(state, RingController::Source::Stack);
+            return;
+        }
         return;
     }
-    if (feature == (uint8_t)StackFeature::Watering)
+    if (strcmp(route.feature, "septic") == 0)
     {
-        handleWateringFrame_(node_id, action, doc["params"]);
+        handleSepticFrame_(node_id, action, params);
+        return;
+    }
+    if (strcmp(route.feature, "tanks") == 0)
+    {
+        handleTankFrame_(node_id, action, params);
+        return;
+    }
+    if (strcmp(route.feature, "watering") == 0)
+    {
+        handleWateringFrame_(node_id, action, params);
         return;
     }
 }
@@ -751,9 +799,6 @@ void AppRuntime::flushPendingSepticDetect_(){
         return;
     if (!stackSlaveActive_())
         return;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-        return;
     _pending_septic_detect = false;
     sendSepticDetectToMaster_(_pending_septic_id, _pending_septic_name, _pending_septic_alarm);
 }
@@ -763,9 +808,6 @@ void AppRuntime::flushPendingTankEmpty_(){
         return;
     if (!stackSlaveActive_())
         return;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-        return;
     _pending_tank_empty = false;
     sendTankEmptyToMaster_(_pending_tank_id, _pending_tank_name);
 }
@@ -774,9 +816,6 @@ void AppRuntime::flushPendingWateringEvent_(){
     if (!_pending_watering_event)
         return;
     if (!stackSlaveActive_())
-        return;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
         return;
     _pending_watering_event = false;
     sendWateringEventToMaster_(_pending_watering_event_type, _pending_watering_event_cfg,
@@ -788,9 +827,6 @@ void AppRuntime::flushPendingRingButton_(){
         return;
     if (!stackSlaveActive_())
         return;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-        return;
     _pending_ring_button = false;
     sendRingButtonToMaster_(_pending_ring_button_pressed);
 }
@@ -798,31 +834,21 @@ void AppRuntime::flushPendingRingButton_(){
 bool AppRuntime::sendRingButtonToMaster_(bool pressed){
     if (!stackSlaveActive_())
         return false;
-    StackNode &node = net.network.stackNode();
-    if (!node.connected())
-        return false;
-    StaticJsonDocument<128> doc;
-    doc["cmd_id"] = 0;
-    doc["feature"] = (uint8_t)StackFeature::Ring;
-    doc["action"] = "button";
-    JsonObject params = doc["params"].to<JsonObject>();
-    params["pressed"] = pressed;
-    char payload[128] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return false;
-    return node.send((uint8_t)StackMsgType::CmdSet,
-                     reinterpret_cast<const uint8_t *>(payload), len);
+    StaticJsonDocument<64> doc;
+    doc["pressed"] = pressed;
+    return net.network.stackRoute().sendEvent(0, "ring", "button", &doc, StackRouteAdapter::Mode::Json);
 }
 
 String AppRuntime::stackNodeLabel_(uint32_t node_id) const{
-    StackMaster &master = const_cast<AppRuntime *>(this)->net.network.stackMaster();
-    const size_t count = master.nodeCount();
+    const size_t count = net.network.stackOnlineDeviceCount();
     for (size_t i = 0; i < count; ++i)
     {
-        if (master.nodeIdAt(i) == node_id)
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!net.network.stackDeviceSnapshotAt(i, device))
+            continue;
+        if (device.node_id == node_id)
         {
-            String name = master.nodeNameAt(i);
+            String name = device.name;
             if (name.length() > 0)
                 return name;
         }
@@ -864,11 +890,13 @@ String AppRuntime::escapeHtml_(const String &in){
 }
 
 int AppRuntime::stackNodeIndex_(uint32_t node_id) const{
-    StackMaster &master = const_cast<AppRuntime *>(this)->net.network.stackMaster();
-    const size_t count = master.nodeCount();
+    const size_t count = net.network.stackOnlineDeviceCount();
     for (size_t i = 0; i < count; ++i)
     {
-        if (master.nodeIdAt(i) == node_id)
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!net.network.stackDeviceSnapshotAt(i, device))
+            continue;
+        if (device.node_id == node_id)
             return (int)i;
     }
     return -1;
@@ -877,7 +905,9 @@ int AppRuntime::stackNodeIndex_(uint32_t node_id) const{
 void AppRuntime::logStackNodeInventory_(uint32_t node_id){
     if (node_id == 0 || !stackMasterActive_())
         return;
-    if (!net.network.stackMaster().nodeIsOnline(node_id, kStackNodeStaleMs))
+    StackDeviceRegistry::DeviceInfo device{};
+    if (!net.network.stackDeviceSnapshotByNodeId(node_id, device) ||
+        !device.online || (uint32_t)(millis() - device.last_seen_ms) > kStackNodeStaleMs)
         return;
     StackInventoryLogState *state = inventoryLogState_(node_id, true);
     if (!state)
