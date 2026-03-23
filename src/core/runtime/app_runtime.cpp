@@ -14,6 +14,7 @@
 #include "app.hpp"
 
 #include "core/compat/stack_stub.hpp"
+#include <esp_system.h>
 
 #ifndef STACK_BOOTSTRAP_DEBUG_LOGS
 #define STACK_BOOTSTRAP_DEBUG_LOGS 0
@@ -43,6 +44,25 @@ static constexpr uint16_t kStackBootstrapCoreFeatureMask =
     (uint16_t)((1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4) |
                (1u << 5) | (1u << 6) | (1u << 7) | (1u << 8) | (1u << 9) |
                (1u << 10) | (1u << 13) | (1u << 14));
+
+const char *resetReasonText_(esp_reset_reason_t reason)
+{
+    switch (reason)
+    {
+    case ESP_RST_UNKNOWN: return "unknown";
+    case ESP_RST_POWERON: return "poweron";
+    case ESP_RST_EXT: return "external";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "panic";
+    case ESP_RST_INT_WDT: return "int_wdt";
+    case ESP_RST_TASK_WDT: return "task_wdt";
+    case ESP_RST_WDT: return "wdt";
+    case ESP_RST_DEEPSLEEP: return "deepsleep";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_SDIO: return "sdio";
+    default: return "other";
+    }
+}
 }
 
 AppRuntime::AppRuntime(CoreContext &core, HardwareContext &hw, CommsContext &comms,
@@ -94,6 +114,8 @@ void AppRuntime::bindCallbacks()
 
 void AppRuntime::init()
 {
+    const esp_reset_reason_t reset_reason = esp_reset_reason();
+    core.logs.info(F("APP"), F("Reset reason: %s code: %d"), resetReasonText_(reset_reason), (int)reset_reason);
     _stack_cache.initAllocations();
     _stack_cache.logAllocations();
 }
@@ -126,6 +148,8 @@ void AppRuntime::flushPending()
     flushPendingSepticDetect_();
     flushPendingTankEmpty_();
     flushPendingWateringEvent_();
+    flushPendingStackSocketsResponse_();
+    flushPendingStackSocketsPage_();
     flushPendingRfid_();
     flushPendingIButton_();
     flushPendingRingButton_();

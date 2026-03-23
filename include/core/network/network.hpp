@@ -202,6 +202,7 @@ public:
     void invalidateStackIndexState(uint32_t node_id);
     bool stackSlaveSendResponse(uint32_t target_node, const char *feature, const char *action, uint32_t reply_to,
                                 const JsonDocument *payload = nullptr);
+    bool stackSlaveAuthorized() const;
     bool stackFallbackActive() const;
     bool stackMasterActive() const;
     StackDiagnostics stackDiagnostics() const;

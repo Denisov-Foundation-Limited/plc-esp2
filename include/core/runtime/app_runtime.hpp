@@ -162,6 +162,14 @@ private:
 
     void handleTankFrame_(uint32_t node_id, const String &action, JsonVariantConst params);
 
+    void handleSocketFrame_(uint32_t node_id, const String &action, JsonVariantConst params);
+
+    void appendSystemSnapshot_(JsonObject root) const;
+    void appendSocketSnapshotSummary_(JsonObject root) const;
+    void appendSocketSnapshotItems_(JsonObject root) const;
+    void appendSocketSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
+    void appendControllerSnapshotSummary_(JsonObject root) const;
+
     void handleWateringFrame_(uint32_t node_id, const String &action, JsonVariantConst params);
 
     void updateSecurityNotifyMode_();
@@ -179,6 +187,8 @@ private:
     void flushPendingTankEmpty_();
 
     void flushPendingWateringEvent_();
+    void flushPendingStackSocketsResponse_();
+    void flushPendingStackSocketsPage_();
 
     void flushPendingRfid_();
 
@@ -294,6 +304,15 @@ private:
     WateringController::Event _pending_watering_event_type = WateringController::Event::Stop;
     WateringController::RuleConfig _pending_watering_event_cfg{};
     WateringController::RuleState _pending_watering_event_state{};
+    bool _pending_stack_sockets_response = false;
+    uint32_t _pending_stack_sockets_target_node = 0;
+    uint32_t _pending_stack_sockets_reply_to = 0;
+    uint16_t _pending_stack_sockets_response_offset = 0;
+    uint16_t _pending_stack_sockets_response_limit = 0;
+    bool _pending_stack_sockets_page = false;
+    uint32_t _pending_stack_sockets_node_id = 0;
+    uint16_t _pending_stack_sockets_offset = 0;
+    uint16_t _pending_stack_sockets_limit = 0;
     bool _pending_rfid = false;
     String _pending_rfid_uid;
     bool _pending_ibutton = false;

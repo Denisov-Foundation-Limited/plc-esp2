@@ -62,8 +62,12 @@ StackJsonProtocol::MessageKind StackJsonProtocol::detectKind(const uint8_t *data
     if (!data || size == 0)
         return MessageKind::Unknown;
 
-    StaticJsonDocument<128> doc;
-    if (deserializeJson(doc, data, size))
+    DynamicJsonDocument filter(96);
+    filter["type"] = true;
+    filter["api_key"] = true;
+
+    DynamicJsonDocument doc(128);
+    if (deserializeJson(doc, data, size, DeserializationOption::Filter(filter)))
         return MessageKind::Unknown;
 
     const char *type = doc["type"] | "";
@@ -81,7 +85,7 @@ bool StackJsonProtocol::parseAuth(const uint8_t *data, size_t size, AuthMessage 
     if (!data || size == 0)
         return false;
 
-    StaticJsonDocument<384> doc;
+    DynamicJsonDocument doc(384);
     if (deserializeJson(doc, data, size))
         return false;
 
@@ -103,7 +107,7 @@ bool StackJsonProtocol::parseRoute(const uint8_t *data, size_t size, RouteMessag
     if (!data || size == 0)
         return false;
 
-    StaticJsonDocument<768> doc;
+    DynamicJsonDocument doc(3072);
     if (deserializeJson(doc, data, size))
         return false;
     if (strcmp(doc["type"] | "", "route") != 0)
@@ -130,7 +134,7 @@ bool StackJsonProtocol::parseNotify(const uint8_t *data, size_t size, NotifyMess
     if (!data || size == 0)
         return false;
 
-    StaticJsonDocument<768> doc;
+    DynamicJsonDocument doc(3072);
     if (deserializeJson(doc, data, size))
         return false;
     if (strcmp(doc["type"] | "", "notify") != 0)
@@ -152,7 +156,7 @@ bool StackJsonProtocol::parseNotify(const uint8_t *data, size_t size, NotifyMess
 String StackJsonProtocol::makeRoute(uint32_t source_node, uint32_t target_node, const char *feature, const char *action,
                                     const JsonDocument *payload, const StackTransport::RouteMeta *meta)
 {
-    StaticJsonDocument<768> doc;
+    DynamicJsonDocument doc(3072);
     doc["type"] = "route";
     doc["source_node"] = source_node;
     doc["target_node"] = target_node;
@@ -175,7 +179,7 @@ String StackJsonProtocol::makeRoute(uint32_t source_node, uint32_t target_node, 
 String StackJsonProtocol::makeNotify(uint32_t source_node, const char *level, const char *feature, const char *code,
                                      const char *message, const JsonDocument *payload)
 {
-    StaticJsonDocument<768> doc;
+    DynamicJsonDocument doc(768);
     doc["type"] = "notify";
     doc["source_node"] = source_node;
     doc["level"] = (level && level[0]) ? level : "info";
@@ -194,7 +198,7 @@ String StackJsonProtocol::makeNotify(uint32_t source_node, const char *level, co
 
 String StackJsonProtocol::makeOk(const char *message)
 {
-    StaticJsonDocument<128> doc;
+    DynamicJsonDocument doc(128);
     doc["ok"] = true;
     if (message && message[0])
         doc["message"] = message;
@@ -205,7 +209,7 @@ String StackJsonProtocol::makeOk(const char *message)
 
 String StackJsonProtocol::makeError(const char *message)
 {
-    StaticJsonDocument<160> doc;
+    DynamicJsonDocument doc(160);
     doc["ok"] = false;
     doc["error"] = (message && message[0]) ? message : "error";
     String out;

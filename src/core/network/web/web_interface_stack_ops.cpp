@@ -284,7 +284,7 @@ bool WebInterfaceStackOps::requestStackIndexState_(uint32_t node_id)
     const uint16_t cmd_id = nextStackCmdId_();
     DynamicJsonDocument doc(64);
     doc["cmd_id"] = cmd_id;
-    return _web.network()->stackRoute().sendRequest(node_id, "web", "index_state_req", &doc, StackRouteAdapter::Mode::Json,
+    return _web.network()->stackRoute().sendRequest(node_id, "system", "snapshot_req", &doc, StackRouteAdapter::Mode::Json,
                                                     true);
 }
 

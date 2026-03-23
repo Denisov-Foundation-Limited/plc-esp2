@@ -734,10 +734,14 @@ void CloudClient::handleGetStack_(const String &req_id, uint32_t node_id, JsonAr
 }
 void CloudClient::handleCmd_(const String &req_id, JsonDocument &doc)
 {
-    const String unit = doc["unit"] | "local";
+    String unit = doc["unit"] | "local";
+    const uint32_t node_id = (uint32_t)(doc["node_id"] | 0UL);
     JsonObjectConst payload = doc["payload"].as<JsonObjectConst>();
-    const String ctrl = payload["controller"] | "";
-    const String action = payload["action"] | "";
+    String ctrl = payload["controller"] | "";
+    String action = payload["action"] | "";
+    unit.trim();
+    ctrl.trim();
+    action.trim();
     JsonObjectConst args = payload["args"].as<JsonObjectConst>();
     ActorInfo actor;
 
@@ -748,17 +752,22 @@ void CloudClient::handleCmd_(const String &req_id, JsonDocument &doc)
         sendError_(req_id, "invalid actor");
         return;
     }
-    if (unit == "stack")
-    {
-        sendError_(req_id, "stack removed");
-        return;
-    }
-    if (!aclCanControl_(actor, ctrl, action, args, 0))
+    if (!aclCanControl_(actor, ctrl, action, args, unit == "stack" ? node_id : 0))
     {
         _log.warn(F("CLOUD"), F("Cmd rejected: ctrl: %s action: %s user: %s acl deny"),
                   ctrl.c_str(), action.c_str(),
                   actor.resolved_user.length() ? actor.resolved_user.c_str() : "-");
         sendError_(req_id, "acl deny");
+        return;
+    }
+    if (unit == "stack")
+    {
+        if (node_id == 0)
+        {
+            sendError_(req_id, "bad node_id");
+            return;
+        }
+        handleCmdStack_(req_id, node_id, ctrl, action, args, actor);
         return;
     }
     handleCmdLocal_(req_id, ctrl, action, args, actor);
@@ -793,6 +802,12 @@ void CloudClient::handleCmdLocal_(const String &req_id, const String &ctrl, cons
 void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
                      const String &ctrl, const String &action, JsonObjectConst args, const ActorInfo &actor)
 {
+    String ctrl_key = ctrl;
+    String action_key = action;
+    ctrl_key.trim();
+    action_key.trim();
+    ctrl_key.toLowerCase();
+    action_key.toLowerCase();
     if (!_stack_master || !isStackMaster_())
     {
         sendError_(req_id, "stack master missing");
@@ -800,53 +815,105 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
     }
     StackFeature feature = StackFeature::System;
     String stack_action;
-    DynamicJsonDocument params(512);
-    bool force_refresh_sockets = false;
-    bool force_refresh_lights = false;
+    const auto requestStackSnapshotRefresh = [&](bool refresh_sockets) {
+        if (!_network)
+            return;
+        _network->stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
+                                           StackRouteAdapter::Mode::Json, true);
+        _network->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
+                                           StackRouteAdapter::Mode::Json, true);
+        if (!refresh_sockets)
+            return;
+        DynamicJsonDocument req(64);
+        req["offset"] = 0;
+        req["limit"] = 8;
+        _network->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
+                                           StackRouteAdapter::Mode::Json, true);
+    };
 
-    if (ctrl == "sockets")
+    if (ctrl_key == "sockets")
     {
-        force_refresh_sockets = true;
-        feature = StackFeature::Sockets;
-        stack_action = (action == "toggle") ? "set" : "set";
         const uint32_t item_id = (uint32_t)(args["id"] | 0);
-        if (action == "toggle")
-            _log.info(F("CLOUD"), F("Cmd stack: sockets node_id: %u id: %u action: toggle"),
-                      (unsigned)node_id, (unsigned)item_id);
-        else
-            _log.info(F("CLOUD"), F("Cmd stack: sockets node_id: %u id: %u action: set state: %s"),
-                      (unsigned)node_id, (unsigned)item_id,
-                      (String(args["state"] | "") == "on") ? "on" : "off");
+        if (item_id == 0)
+        {
+            sendError_(req_id, "bad id");
+            return;
+        }
+        if (action_key != "toggle" && action_key != "set")
+        {
+            sendError_(req_id, "unsupported action");
+            return;
+        }
+        if (!_network)
+        {
+            sendError_(req_id, "stack route missing");
+            return;
+        }
+        DynamicJsonDocument params(128);
+        params["source"] = "cloud";
+        params["source_user"] = actor.resolved_user.length() ? actor.resolved_user
+                                                              : (actor.plc_username.length() ? actor.plc_username : String("cloud"));
         JsonArray items = params["items"].to<JsonArray>();
         JsonObject o = items.add<JsonObject>();
-        o["id"] = (unsigned)(args["id"] | 0);
-        if (action == "toggle")
+        o["id"] = (unsigned)item_id;
+        if (action_key == "toggle")
             o["toggle"] = true;
         else
             o["state"] = (String(args["state"] | "") == "on");
+        const bool sent = _network->stackRoute().sendEvent(node_id, "sockets", "set", &params,
+                                                           StackRouteAdapter::Mode::Json);
+        if (!sent)
+        {
+            sendError_(req_id, "stack route send failed");
+            return;
+        }
+        requestStackSnapshotRefresh(true);
+        sendAck_(req_id, true, "");
+        return;
     }
-    else if (ctrl == "lights")
+
+    if (ctrl_key == "lights")
     {
-        force_refresh_lights = true;
-        feature = StackFeature::Sockets;
-        stack_action = (action == "toggle") ? "set_lights" : "set_lights";
         const uint32_t item_id = (uint32_t)(args["id"] | 0);
-        if (action == "toggle")
-            _log.info(F("CLOUD"), F("Cmd stack: lights node_id: %u id: %u action: toggle"),
-                      (unsigned)node_id, (unsigned)item_id);
-        else
-            _log.info(F("CLOUD"), F("Cmd stack: lights node_id: %u id: %u action: set state: %s"),
-                      (unsigned)node_id, (unsigned)item_id,
-                      (String(args["state"] | "") == "on") ? "on" : "off");
+        if (item_id == 0)
+        {
+            sendError_(req_id, "bad id");
+            return;
+        }
+        if (action_key != "toggle" && action_key != "set")
+        {
+            sendError_(req_id, "unsupported action");
+            return;
+        }
+        if (!_network)
+        {
+            sendError_(req_id, "stack route missing");
+            return;
+        }
+        DynamicJsonDocument params(128);
+        params["source"] = "cloud";
+        params["source_user"] = actor.resolved_user.length() ? actor.resolved_user
+                                                              : (actor.plc_username.length() ? actor.plc_username : String("cloud"));
         JsonArray items = params["items"].to<JsonArray>();
         JsonObject o = items.add<JsonObject>();
-        o["id"] = (unsigned)(args["id"] | 0);
-        if (action == "toggle")
+        o["id"] = (unsigned)item_id;
+        if (action_key == "toggle")
             o["toggle"] = true;
         else
             o["state"] = (String(args["state"] | "") == "on");
+        const bool sent = _network->stackRoute().sendEvent(node_id, "sockets", "set_lights", &params,
+                                                           StackRouteAdapter::Mode::Json);
+        if (!sent)
+        {
+            sendError_(req_id, "stack route send failed");
+            return;
+        }
+        requestStackSnapshotRefresh(false);
+        sendAck_(req_id, true, "");
+        return;
     }
-    else if (ctrl == "thermo")
+    DynamicJsonDocument params(512);
+    if (ctrl == "thermo")
     {
         feature = StackFeature::Thermo;
         stack_action = "set";
@@ -1040,14 +1107,6 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
     {
         finalizePending_(p, false, "stack send failed");
         return;
-    }
-    // Force fast cache refresh for relay-like controllers so cloud UI does not wait for background poll.
-    if (_stack_cache)
-    {
-        if (force_refresh_sockets)
-            _stack_cache->requestSockets(node_id);
-        if (force_refresh_lights)
-            _stack_cache->requestLights(node_id);
     }
 }
 bool CloudClient::handleCmdSockets_(SocketController &s, const String &action, JsonObjectConst args, bool lights,
@@ -2512,7 +2571,7 @@ bool CloudClient::fillStackCachedSystem_(JsonObject out, uint32_t node_id)
         const bool request_ready = _network->prepareStackIndexStateRequest(node_id, now, stale_ms, kStackTimeoutMs);
         if (request_ready)
         {
-            const bool sent = _network->stackRoute().sendRequest(node_id, "web", "index_state_req", nullptr,
+            const bool sent = _network->stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
                                                                  StackRouteAdapter::Mode::Json, true);
             if (!sent)
                 _network->clearStackIndexStatePending(node_id);
@@ -2552,6 +2611,114 @@ bool CloudClient::fillStackCachedSystem_(JsonObject out, uint32_t node_id)
 }
 bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
 {
+    if (_network)
+    {
+        bool has_any = false;
+        const uint32_t now = millis();
+        const uint32_t stale_ms = 15000;
+        StackUnitSnapshot::Snapshot snapshot{};
+        if (_network->stackIndexStateSnapshot(node_id, snapshot))
+        {
+            if (snapshot.socket_count > 0)
+            {
+                JsonArray sockets = out.createNestedArray("sockets");
+                for (uint8_t i = 0; i < snapshot.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
+                {
+                    const auto &it = snapshot.sockets[i];
+                    if (it.id == 0)
+                        continue;
+                    JsonObject o = sockets.add<JsonObject>();
+                    o["id"] = it.id;
+                    o["enabled"] = it.enabled;
+                    o["state"] = it.state;
+                    if (it.name[0])
+                        o["name"] = it.name;
+                }
+                has_any = true;
+            }
+            else
+            {
+                JsonObject sockets = out.createNestedObject("sockets");
+                sockets["enabled_count"] = snapshot.sockets_enabled;
+                sockets["on_count"] = snapshot.sockets_on;
+                has_any = has_any || (snapshot.sockets_enabled > 0);
+            }
+
+            JsonObject lights = out.createNestedObject("lights");
+            lights["enabled_count"] = snapshot.lights_enabled;
+            lights["on_count"] = snapshot.lights_on;
+            has_any = has_any || (snapshot.lights_enabled > 0);
+
+            JsonObject meteo = out.createNestedObject("meteo");
+            meteo["enabled_count"] = snapshot.meteo_enabled;
+            meteo["ok_count"] = snapshot.meteo_ok;
+            has_any = has_any || (snapshot.meteo_enabled > 0);
+
+            JsonObject thermo = out.createNestedObject("thermo");
+            thermo["enabled_count"] = snapshot.thermo_enabled;
+            thermo["active_count"] = snapshot.thermo_active;
+            has_any = has_any || (snapshot.thermo_enabled > 0);
+
+            JsonObject tanks = out.createNestedObject("tanks");
+            tanks["enabled_count"] = snapshot.tanks_enabled;
+            tanks["alert_count"] = snapshot.tanks_alert;
+            has_any = has_any || (snapshot.tanks_enabled > 0);
+
+            JsonObject septic = out.createNestedObject("septic");
+            septic["enabled_count"] = snapshot.septic_enabled;
+            septic["alert_count"] = snapshot.septic_alert;
+            has_any = has_any || (snapshot.septic_enabled > 0);
+
+            JsonObject watering = out.createNestedObject("watering");
+            watering["enabled_count"] = snapshot.watering_enabled;
+            watering["active_count"] = snapshot.watering_active;
+            has_any = has_any || (snapshot.watering_enabled > 0);
+
+            JsonObject security = out.createNestedObject("security");
+            security["enabled"] = snapshot.security_enabled;
+            security["armed"] = snapshot.security_armed;
+            security["alarm"] = snapshot.security_alarm;
+            security["sensors_enabled"] = snapshot.security_sensors_enabled;
+            has_any = has_any || snapshot.security_enabled || (snapshot.security_sensors_enabled > 0);
+
+            JsonObject ring = out.createNestedObject("ring");
+            ring["enabled"] = snapshot.ring_enabled;
+            ring["relay_on"] = snapshot.ring_on;
+            has_any = has_any || snapshot.ring_enabled;
+
+            JsonObject avr = out.createNestedObject("avr");
+            avr["enabled"] = snapshot.avr_enabled;
+            avr["fault"] = snapshot.avr_fault;
+            avr["active_source_id"] = snapshot.avr_active_source;
+            avr["active_source"] = snapshot.avr_active_source == (uint8_t)AvrController::Source::Main
+                                       ? "main"
+                                       : snapshot.avr_active_source == (uint8_t)AvrController::Source::Reserve ? "reserve"
+                                                                                                                 : "off";
+            has_any = has_any || snapshot.avr_enabled;
+
+            JsonObject leak = out.createNestedObject("leak");
+            leak["enabled_count"] = snapshot.leak_enabled;
+            leak["alert_count"] = snapshot.leak_alert;
+            has_any = has_any || (snapshot.leak_enabled > 0);
+        }
+
+        const bool need_summary = !has_any;
+        if (need_summary)
+        {
+            _network->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
+                                               StackRouteAdapter::Mode::Json, true);
+        }
+        if (snapshot.sockets_enabled > 0 && snapshot.socket_count < snapshot.sockets_enabled)
+        {
+            DynamicJsonDocument req(64);
+            req["offset"] = snapshot.socket_count;
+            req["limit"] = 8;
+            _network->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
+                                               StackRouteAdapter::Mode::Json, true);
+        }
+        return has_any;
+    }
+
     if (!_stack_cache)
         return false;
     bool has_any = false;

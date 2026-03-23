@@ -91,9 +91,9 @@ bool WebInterfaceControllersLightsHelper::isStackLightsView_(const WebInterface 
     }
 
 void WebInterfaceControllersLightsHelper::handleStackLightsToggle_(WebInterface &web, AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie) {
-        if (!web._stack_master)
+        if (!web.network())
         {
-            web.sendText_(request, 400, "text/plain", "Stack master missing", set_cookie);
+            web.sendText_(request, 400, "text/plain", "Stack unavailable", set_cookie);
             return;
         }
         const String id_str = web.paramValueAny_(request, "id");
@@ -146,12 +146,8 @@ void WebInterfaceControllersLightsHelper::handleStackLightsToggle_(WebInterface 
             return;
         }
     
-        StaticJsonDocument<192> doc;
-        doc["cmd_id"] = web.nextStackCmdId_();
-        doc["feature"] = (uint8_t)StackFeature::Sockets;
-        doc["action"] = "set_lights";
-        JsonObject params = doc["params"].to<JsonObject>();
-        JsonArray items = params["items"].to<JsonArray>();
+        StaticJsonDocument<160> doc;
+        JsonArray items = doc["items"].to<JsonArray>();
         JsonObject o = items.add<JsonObject>();
         o["id"] = id;
     
@@ -173,17 +169,14 @@ void WebInterfaceControllersLightsHelper::handleStackLightsToggle_(WebInterface 
             }
         }
     
-        char payload[160] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                               (const uint8_t *)payload, len))
+        if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set_lights", &doc, StackRouteAdapter::Mode::Json))
         {
             web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
             return;
         }
 
-        // Immediately request a fresh snapshot; the switch request itself returns simple ack.
         web.requestStackLights_(node_id);
+        web.requestStackIndexState_(node_id);
         (void)desired_known;
         (void)desired;
         web.sendText_(request, 200, "text/plain", "OK", set_cookie);

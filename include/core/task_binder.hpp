@@ -267,7 +267,7 @@ private:
     {
         if (_stack_task_rtos == nullptr)
         {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::stackTaskEntry_, "stack_loop", 6144, this, 3,
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::stackTaskEntry_, "stack_loop", 8192, this, 3,
                                                     &_stack_task_rtos, tskNO_AFFINITY);
             if (ok != pdPASS)
                 _logs.error(F("TASK"), F("Bind failed: stack_loop"));

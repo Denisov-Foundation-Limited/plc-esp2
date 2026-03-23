@@ -11,6 +11,37 @@
 
 #include "core/network/web/web_interface.hpp"
 
+namespace
+{
+bool stackSocketsSnapshot_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::Snapshot &out)
+{
+    return web.network() && node_id != 0 && web.network()->stackIndexStateSnapshot(node_id, out);
+}
+
+const StackUnitSnapshot::SocketItem *findStackSocketItem_(const StackUnitSnapshot::Snapshot &snapshot, uint8_t id)
+{
+    if (id == 0)
+        return nullptr;
+    for (uint8_t i = 0; i < snapshot.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
+    {
+        if (snapshot.sockets[i].id == id)
+            return &snapshot.sockets[i];
+    }
+    return nullptr;
+}
+
+bool requestNextStackSocketsPage_(WebInterface &web, uint32_t node_id, uint16_t offset, uint16_t limit)
+{
+    if (!web.network() || node_id == 0 || limit == 0)
+        return false;
+    DynamicJsonDocument req(64);
+    req["offset"] = offset;
+    req["limit"] = limit;
+    return web.network()->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
+                                                   StackRouteAdapter::Mode::Json, true);
+}
+}
+
 size_t WebInterfaceControllersSocketsHelper::socketsLocalRenderCount_(const WebInterface &web) {
         if (!web._controllers)
             return 0;
@@ -190,32 +221,34 @@ String WebInterfaceControllersSocketsHelper::listSocketsHtml_(WebInterface &web,
     }
 
 size_t WebInterfaceControllersSocketsHelper::stackSocketsVisibleCount_(const WebInterface &web, uint32_t node_id) {
-            const auto *cache = web._stack_cache ? web._stack_cache->socketsCache(node_id) : nullptr;
-            if (!cache || !cache->has_data || !cache->items)
+            StackUnitSnapshot::Snapshot snapshot{};
+            if (!stackSocketsSnapshot_(web, node_id, snapshot))
+                return 0;
+            if (snapshot.socket_count == 0)
                 return 0;
             const bool can_view_disabled = web.webSessionIsAdmin_();
-            size_t render_count = cache->item_count;
+            size_t render_count = snapshot.socket_count;
             if (can_view_disabled)
             {
                 size_t last_enabled_idx = SIZE_MAX;
-                for (size_t i = 0; i < cache->item_count; ++i)
+                for (size_t i = 0; i < snapshot.socket_count; ++i)
                 {
-                    if (cache->items[i].enabled)
+                    if (snapshot.sockets[i].enabled)
                         last_enabled_idx = i;
                 }
                 if (last_enabled_idx == SIZE_MAX)
-                    render_count = cache->item_count ? 1u : 0u;
+                    render_count = snapshot.socket_count ? 1u : 0u;
                 else
                 {
                     const size_t rc = last_enabled_idx + 2u;
-                    render_count = rc > cache->item_count ? cache->item_count : rc;
+                    render_count = rc > snapshot.socket_count ? snapshot.socket_count : rc;
                 }
             }
             size_t count = 0;
             for (size_t i = 0; i < render_count; ++i)
             {
-                const auto &cfg = cache->items[i];
-                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id))
+                const auto &cfg = snapshot.sockets[i];
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id, snapshot.node_id))
                     continue;
                 if (!can_view_disabled && !cfg.enabled)
                     continue;
@@ -226,10 +259,10 @@ size_t WebInterfaceControllersSocketsHelper::stackSocketsVisibleCount_(const Web
     }
 
 String WebInterfaceControllersSocketsHelper::listStackSocketsHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
-            const auto *cache = web._stack_cache->socketsCache(node_id);
-            if (!cache || !cache->has_data)
+            StackUnitSnapshot::Snapshot snapshot{};
+            if (!stackSocketsSnapshot_(web, node_id, snapshot))
                 return WebUiRu::Sockets::kText9;
-            if (cache->item_count == 0)
+            if (snapshot.socket_count == 0)
                 return WebUiRu::Sockets::kText8;
             String items;
             const size_t page_limit = (limit == 0) ? 1u : limit;
@@ -238,28 +271,28 @@ String WebInterfaceControllersSocketsHelper::listStackSocketsHtml_(WebInterface 
                 reserve = 8192u;
             items.reserve(reserve);
             const bool can_view_disabled = web.webSessionIsAdmin_();
-            size_t render_count = cache->item_count;
+            size_t render_count = snapshot.socket_count;
             if (can_view_disabled)
             {
                 size_t last_enabled_idx = SIZE_MAX;
-                for (size_t i = 0; i < cache->item_count; ++i)
+                for (size_t i = 0; i < snapshot.socket_count; ++i)
                 {
-                    if (cache->items[i].enabled)
+                    if (snapshot.sockets[i].enabled)
                         last_enabled_idx = i;
                 }
                 if (last_enabled_idx == SIZE_MAX)
-                    render_count = cache->item_count ? 1u : 0u;
+                    render_count = snapshot.socket_count ? 1u : 0u;
                 else
                 {
                     const size_t rc = last_enabled_idx + 2u;
-                    render_count = rc > cache->item_count ? cache->item_count : rc;
+                    render_count = rc > snapshot.socket_count ? snapshot.socket_count : rc;
                 }
             }
             size_t rendered = 0;
             size_t visible_idx = 0;
             for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
             {
-                const auto &cfg = cache->items[i];
+                const auto &cfg = snapshot.sockets[i];
                 if (!web.webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id))
                     continue;
                 if (!can_view_disabled && !cfg.enabled)
@@ -414,21 +447,15 @@ String WebInterfaceControllersSocketsHelper::socketsDeviceSelectHtml_(const WebI
     }
 
 String WebInterfaceControllersSocketsHelper::stackSocketsStatusText_(const WebInterface &web, uint32_t node_id) {
-            const auto *cache = web._stack_cache->socketsCache(node_id);
-            if (!cache)
+            StackUnitSnapshot::Snapshot snapshot{};
+            if (!stackSocketsSnapshot_(web, node_id, snapshot))
                 return WebUiRu::kNoDataFromSlave;
-            if (cache->pending &&
-                (uint32_t)(millis() - cache->updated_ms) > 15000u)
+            if (snapshot.pending &&
+                (uint32_t)(millis() - snapshot.request_started_ms) > 15000u)
                 return WebUiRu::Sockets::kText10;
-            if (cache->pending)
+            if (snapshot.pending)
                 return "";
-            if (!cache->last_ok && cache->last_error.length())
-            {
-                String msg = WebUiRu::kErrorPrefix;
-                msg += cache->last_error;
-                return msg;
-            }
-            if (!cache->has_data)
+            if (snapshot.updated_ms == 0)
                 return WebUiRu::kNoDataFromSlave;
             return WebUiRu::kStatusOk;
         
@@ -442,9 +469,9 @@ bool WebInterfaceControllersSocketsHelper::isStackSocketsView_(const WebInterfac
     }
 
 void WebInterfaceControllersSocketsHelper::handleStackSocketsToggle_(WebInterface &web, AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie) {
-        if (!web._stack_master)
+        if (!web.network())
         {
-            web.sendText_(request, 400, "text/plain", "Stack master missing", set_cookie);
+            web.sendText_(request, 400, "text/plain", "Stack unavailable", set_cookie);
             return;
         }
         const String id_str = web.paramValueAny_(request, "id");
@@ -462,28 +489,22 @@ void WebInterfaceControllersSocketsHelper::handleStackSocketsToggle_(WebInterfac
         String action = web.paramValueAny_(request, "action");
         action.trim();
         action.toLowerCase();
-        const auto *cache = web._stack_cache ? web._stack_cache->socketsCache(node_id) : nullptr;
-        const StackCache::StackSocketItem *item = nullptr;
-        if (cache)
-        {
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                if (cache->items[i].id == id)
-                {
-                    item = &cache->items[i];
-                    break;
-                }
-            }
-        }
+        StackUnitSnapshot::Snapshot snapshot{};
+        const bool has_snapshot = stackSocketsSnapshot_(web, node_id, snapshot);
+        const StackUnitSnapshot::SocketItem *item = has_snapshot ? findStackSocketItem_(snapshot, id) : nullptr;
     
         if (action == "state")
         {
-            if (!cache || !cache->has_data ||
-                (uint32_t)(millis() - cache->updated_ms) > 1500u)
+            const bool stale = !has_snapshot || snapshot.updated_ms == 0 ||
+                (uint32_t)(millis() - snapshot.updated_ms) > 1500u;
+            const bool partial = has_snapshot && snapshot.sockets_enabled > snapshot.socket_count;
+            if (stale || partial)
             {
                 web.requestStackSockets_(node_id);
+                web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                return;
             }
-            if (cache && cache->pending)
+            if (has_snapshot && snapshot.pending)
             {
                 web.sendText_(request, 200, "text/plain", "pending", set_cookie);
                 return;
@@ -497,12 +518,11 @@ void WebInterfaceControllersSocketsHelper::handleStackSocketsToggle_(WebInterfac
             return;
         }
     
-        StaticJsonDocument<192> doc;
-        doc["cmd_id"] = web.nextStackCmdId_();
-        doc["feature"] = (uint8_t)StackFeature::Sockets;
-        doc["action"] = "set";
-        JsonObject params = doc["params"].to<JsonObject>();
-        JsonArray items = params["items"].to<JsonArray>();
+        StaticJsonDocument<224> doc;
+        doc["source"] = "localweb";
+        if (const auto *u = web.sessionUser_())
+            doc["source_user"] = u->username;
+        JsonArray items = doc["items"].to<JsonArray>();
         JsonObject o = items.add<JsonObject>();
         o["id"] = id;
     
@@ -524,24 +544,21 @@ void WebInterfaceControllersSocketsHelper::handleStackSocketsToggle_(WebInterfac
             }
         }
     
-        char payload[160] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                               (const uint8_t *)payload, len))
+        if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set", &doc, StackRouteAdapter::Mode::Json))
         {
             web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
             return;
         }
 
-        // Immediately schedule a fresh stack snapshot; the switch request itself returns simple ack.
         web.requestStackSockets_(node_id);
+        web.requestStackIndexState_(node_id);
         (void)desired_known;
         (void)desired;
         web.sendText_(request, 200, "text/plain", "OK", set_cookie);
     }
 
 void WebInterfaceControllersSocketsHelper::handleStackSocketsEnable_(WebInterface &web, AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie) {
-        if (!web._stack_master || !web._stack_cache)
+        if (!web.network())
         {
             web.sendText_(request, 400, "text/plain", "Stack unavailable", set_cookie);
             return;
@@ -566,35 +583,20 @@ void WebInterfaceControllersSocketsHelper::handleStackSocketsEnable_(WebInterfac
         const String enabled_str = web.paramValueAny_(request, "enabled");
         const bool enabled = (enabled_str == "1" || enabled_str == "true" || enabled_str == "on");
         StaticJsonDocument<192> doc;
-        doc["cmd_id"] = web.nextStackCmdId_();
-        doc["feature"] = (uint8_t)StackFeature::Sockets;
-        doc["action"] = "set";
-        JsonArray items = doc["params"]["items"].to<JsonArray>();
+        doc["source"] = "localweb";
+        if (const auto *u = web.sessionUser_())
+            doc["source_user"] = u->username;
+        JsonArray items = doc["items"].to<JsonArray>();
         JsonObject o = items.add<JsonObject>();
         o["id"] = id;
         o["enabled"] = enabled;
-        char payload[160] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                    (const uint8_t *)payload, len))
+        if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set", &doc, StackRouteAdapter::Mode::Json))
         {
             web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
             return;
         }
-        auto *cache = web._stack_cache->socketsCache(node_id);
-        if (cache && cache->items)
-        {
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                if (cache->items[i].id == id)
-                {
-                    cache->items[i].enabled = enabled;
-                    break;
-                }
-            }
-            cache->updated_ms = millis();
-        }
         web.requestStackSockets_(node_id);
+        web.requestStackIndexState_(node_id);
         web.requestStackPorts_(node_id);
         String dbg = String("{\"ok\":true");
         dbg += ",\"id\":\"" + id_str + "\"";
@@ -606,7 +608,23 @@ void WebInterfaceControllersSocketsHelper::handleStackSocketsEnable_(WebInterfac
     }
 
 bool WebInterfaceControllersSocketsHelper::requestStackSockets_(WebInterface &web, uint32_t node_id) {
-        return web._stack_cache && web._stack_cache->requestSockets(node_id);
+        if (!web.network() || node_id == 0)
+            return false;
+        const uint32_t now = millis();
+        StackUnitSnapshot::Snapshot snapshot{};
+        const bool has_snapshot = web.network()->stackIndexStateSnapshot(node_id, snapshot);
+        if (!has_snapshot || snapshot.updated_ms == 0 ||
+            (uint32_t)(now - snapshot.updated_ms) > 5000u)
+        {
+            return web.requestStackIndexState_(node_id);
+        }
+        if (snapshot.pending && (uint32_t)(now - snapshot.request_started_ms) < 1500u)
+            return true;
+        if (snapshot.sockets_enabled > snapshot.socket_count)
+        {
+            return requestNextStackSocketsPage_(web, node_id, snapshot.socket_count, 8);
+        }
+        return true;
     }
 
 String WebInterfaceControllersSocketsHelper::socketPortOptionsJson_(const WebInterface &web, PortIO::PinType type) {

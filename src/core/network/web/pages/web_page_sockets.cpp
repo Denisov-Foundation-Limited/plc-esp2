@@ -555,7 +555,11 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         el.disabled = true;
         try {
           const action = el.checked ? 'on' : 'off';
-          const state = await postForm('/sockets/toggle', 'id=' + encodeURIComponent(id) + '&action=' + action);
+          let body = 'id=' + encodeURIComponent(id) + '&action=' + action;
+          if (socketsUnit === 'stack' && socketsNodeId) {
+            body += '&node_id=' + encodeURIComponent(String(socketsNodeId));
+          }
+          const state = await postForm('/sockets/toggle', body);
           if (state === 'pending' || state === 'OK') {
             updateSocketVisual(tile, desired);
             return;
@@ -580,7 +584,11 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         const tile = el.closest('.tile');
         const enabled = el.checked ? '1' : '0';
         try {
-          const state = await postForm('/sockets/enable', 'id=' + encodeURIComponent(id) + '&enabled=' + enabled);
+          let body = 'id=' + encodeURIComponent(id) + '&enabled=' + enabled;
+          if (socketsUnit === 'stack' && socketsNodeId) {
+            body += '&node_id=' + encodeURIComponent(String(socketsNodeId));
+          }
+          const state = await postForm('/sockets/enable', body);
           let isEnabled = false;
           try {
             const data = JSON.parse(state);

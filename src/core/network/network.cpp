@@ -56,6 +56,7 @@ Network::Network(Logger &logs, WifiManager &wifi, GsmModem &gsm, WebInterface &f
 {
     _cloud.setGsm(&gsm);
     _cloud.setNetwork(this);
+    _cloud.setStackMaster(&_stack_master);
     _cloud.setStackNodeNameProvider(&Network::provideCloudStackNodeName_, this);
     _stack_route.bindMaster(_stack_master_server);
     _stack_route.bindRs485Master(_stack_rs485_server);
@@ -671,6 +672,12 @@ bool Network::stackSlaveSendResponse(uint32_t target_node, const char *feature, 
     const auto guard = _stack_lock.guard();
     const StackTransport::RouteMeta meta = StackRouteAdapter::makeResponseMeta(reply_to);
     return _stack_slave_client.sendRoute(target_node, feature, action, payload, &meta);
+}
+
+bool Network::stackSlaveAuthorized() const
+{
+    const auto guard = _stack_lock.guard();
+    return _stack_slave_client.isAuthorized();
 }
 
 bool Network::stackMasterActive() const

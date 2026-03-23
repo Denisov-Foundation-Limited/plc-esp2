@@ -211,7 +211,8 @@ bool StackSlaveClient::sendRoute(uint32_t target_node, const char *feature, cons
     String msg = StackJsonProtocol::makeRoute(node_id, target_node, feature, action, payload, meta);
     if (transport == Config::TransportKind::Rs485Stub)
         return _rs485.sendText(rs485_client_id, msg.c_str());
-    return _ws.sendTXT(msg);
+    const bool ok = _ws.sendTXT(msg);
+    return ok;
 }
 
 bool StackSlaveClient::sendRouteBinary(uint32_t target_node, const char *feature, const char *action,

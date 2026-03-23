@@ -206,8 +206,21 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
     if (online)
     {
         self->comms.wifi.task();
-        self->_stack_cache.requestPlcStatus(node_id);
-        self->_stack_cache.requestRtcStatus(node_id);
+        self->net.network.clearStackIndexStatePending(node_id);
+        self->net.network.invalidateStackIndexState(node_id);
+        self->core.logs.info(F("STACK"), F("Sync slave %s system info"), label.length() ? label.c_str() : "unknown");
+        self->net.network.stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
+                                                   StackRouteAdapter::Mode::Json, true);
+        self->core.logs.info(F("STACK"), F("Sync slave %s controllers"), label.length() ? label.c_str() : "unknown");
+        self->net.network.stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
+                                                   StackRouteAdapter::Mode::Json, true);
+        DynamicJsonDocument sockets_doc(64);
+        sockets_doc["offset"] = 0;
+        sockets_doc["limit"] = 8;
+        self->core.logs.info(F("STACK"), F("Sync slave %s sockets: 0-7"),
+                             label.length() ? label.c_str() : "unknown");
+        self->net.network.stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &sockets_doc,
+                                                   StackRouteAdapter::Mode::Json, true);
         auto &sec = self->control.controllers.security();
         auto sec_guard = sec.lockGuard();
         self->sendSecurityStateToNode_(node_id, sec.armed(), true);
@@ -546,11 +559,102 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             return;
         return;
     }
-    if (strcmp(route.feature, "web") == 0)
+    if (strcmp(route.feature, "system") == 0)
     {
-        if (action == "index_state_req")
+        if (action == "snapshot_req")
         {
-            DynamicJsonDocument doc(256);
+            DynamicJsonDocument doc(320);
+            appendSystemSnapshot_(doc.to<JsonObject>());
+            net.network.stackSlaveSendResponse(route.source_node, "system", "snapshot",
+                                               route.meta.request_id, &doc);
+            return;
+        }
+        if (action == "snapshot")
+        {
+            StackUnitSnapshot::Snapshot state{};
+            net.network.stackIndexStateSnapshot(node_id, state);
+            state.node_id = node_id;
+            state.updated_ms = millis();
+            state.pending = false;
+            state.has_plc = true;
+            state.has_rtc = true;
+            strlcpy(state.rtc_date, params["rtc_date"] | "", sizeof(state.rtc_date));
+            strlcpy(state.rtc_time, params["rtc_time"] | "", sizeof(state.rtc_time));
+            state.rtc_temp_ok = params["rtc_temp_ok"].as<bool>();
+            state.rtc_temp = state.rtc_temp_ok
+                                 ? (params["rtc_temp"].is<float>() ? params["rtc_temp"].as<float>()
+                                                                   : (float)(params["rtc_temp"] | 0.0))
+                                 : 0.0f;
+            state.board_temp =
+                params["board_temp"].is<float>() ? params["board_temp"].as<float>() : (float)(params["board_temp"] | 0.0);
+            state.fan_on = params["fan_on"].is<bool>() ? params["fan_on"].as<bool>() : ((int)(params["fan_on"] | 0) != 0);
+            if (state.rtc_date[0] == '\0' || state.rtc_time[0] == '\0')
+                state.has_rtc = false;
+            net.network.updateStackIndexState(node_id, state);
+            return;
+        }
+    }
+    if (strcmp(route.feature, "controllers") == 0)
+    {
+        if (action == "summary_req")
+        {
+            DynamicJsonDocument doc(768);
+            appendControllerSnapshotSummary_(doc.to<JsonObject>());
+            net.network.stackSlaveSendResponse(route.source_node, "controllers", "summary",
+                                               route.meta.request_id, &doc);
+            return;
+        }
+        if (action == "summary")
+        {
+            StackUnitSnapshot::Snapshot state{};
+            net.network.stackIndexStateSnapshot(node_id, state);
+            state.node_id = node_id;
+            state.updated_ms = millis();
+            JsonVariantConst sockets_summary = params["summary"]["sockets"];
+            JsonVariantConst lights_summary = params["summary"]["lights"];
+            JsonVariantConst meteo_summary = params["summary"]["meteo"];
+            JsonVariantConst thermo_summary = params["summary"]["thermo"];
+            JsonVariantConst tanks_summary = params["summary"]["tanks"];
+            JsonVariantConst septic_summary = params["summary"]["septic"];
+            JsonVariantConst watering_summary = params["summary"]["watering"];
+            JsonVariantConst security_summary = params["summary"]["security"];
+            JsonVariantConst ring_summary = params["summary"]["ring"];
+            JsonVariantConst avr_summary = params["summary"]["avr"];
+            JsonVariantConst leak_summary = params["summary"]["leak"];
+            state.sockets_enabled = sockets_summary["enabled"] | 0;
+            state.sockets_on = sockets_summary["on"] | 0;
+            state.lights_enabled = lights_summary["enabled"] | 0;
+            state.lights_on = lights_summary["on"] | 0;
+            state.meteo_enabled = meteo_summary["enabled"] | 0;
+            state.meteo_ok = meteo_summary["ok"] | 0;
+            state.thermo_enabled = thermo_summary["enabled"] | 0;
+            state.thermo_active = thermo_summary["active"] | 0;
+            state.tanks_enabled = tanks_summary["enabled"] | 0;
+            state.tanks_alert = tanks_summary["alert"] | 0;
+            state.septic_enabled = septic_summary["enabled"] | 0;
+            state.septic_alert = septic_summary["alert"] | 0;
+            state.watering_enabled = watering_summary["enabled"] | 0;
+            state.watering_active = watering_summary["active"] | 0;
+            state.security_enabled = security_summary["enabled"] | false;
+            state.security_sensors_enabled = security_summary["sensors_enabled"] | 0;
+            state.security_armed = security_summary["armed"] | false;
+            state.security_alarm = security_summary["alarm"] | false;
+            state.ring_enabled = ring_summary["enabled"] | false;
+            state.ring_on = ring_summary["on"] | false;
+            state.avr_enabled = avr_summary["enabled"] | false;
+            state.avr_fault = avr_summary["fault"] | false;
+            state.avr_active_source = (uint8_t)(avr_summary["active_source_id"] | 0);
+            state.leak_enabled = leak_summary["enabled"] | 0;
+            state.leak_alert = leak_summary["alert"] | 0;
+            net.network.updateStackIndexState(node_id, state);
+            return;
+        }
+    }
+    if ((strcmp(route.feature, "web") == 0) || (strcmp(route.feature, "system") == 0))
+    {
+        if (action == "index_state_req" || action == "snapshot_req")
+        {
+            DynamicJsonDocument doc(1024);
             Ds3231Mz::DateTime dt{};
             char date_buf[16] = {};
             char time_buf[16] = {};
@@ -576,11 +680,21 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             doc["fan_html"] = hw.plc.fanStatus()
                                   ? "<span class=\"status-dot status-on\" title=\"enabled\"></span>"
                                   : "<span class=\"status-dot status-off\" title=\"disabled\"></span>";
-            net.network.stackSlaveSendResponse(route.source_node, "web", "index_state",
-                                               route.meta.request_id, &doc);
+            appendControllerSnapshotSummary_(doc.to<JsonObject>());
+            appendSocketSnapshotItems_(doc.to<JsonObject>());
+            const JsonArrayConst sockets = doc["controllers"]["sockets"].as<JsonArrayConst>();
+            const size_t sockets_count = sockets.isNull() ? 0u : sockets.size();
+            core.logs.info(F("STACK"), F("Slave snapshot tx prepare: dst 0x%08lX req: %lu sockets: %u heap: %u"),
+                           (unsigned long)route.source_node, (unsigned long)route.meta.request_id,
+                           (unsigned)sockets_count, (unsigned)ESP.getFreeHeap());
+            const bool sent = net.network.stackSlaveSendResponse(route.source_node, "system", "snapshot",
+                                                                 route.meta.request_id, &doc);
+            core.logs.info(F("STACK"), F("Slave snapshot tx result: dst 0x%08lX req: %lu sent: %u"),
+                           (unsigned long)route.source_node, (unsigned long)route.meta.request_id,
+                           (unsigned)(sent ? 1 : 0));
             return;
         }
-        if (action == "index_state")
+        if (action == "index_state" || action == "snapshot")
         {
             StackUnitSnapshot::Snapshot state{};
             state.node_id = node_id;
@@ -600,9 +714,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.fan_on = params["fan_on"].is<bool>() ? params["fan_on"].as<bool>() : ((int)(params["fan_on"] | 0) != 0);
             if (state.rtc_date[0] == '\0' || state.rtc_time[0] == '\0')
                 state.has_rtc = false;
-            net.network.updateStackIndexState(node_id, state);
-
-            DynamicJsonDocument doc(256);
+            DynamicJsonDocument doc(1024);
             doc["device_name"] = params["device_name"] | "";
             JsonObject system = doc["system"].to<JsonObject>();
             if (state.has_plc)
@@ -619,6 +731,148 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                 rtc["time"] = state.rtc_time;
                 rtc["temp_c"] = state.rtc_temp;
             }
+            JsonObject summary = doc["summary"].to<JsonObject>();
+            JsonVariantConst sockets_summary = params["summary"]["sockets"];
+            JsonVariantConst lights_summary = params["summary"]["lights"];
+            if (!sockets_summary.isNull())
+            {
+                JsonObject sockets = summary["sockets"].to<JsonObject>();
+                sockets["enabled"] = sockets_summary["enabled"] | 0;
+                sockets["on"] = sockets_summary["on"] | 0;
+            }
+            if (!lights_summary.isNull())
+            {
+                JsonObject lights = summary["lights"].to<JsonObject>();
+                lights["enabled"] = lights_summary["enabled"] | 0;
+                lights["on"] = lights_summary["on"] | 0;
+            }
+            JsonVariantConst meteo_summary = params["summary"]["meteo"];
+            JsonVariantConst thermo_summary = params["summary"]["thermo"];
+            JsonVariantConst tanks_summary = params["summary"]["tanks"];
+            JsonVariantConst septic_summary = params["summary"]["septic"];
+            JsonVariantConst watering_summary = params["summary"]["watering"];
+            JsonVariantConst security_summary = params["summary"]["security"];
+            JsonVariantConst ring_summary = params["summary"]["ring"];
+            JsonVariantConst avr_summary = params["summary"]["avr"];
+            JsonVariantConst leak_summary = params["summary"]["leak"];
+            if (!meteo_summary.isNull())
+            {
+                JsonObject meteo = summary["meteo"].to<JsonObject>();
+                meteo["enabled"] = meteo_summary["enabled"] | 0;
+                meteo["ok"] = meteo_summary["ok"] | 0;
+            }
+            if (!thermo_summary.isNull())
+            {
+                JsonObject thermo = summary["thermo"].to<JsonObject>();
+                thermo["enabled"] = thermo_summary["enabled"] | 0;
+                thermo["active"] = thermo_summary["active"] | 0;
+            }
+            if (!tanks_summary.isNull())
+            {
+                JsonObject tanks = summary["tanks"].to<JsonObject>();
+                tanks["enabled"] = tanks_summary["enabled"] | 0;
+                tanks["alert"] = tanks_summary["alert"] | 0;
+            }
+            if (!septic_summary.isNull())
+            {
+                JsonObject septic = summary["septic"].to<JsonObject>();
+                septic["enabled"] = septic_summary["enabled"] | 0;
+                septic["alert"] = septic_summary["alert"] | 0;
+            }
+            if (!watering_summary.isNull())
+            {
+                JsonObject watering = summary["watering"].to<JsonObject>();
+                watering["enabled"] = watering_summary["enabled"] | 0;
+                watering["active"] = watering_summary["active"] | 0;
+            }
+            if (!security_summary.isNull())
+            {
+                JsonObject security = summary["security"].to<JsonObject>();
+                security["enabled"] = security_summary["enabled"] | false;
+                security["sensors_enabled"] = security_summary["sensors_enabled"] | 0;
+                security["armed"] = security_summary["armed"] | false;
+                security["alarm"] = security_summary["alarm"] | false;
+            }
+            if (!ring_summary.isNull())
+            {
+                JsonObject ring = summary["ring"].to<JsonObject>();
+                ring["enabled"] = ring_summary["enabled"] | false;
+                ring["on"] = ring_summary["on"] | false;
+            }
+            if (!avr_summary.isNull())
+            {
+                JsonObject avr = summary["avr"].to<JsonObject>();
+                avr["enabled"] = avr_summary["enabled"] | false;
+                avr["fault"] = avr_summary["fault"] | false;
+                avr["active_source"] = avr_summary["active_source"] | "off";
+            }
+            if (!leak_summary.isNull())
+            {
+                JsonObject leak = summary["leak"].to<JsonObject>();
+                leak["enabled"] = leak_summary["enabled"] | 0;
+                leak["alert"] = leak_summary["alert"] | 0;
+            }
+            state.sockets_enabled = sockets_summary["enabled"] | 0;
+            state.sockets_on = sockets_summary["on"] | 0;
+            state.lights_enabled = lights_summary["enabled"] | 0;
+            state.lights_on = lights_summary["on"] | 0;
+            state.meteo_enabled = meteo_summary["enabled"] | 0;
+            state.meteo_ok = meteo_summary["ok"] | 0;
+            state.thermo_enabled = thermo_summary["enabled"] | 0;
+            state.thermo_active = thermo_summary["active"] | 0;
+            state.tanks_enabled = tanks_summary["enabled"] | 0;
+            state.tanks_alert = tanks_summary["alert"] | 0;
+            state.septic_enabled = septic_summary["enabled"] | 0;
+            state.septic_alert = septic_summary["alert"] | 0;
+            state.watering_enabled = watering_summary["enabled"] | 0;
+            state.watering_active = watering_summary["active"] | 0;
+            state.security_enabled = security_summary["enabled"] | false;
+            state.security_sensors_enabled = security_summary["sensors_enabled"] | 0;
+            state.security_armed = security_summary["armed"] | false;
+            state.security_alarm = security_summary["alarm"] | false;
+            state.ring_enabled = ring_summary["enabled"] | false;
+            state.ring_on = ring_summary["on"] | false;
+            state.avr_enabled = avr_summary["enabled"] | false;
+            state.avr_fault = avr_summary["fault"] | false;
+            state.avr_active_source = (uint8_t)(avr_summary["active_source_id"] | 0);
+            state.leak_enabled = leak_summary["enabled"] | 0;
+            state.leak_alert = leak_summary["alert"] | 0;
+            JsonArrayConst sockets_items = params["controllers"]["sockets"].as<JsonArrayConst>();
+            state.socket_count = 0;
+            if (!sockets_items.isNull())
+            {
+                for (JsonObjectConst item : sockets_items)
+                {
+                    if (state.socket_count >= StackUnitSnapshot::kSocketCount)
+                        break;
+                    auto &dst = state.sockets[state.socket_count];
+                    dst.id = (uint8_t)(item["id"] | 0);
+                    dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                             : (item["enabled"].as<int>() != 0);
+                    dst.state = item["state"].is<bool>() ? item["state"].as<bool>()
+                                                         : (item["state"].as<int>() != 0);
+                    strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
+                    ++state.socket_count;
+                }
+            }
+            if (state.socket_count > 0)
+            {
+                JsonObject controllers = doc["controllers"].to<JsonObject>();
+                JsonArray sockets = controllers["sockets"].to<JsonArray>();
+                for (uint8_t i = 0; i < state.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
+                {
+                    const auto &src = state.sockets[i];
+                    if (src.id == 0)
+                        continue;
+                    JsonObject item = sockets.add<JsonObject>();
+                    item["id"] = src.id;
+                    item["enabled"] = src.enabled;
+                    item["state"] = src.state;
+                    if (src.name[0] != '\0')
+                        item["name"] = src.name;
+                }
+            }
+            net.network.updateStackIndexState(node_id, state);
             String json;
             serializeJson(doc, json);
             publishCloudStackEvent_(node_id, "stack.snapshot", "update", json);
@@ -644,6 +898,100 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         }
         return;
     }
+    if (strcmp(route.feature, "sockets") == 0)
+    {
+        if (action == "snapshot_req")
+        {
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            uint16_t limit = (uint16_t)(params["limit"] | 8);
+            if (limit == 0)
+                limit = 8;
+            if (limit > 8)
+                limit = 8;
+            const uint16_t range_end = (limit == 0) ? offset : (uint16_t)(offset + limit - 1u);
+            SocketController &sockets = control.controllers.sockets();
+            size_t sockets_count = 0;
+            {
+                auto guard = sockets.lockGuard();
+                uint16_t current_index = 0;
+                for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+                {
+                    const auto *cfg = sockets.configByIndex(i);
+                    if (!cfg || !cfg->enabled)
+                        continue;
+                    if (current_index < offset)
+                    {
+                        ++current_index;
+                        continue;
+                    }
+                    if (sockets_count >= limit)
+                        break;
+                    ++sockets_count;
+                    ++current_index;
+                }
+            }
+            _pending_stack_sockets_response = true;
+            _pending_stack_sockets_target_node = route.source_node;
+            _pending_stack_sockets_reply_to = route.meta.request_id;
+            _pending_stack_sockets_response_offset = offset;
+            _pending_stack_sockets_response_limit = limit;
+            return;
+        }
+        if (action == "snapshot")
+        {
+            StackUnitSnapshot::Snapshot state{};
+            net.network.stackIndexStateSnapshot(node_id, state);
+            state.node_id = node_id;
+            state.updated_ms = millis();
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            const uint16_t total = (uint16_t)(params["total"] | 0);
+            const uint16_t summary_total = (uint16_t)(params["summary"]["sockets"]["enabled"] | 0);
+            const JsonArrayConst sockets_items = params["controllers"]["sockets"].as<JsonArrayConst>();
+            const uint16_t received_count = sockets_items.isNull() ? 0u : (uint16_t)sockets_items.size();
+            if (offset == 0)
+            {
+                state.socket_count = 0;
+                memset(state.sockets, 0, sizeof(state.sockets));
+            }
+            if (!sockets_items.isNull())
+            {
+                uint16_t idx = offset;
+                for (JsonObjectConst item : sockets_items)
+                {
+                    if (idx >= StackUnitSnapshot::kSocketCount)
+                        break;
+                    auto &dst = state.sockets[idx];
+                    dst.id = (uint8_t)(item["id"] | 0);
+                    dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                             : (item["enabled"].as<int>() != 0);
+                    dst.state = item["state"].is<bool>() ? item["state"].as<bool>()
+                                                         : (item["state"].as<int>() != 0);
+                    dst.button_port = (uint8_t)(item["button"] | SocketController::kInvalidPort);
+                    dst.relay_port = (uint8_t)(item["relay"] | SocketController::kInvalidPort);
+                    dst.group_id = (uint8_t)(item["group_id"] | 0);
+                    strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
+                    ++idx;
+                }
+                if (idx > state.socket_count)
+                    state.socket_count = (uint8_t)idx;
+            }
+            net.network.updateStackIndexState(node_id, state);
+            const uint16_t expected_total = (total > 0) ? total : summary_total;
+            const uint16_t target_total =
+                (expected_total > StackUnitSnapshot::kSocketCount) ? (uint16_t)StackUnitSnapshot::kSocketCount
+                                                                   : expected_total;
+            if (target_total > 0 && state.socket_count < target_total)
+            {
+                _pending_stack_sockets_page = true;
+                _pending_stack_sockets_node_id = node_id;
+                _pending_stack_sockets_offset = state.socket_count;
+                _pending_stack_sockets_limit = 8;
+            }
+            return;
+        }
+        handleSocketFrame_(node_id, action, params);
+        return;
+    }
     if (strcmp(route.feature, "septic") == 0)
     {
         handleSepticFrame_(node_id, action, params);
@@ -659,6 +1007,442 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         handleWateringFrame_(node_id, action, params);
         return;
     }
+}
+
+void AppRuntime::handleSocketFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
+    (void)node_id;
+    const bool lights = (action == "set_lights");
+    if (!lights && action != "set")
+        return;
+
+    JsonArrayConst items = params["items"].as<JsonArrayConst>();
+    if (items.isNull())
+    {
+        JsonVariantConst nested = params["params"];
+        if (!nested.isNull())
+            items = nested["items"].as<JsonArrayConst>();
+    }
+    if (items.isNull())
+        return;
+
+    SocketController &sockets = control.controllers.sockets();
+    String source = params["source"] | "";
+    if (!source.length())
+    {
+        JsonVariantConst nested = params["params"];
+        if (!nested.isNull())
+            source = nested["source"] | "";
+    }
+    String source_user = params["source_user"] | "";
+    if (!source_user.length())
+    {
+        JsonVariantConst nested = params["params"];
+        if (!nested.isNull())
+            source_user = nested["source_user"] | "";
+    }
+    const char *source_c = source.length() ? source.c_str() : "stack";
+    const char *source_user_c = source_user.length() ? source_user.c_str() : "-";
+    const String slave_name = hw.plc.deviceName();
+    bool changed = false;
+    for (JsonObjectConst item : items)
+    {
+        const uint8_t id = (uint8_t)(item["id"] | 0);
+        if (id == 0)
+            continue;
+
+        bool state_before_known = false;
+        bool state_before = false;
+        if (!lights)
+        {
+            if (const auto *st_before = sockets.state(id))
+            {
+                state_before = st_before->relay_on;
+                state_before_known = true;
+            }
+        }
+
+        if (item["enabled"].is<bool>() || item["enabled"].is<int>())
+        {
+            const bool enabled = item["enabled"].as<bool>();
+            changed = (lights ? sockets.setLightEnabled(id, enabled)
+                              : sockets.setEnabled(id, enabled)) || changed;
+        }
+        if (!item["name"].isNull())
+        {
+            const String name = item["name"] | "";
+            changed = (lights ? sockets.setLightName(id, name)
+                              : sockets.setName(id, name)) || changed;
+        }
+        if (item["button"].is<int>())
+        {
+            const uint8_t port = (uint8_t)(item["button"] | SocketController::kInvalidPort);
+            changed = (lights ? sockets.setLightButtonPort(id, port)
+                              : sockets.setButtonPort(id, port)) || changed;
+        }
+        if (item["relay"].is<int>())
+        {
+            const uint8_t port = (uint8_t)(item["relay"] | SocketController::kInvalidPort);
+            changed = (lights ? sockets.setLightRelayPort(id, port)
+                              : sockets.setRelayPort(id, port)) || changed;
+        }
+        if (item["group_id"].is<int>())
+        {
+            const uint8_t group_id = (uint8_t)(item["group_id"] | 0);
+            changed = (lights ? sockets.setLightGroupId(id, group_id)
+                              : sockets.setGroupId(id, group_id)) || changed;
+        }
+
+        if (item["state"].is<bool>() || item["state"].is<int>())
+        {
+            const bool state_on = item["state"].as<bool>();
+            const bool ok = lights ? sockets.setLightRelayById(id, state_on)
+                                   : sockets.setRelayById(id, state_on);
+            changed = ok || changed;
+            if (!lights && ok)
+            {
+                    const auto *cfg = sockets.config(id);
+                    const auto *st = sockets.state(id);
+                    const bool state_after = st ? st->relay_on : state_on;
+                    if (!state_before_known || state_after != state_before)
+                    {
+                        const char *name_c = (cfg && cfg->name.length()) ? cfg->name.c_str() : "-";
+                        core.logs.info(F("STACK"), F("Socket switched: slave: %s source: %s user: %s id: %u name: %s state: %s"),
+                                   slave_name.length() ? slave_name.c_str() : "unknown",
+                                   source_c,
+                                   source_user_c,
+                                   (unsigned)id,
+                                   name_c,
+                                   state_after ? "on" : "off");
+                    }
+            }
+            continue;
+        }
+
+        const bool toggle = item["toggle"].is<bool>()
+            ? item["toggle"].as<bool>()
+            : (item["toggle"].is<int>() && item["toggle"].as<int>() != 0);
+        if (toggle)
+        {
+            const bool ok = lights ? sockets.toggleLightRelayById(id)
+                                   : sockets.toggleRelayById(id);
+            changed = ok || changed;
+            if (!lights && ok)
+            {
+                const auto *cfg = sockets.config(id);
+                const auto *st = sockets.state(id);
+                const bool state_after = st ? st->relay_on : false;
+                const char *name_c = (cfg && cfg->name.length()) ? cfg->name.c_str() : "-";
+                core.logs.info(F("STACK"), F("Socket switched: slave: %s source: %s user: %s id: %u name: %s state: %s"),
+                               slave_name.length() ? slave_name.c_str() : "unknown",
+                               source_c,
+                               source_user_c,
+                               (unsigned)id,
+                               name_c,
+                               state_after ? "on" : "off");
+            }
+        }
+    }
+}
+
+void AppRuntime::appendSocketSnapshotSummary_(JsonObject root) const{
+    JsonObject summary = root["summary"].to<JsonObject>();
+    JsonObject sockets_out = summary["sockets"].to<JsonObject>();
+    JsonObject lights_out = summary["lights"].to<JsonObject>();
+
+    uint16_t sockets_enabled = 0;
+    uint16_t sockets_on = 0;
+    uint16_t lights_enabled = 0;
+    uint16_t lights_on = 0;
+
+    SocketController &sockets = control.controllers.sockets();
+    auto guard = sockets.lockGuard();
+    for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+    {
+        const auto *cfg = sockets.configByIndex(i);
+        const auto *st = sockets.stateByIndex(i);
+        if (!cfg || !st || !cfg->enabled)
+            continue;
+        ++sockets_enabled;
+        if (st->relay_on)
+            ++sockets_on;
+    }
+    for (size_t i = 0; i < SocketController::kLightCount; ++i)
+    {
+        const auto *cfg = sockets.lightConfigByIndex(i);
+        const auto *st = sockets.lightStateByIndex(i);
+        if (!cfg || !st || !cfg->enabled)
+            continue;
+        ++lights_enabled;
+        if (st->relay_on)
+            ++lights_on;
+    }
+
+    sockets_out["enabled"] = sockets_enabled;
+    sockets_out["on"] = sockets_on;
+    lights_out["enabled"] = lights_enabled;
+    lights_out["on"] = lights_on;
+}
+
+void AppRuntime::appendSystemSnapshot_(JsonObject root) const{
+    Ds3231Mz::DateTime dt{};
+    char date_buf[16] = {};
+    char time_buf[16] = {};
+    float rtc_temp_c = 0.0f;
+    const bool rtc_time_ok = hw.rtc.Time(dt);
+    const bool rtc_temp_ok = hw.rtc.readTemp(rtc_temp_c);
+
+    if (rtc_time_ok)
+    {
+        snprintf(date_buf, sizeof(date_buf), "%04u-%02u-%02u", (unsigned)dt.year, (unsigned)dt.month,
+                 (unsigned)dt.day);
+        snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u", (unsigned)dt.hour, (unsigned)dt.minute,
+                 (unsigned)dt.second);
+    }
+
+    root["device_name"] = hw.plc.deviceName();
+    root["rtc_date"] = rtc_time_ok ? String(date_buf) : String("n/a");
+    root["rtc_time"] = rtc_time_ok ? String(time_buf) : String("n/a");
+    root["rtc_temp"] = rtc_temp_ok ? rtc_temp_c : 0.0f;
+    root["rtc_temp_ok"] = rtc_temp_ok;
+    root["board_temp"] = hw.plc.boardTemp();
+    root["fan_on"] = hw.plc.fanStatus();
+    root["fan_html"] = hw.plc.fanStatus()
+                           ? "<span class=\"status-dot status-on\" title=\"enabled\"></span>"
+                           : "<span class=\"status-dot status-off\" title=\"disabled\"></span>";
+}
+
+void AppRuntime::appendSocketSnapshotItems_(JsonObject root) const{
+    JsonObject controllers_out = root["controllers"].to<JsonObject>();
+    JsonArray sockets_out = controllers_out["sockets"].to<JsonArray>();
+
+    SocketController &sockets = control.controllers.sockets();
+    auto guard = sockets.lockGuard();
+    for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+    {
+        const auto *cfg = sockets.configByIndex(i);
+        const auto *st = sockets.stateByIndex(i);
+        if (!cfg || !st || !cfg->enabled)
+            continue;
+        JsonObject o = sockets_out.add<JsonObject>();
+        o["id"] = cfg->id;
+        o["enabled"] = true;
+        o["state"] = st->relay_on;
+        o["button"] = cfg->button_port;
+        o["relay"] = cfg->relay_port;
+        o["group_id"] = cfg->group_id;
+        if (cfg->name.length())
+            o["name"] = cfg->name;
+    }
+}
+
+void AppRuntime::appendSocketSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const{
+    JsonObject summary = root["summary"].to<JsonObject>();
+    JsonObject sockets_summary = summary["sockets"].to<JsonObject>();
+    JsonObject controllers_out = root["controllers"].to<JsonObject>();
+    JsonArray sockets_out = controllers_out["sockets"].to<JsonArray>();
+
+    uint16_t sockets_enabled = 0;
+    uint16_t sockets_on = 0;
+    uint16_t current_index = 0;
+
+    SocketController &sockets = control.controllers.sockets();
+    auto guard = sockets.lockGuard();
+    for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+    {
+        const auto *cfg = sockets.configByIndex(i);
+        const auto *st = sockets.stateByIndex(i);
+        if (!cfg || !st || !cfg->enabled)
+            continue;
+
+        ++sockets_enabled;
+        if (st->relay_on)
+            ++sockets_on;
+
+        if (current_index < offset)
+        {
+            ++current_index;
+            continue;
+        }
+        if ((uint16_t)sockets_out.size() >= limit)
+            continue;
+
+        JsonObject o = sockets_out.add<JsonObject>();
+        o["id"] = cfg->id;
+        o["enabled"] = true;
+        o["state"] = st->relay_on;
+        o["button"] = cfg->button_port;
+        o["relay"] = cfg->relay_port;
+        o["group_id"] = cfg->group_id;
+        if (cfg->name.length())
+            o["name"] = cfg->name;
+        ++current_index;
+    }
+
+    sockets_summary["enabled"] = sockets_enabled;
+    sockets_summary["on"] = sockets_on;
+    root["offset"] = offset;
+    root["limit"] = limit;
+    root["total"] = sockets_enabled;
+}
+
+void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
+    appendSocketSnapshotSummary_(root);
+    JsonObject summary = root["summary"].to<JsonObject>();
+
+    uint16_t meteo_enabled = 0;
+    uint16_t meteo_ok = 0;
+    {
+        MeteoController &meteo = control.controllers.meteo();
+        auto guard = meteo.lockGuard();
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = meteo.configByIndex(i);
+            const auto *st = meteo.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            ++meteo_enabled;
+            if (st->ok)
+                ++meteo_ok;
+        }
+    }
+    JsonObject meteo_out = summary["meteo"].to<JsonObject>();
+    meteo_out["enabled"] = meteo_enabled;
+    meteo_out["ok"] = meteo_ok;
+
+    uint16_t thermo_enabled = 0;
+    uint16_t thermo_active = 0;
+    {
+        ThermoController &thermo = control.controllers.thermo();
+        auto guard = thermo.lockGuard();
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = thermo.configByIndex(i);
+            const auto *st = thermo.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            ++thermo_enabled;
+            if (st->heat_on || st->cool_on)
+                ++thermo_active;
+        }
+    }
+    JsonObject thermo_out = summary["thermo"].to<JsonObject>();
+    thermo_out["enabled"] = thermo_enabled;
+    thermo_out["active"] = thermo_active;
+
+    uint16_t tanks_enabled = 0;
+    uint16_t tanks_alert = 0;
+    {
+        TankController &tanks = control.controllers.tanks();
+        auto guard = tanks.lockGuard();
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = tanks.configByIndex(i);
+            const auto *st = tanks.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            ++tanks_enabled;
+            if (!st->levels_ok || (!st->level_low && !st->level_mid && !st->level_full) || st->alarm_on || st->pump_on)
+                ++tanks_alert;
+        }
+    }
+    JsonObject tanks_out = summary["tanks"].to<JsonObject>();
+    tanks_out["enabled"] = tanks_enabled;
+    tanks_out["alert"] = tanks_alert;
+
+    uint16_t septic_enabled = 0;
+    uint16_t septic_alert = 0;
+    {
+        SepticController &septic = control.controllers.septic();
+        auto guard = septic.lockGuard();
+        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        {
+            const auto *cfg = septic.configByIndex(i);
+            const auto *st = septic.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            ++septic_enabled;
+            if (st->warning || st->alarm)
+                ++septic_alert;
+        }
+    }
+    JsonObject septic_out = summary["septic"].to<JsonObject>();
+    septic_out["enabled"] = septic_enabled;
+    septic_out["alert"] = septic_alert;
+
+    uint16_t watering_enabled = 0;
+    uint16_t watering_active = 0;
+    {
+        WateringController &watering = control.controllers.watering();
+        auto guard = watering.lockGuard();
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+            const auto *cfg = watering.configByIndex(i);
+            const auto *st = watering.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            ++watering_enabled;
+            if (st->active)
+                ++watering_active;
+        }
+    }
+    JsonObject watering_out = summary["watering"].to<JsonObject>();
+    watering_out["enabled"] = watering_enabled;
+    watering_out["active"] = watering_active;
+
+    {
+        SecurityController &security = control.controllers.security();
+        auto guard = security.lockGuard();
+        uint16_t sensors_enabled = 0;
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+            const auto *cfg = security.configByIndex(i);
+            if (cfg && cfg->enabled)
+                ++sensors_enabled;
+        }
+        JsonObject security_out = summary["security"].to<JsonObject>();
+        security_out["enabled"] = security.controllerEnabled();
+        security_out["sensors_enabled"] = sensors_enabled;
+        security_out["armed"] = security.armed();
+        security_out["alarm"] = security.alarmOn();
+    }
+
+    {
+        RingController &ring = control.controllers.ring();
+        auto guard = ring.lockGuard();
+        JsonObject ring_out = summary["ring"].to<JsonObject>();
+        ring_out["enabled"] = ring.controllerEnabled() && ring.config().enabled;
+        ring_out["on"] = ring.state().relay_on;
+    }
+
+    {
+        AvrController &avr = control.controllers.avr();
+        auto guard = avr.lockGuard();
+        JsonObject avr_out = summary["avr"].to<JsonObject>();
+        avr_out["enabled"] = avr.controllerEnabled() && avr.config().enabled;
+        avr_out["fault"] = avr.fault() != AvrController::Fault::None;
+        avr_out["active_source"] = AvrController::sourceName(avr.activeSource());
+        avr_out["active_source_id"] = (uint8_t)avr.activeSource();
+    }
+
+    uint16_t leak_enabled = 0;
+    uint16_t leak_alert = 0;
+    {
+        LeakController &leak = control.controllers.leak();
+        auto guard = leak.lockGuard();
+        for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+        {
+            const auto *cfg = leak.configByIndex(i);
+            const auto *st = leak.stateByIndex(i);
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            ++leak_enabled;
+            if (st->wet || st->alarm_latched)
+                ++leak_alert;
+        }
+    }
+    JsonObject leak_out = summary["leak"].to<JsonObject>();
+    leak_out["enabled"] = leak_enabled;
+    leak_out["alert"] = leak_alert;
 }
 
 void AppRuntime::handleSepticFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
@@ -820,6 +1604,74 @@ void AppRuntime::flushPendingWateringEvent_(){
     _pending_watering_event = false;
     sendWateringEventToMaster_(_pending_watering_event_type, _pending_watering_event_cfg,
                                _pending_watering_event_state);
+}
+
+void AppRuntime::flushPendingStackSocketsResponse_(){
+    if (!_pending_stack_sockets_response)
+        return;
+    if (!stackSlaveActive_())
+        return;
+    if (!net.network.stackSlaveAuthorized())
+        return;
+
+    const uint32_t target_node = _pending_stack_sockets_target_node;
+    const uint32_t reply_to = _pending_stack_sockets_reply_to;
+    const uint16_t offset = _pending_stack_sockets_response_offset;
+    uint16_t limit = _pending_stack_sockets_response_limit;
+    if (target_node == 0)
+        return;
+    if (limit == 0)
+        limit = 8;
+    if (limit > 8)
+        limit = 8;
+
+    DynamicJsonDocument doc(1536);
+    appendSocketSnapshotPage_(doc.to<JsonObject>(), offset, limit);
+    if (doc.overflowed())
+    {
+        core.logs.warn(F("STACK"), F("Slave sockets snapshot overflow: range: %u-%u"),
+                       (unsigned)offset, (unsigned)(offset + limit - 1u));
+    }
+    const bool sent = net.network.stackSlaveSendResponse(target_node, "sockets", "snapshot", reply_to, &doc);
+    if (sent)
+        _pending_stack_sockets_response = false;
+}
+
+void AppRuntime::flushPendingStackSocketsPage_(){
+    if (!_pending_stack_sockets_page)
+        return;
+    if (!stackMasterActive_())
+        return;
+    _pending_stack_sockets_page = false;
+
+    const uint32_t node_id = _pending_stack_sockets_node_id;
+    const uint16_t offset = _pending_stack_sockets_offset;
+    uint16_t limit = _pending_stack_sockets_limit;
+    if (node_id == 0)
+        return;
+    if (limit == 0)
+        limit = 8;
+
+    DynamicJsonDocument req(64);
+    req["offset"] = offset;
+    req["limit"] = limit;
+
+    const uint16_t range_end = (uint16_t)(offset + limit - 1u);
+    const String label = stackNodeLabel_(node_id);
+
+    const bool sent = net.network.stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
+                                                           StackRouteAdapter::Mode::Json, true);
+    if (sent)
+    {
+        core.logs.info(F("STACK"), F("Sync slave %s sockets: %u-%u"),
+                       label.length() ? label.c_str() : "unknown",
+                       (unsigned)offset, (unsigned)range_end);
+    }
+    else
+    {
+        core.logs.warn(F("STACK"), F("Sync slave sockets request failed: node 0x%08lX range: %u-%u"),
+                       (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
+    }
 }
 
 void AppRuntime::flushPendingRingButton_(){
