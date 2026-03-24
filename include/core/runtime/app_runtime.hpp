@@ -86,6 +86,7 @@ private:
     void stopStackBootstrapSync_(bool timeout);
     bool bootstrapSyncCompleted_(uint32_t node_id) const;
     bool shouldLogStackBootstrapSync_(uint32_t node_id) const;
+    bool queueDisplayStackSnapshotPage_(uint32_t node_id, const char *feature, uint16_t offset);
 
     static bool onRemoteMeteo_(void *ctx, uint32_t node_id, uint8_t sensor_id, float &temp_c, bool &has_temp);
 
@@ -315,6 +316,9 @@ private:
     uint16_t _pending_stack_sockets_offset = 0;
     uint16_t _pending_stack_sockets_limit = 0;
     bool _pending_stack_sockets_log = false;
+    bool _pending_display_stack_sockets_page = false;
+    uint32_t _pending_display_stack_sockets_node_id = 0;
+    uint16_t _pending_display_stack_sockets_offset = 0;
     bool _pending_stack_lights_response = false;
     uint32_t _pending_stack_lights_target_node = 0;
     uint32_t _pending_stack_lights_reply_to = 0;
@@ -325,6 +329,9 @@ private:
     uint16_t _pending_stack_lights_offset = 0;
     uint16_t _pending_stack_lights_limit = 0;
     bool _pending_stack_lights_log = false;
+    bool _pending_display_stack_lights_page = false;
+    uint32_t _pending_display_stack_lights_node_id = 0;
+    uint16_t _pending_display_stack_lights_offset = 0;
     bool _pending_rfid = false;
     String _pending_rfid_uid;
     bool _pending_ibutton = false;
@@ -345,6 +352,10 @@ private:
     uint8_t _stack_bootstrap_feature_index = 0;
     uint8_t _stack_bootstrap_pass = 0;
     uint16_t _stack_bootstrap_feature_sent_mask = 0;
+    uint32_t _stack_bootstrap_logged_sockets_node_id = 0;
+    uint32_t _stack_bootstrap_logged_lights_node_id = 0;
+    uint16_t _stack_bootstrap_logged_sockets_offset = 0xFFFF;
+    uint16_t _stack_bootstrap_logged_lights_offset = 0xFFFF;
     uint32_t _stack_bootstrap_queue[StackDeviceRegistry::kMaxDevices]{};
     uint8_t _stack_bootstrap_queue_count = 0;
     StackInventoryLogState _stack_inventory_log[StackDeviceRegistry::kMaxDevices]{};

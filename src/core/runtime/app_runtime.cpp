@@ -169,6 +169,34 @@ void AppRuntime::taskFlush()
 {
     if (_task_phase != TaskPhase::PostNetwork)
         return;
+    if (_pending_display_stack_sockets_page && !_pending_stack_sockets_page)
+    {
+        const uint32_t node_id = _pending_display_stack_sockets_node_id;
+        const uint16_t offset = _pending_display_stack_sockets_offset;
+        _pending_display_stack_sockets_page = false;
+        if (node_id != 0 && net.network.prepareStackSocketsPageRequest(node_id, millis(), offset, 4000u))
+        {
+            _pending_stack_sockets_page = true;
+            _pending_stack_sockets_node_id = node_id;
+            _pending_stack_sockets_offset = offset;
+            _pending_stack_sockets_limit = 8;
+            _pending_stack_sockets_log = false;
+        }
+    }
+    if (_pending_display_stack_lights_page && !_pending_stack_lights_page)
+    {
+        const uint32_t node_id = _pending_display_stack_lights_node_id;
+        const uint16_t offset = _pending_display_stack_lights_offset;
+        _pending_display_stack_lights_page = false;
+        if (node_id != 0 && net.network.prepareStackLightsPageRequest(node_id, millis(), offset, 4000u))
+        {
+            _pending_stack_lights_page = true;
+            _pending_stack_lights_node_id = node_id;
+            _pending_stack_lights_offset = offset;
+            _pending_stack_lights_limit = 8;
+            _pending_stack_lights_log = false;
+        }
+    }
     flushPending();
 }
 
@@ -240,9 +268,12 @@ bool AppRuntime::requestStackPollFeature_(uint32_t node_id, uint8_t feature){
 bool AppRuntime::bootstrapSyncCompleted_(uint32_t node_id) const{
     if (node_id == 0)
         return true;
-    AppRuntime *self = const_cast<AppRuntime *>(this);
-    StackInventoryLogState *st = self->inventoryLogState_(node_id, false);
-    return st && st->sync_complete_logged;
+    StackUnitSnapshot::State snapshot{};
+    if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+        return false;
+    const bool sockets_ready = snapshot.socket_count >= snapshot.sockets_enabled;
+    const bool lights_ready = snapshot.light_count >= snapshot.lights_enabled;
+    return sockets_ready && lights_ready;
 }
 
 bool AppRuntime::shouldLogStackBootstrapSync_(uint32_t node_id) const{
@@ -254,6 +285,30 @@ bool AppRuntime::shouldLogStackBootstrapSync_(uint32_t node_id) const{
     {
         if (_stack_bootstrap_queue[i] == node_id)
             return true;
+    }
+    return false;
+}
+
+bool AppRuntime::queueDisplayStackSnapshotPage_(uint32_t node_id, const char *feature, uint16_t offset){
+    if (node_id == 0 || !feature || !stackMasterActive_())
+        return false;
+    if (strcmp(feature, "sockets") == 0)
+    {
+        if (_pending_stack_sockets_page || _pending_display_stack_sockets_page)
+            return false;
+        _pending_display_stack_sockets_page = true;
+        _pending_display_stack_sockets_node_id = node_id;
+        _pending_display_stack_sockets_offset = offset;
+        return true;
+    }
+    if (strcmp(feature, "lights") == 0)
+    {
+        if (_pending_stack_lights_page || _pending_display_stack_lights_page)
+            return false;
+        _pending_display_stack_lights_page = true;
+        _pending_display_stack_lights_node_id = node_id;
+        _pending_display_stack_lights_offset = offset;
+        return true;
     }
     return false;
 }
@@ -336,6 +391,10 @@ void AppRuntime::startStackBootstrapSync_(uint32_t node_id){
     _stack_bootstrap_feature_index = 0;
     _stack_bootstrap_pass = 0;
     _stack_bootstrap_feature_sent_mask = 0;
+    _stack_bootstrap_logged_sockets_node_id = 0;
+    _stack_bootstrap_logged_lights_node_id = 0;
+    _stack_bootstrap_logged_sockets_offset = 0xFFFF;
+    _stack_bootstrap_logged_lights_offset = 0xFFFF;
     _last_stack_poll_ms = 0; // allow first bootstrap request on the next loop tick
     STACK_BOOTSTRAP_EVT_INFO((*this), "Bootstrap sync start: %s", stackNodeLabel_(node_id).c_str());
     STACK_BOOTSTRAP_DBG((*this), "Bootstrap active: id: 0x%08lX q:%u",
@@ -357,6 +416,10 @@ void AppRuntime::stopStackBootstrapSync_(bool timeout){
     _stack_bootstrap_feature_index = 0;
     _stack_bootstrap_pass = 0;
     _stack_bootstrap_feature_sent_mask = 0;
+    _stack_bootstrap_logged_sockets_node_id = 0;
+    _stack_bootstrap_logged_lights_node_id = 0;
+    _stack_bootstrap_logged_sockets_offset = 0xFFFF;
+    _stack_bootstrap_logged_lights_offset = 0xFFFF;
     if (prev_node_id != 0)
         tryStartNextStackBootstrapSync_();
 }

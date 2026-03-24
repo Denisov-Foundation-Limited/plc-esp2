@@ -73,37 +73,6 @@ void advanceDisplayDateTime_(Ds3231Mz::DateTime &dt, uint32_t delta_sec)
     }
 }
 
-bool requestDisplayStackSnapshotPage_(Network &network, uint32_t node_id, const char *feature, uint16_t offset)
-{
-    if (node_id == 0 || !feature)
-        return false;
-    const uint32_t now = millis();
-    bool prepared = false;
-    if (strcmp(feature, "sockets") == 0)
-    {
-        prepared = network.prepareStackSocketsPageRequest(node_id, now, offset, 4000u);
-    }
-    else if (strcmp(feature, "lights") == 0)
-    {
-        prepared = network.prepareStackLightsPageRequest(node_id, now, offset, 4000u);
-    }
-    if (!prepared)
-        return false;
-    DynamicJsonDocument req(64);
-    req["offset"] = offset;
-    req["limit"] = 8;
-    const bool sent = network.stackRoute().sendRequest(node_id, feature, "snapshot_req", &req,
-                                                       StackRouteAdapter::Mode::Json, true);
-    if (!sent)
-    {
-        if (strcmp(feature, "sockets") == 0)
-            network.clearStackSocketsPageRequest(node_id);
-        else if (strcmp(feature, "lights") == 0)
-            network.clearStackLightsPageRequest(node_id);
-    }
-    return sent;
-}
-
 } // namespace
 
 bool AppRuntime::onDisplaySlot_(void *ctx, const DisplaySlotConfig &slot, char out[5]){
@@ -206,12 +175,12 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             StackUnitSnapshot::State snapshot{};
             if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
             {
-                requestDisplayStackSnapshotPage_(net.network, node_id, "sockets", 0);
+                queueDisplayStackSnapshotPage_(node_id, "sockets", 0);
                 return false;
             }
             const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
             if (age_ms > 3000u)
-                requestDisplayStackSnapshotPage_(net.network, node_id, "sockets", 0);
+                queueDisplayStackSnapshotPage_(node_id, "sockets", 0);
             if (age_ms > kStackNodeStaleMs)
             {
                 memcpy(out, "ERR ", 4);
@@ -221,7 +190,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             if (!net.network.stackIndexSocketById(node_id, slot.index, item))
             {
                 if (snapshot.sockets_enabled > snapshot.socket_count)
-                    requestDisplayStackSnapshotPage_(net.network, node_id, "sockets", snapshot.socket_count);
+                    queueDisplayStackSnapshotPage_(node_id, "sockets", snapshot.socket_count);
                 return false;
             }
             if (!item.enabled)
@@ -255,12 +224,12 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             StackUnitSnapshot::State snapshot{};
             if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
             {
-                requestDisplayStackSnapshotPage_(net.network, node_id, "lights", 0);
+                queueDisplayStackSnapshotPage_(node_id, "lights", 0);
                 return false;
             }
             const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
             if (age_ms > 3000u)
-                requestDisplayStackSnapshotPage_(net.network, node_id, "lights", 0);
+                queueDisplayStackSnapshotPage_(node_id, "lights", 0);
             if (age_ms > kStackNodeStaleMs)
             {
                 memcpy(out, "ERR ", 4);
@@ -270,7 +239,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             if (!net.network.stackIndexLightById(node_id, slot.index, item))
             {
                 if (snapshot.lights_enabled > snapshot.light_count)
-                    requestDisplayStackSnapshotPage_(net.network, node_id, "lights", snapshot.light_count);
+                    queueDisplayStackSnapshotPage_(node_id, "lights", snapshot.light_count);
                 return false;
             }
             if (!item.enabled)

@@ -46,6 +46,8 @@
 
 - Ошибка таб-комплишена CLI: при добавлении команд нужно обновлять размер массива `std::array`.
 - Кодировка веб-страниц: редактирование через apply_patch может ломать UTF-8.
+- `StackUnitSnapshot::update()` не должен перетирать внутренний page-request bookkeeping (`*_page_pending`, `*_page_request_offset`, `*_started_ms`) данными из временного `Snapshot`, иначе мастер начинает бесконечно ретраить страницы `8-15`.
+- Нельзя делать `entry = Entry{}` / `*entry = Entry{}` для больших `StackUnitSnapshot::Entry`: это создаёт временный объект на стеке RTOS-задачи и легко бьёт canary. Очищать только in-place через `memset`.
 - plc-cloud: если даже в приватном окне видны кракозябры, проверять не только `ui.js`, но и `index.html`/`main.js` по HTTP (`curl -o ... http://host:3000/...`), потому что проблема может быть в статическом HTML, а не в runtime-рендере.
 - plc-cloud: для Express static принудительно отдавать `charset=utf-8` для `.html/.js/.css/.json` и отключать кэш текстовой статики (`Cache-Control: no-store`), иначе браузер может продолжать показывать старую битую версию даже после `Ctrl+F5`.
 - plc-cloud: PowerShell может искажать кириллицу в консольном выводе; для проверки реального содержимого файла/HTTP-ответа смотреть файл через Python (`read_text(encoding='utf-8')` + `encode('unicode_escape')`), а не полагаться на обычный `Get-Content` или redirect.

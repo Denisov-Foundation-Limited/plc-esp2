@@ -961,7 +961,16 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     _pending_stack_sockets_node_id = node_id;
                     _pending_stack_sockets_offset = next_offset;
                     _pending_stack_sockets_limit = 8;
-                    _pending_stack_sockets_log = shouldLogStackBootstrapSync_(node_id);
+                    const bool bootstrap_log = shouldLogStackBootstrapSync_(node_id);
+                    _pending_stack_sockets_log =
+                        bootstrap_log &&
+                        !(_stack_bootstrap_logged_sockets_node_id == node_id &&
+                          _stack_bootstrap_logged_sockets_offset == next_offset);
+                    if (_pending_stack_sockets_log)
+                    {
+                        _stack_bootstrap_logged_sockets_node_id = node_id;
+                        _stack_bootstrap_logged_sockets_offset = next_offset;
+                    }
                 }
             }
             return;
@@ -1038,7 +1047,16 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     _pending_stack_lights_node_id = node_id;
                     _pending_stack_lights_offset = next_offset;
                     _pending_stack_lights_limit = 8;
-                    _pending_stack_lights_log = shouldLogStackBootstrapSync_(node_id);
+                    const bool bootstrap_log = shouldLogStackBootstrapSync_(node_id);
+                    _pending_stack_lights_log =
+                        bootstrap_log &&
+                        !(_stack_bootstrap_logged_lights_node_id == node_id &&
+                          _stack_bootstrap_logged_lights_offset == next_offset);
+                    if (_pending_stack_lights_log)
+                    {
+                        _stack_bootstrap_logged_lights_node_id = node_id;
+                        _stack_bootstrap_logged_lights_offset = next_offset;
+                    }
                 }
             }
             return;

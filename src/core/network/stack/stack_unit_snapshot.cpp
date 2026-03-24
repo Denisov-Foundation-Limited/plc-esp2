@@ -250,9 +250,21 @@ void StackUnitSnapshot::update(uint32_t node_id, const Snapshot &state)
     Entry *entry = allocEntry_(node_id);
     if (!entry)
         return;
+    const uint32_t sockets_page_request_started_ms = entry->sockets_page_request_started_ms;
+    const uint32_t lights_page_request_started_ms = entry->lights_page_request_started_ms;
+    const uint16_t sockets_page_request_offset = entry->sockets_page_request_offset;
+    const uint16_t lights_page_request_offset = entry->lights_page_request_offset;
+    const bool sockets_page_pending = entry->sockets_page_pending;
+    const bool lights_page_pending = entry->lights_page_pending;
     entry->used = true;
     copyState_(*entry, state);
     entry->updated_ms = state.updated_ms ? state.updated_ms : millis();
+    entry->sockets_page_request_started_ms = sockets_page_request_started_ms;
+    entry->lights_page_request_started_ms = lights_page_request_started_ms;
+    entry->sockets_page_request_offset = sockets_page_request_offset;
+    entry->lights_page_request_offset = lights_page_request_offset;
+    entry->sockets_page_pending = sockets_page_pending;
+    entry->lights_page_pending = lights_page_pending;
     memcpy(entry->sockets, state.sockets, sizeof(entry->sockets));
     memcpy(entry->lights, state.lights, sizeof(entry->lights));
 }
@@ -266,7 +278,7 @@ void StackUnitSnapshot::invalidate(uint32_t node_id)
         return;
     Entry *entry = findEntry_(node_id);
     if (entry)
-        *entry = Entry{};
+        memset(entry, 0, sizeof(*entry));
 }
 
 StackUnitSnapshot::Entry *StackUnitSnapshot::findEntry_(uint32_t node_id)
@@ -306,7 +318,7 @@ StackUnitSnapshot::Entry *StackUnitSnapshot::allocEntry_(uint32_t node_id)
         auto &entry = _entries[i];
         if (!entry.used)
         {
-            entry = Entry{};
+            memset(&entry, 0, sizeof(entry));
             entry.used = true;
             entry.node_id = node_id;
             return &entry;
