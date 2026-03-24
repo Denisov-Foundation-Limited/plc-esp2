@@ -72,6 +72,38 @@ void advanceDisplayDateTime_(Ds3231Mz::DateTime &dt, uint32_t delta_sec)
         --day_carry;
     }
 }
+
+bool requestDisplayStackSnapshotPage_(Network &network, uint32_t node_id, const char *feature, uint16_t offset)
+{
+    if (node_id == 0 || !feature)
+        return false;
+    const uint32_t now = millis();
+    bool prepared = false;
+    if (strcmp(feature, "sockets") == 0)
+    {
+        prepared = network.prepareStackSocketsPageRequest(node_id, now, offset, 4000u);
+    }
+    else if (strcmp(feature, "lights") == 0)
+    {
+        prepared = network.prepareStackLightsPageRequest(node_id, now, offset, 4000u);
+    }
+    if (!prepared)
+        return false;
+    DynamicJsonDocument req(64);
+    req["offset"] = offset;
+    req["limit"] = 8;
+    const bool sent = network.stackRoute().sendRequest(node_id, feature, "snapshot_req", &req,
+                                                       StackRouteAdapter::Mode::Json, true);
+    if (!sent)
+    {
+        if (strcmp(feature, "sockets") == 0)
+            network.clearStackSocketsPageRequest(node_id);
+        else if (strcmp(feature, "lights") == 0)
+            network.clearStackLightsPageRequest(node_id);
+    }
+    return sent;
+}
+
 } // namespace
 
 bool AppRuntime::onDisplaySlot_(void *ctx, const DisplaySlotConfig &slot, char out[5]){
@@ -146,44 +178,12 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            const auto *cache = _stack_cache.securityCache(node_id);
-            if (!cache || !cache->has_data)
-            {
-                _stack_cache.requestSecurity(node_id);
-                return false;
-            }
-            if (!cache->last_ok && cache->last_error.length())
-            {
-                memcpy(out, "ERR ", 4);
-                return true;
-            }
-            const char *txt = cache->armed ? "ARM " : "DIS ";
-            memcpy(out, txt, 4);
+            memcpy(out, "ERR ", 4);
             return true;
         }
         if (!is_slave)
             return false;
-        const auto *rcache = net.stack_slave.remoteSecurityCache(node_id);
-        if (!rcache || !rcache->has_data)
-        {
-            net.stack_slave.requestRemoteSecurity(node_id);
-            return false;
-        }
-        const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
-        if (age_ms > 3000u)
-            net.stack_slave.requestRemoteSecurity(node_id);
-        if (age_ms > 8000u)
-        {
-            memcpy(out, "ERR ", 4);
-            return true;
-        }
-        if (!rcache->last_ok && rcache->last_error.length())
-        {
-            memcpy(out, "ERR ", 4);
-            return true;
-        }
-        const char *txt = rcache->armed ? "ARM " : "DIS ";
-        memcpy(out, txt, 4);
+        memcpy(out, "ERR ", 4);
         return true;
     }
     case DisplaySlotKind::Socket:
@@ -203,59 +203,37 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            const auto *cache = _stack_cache.socketsCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
+            StackUnitSnapshot::State snapshot{};
+            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
             {
-                _stack_cache.requestSockets(node_id);
+                requestDisplayStackSnapshotPage_(net.network, node_id, "sockets", 0);
                 return false;
             }
-            if (!cache->last_ok && cache->last_error.length())
+            const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
+            if (age_ms > 3000u)
+                requestDisplayStackSnapshotPage_(net.network, node_id, "sockets", 0);
+            if (age_ms > kStackNodeStaleMs)
             {
                 memcpy(out, "ERR ", 4);
                 return true;
             }
-            for (size_t i = 0; i < cache->item_count; ++i)
+            StackUnitSnapshot::SocketItem item{};
+            if (!net.network.stackIndexSocketById(node_id, slot.index, item))
             {
-                const auto &it = cache->items[i];
-                if (it.id != slot.index || !it.enabled)
-                    continue;
-                const char *txt = it.state ? "ON  " : "OFF ";
-                memcpy(out, txt, 4);
-                return true;
+                if (snapshot.sockets_enabled > snapshot.socket_count)
+                    requestDisplayStackSnapshotPage_(net.network, node_id, "sockets", snapshot.socket_count);
+                return false;
             }
-            return false;
-        }
-        if (!is_slave)
-            return false;
-        const auto *rcache = net.stack_slave.remoteSocketsCache(node_id);
-        if (!rcache || !rcache->has_data || !rcache->items)
-        {
-            net.stack_slave.requestRemoteSockets(node_id);
-            return false;
-        }
-        const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
-        if (age_ms > 3000u)
-            net.stack_slave.requestRemoteSockets(node_id);
-        if (age_ms > 8000u)
-        {
-            memcpy(out, "ERR ", 4);
-            return true;
-        }
-        if (!rcache->last_ok && rcache->last_error.length())
-        {
-            memcpy(out, "ERR ", 4);
-            return true;
-        }
-        for (size_t i = 0; i < rcache->item_count; ++i)
-        {
-            const auto &it = rcache->items[i];
-            if (it.id != slot.index || !it.enabled)
-                continue;
-            const char *txt = it.state ? "ON  " : "OFF ";
+            if (!item.enabled)
+                return false;
+            const char *txt = item.state ? "ON  " : "OFF ";
             memcpy(out, txt, 4);
             return true;
         }
-        return false;
+        if (!is_slave)
+            return false;
+        memcpy(out, "ERR ", 4);
+        return true;
     }
     case DisplaySlotKind::Light:
     {
@@ -274,59 +252,37 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            const auto *cache = _stack_cache.lightsCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
+            StackUnitSnapshot::State snapshot{};
+            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
             {
-                _stack_cache.requestLights(node_id);
+                requestDisplayStackSnapshotPage_(net.network, node_id, "lights", 0);
                 return false;
             }
-            if (!cache->last_ok && cache->last_error.length())
+            const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
+            if (age_ms > 3000u)
+                requestDisplayStackSnapshotPage_(net.network, node_id, "lights", 0);
+            if (age_ms > kStackNodeStaleMs)
             {
                 memcpy(out, "ERR ", 4);
                 return true;
             }
-            for (size_t i = 0; i < cache->item_count; ++i)
+            StackUnitSnapshot::SocketItem item{};
+            if (!net.network.stackIndexLightById(node_id, slot.index, item))
             {
-                const auto &it = cache->items[i];
-                if (it.id != slot.index || !it.enabled)
-                    continue;
-                const char *txt = it.state ? "ON  " : "OFF ";
-                memcpy(out, txt, 4);
-                return true;
+                if (snapshot.lights_enabled > snapshot.light_count)
+                    requestDisplayStackSnapshotPage_(net.network, node_id, "lights", snapshot.light_count);
+                return false;
             }
-            return false;
-        }
-        if (!is_slave)
-            return false;
-        const auto *rcache = net.stack_slave.remoteLightsCache(node_id);
-        if (!rcache || !rcache->has_data || !rcache->items)
-        {
-            net.stack_slave.requestRemoteLights(node_id);
-            return false;
-        }
-        const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
-        if (age_ms > 3000u)
-            net.stack_slave.requestRemoteLights(node_id);
-        if (age_ms > 8000u)
-        {
-            memcpy(out, "ERR ", 4);
-            return true;
-        }
-        if (!rcache->last_ok && rcache->last_error.length())
-        {
-            memcpy(out, "ERR ", 4);
-            return true;
-        }
-        for (size_t i = 0; i < rcache->item_count; ++i)
-        {
-            const auto &it = rcache->items[i];
-            if (it.id != slot.index || !it.enabled)
-                continue;
-            const char *txt = it.state ? "ON  " : "OFF ";
+            if (!item.enabled)
+                return false;
+            const char *txt = item.state ? "ON  " : "OFF ";
             memcpy(out, txt, 4);
             return true;
         }
-        return false;
+        if (!is_slave)
+            return false;
+        memcpy(out, "ERR ", 4);
+        return true;
     }
     case DisplaySlotKind::Meteo:
     {
@@ -365,93 +321,17 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         else if (is_master)
         {
-            const auto *cache = _stack_cache.meteoCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
-            {
-                _stack_cache.requestMeteo(node_id);
-                return false;
-            }
-            if (!cache->last_ok && cache->last_error.length())
-            {
-                memcpy(out, "ERR ", 4);
-                return true;
-            }
-            const StackCache::StackMeteoItem *found = nullptr;
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                if (cache->items[i].id == slot.index && cache->items[i].enabled)
-                {
-                    found = &cache->items[i];
-                    break;
-                }
-            }
-            if (!found || !found->ok)
-                return false;
-            if (slot.field == DisplaySlotField::MeteoHum)
-            {
-                if (!found->has_hum)
-                    return false;
-                const int h = (int)roundf(found->hum);
-                snprintf(out, 5, "%2d%%", h);
-            }
-            else
-            {
-            if (!found->has_temp)
-                return false;
-            const int t = (int)roundf(found->temp_c);
-            formatTemp3_(out, t);
+            memcpy(out, "ERR ", 4);
+            return true;
         }
-    }
         else
         {
-            const auto *cache = net.stack_slave.remoteMeteoCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
-            {
-                net.stack_slave.requestRemoteMeteoAll();
-                return false;
-            }
-            const uint32_t age_ms = (uint32_t)(millis() - cache->updated_ms);
-            if (age_ms > 3000u)
-                net.stack_slave.requestRemoteMeteoAll();
-            if (age_ms > kStackNodeStaleMs)
-            {
-                memcpy(out, "ERR ", 4);
-                return true;
-            }
-            if (!cache->last_ok && cache->last_error.length())
-            {
-                memcpy(out, "ERR ", 4);
-                return true;
-            }
-            const StackSlaveHandler::RemoteMeteoItem *found = nullptr;
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                if (cache->items[i].id == slot.index)
-                {
-                    found = &cache->items[i];
-                    break;
-                }
-            }
-            if (!found || !found->ok)
-                return false;
-            if (slot.field == DisplaySlotField::MeteoHum)
-            {
-                if (!found->has_hum)
-                    return false;
-                const int h = (int)roundf(found->hum);
-                snprintf(out, 5, "%2d%%", h);
-            }
-            else
-            {
-            if (!found->has_temp)
-                return false;
-            const int t = (int)roundf(found->temp_c);
-            formatTemp3_(out, t);
+            memcpy(out, "ERR ", 4);
+            return true;
         }
-    }
-    if (strlen(out) < 4)
-    {
-        size_t len = strlen(out);
+        if (strlen(out) < 4)
+        {
+            size_t len = strlen(out);
             while (len < 4)
                 out[len++] = ' ';
             out[4] = '\0';
@@ -481,71 +361,13 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            const auto *cache = _stack_cache.thermoCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
-            {
-                _stack_cache.requestThermo(node_id);
-                return false;
-            }
-            if (!cache->last_ok && cache->last_error.length())
-            {
-                memcpy(out, "ERR ", 4);
-                return true;
-            }
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                const auto &it = cache->items[i];
-                if (it.id != slot.index || !it.enabled)
-                    continue;
-                if (!it.power_on)
-                    memcpy(out, "IDL ", 4);
-                else if (it.heat_on)
-                    memcpy(out, "HET ", 4);
-                else if (it.cool_on)
-                    memcpy(out, "COL ", 4);
-                else
-                    memcpy(out, "IDL ", 4);
-                return true;
-            }
-            return false;
+            memcpy(out, "ERR ", 4);
+            return true;
         }
         if (!is_slave)
             return false;
-        const auto *rcache = net.stack_slave.remoteThermoCache(node_id);
-        if (!rcache || !rcache->has_data || !rcache->items)
-        {
-            net.stack_slave.requestRemoteThermo(node_id);
-            return false;
-        }
-        const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
-        if (age_ms > 3000u)
-            net.stack_slave.requestRemoteThermo(node_id);
-        if (age_ms > kStackNodeStaleMs)
-        {
-            memcpy(out, "ERR ", 4);
-            return true;
-        }
-        if (!rcache->last_ok && rcache->last_error.length())
-        {
-            memcpy(out, "ERR ", 4);
-            return true;
-        }
-        for (size_t i = 0; i < rcache->item_count; ++i)
-        {
-            const auto &it = rcache->items[i];
-            if (it.id != slot.index || !it.enabled)
-                continue;
-            if (!it.power_on)
-                memcpy(out, "IDL ", 4);
-            else if (it.heat_on)
-                memcpy(out, "HET ", 4);
-            else if (it.cool_on)
-                memcpy(out, "COL ", 4);
-            else
-                memcpy(out, "IDL ", 4);
-            return true;
-        }
-        return false;
+        memcpy(out, "ERR ", 4);
+        return true;
     }
     case DisplaySlotKind::Tank:
     {
@@ -570,116 +392,13 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            const auto *cache = _stack_cache.tanksCache(node_id);
-            if (!cache || !cache->items)
-            {
-                _stack_cache.requestTanks(node_id);
-                return false;
-            }
-            StackDeviceRegistry::DeviceInfo device{};
-            const bool node_online =
-                net.network.stackDeviceSnapshotByNodeId(node_id, device) &&
-                device.online &&
-                (uint32_t)(millis() - device.last_seen_ms) <= kStackNodeStaleMs;
-            const uint32_t now = millis();
-            const uint32_t age_ms = (uint32_t)(now - cache->updated_ms);
-            if (age_ms > 3000u)
-                _stack_cache.requestTanks(node_id);
-            if (!cache->has_data)
-            {
-                bool no_data_long = false;
-                if (cache->pending_since_ms)
-                    no_data_long = (uint32_t)(now - cache->pending_since_ms) > kDisplayNoDataErrMs;
-                else if (cache->updated_ms)
-                    no_data_long = (uint32_t)(now - cache->updated_ms) > kDisplayNoDataErrMs;
-                else
-                    no_data_long = now > kDisplayNoDataErrMs;
-                if (no_data_long && !node_online)
-                {
-                    memcpy(out, "ERR ", 4);
-                    return true;
-                }
-                return false;
-            }
-            if (age_ms > kDisplayNoDataErrMs && !node_online)
-            {
-                memcpy(out, "ERR ", 4);
-                return true;
-            }
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                const auto &it = cache->items[i];
-                if (it.id != slot.index || !it.enabled)
-                    continue;
-                if (!it.levels_ok)
-                    return false;
-                if (it.level_full)
-                    memcpy(out, "99% ", 4);
-                else if (it.level_mid)
-                    memcpy(out, "66% ", 4);
-                else if (it.level_low)
-                    memcpy(out, "33% ", 4);
-                else
-                    memcpy(out, "0%  ", 4);
-                return true;
-            }
-            return false;
-        }
-        if (!is_slave)
-            return false;
-        const auto *rcache = net.stack_slave.remoteTanksCache(node_id);
-        if (!rcache || !rcache->items)
-        {
-            net.stack_slave.requestRemoteTanks(node_id);
-            return false;
-        }
-        const Network::StackRuntimeState stack_state = net.network.stackRuntimeState();
-        const bool master_connected =
-            stack_state == Network::StackRuntimeState::Online ||
-            stack_state == Network::StackRuntimeState::AuthPending;
-        const uint32_t now = millis();
-        const uint32_t age_ms = (uint32_t)(now - rcache->updated_ms);
-        if (age_ms > 3000u)
-            net.stack_slave.requestRemoteTanks(node_id);
-        if (!rcache->has_data)
-        {
-            bool no_data_long = false;
-            if (rcache->pending_since_ms)
-                no_data_long = (uint32_t)(now - rcache->pending_since_ms) > kDisplayNoDataErrMs;
-            else if (rcache->updated_ms)
-                no_data_long = (uint32_t)(now - rcache->updated_ms) > kDisplayNoDataErrMs;
-            else
-                no_data_long = now > kDisplayNoDataErrMs;
-            if (no_data_long && !master_connected)
-            {
-                memcpy(out, "ERR ", 4);
-                return true;
-            }
-            return false;
-        }
-        if (age_ms > kDisplayNoDataErrMs && !master_connected)
-        {
             memcpy(out, "ERR ", 4);
             return true;
         }
-        for (size_t i = 0; i < rcache->item_count; ++i)
-        {
-            const auto &it = rcache->items[i];
-            if (it.id != slot.index || !it.enabled)
-                continue;
-            if (!it.levels_ok)
-                return false;
-            if (it.level_full)
-                memcpy(out, "99% ", 4);
-            else if (it.level_mid)
-                memcpy(out, "66% ", 4);
-            else if (it.level_low)
-                memcpy(out, "33% ", 4);
-            else
-                memcpy(out, "0%  ", 4);
-            return true;
-        }
-        return false;
+        if (!is_slave)
+            return false;
+        memcpy(out, "ERR ", 4);
+        return true;
     }
     case DisplaySlotKind::Septic:
     {
@@ -703,67 +422,13 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            const auto *cache = _stack_cache.septicCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
-            {
-                _stack_cache.requestSeptic(node_id);
-                return false;
-            }
-            if (!cache->last_ok && cache->last_error.length())
-            {
-                memcpy(out, "ERR ", 4);
-                return true;
-            }
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                const auto &it = cache->items[i];
-                if (it.id != slot.index || !it.enabled)
-                    continue;
-                if (it.alarm)
-                    memcpy(out, "ALM ", 4);
-                else if (it.warning)
-                    memcpy(out, "WRN ", 4);
-                else
-                    memcpy(out, "OK  ", 4);
-                return true;
-            }
-            return false;
+            memcpy(out, "ERR ", 4);
+            return true;
         }
         if (!is_slave)
             return false;
-        const auto *rcache = net.stack_slave.remoteSepticCache(node_id);
-        if (!rcache || !rcache->has_data || !rcache->items)
-        {
-            net.stack_slave.requestRemoteSeptic(node_id);
-            return false;
-        }
-        const uint32_t age_ms = (uint32_t)(millis() - rcache->updated_ms);
-        if (age_ms > 3000u)
-            net.stack_slave.requestRemoteSeptic(node_id);
-        if (age_ms > 8000u)
-        {
-            memcpy(out, "ERR ", 4);
-            return true;
-        }
-        if (!rcache->last_ok && rcache->last_error.length())
-        {
-            memcpy(out, "ERR ", 4);
-            return true;
-        }
-        for (size_t i = 0; i < rcache->item_count; ++i)
-        {
-                const auto &it = rcache->items[i];
-                if (it.id != slot.index || !it.enabled)
-                    continue;
-                if (it.alarm)
-                    memcpy(out, "ALM ", 4);
-                else if (it.warning)
-                    memcpy(out, "WRN ", 4);
-                else
-                    memcpy(out, "OK  ", 4);
-                return true;
-        }
-        return false;
+        memcpy(out, "ERR ", 4);
+        return true;
     }
     case DisplaySlotKind::Avr:
     {
@@ -786,30 +451,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            const auto *cache = _stack_cache.avrCache(node_id);
-            if (!cache || !cache->has_data)
-            {
-                _stack_cache.requestAvr(node_id);
-                return false;
-            }
-            const uint32_t age_ms = (uint32_t)(millis() - cache->updated_ms);
-            if (age_ms > 3000u)
-                _stack_cache.requestAvr(node_id);
-            if (age_ms > 8000u || (!cache->last_ok && cache->last_error.length()))
-            {
-                memcpy(out, "ERR ", 4);
-                return true;
-            }
-            if (slot.field == DisplaySlotField::AvrMainOk)
-                memcpy(out, cache->main_ok ? "ON  " : "OFF ", 4);
-            else if (slot.field == DisplaySlotField::AvrReserveOk)
-                memcpy(out, cache->reserve_ok ? "ON  " : "OFF ", 4);
-            else if (strcmp(cache->active_source, "main") == 0)
-                memcpy(out, "MAN ", 4);
-            else if (strcmp(cache->active_source, "reserve") == 0)
-                memcpy(out, "RES ", 4);
-            else
-                memcpy(out, "OFF ", 4);
+            memcpy(out, "ERR ", 4);
             return true;
         }
         return false;
@@ -833,32 +475,8 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            const auto *cache = _stack_cache.leakCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
-            {
-                _stack_cache.requestLeak(node_id);
-                return false;
-            }
-            const uint32_t age_ms = (uint32_t)(millis() - cache->updated_ms);
-            if (age_ms > 3000u)
-                _stack_cache.requestLeak(node_id);
-            if (age_ms > 8000u || (!cache->last_ok && cache->last_error.length()))
-            {
-                memcpy(out, "ERR ", 4);
-                return true;
-            }
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                const auto &it = cache->items[i];
-                if (it.id != slot.index || !it.enabled)
-                    continue;
-                if (it.wet || it.alarm_latched)
-                    memcpy(out, "ALRM", 4);
-                else
-                    memcpy(out, "DRY ", 4);
-                return true;
-            }
-            return false;
+            memcpy(out, "ERR ", 4);
+            return true;
         }
         return false;
     }

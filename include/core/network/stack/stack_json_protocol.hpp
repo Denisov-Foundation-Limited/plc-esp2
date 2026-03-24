@@ -14,6 +14,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <stdint.h>
+#include <memory>
 
 #include "core/network/stack/stack_device_registry.hpp"
 #include "core/network/stack/stack_transport.hpp"
@@ -47,6 +48,8 @@ public:
         char feature[32] = {};
         char action[32] = {};
         String payload;
+        std::shared_ptr<DynamicJsonDocument> payload_storage;
+        JsonVariantConst payload_json;
     };
 
     struct NotifyMessage
@@ -62,9 +65,12 @@ public:
     static MessageKind detectKind(const uint8_t *data, size_t size);
     static bool parseAuth(const uint8_t *data, size_t size, AuthMessage &out);
     static bool parseRoute(const uint8_t *data, size_t size, RouteMessage &out);
+    static bool parseRoutePayload(const String &payload, RouteMessage &out);
     static bool parseNotify(const uint8_t *data, size_t size, NotifyMessage &out);
     static String makeRoute(uint32_t source_node, uint32_t target_node, const char *feature, const char *action,
                             const JsonDocument *payload = nullptr, const StackTransport::RouteMeta *meta = nullptr);
+    static String makeRoute(uint32_t source_node, uint32_t target_node, const char *feature, const char *action,
+                            JsonVariantConst payload, const StackTransport::RouteMeta *meta = nullptr);
     static String makeNotify(uint32_t source_node, const char *level, const char *feature, const char *code,
                              const char *message = nullptr, const JsonDocument *payload = nullptr);
     static String makeOk(const char *message = nullptr);

@@ -66,41 +66,26 @@ String WebInterfaceControllersSecurityHelper::securityDeviceSelectHtml_(const We
     }
 
 String WebInterfaceControllersSecurityHelper::stackSecurityStatusText_(const WebInterface &web, uint32_t node_id) {
-            const auto *cache = web._stack_cache->securityCache(node_id);
-            if (!cache)
-                return WebUiRu::kNoDataFromSlave;
-            if (cache->pending)
-                return "";
-            if (!cache->last_ok && cache->last_error.length())
-            {
-                String msg = WebUiRu::kErrorPrefix;
-                msg += cache->last_error;
-                return msg;
-            }
-            if (!cache->has_data)
-                return WebUiRu::kNoDataFromSlave;
-            return WebUiRu::kStatusOk;
+            (void)web;
+            (void)node_id;
+            return WebUiRu::kNoDataFromSlave;
         
     }
 
 String WebInterfaceControllersSecurityHelper::stackSecurityTitle_(const WebInterface &web, uint32_t node_id) {
         String title = WebUiRu::Security::kText;
-        if (!web._stack_master || node_id == 0)
+        if (!web.network() || node_id == 0)
             return title;
-        const size_t count = web._stack_master->nodeCount();
-        for (size_t i = 0; i < count; ++i)
+        StackDeviceRegistry::DeviceInfo device{};
+        if (web.network()->stackDeviceSnapshotByNodeId(node_id, device))
         {
-            if (web._stack_master->nodeIdAt(i) == node_id)
+            if (device.name[0])
             {
-                String name = web._stack_master->nodeNameAt(i);
-                if (name.length() > 0)
-                {
-                    title += " (";
-                    title += name;
-                    title += ")";
-                }
-                return title;
+                title += " (";
+                title += String(device.name);
+                title += ")";
             }
+            return title;
         }
         return title;
     }
@@ -113,7 +98,9 @@ bool WebInterfaceControllersSecurityHelper::isStackSecurityView_(const WebInterf
     }
 
 bool WebInterfaceControllersSecurityHelper::requestStackSecurity_(WebInterface &web, uint32_t node_id) {
-        return web._stack_cache && web._stack_cache->requestSecurity(node_id);
+        (void)web;
+        (void)node_id;
+        return false;
     }
 
 String WebInterfaceControllersSecurityHelper::listSecuritySensorsHtml_(WebInterface &web) {
@@ -344,220 +331,18 @@ String WebInterfaceControllersSecurityHelper::listSecuritySensorsTiles_(WebInter
     }
 
 size_t WebInterfaceControllersSecurityHelper::stackSecurityVisibleCount_(const WebInterface &web, uint32_t node_id) {
-            const auto *cache = web._stack_cache ? web._stack_cache->securityCache(node_id) : nullptr;
-            if (!cache || !cache->has_data || !cache->items)
-                return 0;
-            const bool can_view_disabled = web.webSessionIsAdmin_();
-            size_t render_count = cache->item_count;
-            if (can_view_disabled)
-            {
-                size_t last_enabled_idx = SIZE_MAX;
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    if (cache->items[i].enabled)
-                        last_enabled_idx = i;
-                }
-                if (last_enabled_idx == SIZE_MAX)
-                    render_count = cache->item_count ? 1u : 0u;
-                else
-                {
-                    const size_t rc = last_enabled_idx + 2u;
-                    render_count = rc > cache->item_count ? cache->item_count : rc;
-                }
-            }
-            size_t count = 0;
-            for (size_t i = 0; i < render_count; ++i)
-            {
-                const auto &cfg = cache->items[i];
-                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Security, cfg.id, node_id))
-                    continue;
-                if (!can_view_disabled && !cfg.enabled)
-                    continue;
-                ++count;
-            }
-            return count;
+            (void)web;
+            (void)node_id;
+            return 0;
         
     }
 
 String WebInterfaceControllersSecurityHelper::listStackSecuritySensorsTiles_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
-        const auto *cache = web._stack_cache->securityCache(node_id);
-        if (!cache || !cache->has_data)
-            return WebUiRu::Security::kText9;
-        if (cache->item_count == 0)
-            return WebUiRu::Security::kText8;
-        String items;
-        const size_t page_limit = (limit == 0) ? 1u : limit;
-        size_t reserve = 2048u + page_limit * 900u;
-        if (reserve < 12288u)
-            reserve = 12288u;
-        items.reserve(reserve);
-        const bool can_view_disabled = web.webSessionIsAdmin_();
-        size_t render_count = cache->item_count;
-        if (can_view_disabled)
-        {
-            size_t last_enabled_idx = SIZE_MAX;
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                if (cache->items[i].enabled)
-                    last_enabled_idx = i;
-            }
-            if (last_enabled_idx == SIZE_MAX)
-                render_count = cache->item_count ? 1u : 0u;
-            else
-            {
-                const size_t rc = last_enabled_idx + 2u;
-                render_count = rc > cache->item_count ? cache->item_count : rc;
-            }
-        }
-
-        auto appendTypeOption = [&](const char *value, const char *label, bool selected) {
-            items += "<option value=\"";
-            items += value;
-            items += "\"";
-            if (selected)
-                items += " selected";
-            items += ">";
-            items += label;
-            items += "</option>";
-        };
-
-        size_t rendered = 0;
-        size_t visible_idx = 0;
-        for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
-        {
-            const auto &cfg = cache->items[i];
-            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Security, cfg.id, node_id))
-                continue;
-            if (!can_view_disabled && !cfg.enabled)
-                continue;
-            if (visible_idx < offset)
-            {
-                ++visible_idx;
-                continue;
-            }
-            ++visible_idx;
-
-            const bool enabled = cfg.enabled;
-            const bool detected = cfg.detect;
-            const bool is_reed = strcmp(cfg.type, "reed") == 0;
-            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Security, cfg.id, node_id);
-            const bool can_edit_cfg = can_control;
-
-            const bool has_groups = web.hasGroups_(node_id);
-            items += "<div class=\"tile js-group-item";
-            if (!enabled)
-                items += " disabled";
-            items += "\" data-group-id=\"";
-            items += String((unsigned)cfg.group_id);
-            items += "\"";
-            items += web.groupVisibilityStyleAttr_(cfg.group_id, node_id);
-            items += " data-sensor-id=\"";
-            items += String((unsigned)cfg.id);
-            items += "\"><div class=\"sock-visual\"><span class=\"badge\">#";
-            items += String((unsigned)cfg.id);
-            items += "</span>";
-            items += "<svg class=\"sock-icon ";
-            if (!enabled)
-                items += "off";
-            else if (detected)
-                items += "alert";
-            else
-                items += "on";
-            items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
-            if (is_reed)
-            {
-                items += "<rect x=\"6\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
-                items += "<rect x=\"44\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
-                items += "<rect x=\"22\" y=\"30\" width=\"20\" height=\"4\" rx=\"2\" fill=\"currentColor\"/>";
-            }
-            else
-            {
-                items += "<circle cx=\"32\" cy=\"24\" r=\"6\" fill=\"currentColor\"/>";
-                items += "<path d=\"M14 48c6-10 12-14 18-14s12 4 18 14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"4\" stroke-linecap=\"round\"/>";
-                items += "<path d=\"M8 20c6-6 12-10 18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
-                items += "<path d=\"M56 20c-6-6-12-10-18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
-            }
-            items += "</svg></div><div>";
-            items += "<div class=\"tile-head\"><strong>";
-            items += WebUiRu::Security::kNum;
-            items += String((unsigned)cfg.id);
-            items += "</strong><label class=\"switch\"><input type=\"checkbox\" name=\"sec";
-            items += String((unsigned)cfg.id);
-            items += "_en\"";
-            if (enabled)
-                items += " checked";
-            if (!can_edit_cfg)
-                items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-
-            items += "<input class=\"field name\" type=\"text\" name=\"sec";
-            items += String((unsigned)cfg.id);
-            items += "_name\" value=\"";
-            web.appendHtmlEscaped_(items, cfg.name);
-            items += "\"";
-            if (!can_edit_cfg)
-                items += " readonly";
-            items += ">";
-            items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"sec";
-            items += String((unsigned)cfg.id);
-            items += "_group\"";
-            if (!can_edit_cfg || !has_groups)
-                items += " disabled";
-            items += ">";
-            items += web.groupOptionsHtml_(cfg.group_id, true, true, node_id);
-            items += "</select></div>";
-
-            items += "<div class=\"status-line\"><span class=\"status-dot ";
-            if (!enabled)
-                items += "status-off";
-            else if (detected)
-                items += "status-bad";
-            else
-                items += "status-on";
-            items += "\"></span><span class=\"status-text\">";
-            if (!enabled)
-                items += WebUiRu::Security::kText5;
-            else if (detected)
-                items += WebUiRu::Security::kText6;
-            else
-                items += WebUiRu::Security::kText7;
-            items += "</span></div>";
-
-            items += "<div class=\"form-grid\">";
-            items += WebUiRu::Security::kSelectClassFieldMiniNameSec;
-            items += String((unsigned)cfg.id);
-            items += "_type\"";
-            if (!can_edit_cfg)
-                items += " disabled";
-            items += ">";
-            appendTypeOption("pir", "pir", strcmp(cfg.type, "reed") != 0);
-            appendTypeOption("reed", "reed", strcmp(cfg.type, "reed") == 0);
-            items += "</select></div>";
-
-            items += WebUiRu::Security::kSelectClassFieldMiniSecurityPortData;
-            if (cfg.port != SecurityController::kInvalidPort)
-                items += String((unsigned)cfg.port);
-            items += "\" name=\"sec";
-            items += String((unsigned)cfg.id);
-            items += "_port\"";
-            if (!can_edit_cfg)
-                items += " disabled";
-            items += "></select></div>";
-
-            items += WebUiRu::Security::kInputTypeCheckboxNameSec;
-            items += String((unsigned)cfg.id);
-            items += "_silent\"";
-            if (cfg.silent)
-                items += " checked";
-            if (!can_edit_cfg)
-                items += " disabled";
-            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
-            items += "</div></div></div>";
-            ++rendered;
-        }
-        if (items.length() == 0)
-            items = WebUiRu::Security::kText8;
-        return items;
+        (void)web;
+        (void)node_id;
+        (void)offset;
+        (void)limit;
+        return WebUiRu::Security::kText9;
     }
 
 String WebInterfaceControllersSecurityHelper::securityPortOptionsJson_(const WebInterface &web) {

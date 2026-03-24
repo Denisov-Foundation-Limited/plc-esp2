@@ -19,9 +19,9 @@
 #include "controllers/watering_controller.hpp"
 #include "controllers/thermo_controller.hpp"
 #include "core/network/cloud/cloud_transport.hpp"
+#include "core/network/stack/stack_device_registry.hpp"
 #include "core/network/cloud/cloud_ws_transport.hpp"
 #include "core/rules_controller.hpp"
-#include "core/compat/stack_stub.hpp"
 #include "utils/users_registry.hpp"
 
 class Logger;
@@ -31,8 +31,6 @@ class PlcControl;
 class WifiManager;
 class RTC;
 class GsmModem;
-class StackMaster;
-class StackCache;
 class ConfigsManagerIface;
 class Network;
 class CloudClient
@@ -54,9 +52,7 @@ public:
 
     void setGsm(GsmModem *gsm);
     void setNetwork(Network *network);
-    void setStackMaster(StackMaster *master);
     void setStackNodeNameProvider(StackNodeNameProvider cb, void *ctx);
-    void setStackCache(StackCache *cache);
     void setConfigsManager(ConfigsManagerIface *cfg);
     void setUsersRegistry(UsersRegistry *users);
     void setRulesController(RulesController *rules);
@@ -84,10 +80,6 @@ public:
 
 private:
     static constexpr uint8_t kProtoVersion = 1;
-    static constexpr uint16_t kStackCmdIdBase = 0x8000;
-    static constexpr uint16_t kStackCmdIdMax = 0xFFFE;
-    static constexpr uint8_t kMaxPending = 6;
-    static constexpr uint8_t kMaxStackCmds = 32;
     static constexpr uint8_t kMaxQueuedEvents = 64;
     static constexpr uint32_t kStackTimeoutMs = 1500;
     static constexpr size_t kWsDocCapacity = 8192;
@@ -98,49 +90,6 @@ private:
     static constexpr uint32_t kSnapshotLockTimeoutMs = 250;
     static constexpr uint32_t kSnapshotWarnIntervalMs = 5000;
     static constexpr uint32_t kFastReconnectMs = 2000;
-
-    enum class StackPart : uint8_t
-    {
-        None = 0,
-        SystemInfo,
-        PlcStatus,
-        FanStatus,
-        RtcTime,
-        Sockets,
-        Lights,
-        Meteo,
-        Thermo,
-        Tanks,
-        Septic,
-        Watering,
-        SecurityStatus,
-        SecuritySensors,
-        Groups,
-        Ring,
-        Avr,
-        Leak
-    };
-
-    struct PendingStackCmd
-    {
-        bool used = false;
-        uint16_t cmd_id = 0;
-        uint8_t pending_idx = 0;
-        StackPart part = StackPart::None;
-        bool started = false;
-    };
-
-    struct PendingRequest
-    {
-        bool used = false;
-        String ws_id;
-        uint32_t node_id = 0;
-        uint32_t deadline_ms = 0;
-        uint32_t pending_mask = 0;
-        bool want_system = false;
-        bool want_controllers = false;
-        DynamicJsonDocument *doc = nullptr;
-    };
 
     struct ActorInfo
     {
@@ -170,10 +119,8 @@ private:
     RTC &_rtc;
     GsmModem *_gsm = nullptr;
     Network *_network = nullptr;
-    StackMaster *_stack_master = nullptr;
     StackNodeNameProvider _stack_node_name_cb = nullptr;
     void *_stack_node_name_ctx = nullptr;
-    StackCache *_stack_cache = nullptr;
     ConfigsManagerIface *_configs = nullptr;
     UsersRegistry *_users = nullptr;
     RulesController *_rules = nullptr;
@@ -194,9 +141,6 @@ private:
     bool _disconnect_reported = false;
     uint32_t _reconnect_backoff_until_ms = 0;
     uint8_t _reconnect_fail_streak = 0;
-    PendingRequest _pending[kMaxPending] = {};
-    PendingStackCmd _stack_cmds[kMaxStackCmds] = {};
-    uint16_t _next_stack_cmd_id = kStackCmdIdBase;
     QueuedEvent _event_queue[kMaxQueuedEvents] = {};
     uint8_t _event_head = 0;
     uint8_t _event_count = 0;
@@ -260,35 +204,6 @@ private:
     void sendAck_(const String &reply_to, bool ok, const char *error);
 
     void sendError_(const String &reply_to, const char *msg);
-
-    void finalizePending_(PendingRequest *p, bool ok, const char *err);
-
-    void scheduleStackSystem_(PendingRequest *p);
-
-    void scheduleStackControllers_(PendingRequest *p);
-
-    bool sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                       const char *action, PendingRequest *p = nullptr);
-
-    bool sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                       const char *action, const DynamicJsonDocument &params,
-                       PendingRequest *p = nullptr);
-
-    bool sendStackCmdSimple_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                             const char *action, const DynamicJsonDocument &params,
-                             PendingRequest *p = nullptr);
-
-    static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame);
-
-    void handleStackFrame_(uint32_t node_id, const StackFrame &frame);
-
-    void applyStackPart_(PendingRequest *p, StackPart part, bool ok, JsonObject data, bool first_part, bool done);
-
-    void applyStackSystem_(JsonObject root, StackPart part, JsonObject data, uint32_t node_id);
-
-    void applyStackControllers_(JsonObject root, StackPart part, JsonObject data, bool first_part);
-
-    static void copyItems_(JsonObject &dst_parent, const char *key, JsonArrayConst items, bool reset);
     static void onSocketEvent_(void *ctx, bool lights, uint8_t id, const String &name, bool state_on,
                                const char *source);
     static void onMeteoAlarmEvent_(void *ctx, uint32_t node_id, uint8_t sensor_id, bool alarm);
@@ -344,10 +259,6 @@ private:
 
     void handlePendingTimeouts_();
 
-    PendingRequest *allocPending_(const String &ws_id, uint32_t node_id);
-
-    void freePending_(PendingRequest *p);
-
     bool parseActor_(JsonObjectConst payload, ActorInfo &out) const;
     bool resolveActor_(ActorInfo &actor) const;
     uint8_t aclUnitByNodeId_(uint32_t node_id) const;
@@ -357,20 +268,6 @@ private:
                         JsonObjectConst args, uint32_t node_id) const;
 
     void clearPending_();
-
-    void ensurePendingDoc_(PendingRequest *p);
-
-    PendingRequest *findPendingByNode_(uint32_t node_id);
-
-    void registerStackCmd_(uint16_t cmd_id, PendingRequest *p, StackPart part);
-
-    PendingStackCmd *findStackCmd_(uint16_t cmd_id);
-
-    uint16_t nextStackCmdId_();
-
-    StackPart partFrom_(StackFeature feature, const char *action) const;
-
-    static uint32_t maskFor_(StackPart p);
 
     static bool hasWhat_(JsonArrayConst what, const char *name);
     const char *transportName_() const;

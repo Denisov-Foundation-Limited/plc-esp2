@@ -19,7 +19,6 @@
 #include "controllers/controllers.hpp"
 #include "core/network/gsm_modem.hpp"
 #include "core/network/network.hpp"
-#include "core/compat/stack_stub.hpp"
 #include "core/network/wifi_manager.hpp"
 #include "core/rtc.hpp"
 #include "core/rules_controller.hpp"
@@ -74,15 +73,11 @@ void CloudClient::setGsm(GsmModem *gsm)
 { _gsm = gsm; }
 void CloudClient::setNetwork(Network *network)
 { _network = network; }
-void CloudClient::setStackMaster(StackMaster *master)
-{ _stack_master = master; }
 void CloudClient::setStackNodeNameProvider(StackNodeNameProvider cb, void *ctx)
 {
     _stack_node_name_cb = cb;
     _stack_node_name_ctx = ctx;
 }
-void CloudClient::setStackCache(StackCache *cache)
-{ _stack_cache = cache; }
 void CloudClient::setConfigsManager(ConfigsManagerIface *cfg)
 { _configs = cfg; }
 void CloudClient::setUsersRegistry(UsersRegistry *users)
@@ -195,8 +190,6 @@ void CloudClient::begin(const CloudClient::Config &cfg)
     transport_cfg.reconnect_ms = _cfg.reconnect_ms;
     transport_cfg.transport = _cfg.transport;
     _transport->begin(transport_cfg);
-    if (_stack_master)
-        _stack_master->setFrameHandlerSecondary(&CloudClient::onStackFrame_, this);
 }
 void CloudClient::loop()
 {
@@ -672,65 +665,27 @@ void CloudClient::handleGetStack_(const String &req_id, uint32_t node_id, JsonAr
         sendError_(req_id, "stack role is slave");
         return;
     }
-    if (_network)
+    if (!_network)
     {
-        DynamicJsonDocument out(kWsDocCapacity);
-        out["v"] = kProtoVersion;
-        out["type"] = "result";
-        out["id"] = nextWsId_();
-        out["reply_to"] = req_id;
-        out["unit"] = "stack";
-        out["node_id"] = node_id;
-        if (_session_id.length())
-            out["session_id"] = _session_id;
-        out["payload"]["ok"] = true;
-        JsonObject data = out["payload"]["data"].to<JsonObject>();
-        if (hasWhat_(what, "system"))
-            fillStackCachedSystem_(data.createNestedObject("system"), node_id);
-        if (hasWhat_(what, "controllers"))
-            fillStackCachedControllers_(data.createNestedObject("controllers"), node_id);
-        sendJson_(out);
+        sendError_(req_id, "stack route missing");
         return;
     }
-    if (_stack_cache)
-    {
-        DynamicJsonDocument out(kWsDocCapacity);
-        out["v"] = kProtoVersion;
-        out["type"] = "result";
-        out["id"] = nextWsId_();
-        out["reply_to"] = req_id;
-        out["unit"] = "stack";
-        out["node_id"] = node_id;
-        if (_session_id.length())
-            out["session_id"] = _session_id;
-        out["payload"]["ok"] = true;
-        JsonObject data = out["payload"]["data"].to<JsonObject>();
-        if (hasWhat_(what, "system"))
-            fillStackCachedSystem_(data.createNestedObject("system"), node_id);
-        if (hasWhat_(what, "controllers"))
-            fillStackCachedControllers_(data.createNestedObject("controllers"), node_id);
-        sendJson_(out);
-        return;
-    }
-
-    PendingRequest *p = allocPending_(req_id, node_id);
-    if (!p)
-    {
-        sendError_(req_id, "pending overflow");
-        return;
-    }
-    p->want_system = hasWhat_(what, "system");
-    p->want_controllers = hasWhat_(what, "controllers");
-
-    if (p->want_system)
-        scheduleStackSystem_(p);
-    if (p->want_controllers)
-        scheduleStackControllers_(p);
-
-    if (p->pending_mask == 0)
-    {
-        finalizePending_(p, true, "");
-    }
+    DynamicJsonDocument out(kWsDocCapacity);
+    out["v"] = kProtoVersion;
+    out["type"] = "result";
+    out["id"] = nextWsId_();
+    out["reply_to"] = req_id;
+    out["unit"] = "stack";
+    out["node_id"] = node_id;
+    if (_session_id.length())
+        out["session_id"] = _session_id;
+    out["payload"]["ok"] = true;
+    JsonObject data = out["payload"]["data"].to<JsonObject>();
+    if (hasWhat_(what, "system"))
+        fillStackCachedSystem_(data.createNestedObject("system"), node_id);
+    if (hasWhat_(what, "controllers"))
+        fillStackCachedControllers_(data.createNestedObject("controllers"), node_id);
+    sendJson_(out);
 }
 void CloudClient::handleCmd_(const String &req_id, JsonDocument &doc)
 {
@@ -808,27 +763,34 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
     action_key.trim();
     ctrl_key.toLowerCase();
     action_key.toLowerCase();
-    if (!_stack_master || !isStackMaster_())
+    if (!isStackMaster_())
     {
         sendError_(req_id, "stack master missing");
         return;
     }
-    StackFeature feature = StackFeature::System;
-    String stack_action;
-    const auto requestStackSnapshotRefresh = [&](bool refresh_sockets) {
+    const auto requestStackSnapshotRefresh = [&](bool refresh_sockets, bool refresh_lights) {
         if (!_network)
             return;
         _network->stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
                                            StackRouteAdapter::Mode::Json, true);
         _network->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
                                            StackRouteAdapter::Mode::Json, true);
-        if (!refresh_sockets)
-            return;
-        DynamicJsonDocument req(64);
-        req["offset"] = 0;
-        req["limit"] = 8;
-        _network->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
-                                           StackRouteAdapter::Mode::Json, true);
+        if (refresh_sockets)
+        {
+            DynamicJsonDocument req(64);
+            req["offset"] = 0;
+            req["limit"] = 8;
+            _network->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
+                                               StackRouteAdapter::Mode::Json, true);
+        }
+        if (refresh_lights)
+        {
+            DynamicJsonDocument req(64);
+            req["offset"] = 0;
+            req["limit"] = 8;
+            _network->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
+                                               StackRouteAdapter::Mode::Json, true);
+        }
     };
 
     if (ctrl_key == "sockets")
@@ -867,7 +829,7 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
             sendError_(req_id, "stack route send failed");
             return;
         }
-        requestStackSnapshotRefresh(true);
+        requestStackSnapshotRefresh(true, false);
         sendAck_(req_id, true, "");
         return;
     }
@@ -908,206 +870,11 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
             sendError_(req_id, "stack route send failed");
             return;
         }
-        requestStackSnapshotRefresh(false);
+        requestStackSnapshotRefresh(false, true);
         sendAck_(req_id, true, "");
         return;
     }
-    DynamicJsonDocument params(512);
-    if (ctrl == "thermo")
-    {
-        feature = StackFeature::Thermo;
-        stack_action = "set";
-        JsonArray items = params["items"].to<JsonArray>();
-        JsonObject o = items.add<JsonObject>();
-        o["id"] = (unsigned)(args["id"] | 0);
-        if (action == "power")
-            o["power"] = (String(args["state"] | "") == "on");
-        else if (action == "mode")
-            o["mode"] = args["mode"] | "";
-        else if (action == "target")
-            o["target"] = args["target_c"] | 0.0f;
-    }
-    else if (ctrl == "tanks")
-    {
-        feature = StackFeature::Tanks;
-        stack_action = "set";
-        JsonArray items = params["items"].to<JsonArray>();
-        JsonObject o = items.add<JsonObject>();
-        o["id"] = (unsigned)(args["id"] | 0);
-        o["power_on"] = (String(args["state"] | "") == "on");
-    }
-    else if (ctrl == "septic")
-    {
-        feature = StackFeature::Septic;
-        stack_action = "set";
-        params["id"] = (unsigned)(args["id"] | 1);
-        params["monitor"] = (String(args["state"] | "") == "on");
-    }
-    else if (ctrl == "watering")
-    {
-        feature = StackFeature::Watering;
-        stack_action = "set";
-        params["id"] = (unsigned)(args["id"] | 0);
-        uint8_t slot = (uint8_t)(args["slot"] | 1);
-        if (slot < 1 || slot > 3)
-            slot = 1;
-        if (action == "status")
-            params["state"] = (String(args["state"] | "") == "on");
-        else if (action == "weekdays")
-            params["weekdays_mask"] = (unsigned)((args["weekdays_mask"] | 0) & 0x7Fu);
-        else if (action == "time")
-        {
-            const unsigned hour = (unsigned)(args["hour"] | 0);
-            const unsigned minute = (unsigned)(args["minute"] | 0);
-            if (slot == 2)
-            {
-                params["hour2"] = hour;
-                params["minute2"] = minute;
-            }
-            else if (slot == 3)
-            {
-                params["hour3"] = hour;
-                params["minute3"] = minute;
-            }
-            else
-            {
-                params["hour"] = hour;
-                params["minute"] = minute;
-            }
-        }
-        else if (action == "duration")
-        {
-            const unsigned duration_s = (unsigned)(args["duration_s"] | 0UL);
-            if (slot == 2)
-                params["duration2_s"] = duration_s;
-            else if (slot == 3)
-                params["duration3_s"] = duration_s;
-            else
-                params["duration_s"] = duration_s;
-        }
-        else
-        {
-            sendError_(req_id, "bad watering action");
-            return;
-        }
-    }
-    else if (ctrl == "security")
-    {
-        if (action == "rfid")
-        {
-            String uid = args["uid"] | "";
-            if (uid.length() == 0)
-                uid = args["serial"] | "";
-            if (!uid.length())
-            {
-                sendError_(req_id, "missing uid");
-                return;
-            }
-            const String src = actor.resolved_user.length() ? actor.resolved_user
-                                                            : String(args["name"] | stackNodeName_(node_id));
-            const bool ok = _controllers.security().processRfidUidString(uid.c_str(), src.c_str());
-            sendAck_(req_id, ok, ok ? "" : "failed");
-            return;
-        }
-        if (action == "ibutton")
-        {
-            const String serial = args["serial"] | "";
-            if (!serial.length())
-            {
-                sendError_(req_id, "missing serial");
-                return;
-            }
-            const String src = actor.resolved_user.length() ? actor.resolved_user
-                                                            : String(args["name"] | stackNodeName_(node_id));
-            const bool ok = _controllers.security().processIButtonSerialString(serial.c_str(), src.c_str());
-            sendAck_(req_id, ok, ok ? "" : "failed");
-            return;
-        }
-        feature = StackFeature::Security;
-        stack_action = "set";
-        if (action == "arm")
-        {
-            params["armed"] = true;
-            params["user"] = actor.resolved_user;
-        }
-        else if (action == "disarm")
-        {
-            params["armed"] = false;
-            params["user"] = actor.resolved_user;
-        }
-        else if (action == "clear")
-            params["clear"] = true;
-    }
-    else if (ctrl == "ring")
-    {
-        feature = StackFeature::Ring;
-        stack_action = "set";
-        params["state"] = (String(args["state"] | "") == "on");
-    }
-    else if (ctrl == "avr")
-    {
-        feature = StackFeature::Avr;
-        stack_action = "set";
-        if (action == "auto")
-            params["auto_mode"] = (String(args["state"] | "") == "on");
-        else if (action == "source")
-            params["manual_source"] = args["source"] | "off";
-        else if (action == "clear_fault")
-            params["clear_fault"] = true;
-        else
-        {
-            sendError_(req_id, "unsupported action");
-            return;
-        }
-    }
-    else if (ctrl == "leak")
-    {
-        feature = StackFeature::Leak;
-        stack_action = "set";
-        if (action == "power")
-        {
-            JsonArray zones = params["zones"].to<JsonArray>();
-            JsonObject z = zones.add<JsonObject>();
-            z["id"] = (unsigned)(args["id"] | 0);
-            z["power_on"] = (String(args["state"] | "") == "on");
-        }
-        else if (action == "ack_all")
-        {
-            params["ack_all"] = true;
-        }
-        else if (action == "ack")
-        {
-            // Stack leak API supports only ack_all. Keep a dedicated action for cloud API;
-            // remote execution falls back to ack_all.
-            params["ack_all"] = true;
-        }
-        else
-        {
-            sendError_(req_id, "unsupported action");
-            return;
-        }
-    }
-    else
-    {
-        sendError_(req_id, "unknown controller");
-        return;
-    }
-
-    PendingRequest *p = allocPending_(req_id, node_id);
-    if (!p)
-    {
-        sendError_(req_id, "pending overflow");
-        return;
-    }
-    const StackPart set_part = partFrom_(feature, stack_action.c_str());
-    p->pending_mask = maskFor_(set_part);
-    p->want_controllers = true;
-    ensurePendingDoc_(p);
-    if (!sendStackCmd_(node_id, StackMsgType::CmdSet, feature, stack_action.c_str(), params, p))
-    {
-        finalizePending_(p, false, "stack send failed");
-        return;
-    }
+    sendError_(req_id, "stack controller not migrated");
 }
 bool CloudClient::handleCmdSockets_(SocketController &s, const String &action, JsonObjectConst args, bool lights,
                                     const ActorInfo &actor)
@@ -1300,347 +1067,6 @@ void CloudClient::sendError_(const String &reply_to, const char *msg)
     doc["payload"]["code"] = "bad_request";
     doc["payload"]["message"] = msg ? msg : "error";
     sendJson_(doc);
-}
-void CloudClient::finalizePending_(CloudClient::PendingRequest *p, bool ok, const char *err)
-{
-    if (!p || !p->used)
-        return;
-    DynamicJsonDocument out(kWsDocCapacity);
-    out["v"] = kProtoVersion;
-    out["type"] = "result";
-    out["id"] = nextWsId_();
-    out["reply_to"] = p->ws_id;
-    if (p->node_id)
-    {
-        out["unit"] = "stack";
-        out["node_id"] = p->node_id;
-    }
-    if (_session_id.length())
-        out["session_id"] = _session_id;
-    out["payload"]["ok"] = ok;
-    if (!ok && err)
-        out["payload"]["error"] = err;
-    if (p->doc)
-        out["payload"]["data"] = p->doc->as<JsonVariantConst>();
-    sendJson_(out);
-    freePending_(p);
-}
-void CloudClient::scheduleStackSystem_(CloudClient::PendingRequest *p)
-{
-    if (!p)
-        return;
-    ensurePendingDoc_(p);
-    p->pending_mask |= maskFor_(StackPart::SystemInfo);
-    p->pending_mask |= maskFor_(StackPart::PlcStatus);
-    p->pending_mask |= maskFor_(StackPart::FanStatus);
-    p->pending_mask |= maskFor_(StackPart::RtcTime);
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::System, "get_info");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::PlcStatus, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Fan, "get_status");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Rtc, "get_time");
-}
-void CloudClient::scheduleStackControllers_(CloudClient::PendingRequest *p)
-{
-    if (!p)
-        return;
-    ensurePendingDoc_(p);
-    p->pending_mask |= maskFor_(StackPart::Sockets);
-    p->pending_mask |= maskFor_(StackPart::Lights);
-    p->pending_mask |= maskFor_(StackPart::Meteo);
-    p->pending_mask |= maskFor_(StackPart::Thermo);
-    p->pending_mask |= maskFor_(StackPart::Tanks);
-    p->pending_mask |= maskFor_(StackPart::Septic);
-    p->pending_mask |= maskFor_(StackPart::Watering);
-    p->pending_mask |= maskFor_(StackPart::SecurityStatus);
-    p->pending_mask |= maskFor_(StackPart::SecuritySensors);
-    p->pending_mask |= maskFor_(StackPart::Groups);
-    p->pending_mask |= maskFor_(StackPart::Ring);
-    p->pending_mask |= maskFor_(StackPart::Avr);
-    p->pending_mask |= maskFor_(StackPart::Leak);
-
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Sockets, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Sockets, "get_lights");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Meteo, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Thermo, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Tanks, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Septic, "get");
-    DynamicJsonDocument watering_params(64);
-    watering_params["offset"] = 0;
-    watering_params["limit"] = (unsigned)WateringController::kRuleCount;
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Watering, "get", watering_params);
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Security, "status");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Security, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Groups, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Ring, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Avr, "get");
-    sendStackCmd_(p->node_id, StackMsgType::CmdGet, StackFeature::Leak, "get");
-}
-bool CloudClient::sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                   const char *action, PendingRequest *p)
-{
-    if (!_stack_master)
-        return false;
-    DynamicJsonDocument doc(1024);
-    const uint16_t cmd_id = nextStackCmdId_();
-    doc["cmd_id"] = cmd_id;
-    doc["feature"] = (uint8_t)feature;
-    doc["action"] = action;
-    uint8_t buf[StackCodec::kMaxPayload] = {};
-    const size_t len = serializeJson(doc, reinterpret_cast<char *>(buf), sizeof(buf));
-    if (len == 0 || len > sizeof(buf))
-        return false;
-    if (!_stack_master->sendTo(node_id, (uint8_t)type, buf, len))
-        return false;
-    registerStackCmd_(cmd_id, p ? p : findPendingByNode_(node_id), partFrom_(feature, action));
-    return true;
-}
-bool CloudClient::sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                   const char *action, const DynamicJsonDocument &params, PendingRequest *p)
-{
-    if (!_stack_master)
-        return false;
-    DynamicJsonDocument doc(1024);
-    const uint16_t cmd_id = nextStackCmdId_();
-    doc["cmd_id"] = cmd_id;
-    doc["feature"] = (uint8_t)feature;
-    doc["action"] = action;
-    doc["params"] = params.as<JsonVariantConst>();
-    uint8_t buf[StackCodec::kMaxPayload] = {};
-    const size_t len = serializeJson(doc, reinterpret_cast<char *>(buf), sizeof(buf));
-    if (len == 0 || len > sizeof(buf))
-        return false;
-    if (!_stack_master->sendTo(node_id, (uint8_t)type, buf, len))
-        return false;
-    registerStackCmd_(cmd_id, p ? p : findPendingByNode_(node_id), partFrom_(feature, action));
-    return true;
-}
-bool CloudClient::sendStackCmdSimple_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                         const char *action, const DynamicJsonDocument &params, PendingRequest *p)
-{
-    if (!_stack_master)
-        return false;
-    DynamicJsonDocument doc(1024);
-    const uint16_t cmd_id = nextStackCmdId_();
-    doc["cmd_id"] = cmd_id;
-    doc["feature"] = (uint8_t)feature;
-    doc["action"] = action;
-    doc["params"] = params.as<JsonVariantConst>();
-    uint8_t buf[StackCodec::kMaxPayload] = {};
-    const size_t len = serializeJson(doc, reinterpret_cast<char *>(buf), sizeof(buf));
-    if (len == 0 || len > sizeof(buf))
-        return false;
-    if (!_stack_master->sendTo(node_id, (uint8_t)type, buf, len))
-        return false;
-    registerStackCmd_(cmd_id, p ? p : findPendingByNode_(node_id), StackPart::None);
-    return true;
-}
-void CloudClient::onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame)
-{
-    if (!ctx)
-        return;
-    static_cast<CloudClient *>(ctx)->handleStackFrame_(node_id, frame);
-}
-void CloudClient::handleStackFrame_(uint32_t node_id, const StackFrame &frame)
-{
-    if (frame.type != (uint8_t)StackMsgType::Ack && frame.type != (uint8_t)StackMsgType::Err)
-        return;
-    DynamicJsonDocument doc(2048);
-    if (deserializeJson(doc, frame.payload, frame.payload_len))
-        return;
-    const uint16_t cmd_id = doc["cmd_id"] | 0;
-    PendingStackCmd *cmd = findStackCmd_(cmd_id);
-    if (!cmd || !cmd->used)
-        return;
-    PendingRequest *p = &_pending[cmd->pending_idx];
-    if (!p->used || p->node_id != node_id)
-    {
-        cmd->used = false;
-        return;
-    }
-    const bool ok = doc["ok"] | false;
-    if (!ok)
-    {
-        const char *err = doc["error"] | doc["message"] | "stack error";
-        _log.warn(F("CLOUD"), F("Stack cmd error: node_id: %lu cmd_id: %u err: %s"),
-                  (unsigned long)node_id, (unsigned)cmd_id, err);
-    }
-    JsonObject data = doc["data"].as<JsonObject>();
-    const uint16_t part_idx = data["part"] | 1;
-    const uint16_t parts = data["parts"] | 1;
-    const bool done = data["done"].is<bool>() ? data["done"].as<bool>() : (part_idx >= parts);
-    const bool first_part = !cmd->started || part_idx <= 1;
-    applyStackPart_(p, cmd->part, ok, data, first_part, done);
-    cmd->started = true;
-    if (done || !ok)
-        cmd->used = false;
-
-    if (p->pending_mask == 0)
-        finalizePending_(p, true, "");
-}
-void CloudClient::applyStackPart_(CloudClient::PendingRequest *p, CloudClient::StackPart part, bool ok, JsonObject data, bool first_part, bool done)
-{
-    if (!p || !p->doc)
-        return;
-    if (!ok)
-    {
-        p->pending_mask &= ~maskFor_(part);
-        return;
-    }
-    JsonObject root = p->doc->to<JsonObject>();
-    if (p->want_system)
-        applyStackSystem_(root, part, data, p->node_id);
-    if (p->want_controllers)
-        applyStackControllers_(root, part, data, first_part);
-    if (done)
-        p->pending_mask &= ~maskFor_(part);
-}
-void CloudClient::applyStackSystem_(JsonObject root, CloudClient::StackPart part, JsonObject data, uint32_t node_id)
-{
-    JsonObject sys = root["system"].to<JsonObject>();
-    if (sys.isNull())
-        sys = root.createNestedObject("system");
-    if (part == StackPart::SystemInfo)
-    {
-        sys["device_name"] = stackNodeName_(node_id);
-        sys["uptime_ms"] = data["uptime_ms"] | 0;
-        sys["board"] = data["board"] | "";
-        sys["fw_version"] = data["fw_version"] | "";
-    }
-    else if (part == StackPart::PlcStatus)
-    {
-        JsonObject plc = sys["plc"].to<JsonObject>();
-        plc["board_temp"] = data["board_temp"] | 0.0f;
-        JsonObject fan = sys["fan"].to<JsonObject>();
-        fan["fan_on"] = data["fan_on"] | false;
-        fan["on_c"] = data["on_c"] | 0.0f;
-        fan["hyst_c"] = data["hyst_c"] | 0.0f;
-    }
-    else if (part == StackPart::FanStatus)
-    {
-        JsonObject fan = sys["fan"].to<JsonObject>();
-        fan["mode"] = data["mode"] | "";
-        fan["fan_on"] = data["fan_on"] | false;
-        fan["on_c"] = data["on_c"] | 0.0f;
-        fan["hyst_c"] = data["hyst_c"] | 0.0f;
-        JsonObject plc = sys["plc"].to<JsonObject>();
-        plc["board_temp"] = data["board_temp"] | plc["board_temp"] | 0.0f;
-    }
-    else if (part == StackPart::RtcTime)
-    {
-        JsonObject rtc = sys["rtc"].to<JsonObject>();
-        rtc["date"] = data["date"] | "";
-        rtc["time"] = data["time"] | "";
-        rtc["weekday"] = data["weekday"] | 0;
-        rtc["temp_c"] = data["temp_c"] | 0.0f;
-    }
-}
-void CloudClient::applyStackControllers_(JsonObject root, CloudClient::StackPart part, JsonObject data, bool first_part)
-{
-    JsonObject ctrls = root["controllers"].to<JsonObject>();
-    if (ctrls.isNull())
-        ctrls = root.createNestedObject("controllers");
-
-    if (part == StackPart::Sockets)
-        copyItems_(ctrls, "sockets", data["items"].as<JsonArrayConst>(), first_part);
-    else if (part == StackPart::Lights)
-        copyItems_(ctrls, "lights", data["items"].as<JsonArrayConst>(), first_part);
-    else if (part == StackPart::Meteo)
-        copyItems_(ctrls, "meteo", data["items"].as<JsonArrayConst>(), first_part);
-    else if (part == StackPart::Thermo)
-        copyItems_(ctrls, "thermo", data["items"].as<JsonArrayConst>(), first_part);
-    else if (part == StackPart::Tanks)
-        copyItems_(ctrls, "tanks", data["items"].as<JsonArrayConst>(), first_part);
-    else if (part == StackPart::Septic)
-        copyItems_(ctrls, "septic", data["items"].as<JsonArrayConst>(), first_part);
-    else if (part == StackPart::Watering)
-        copyItems_(ctrls, "watering", data["items"].as<JsonArrayConst>(), first_part);
-    else if (part == StackPart::SecurityStatus)
-    {
-        JsonObject sec = ctrls["security"].to<JsonObject>();
-        if (sec.isNull())
-            sec = ctrls.createNestedObject("security");
-        sec["enabled"] = data["enabled"] | false;
-        sec["armed"] = data["armed"] | false;
-        sec["alarm"] = data["alarm"] | false;
-        if (data["siren"].is<unsigned>())
-            sec["siren"] = data["siren"].as<unsigned>();
-    }
-    else if (part == StackPart::SecuritySensors)
-    {
-        JsonObject sec = ctrls["security"].to<JsonObject>();
-        if (sec.isNull())
-            sec = ctrls.createNestedObject("security");
-        copyItems_(sec, "sensors", data["items"].as<JsonArrayConst>(), first_part);
-    }
-    else if (part == StackPart::Groups)
-    {
-        if (first_part)
-            ctrls.remove("groups");
-        JsonArray dst = ctrls["groups"].to<JsonArray>();
-        if (dst.isNull())
-            dst = ctrls.createNestedArray("groups");
-        JsonArrayConst src = data["groups"].as<JsonArrayConst>();
-        for (JsonVariantConst v : src)
-            dst.add(v);
-    }
-    else if (part == StackPart::Ring)
-    {
-        JsonObject ring = ctrls["ring"].to<JsonObject>();
-        if (ring.isNull())
-            ring = ctrls.createNestedObject("ring");
-        ring["enabled"] = data["enabled"] | false;
-        if (data["button"].is<unsigned>())
-            ring["button"] = data["button"].as<unsigned>();
-        if (data["relay"].is<unsigned>())
-            ring["relay"] = data["relay"].as<unsigned>();
-        ring["relay_on"] = data["relay_on"] | false;
-    }
-    else if (part == StackPart::Avr)
-    {
-        JsonObject avr = ctrls["avr"].to<JsonObject>();
-        if (avr.isNull())
-            avr = ctrls.createNestedObject("avr");
-        avr["enabled"] = data["enabled"] | false;
-        avr["auto_mode"] = data["auto_mode"] | true;
-        avr["prefer_main"] = data["prefer_main"] | true;
-        avr["auto_return_main"] = data["auto_return_main"] | true;
-        if (data["main_ok_port"].is<unsigned>())
-            avr["main_ok_port"] = data["main_ok_port"].as<unsigned>();
-        if (data["reserve_ok_port"].is<unsigned>())
-            avr["reserve_ok_port"] = data["reserve_ok_port"].as<unsigned>();
-        if (data["relay_main_port"].is<unsigned>())
-            avr["relay_main_port"] = data["relay_main_port"].as<unsigned>();
-        if (data["relay_reserve_port"].is<unsigned>())
-            avr["relay_reserve_port"] = data["relay_reserve_port"].as<unsigned>();
-        if (data["feedback_main_port"].is<unsigned>())
-            avr["feedback_main_port"] = data["feedback_main_port"].as<unsigned>();
-        if (data["feedback_reserve_port"].is<unsigned>())
-            avr["feedback_reserve_port"] = data["feedback_reserve_port"].as<unsigned>();
-        avr["main_ok"] = data["main_ok"] | false;
-        avr["reserve_ok"] = data["reserve_ok"] | false;
-        avr["relay_main_on"] = data["relay_main_on"] | false;
-        avr["relay_reserve_on"] = data["relay_reserve_on"] | false;
-        avr["active_source"] = data["active_source"] | "";
-        avr["target_source"] = data["target_source"] | "";
-        avr["fault"] = data["fault"] | "";
-        avr["transfer"] = data["transfer"] | false;
-    }
-    else if (part == StackPart::Leak)
-    {
-        copyItems_(ctrls, "leak", data["items"].as<JsonArrayConst>(), first_part);
-    }
-}
-void CloudClient::copyItems_(JsonObject &dst_parent, const char *key, JsonArrayConst items, bool reset)
-{
-    if (reset)
-        dst_parent.remove(key);
-    JsonArray dst = dst_parent[key].to<JsonArray>();
-    if (dst.isNull())
-        dst = dst_parent.createNestedArray(key);
-    if (items.isNull())
-        return;
-    for (JsonVariantConst v : items)
-        dst.add(v);
 }
 void CloudClient::onSocketEvent_(void *ctx, bool lights, uint8_t id, const String &name, bool state_on,
                                  const char *source)
@@ -2215,25 +1641,6 @@ void CloudClient::fillThermo_(JsonArray out)
                     }
                 }
             }
-            else if (_stack_cache)
-            {
-                const auto *meteo = _stack_cache->meteoCache(cfg->sensor_node_id);
-                if (meteo && meteo->has_data && meteo->items)
-                {
-                    for (size_t j = 0; j < meteo->item_count && j < meteo->capacity; ++j)
-                    {
-                        const auto &it = meteo->items[j];
-                        if (it.id != cfg->sensor_id)
-                            continue;
-                        if (it.name[0])
-                            o["sensor_name"] = it.name;
-                        o["has_temp"] = it.has_temp;
-                        if (it.has_temp)
-                            o["temp_c"] = it.temp_c;
-                        break;
-                    }
-                }
-            }
         }
     }
 }
@@ -2504,38 +1911,21 @@ void CloudClient::fillStackInfo_(JsonObject out)
     out["role"] = stackRoleName_();
     out["node_id"] = _network ? _network->stackLocalNodeId() : deviceId_();
     JsonArray nodes = out["nodes"].to<JsonArray>();
-    if (!isStackMaster_())
+    if (!isStackMaster_() || !_network)
         return;
-    if (_network)
-    {
-        const size_t count = _network->stackOnlineDeviceCount();
-        for (size_t i = 0; i < count; ++i)
-        {
-            StackDeviceRegistry::DeviceInfo device{};
-            if (!_network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
-                continue;
-            if ((device.caps & StackCapController) == 0)
-                continue;
-            JsonObject n = nodes.add<JsonObject>();
-            n["node_id"] = device.node_id;
-            n["name"] = device.name;
-            n["online"] = true;
-            n["last_seen_ms"] = device.last_seen_ms;
-        }
-        return;
-    }
-    if (!_stack_master)
-        return;
-    const size_t count = _stack_master->nodeCount();
+    const size_t count = _network->stackOnlineDeviceCount();
     for (size_t i = 0; i < count; ++i)
     {
-        if (!_stack_master->nodeIsControllerAt(i))
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!_network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+            continue;
+        if ((device.caps & kStackCapController) == 0)
             continue;
         JsonObject n = nodes.add<JsonObject>();
-        n["node_id"] = _stack_master->nodeIdAt(i);
-        n["name"] = _stack_master->nodeNameAt(i);
+        n["node_id"] = device.node_id;
+        n["name"] = device.name;
         n["online"] = true;
-        n["last_seen_ms"] = 0;
+        n["last_seen_ms"] = device.last_seen_ms;
     }
 }
 bool CloudClient::fillStackCachedSystem_(JsonObject out, uint32_t node_id)
@@ -2543,88 +1933,57 @@ bool CloudClient::fillStackCachedSystem_(JsonObject out, uint32_t node_id)
     const uint32_t now = millis();
     const uint32_t stale_ms = 15000;
     out["device_name"] = stackNodeName_(node_id);
-    if (_network)
-    {
-        bool has_any = false;
-        bool has_snapshot = false;
-        StackUnitSnapshot::Snapshot status{};
-        if (_network->stackIndexStateSnapshot(node_id, status))
-        {
-            has_snapshot = true;
-            if (status.has_plc)
-            {
-                JsonObject plc = out["plc"].to<JsonObject>();
-                plc["board_temp"] = status.board_temp;
-                JsonObject fan = out["fan"].to<JsonObject>();
-                fan["fan_on"] = status.fan_on;
-                has_any = true;
-            }
-            if (status.has_rtc)
-            {
-                JsonObject rtc = out["rtc"].to<JsonObject>();
-                rtc["date"] = status.rtc_date;
-                rtc["time"] = status.rtc_time;
-                rtc["temp_c"] = status.rtc_temp;
-                has_any = true;
-            }
-        }
-        const bool request_ready = _network->prepareStackIndexStateRequest(node_id, now, stale_ms, kStackTimeoutMs);
-        if (request_ready)
-        {
-            const bool sent = _network->stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
-                                                                 StackRouteAdapter::Mode::Json, true);
-            if (!sent)
-                _network->clearStackIndexStatePending(node_id);
-        }
-        return has_any;
-    }
-    if (!_stack_cache)
+    if (!_network)
         return false;
     bool has_any = false;
-    const auto *status = _stack_cache->statusCache(node_id);
-    if (status && status->has_plc)
+    StackUnitSnapshot::State status{};
+    if (_network->stackIndexState(node_id, status))
     {
-        JsonObject plc = out["plc"].to<JsonObject>();
-        plc["board_temp"] = status->board_temp;
-        JsonObject fan = out["fan"].to<JsonObject>();
-        fan["fan_on"] = status->fan_on;
-        fan["on_c"] = status->fan_on_c;
-        fan["hyst_c"] = status->fan_hyst_c;
-        has_any = true;
+        if (status.has_plc)
+        {
+            JsonObject plc = out["plc"].to<JsonObject>();
+            plc["board_temp"] = status.board_temp;
+            JsonObject fan = out["fan"].to<JsonObject>();
+            fan["fan_on"] = status.fan_on;
+            has_any = true;
+        }
+        if (status.has_rtc)
+        {
+            JsonObject rtc = out["rtc"].to<JsonObject>();
+            rtc["date"] = status.rtc_date;
+            rtc["time"] = status.rtc_time;
+            rtc["temp_c"] = status.rtc_temp;
+            has_any = true;
+        }
     }
-    if (status && status->has_rtc)
+    const bool request_ready = _network->prepareStackIndexStateRequest(node_id, now, stale_ms, kStackTimeoutMs);
+    if (request_ready)
     {
-        JsonObject rtc = out["rtc"].to<JsonObject>();
-        rtc["date"] = status->rtc_date;
-        rtc["time"] = status->rtc_time;
-        rtc["weekday"] = status->rtc_weekday;
-        rtc["temp_c"] = status->rtc_temp;
-        has_any = true;
+        const bool sent = _network->stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
+                                                             StackRouteAdapter::Mode::Json, true);
+        if (!sent)
+            _network->clearStackIndexStatePending(node_id);
     }
-    const bool stale_plc = status && status->has_plc && (int32_t)(now - status->plc_updated_ms) >= (int32_t)stale_ms;
-    const bool stale_rtc = status && status->has_rtc && (int32_t)(now - status->rtc_updated_ms) >= (int32_t)stale_ms;
-    if (!status || !status->has_plc || stale_plc)
-        _stack_cache->requestPlcStatus(node_id);
-    if (!status || !status->has_rtc || stale_rtc)
-        _stack_cache->requestRtcStatus(node_id);
     return has_any;
 }
 bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
 {
-    if (_network)
+    if (!_network)
+        return false;
+    bool has_any = false;
+    const uint32_t now = millis();
+    const uint32_t stale_ms = 15000;
+    StackUnitSnapshot::State snapshot{};
+    if (_network->stackIndexState(node_id, snapshot))
     {
-        bool has_any = false;
-        const uint32_t now = millis();
-        const uint32_t stale_ms = 15000;
-        StackUnitSnapshot::Snapshot snapshot{};
-        if (_network->stackIndexStateSnapshot(node_id, snapshot))
-        {
             if (snapshot.socket_count > 0)
             {
                 JsonArray sockets = out.createNestedArray("sockets");
                 for (uint8_t i = 0; i < snapshot.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
                 {
-                    const auto &it = snapshot.sockets[i];
+                    StackUnitSnapshot::SocketItem it{};
+                    if (!_network->stackIndexSocketAt(node_id, i, it))
+                        continue;
                     if (it.id == 0)
                         continue;
                     JsonObject o = sockets.add<JsonObject>();
@@ -2644,10 +2003,37 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                 has_any = has_any || (snapshot.sockets_enabled > 0);
             }
 
-            JsonObject lights = out.createNestedObject("lights");
-            lights["enabled_count"] = snapshot.lights_enabled;
-            lights["on_count"] = snapshot.lights_on;
-            has_any = has_any || (snapshot.lights_enabled > 0);
+            if (snapshot.light_count > 0)
+            {
+                JsonArray lights = out.createNestedArray("lights");
+                for (uint8_t i = 0; i < snapshot.light_count && i < StackUnitSnapshot::kSocketCount; ++i)
+                {
+                    StackUnitSnapshot::SocketItem it{};
+                    if (!_network->stackIndexLightAt(node_id, i, it))
+                        continue;
+                    if (it.id == 0)
+                        continue;
+                    JsonObject o = lights.add<JsonObject>();
+                    o["id"] = it.id;
+                    o["group_id"] = it.group_id;
+                    o["enabled"] = it.enabled;
+                    if (it.name[0])
+                        o["name"] = it.name;
+                    if (it.button_port != SocketController::kInvalidPort)
+                        o["button"] = it.button_port;
+                    if (it.relay_port != SocketController::kInvalidPort)
+                        o["relay"] = it.relay_port;
+                    o["state"] = it.state;
+                }
+                has_any = true;
+            }
+            else
+            {
+                JsonObject lights = out.createNestedObject("lights");
+                lights["enabled_count"] = snapshot.lights_enabled;
+                lights["on_count"] = snapshot.lights_on;
+                has_any = has_any || (snapshot.lights_enabled > 0);
+            }
 
             JsonObject meteo = out.createNestedObject("meteo");
             meteo["enabled_count"] = snapshot.meteo_enabled;
@@ -2700,404 +2086,37 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             leak["enabled_count"] = snapshot.leak_enabled;
             leak["alert_count"] = snapshot.leak_alert;
             has_any = has_any || (snapshot.leak_enabled > 0);
-        }
-
-        const bool need_summary = !has_any;
-        if (need_summary)
-        {
-            _network->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
-                                               StackRouteAdapter::Mode::Json, true);
-        }
-        if (snapshot.sockets_enabled > 0 && snapshot.socket_count < snapshot.sockets_enabled)
+    }
+    const bool request_ready = _network->prepareStackIndexStateRequest(node_id, now, stale_ms, kStackTimeoutMs);
+    if (request_ready)
+    {
+        _network->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
+                                           StackRouteAdapter::Mode::Json, true);
+    }
+    if (snapshot.sockets_enabled > 0 && snapshot.socket_count < snapshot.sockets_enabled)
+    {
+        if (_network->prepareStackSocketsPageRequest(node_id, now, snapshot.socket_count, 4000u))
         {
             DynamicJsonDocument req(64);
             req["offset"] = snapshot.socket_count;
             req["limit"] = 8;
-            _network->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
-                                               StackRouteAdapter::Mode::Json, true);
+            if (!_network->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
+                                                    StackRouteAdapter::Mode::Json, true))
+                _network->clearStackSocketsPageRequest(node_id);
         }
-        return has_any;
     }
-
-    if (!_stack_cache)
-        return false;
-    bool has_any = false;
-    const uint32_t now = millis();
-    const uint32_t stale_ms = 10000;
-
-    const auto *groups = _stack_cache->groupsCache(node_id);
-    if (groups && groups->has_data)
+    if (snapshot.lights_enabled > 0 && snapshot.light_count < snapshot.lights_enabled)
     {
-        JsonArray arr = out.createNestedArray("groups");
-        if (groups->items)
+        if (_network->prepareStackLightsPageRequest(node_id, now, snapshot.light_count, 4000u))
         {
-            for (size_t i = 0; i < groups->item_count && i < groups->capacity; ++i)
-            {
-                const auto &g = groups->items[i];
-                if (g.id == 0 || !g.name[0])
-                    continue;
-                JsonObject o = arr.add<JsonObject>();
-                o["id"] = (unsigned)g.id;
-                o["name"] = g.name;
-                o["sort"] = (unsigned)g.sort;
-            }
+            DynamicJsonDocument req(64);
+            req["offset"] = snapshot.light_count;
+            req["limit"] = 8;
+            if (!_network->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
+                                                    StackRouteAdapter::Mode::Json, true))
+                _network->clearStackLightsPageRequest(node_id);
         }
-        has_any = true;
     }
-    if (!groups || !groups->has_data || (groups->updated_ms && (int32_t)(now - groups->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestGroups(node_id);
-
-    const auto *sockets = _stack_cache->socketsCache(node_id);
-    if (sockets && sockets->has_data && sockets->items)
-    {
-        JsonArray arr = out.createNestedArray("sockets");
-        for (size_t i = 0; i < sockets->item_count && i < sockets->capacity; ++i)
-        {
-            const auto &it = sockets->items[i];
-            JsonObject o = arr.add<JsonObject>();
-            o["id"] = (unsigned)it.id;
-            o["group_id"] = (unsigned)it.group_id;
-            o["enabled"] = it.enabled;
-            if (it.name[0])
-                o["name"] = it.name;
-            if (it.button_port != SocketController::kInvalidPort)
-                o["button"] = it.button_port;
-            if (it.relay_port != SocketController::kInvalidPort)
-                o["relay"] = it.relay_port;
-            o["state"] = it.state;
-        }
-        has_any = true;
-    }
-    if (!sockets || !sockets->has_data || (sockets->updated_ms && (int32_t)(now - sockets->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestSockets(node_id);
-
-    const auto *lights = _stack_cache->lightsCache(node_id);
-    if (lights && lights->has_data && lights->items)
-    {
-        JsonArray arr = out.createNestedArray("lights");
-        for (size_t i = 0; i < lights->item_count && i < lights->capacity; ++i)
-        {
-            const auto &it = lights->items[i];
-            JsonObject o = arr.add<JsonObject>();
-            o["id"] = (unsigned)it.id;
-            o["group_id"] = (unsigned)it.group_id;
-            o["enabled"] = it.enabled;
-            if (it.name[0])
-                o["name"] = it.name;
-            if (it.button_port != SocketController::kInvalidPort)
-                o["button"] = it.button_port;
-            if (it.relay_port != SocketController::kInvalidPort)
-                o["relay"] = it.relay_port;
-            o["state"] = it.state;
-        }
-        has_any = true;
-    }
-    if (!lights || !lights->has_data || (lights->updated_ms && (int32_t)(now - lights->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestLights(node_id);
-
-    const auto *meteo = _stack_cache->meteoCache(node_id);
-    if (meteo && meteo->has_data && meteo->items)
-    {
-        JsonArray arr = out.createNestedArray("meteo");
-        for (size_t i = 0; i < meteo->item_count && i < meteo->capacity; ++i)
-        {
-            const auto &it = meteo->items[i];
-            JsonObject o = arr.add<JsonObject>();
-            o["id"] = (unsigned)it.id;
-            o["group_id"] = (unsigned)it.group_id;
-            o["enabled"] = it.enabled;
-            if (it.name[0])
-                o["name"] = it.name;
-            if (it.type[0])
-                o["type"] = it.type;
-            if (it.pin >= 0)
-                o["pin"] = (unsigned)it.pin;
-            if (it.addr[0])
-                o["addr"] = it.addr;
-            if (it.has_temp)
-                o["temp_c"] = it.temp_c;
-            if (it.has_hum)
-                o["hum"] = it.hum;
-            o["has_temp"] = it.has_temp;
-            o["has_hum"] = it.has_hum;
-            o["ok"] = it.ok;
-        }
-        has_any = true;
-    }
-    if (!meteo || !meteo->has_data || (meteo->updated_ms && (int32_t)(now - meteo->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestMeteo(node_id);
-
-    const auto *thermo = _stack_cache->thermoCache(node_id);
-    const auto *local_meteo = _stack_cache->meteoCache(node_id);
-    if (thermo && thermo->has_data && thermo->items)
-    {
-        JsonArray arr = out.createNestedArray("thermo");
-        for (size_t i = 0; i < thermo->item_count && i < thermo->capacity; ++i)
-        {
-            const auto &it = thermo->items[i];
-            JsonObject o = arr.add<JsonObject>();
-            o["id"] = (unsigned)it.id;
-            o["group_id"] = (unsigned)it.group_id;
-            o["enabled"] = it.enabled;
-            if (it.name[0])
-                o["name"] = it.name;
-            o["sensor"] = it.sensor;
-            if (it.sensor_node != 0)
-                o["sensor_node"] = (unsigned long)it.sensor_node;
-            if (it.mode[0])
-                o["mode"] = it.mode;
-            o["target"] = it.target;
-            o["hyst"] = it.hyst;
-            if (it.heat != ThermoController::kInvalidPort)
-                o["heat"] = it.heat;
-            if (it.cool != ThermoController::kInvalidPort)
-                o["cool"] = it.cool;
-            if (it.button != ThermoController::kInvalidPort)
-                o["button"] = it.button;
-            o["power_on"] = it.power_on;
-            o["heat_on"] = it.heat_on;
-            o["cool_on"] = it.cool_on;
-
-            const uint32_t sensor_node_id = it.sensor_node ? it.sensor_node : node_id;
-            const auto *meteo = (sensor_node_id == node_id) ? local_meteo : _stack_cache->meteoCache(sensor_node_id);
-            if (it.sensor != 0 && meteo && meteo->has_data && meteo->items)
-            {
-                for (size_t j = 0; j < meteo->item_count && j < meteo->capacity; ++j)
-                {
-                    const auto &sensor = meteo->items[j];
-                    if (sensor.id != it.sensor)
-                        continue;
-                    if (sensor.name[0])
-                        o["sensor_name"] = sensor.name;
-                    o["has_temp"] = sensor.has_temp;
-                    if (sensor.has_temp)
-                        o["temp_c"] = sensor.temp_c;
-                    break;
-                }
-            }
-        }
-        has_any = true;
-    }
-    if (!thermo || !thermo->has_data || (thermo->updated_ms && (int32_t)(now - thermo->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestThermo(node_id);
-
-    const auto *tanks = _stack_cache->tanksCache(node_id);
-    if (tanks && tanks->has_data && tanks->items)
-    {
-        JsonArray arr = out.createNestedArray("tanks");
-        for (size_t i = 0; i < tanks->item_count && i < tanks->capacity; ++i)
-        {
-            const auto &it = tanks->items[i];
-            JsonObject o = arr.add<JsonObject>();
-            o["id"] = (unsigned)it.id;
-            o["group_id"] = (unsigned)it.group_id;
-            o["enabled"] = it.enabled;
-            o["power_on"] = it.power_on;
-            if (it.name[0])
-                o["name"] = it.name;
-            if (it.low != TankController::kInvalidPort)
-                o["low"] = it.low;
-            if (it.mid != TankController::kInvalidPort)
-                o["mid"] = it.mid;
-            if (it.full != TankController::kInvalidPort)
-                o["full"] = it.full;
-            if (it.valve != TankController::kInvalidPort)
-                o["valve"] = it.valve;
-            if (it.pump != TankController::kInvalidPort)
-                o["pump"] = it.pump;
-            if (it.alarm != TankController::kInvalidPort)
-                o["alarm"] = it.alarm;
-            o["level_low"] = it.level_low;
-            o["level_mid"] = it.level_mid;
-            o["level_full"] = it.level_full;
-            o["levels_ok"] = it.levels_ok;
-            o["valve_on"] = it.valve_on;
-            o["pump_on"] = it.pump_on;
-            o["alarm_on"] = it.alarm_on;
-        }
-        has_any = true;
-    }
-    if (!tanks || !tanks->has_data || (tanks->updated_ms && (int32_t)(now - tanks->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestTanks(node_id);
-
-    const auto *septic = _stack_cache->septicCache(node_id);
-    if (septic && septic->has_data && septic->items)
-    {
-        JsonArray arr = out.createNestedArray("septic");
-        for (size_t i = 0; i < septic->item_count && i < septic->capacity; ++i)
-        {
-            const auto &it = septic->items[i];
-            JsonObject o = arr.add<JsonObject>();
-            o["id"] = (unsigned)it.id;
-            o["group_id"] = (unsigned)it.group_id;
-            o["enabled"] = it.enabled;
-            if (it.name[0])
-                o["name"] = it.name;
-            o["monitor"] = it.monitor;
-            if (it.warning_port != SepticController::kInvalidPort)
-                o["warning_port"] = it.warning_port;
-            if (it.alarm_port != SepticController::kInvalidPort)
-                o["alarm_port"] = it.alarm_port;
-            if (it.relay_warning != SepticController::kInvalidPort)
-                o["relay_warning"] = it.relay_warning;
-            if (it.relay_alarm != SepticController::kInvalidPort)
-                o["relay_alarm"] = it.relay_alarm;
-            o["warning"] = it.warning;
-            o["alarm"] = it.alarm;
-        }
-        has_any = true;
-    }
-    if (!septic || !septic->has_data || (septic->updated_ms && (int32_t)(now - septic->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestSeptic(node_id);
-
-    const auto *watering = _stack_cache->wateringCache(node_id);
-    if (watering && watering->has_data && watering->items)
-    {
-        JsonArray arr = out.createNestedArray("watering");
-        for (size_t i = 0; i < watering->item_count && i < watering->capacity; ++i)
-        {
-            const auto &it = watering->items[i];
-            JsonObject o = arr.add<JsonObject>();
-            o["id"] = (unsigned)it.id;
-            o["enabled"] = it.enabled;
-            o["status"] = it.status;
-            if (it.name[0])
-                o["name"] = it.name;
-            if (it.port != WateringController::kInvalidPort)
-                o["port"] = it.port;
-            if (it.tank_id)
-            {
-                o["tank"] = it.tank_id;
-                if (it.tank_name[0])
-                    o["tank_name"] = it.tank_name;
-            }
-            if (it.weekdays_mask)
-                o["weekdays_mask"] = it.weekdays_mask;
-            if (it.duration_sec && it.hour <= 23 && it.minute <= 59)
-            {
-                o["hour"] = it.hour;
-                o["minute"] = it.minute;
-                o["duration_s"] = it.duration_sec;
-            }
-            if (it.duration2_sec && it.hour2 <= 23 && it.minute2 <= 59)
-            {
-                o["hour2"] = it.hour2;
-                o["minute2"] = it.minute2;
-                o["duration2_s"] = it.duration2_sec;
-            }
-            if (it.duration3_sec && it.hour3 <= 23 && it.minute3 <= 59)
-            {
-                o["hour3"] = it.hour3;
-                o["minute3"] = it.minute3;
-                o["duration3_s"] = it.duration3_sec;
-            }
-            o["resume"] = it.resume_after_refill;
-            o["resume_level"] = it.resume_level;
-            o["active"] = it.active;
-            o["paused"] = it.paused;
-            if (it.remaining_ms)
-                o["remaining_ms"] = it.remaining_ms;
-        }
-        has_any = true;
-    }
-    if (!watering || !watering->has_data || (watering->updated_ms && (int32_t)(now - watering->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestWatering(node_id);
-
-    const auto *security = _stack_cache->securityCache(node_id);
-    if (security && security->has_data)
-    {
-        JsonObject sec = out.createNestedObject("security");
-        sec["enabled"] = security->enabled;
-        sec["armed"] = security->armed;
-        sec["alarm"] = security->alarm;
-        if (security->siren != SecurityController::kInvalidPort)
-            sec["siren"] = security->siren;
-        JsonArray sensors = sec.createNestedArray("sensors");
-        if (security->items)
-        {
-            for (size_t i = 0; i < security->item_count && i < security->capacity; ++i)
-            {
-                const auto &it = security->items[i];
-                JsonObject o = sensors.add<JsonObject>();
-                o["id"] = (unsigned)it.id;
-                o["group_id"] = (unsigned)it.group_id;
-                o["enabled"] = it.enabled;
-                if (it.name[0])
-                    o["name"] = it.name;
-                if (it.type[0])
-                    o["type"] = it.type;
-                if (it.port != SecurityController::kInvalidPort)
-                    o["port"] = it.port;
-                o["silent"] = it.silent;
-                o["detect"] = it.detect;
-            }
-        }
-        has_any = true;
-    }
-    if (!security || !security->has_data || (security->updated_ms && (int32_t)(now - security->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestSecurity(node_id);
-
-    const auto *avr = _stack_cache->avrCache(node_id);
-    if (avr && avr->has_data)
-    {
-        JsonObject obj = out.createNestedObject("avr");
-        obj["enabled"] = avr->enabled;
-        obj["auto_mode"] = avr->auto_mode;
-        obj["prefer_main"] = avr->prefer_main;
-        obj["auto_return_main"] = avr->auto_return_main;
-        if (avr->main_ok_port != AvrController::kInvalidPort)
-            obj["main_ok_port"] = avr->main_ok_port;
-        if (avr->reserve_ok_port != AvrController::kInvalidPort)
-            obj["reserve_ok_port"] = avr->reserve_ok_port;
-        if (avr->relay_main_port != AvrController::kInvalidPort)
-            obj["relay_main_port"] = avr->relay_main_port;
-        if (avr->relay_reserve_port != AvrController::kInvalidPort)
-            obj["relay_reserve_port"] = avr->relay_reserve_port;
-        if (avr->feedback_main_port != AvrController::kInvalidPort)
-            obj["feedback_main_port"] = avr->feedback_main_port;
-        if (avr->feedback_reserve_port != AvrController::kInvalidPort)
-            obj["feedback_reserve_port"] = avr->feedback_reserve_port;
-        obj["main_ok"] = avr->main_ok;
-        obj["reserve_ok"] = avr->reserve_ok;
-        obj["relay_main_on"] = avr->relay_main_on;
-        obj["relay_reserve_on"] = avr->relay_reserve_on;
-        obj["active_source"] = avr->active_source;
-        obj["target_source"] = avr->target_source;
-        obj["fault"] = avr->fault;
-        obj["transfer"] = avr->transfer;
-        has_any = true;
-    }
-    if (!avr || !avr->has_data || (avr->updated_ms && (int32_t)(now - avr->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestAvr(node_id);
-
-    const auto *leak = _stack_cache->leakCache(node_id);
-    if (leak && leak->has_data && leak->items)
-    {
-        JsonArray arr = out.createNestedArray("leak");
-        for (size_t i = 0; i < leak->item_count && i < leak->capacity; ++i)
-        {
-            const auto &it = leak->items[i];
-            JsonObject o = arr.add<JsonObject>();
-            o["id"] = (unsigned)it.id;
-            o["enabled"] = it.enabled;
-            o["power_on"] = it.power_on;
-            o["sensor_active_low"] = it.sensor_active_low;
-            if (it.sensor != LeakController::kInvalidPort)
-                o["sensor"] = it.sensor;
-            if (it.valve != LeakController::kInvalidPort)
-                o["valve"] = it.valve;
-            if (it.alarm != LeakController::kInvalidPort)
-                o["alarm"] = it.alarm;
-            if (it.name[0])
-                o["name"] = it.name;
-            o["wet"] = it.wet;
-            o["alarm_latched"] = it.alarm_latched;
-        }
-        has_any = true;
-    }
-    if (!leak || !leak->has_data || (leak->updated_ms && (int32_t)(now - leak->updated_ms) >= (int32_t)stale_ms))
-        _stack_cache->requestLeak(node_id);
-
     return has_any;
 }
 void CloudClient::maybeSendPeriodicEvent_()
@@ -3124,146 +2143,11 @@ void CloudClient::maybeSendPeriodicEvent_()
 }
 void CloudClient::handlePendingTimeouts_()
 {
-    const uint32_t now = millis();
-    for (auto &p : _pending)
-    {
-        if (!p.used)
-            continue;
-        if ((int32_t)(now - p.deadline_ms) < 0)
-            continue;
-        finalizePending_(&p, false, "timeout");
-    }
-}
-CloudClient::PendingRequest *CloudClient::allocPending_(const String &ws_id, uint32_t node_id)
-{
-    for (auto &p : _pending)
-    {
-        if (!p.used)
-        {
-            p.used = true;
-            p.ws_id = ws_id;
-            p.node_id = node_id;
-            p.deadline_ms = millis() + kStackTimeoutMs;
-            p.pending_mask = 0;
-            p.want_system = false;
-            p.want_controllers = false;
-            p.doc = nullptr;
-            return &p;
-        }
-    }
-    return nullptr;
-}
-void CloudClient::freePending_(CloudClient::PendingRequest *p)
-{
-    if (!p)
-        return;
-    if (p->doc)
-    {
-        delete p->doc;
-        p->doc = nullptr;
-    }
-    *p = PendingRequest{};
+    // Stack cloud path is now snapshot/route based and no longer uses legacy pending CmdGet/Ack state.
 }
 void CloudClient::clearPending_()
 {
-    for (auto &p : _pending)
-        if (p.used)
-            freePending_(&p);
-    for (auto &c : _stack_cmds)
-        c.used = false;
-}
-void CloudClient::ensurePendingDoc_(CloudClient::PendingRequest *p)
-{
-    if (!p)
-        return;
-    if (!p->doc)
-        p->doc = new DynamicJsonDocument(kWsDocCapacity);
-}
-CloudClient::PendingRequest *CloudClient::findPendingByNode_(uint32_t node_id)
-{
-    for (auto &p : _pending)
-        if (p.used && p.node_id == node_id)
-            return &p;
-    return nullptr;
-}
-void CloudClient::registerStackCmd_(uint16_t cmd_id, CloudClient::PendingRequest *p, CloudClient::StackPart part)
-{
-    if (!p)
-        return;
-    for (auto &c : _stack_cmds)
-    {
-        if (!c.used)
-        {
-            c.used = true;
-            c.cmd_id = cmd_id;
-            c.pending_idx = (uint8_t)(p - _pending);
-            c.part = part;
-            c.started = false;
-            return;
-        }
-    }
-}
-CloudClient::PendingStackCmd *CloudClient::findStackCmd_(uint16_t cmd_id)
-{
-    for (auto &c : _stack_cmds)
-        if (c.used && c.cmd_id == cmd_id)
-            return &c;
-    return nullptr;
-}
-uint16_t CloudClient::nextStackCmdId_()
-{
-    if (_next_stack_cmd_id < kStackCmdIdBase || _next_stack_cmd_id > kStackCmdIdMax)
-        _next_stack_cmd_id = kStackCmdIdBase;
-    const uint16_t out = _next_stack_cmd_id++;
-    if (_next_stack_cmd_id > kStackCmdIdMax)
-        _next_stack_cmd_id = kStackCmdIdBase;
-    return out;
-}
-CloudClient::StackPart CloudClient::partFrom_(StackFeature feature, const char *action) const
-{
-    if (feature == StackFeature::System && strcmp(action, "get_info") == 0)
-        return StackPart::SystemInfo;
-    if (feature == StackFeature::PlcStatus)
-        return StackPart::PlcStatus;
-    if (feature == StackFeature::Fan)
-        return StackPart::FanStatus;
-    if (feature == StackFeature::Rtc)
-        return StackPart::RtcTime;
-    if (feature == StackFeature::Sockets && strcmp(action, "get") == 0)
-        return StackPart::Sockets;
-    if (feature == StackFeature::Sockets && strcmp(action, "set") == 0)
-        return StackPart::Sockets;
-    if (feature == StackFeature::Sockets && strcmp(action, "get_lights") == 0)
-        return StackPart::Lights;
-    if (feature == StackFeature::Sockets && strcmp(action, "set_lights") == 0)
-        return StackPart::Lights;
-    if (feature == StackFeature::Meteo)
-        return StackPart::Meteo;
-    if (feature == StackFeature::Thermo)
-        return StackPart::Thermo;
-    if (feature == StackFeature::Tanks)
-        return StackPart::Tanks;
-    if (feature == StackFeature::Septic)
-        return StackPart::Septic;
-    if (feature == StackFeature::Watering)
-        return StackPart::Watering;
-    if (feature == StackFeature::Security && strcmp(action, "status") == 0)
-        return StackPart::SecurityStatus;
-    if (feature == StackFeature::Security && strcmp(action, "get") == 0)
-        return StackPart::SecuritySensors;
-    if (feature == StackFeature::Groups && strcmp(action, "get") == 0)
-        return StackPart::Groups;
-    if (feature == StackFeature::Ring)
-        return StackPart::Ring;
-    if (feature == StackFeature::Avr && strcmp(action, "get") == 0)
-        return StackPart::Avr;
-    if (feature == StackFeature::Leak && strcmp(action, "get") == 0)
-        return StackPart::Leak;
-    return StackPart::None;
-}
-uint32_t CloudClient::maskFor_(CloudClient::StackPart p)
-{
-    return 1u << (uint8_t)p;
+    // No-op: legacy pending state removed together with old stack cache/cmd path.
 }
 bool CloudClient::hasWhat_(JsonArrayConst what, const char *name)
 {
@@ -3321,12 +2205,6 @@ String CloudClient::stackNodeName_(uint32_t node_id) const
         if (_network->stackDeviceSnapshotByNodeId(node_id, device) && device.name[0])
             return String(device.name);
     }
-    if (!_stack_master)
-        return String();
-    const size_t count = _stack_master->nodeCount();
-    for (size_t i = 0; i < count; ++i)
-        if (_stack_master->nodeIdAt(i) == node_id)
-            return _stack_master->nodeNameAt(i);
     return String();
 }
 String CloudClient::eventSourceName_(const String &unit, uint32_t node_id) const
@@ -3409,11 +2287,15 @@ uint8_t CloudClient::aclUnitByNodeId_(uint32_t node_id) const
 {
     if (node_id == 0)
         return 0;
-    if (!_stack_master)
+    if (!_network)
         return UsersRegistry::kAclUnitCount;
-    for (size_t i = 0; i < _stack_master->nodeCount(); ++i)
+    const size_t count = _network->stackOnlineDeviceCount();
+    for (size_t i = 0; i < count; ++i)
     {
-        if (_stack_master->nodeIdAt(i) == node_id)
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!_network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+            continue;
+        if (device.node_id == node_id)
         {
             const size_t unit = i + 1u;
             if (unit >= (size_t)UsersRegistry::kAclUnitCount)

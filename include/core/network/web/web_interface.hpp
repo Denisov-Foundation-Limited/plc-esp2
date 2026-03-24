@@ -25,7 +25,6 @@
 #include "boards/board_profile.hpp"
 #include "core/cli/cli_console.hpp"
 #include "core/network/wifi_manager.hpp"
-#include "core/compat/stack_stub.hpp"
 #include "core/network/web/interfaces/web_interface_pages.hpp"
 #include "core/network/web/interfaces/web_interface_handler_fwd.hpp"
 #include "core/network/web/interfaces/web_interface_texts_ru.hpp"
@@ -38,7 +37,6 @@
 #include "utils/users_registry.hpp"
 #include "utils/fs_config.hpp"
 #include "utils/configs_manager_iface.hpp"
-#include "core/compat/stack_stub.hpp"
 #include "core/network/gsm_modem.hpp"
 #include "core/network/cloud/cloud_client.hpp"
 #include "core/display_slots.hpp"
@@ -84,15 +82,9 @@ public:
 
     void setGsmModem(GsmModem &modem);
 
-    void setStackCache(StackCache &cache);
-
     void setConfigsManager(ConfigsManagerIface &mgr);
 
     void setUsersRegistry(UsersRegistry &users);
-
-    void setStackMaster(StackMaster &master);
-
-    void setStackSlave(StackSlaveHandler *slave);
 
     void setCloudClient(CloudClient &client);
     void setNetwork(class Network &network);
@@ -100,14 +92,6 @@ public:
     void setRules(RulesController &rules);
 
     class Network *network() const;
-
-
-    StackCache &stackCache();
-
-    const StackCache &stackCache() const;
-
-    void logStackCacheAllocations();
-
 
     void registerRoutes();
 
@@ -203,7 +187,6 @@ private:
     bool isStackBusesView_(uint32_t node_id) const;
     bool isStackPortsView_(uint32_t node_id) const;
     uint32_t parseStackNodeIdParam_(AsyncWebServerRequest *request) const;
-    void handleStackFrame_(uint32_t node_id, const StackFrame &frame);
     bool requestStackPorts_(uint32_t node_id);
     bool refreshStackPorts_(uint32_t node_id);
     bool requestStackExtenders_(uint32_t node_id);
@@ -221,7 +204,6 @@ private:
     String listStackNodesStatusHtml_() const;
     String listStackNodesHtml_() const;
     String globalUsedPortsJson_(PortIO::PinType type) const;
-    bool stackPortTypeMatch_(const StackCache::StackPortItem &it, PortIO::PinType type) const;
     String stackPortOptionsJson_(uint32_t node_id, PortIO::PinType type) const;
     String stackUsedPortsJson_(uint32_t node_id, PortIO::PinType type) const;
     String stackMeteoDs18OptionsJson_(uint32_t node_id) const;
@@ -330,6 +312,7 @@ private:
     String stackLightsStatusText_(uint32_t node_id) const;
     bool isStackLightsView_(uint32_t node_id) const;
     void handleStackLightsToggle_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie);
+    void handleStackLightsEnable_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie);
     bool requestStackLights_(uint32_t node_id);
     String listLightsHtml_(uint8_t start_id, uint8_t end_id);
     size_t stackLightsVisibleCount_(uint32_t node_id) const;
@@ -434,7 +417,6 @@ private:
     bool isStackRingView_(uint32_t node_id) const;
     bool sendStackRingCmd_(uint32_t node_id, bool set_state, bool state);
     bool sendStackRingCmdAll_(bool set_state, bool state);
-    static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame);
 
     static String paramValue_(AsyncWebServerRequest *request, const String &name);
 
@@ -669,9 +651,6 @@ private:
     CliConsole *_cli_auth = nullptr;
     Extender *_ext = nullptr;
     Logger *_log = nullptr;
-    StackMaster *_stack_master = nullptr;
-    StackSlaveHandler *_stack_slave = nullptr;
-    StackCache *_stack_cache = nullptr;
     CloudClient *_cloud = nullptr;
     class Network *_network = nullptr;
     UsersRegistry *_users = nullptr;
@@ -683,7 +662,3 @@ private:
     bool _ota_set_cookie = false;
     bool _ota_in_progress = false;
 };
-
-
-
-

@@ -14,8 +14,6 @@
 
 #include <ArduinoJson.h>
 
-#include "core/compat/stack_stub.hpp"
-
 class GroupsHandler
 {
 public:

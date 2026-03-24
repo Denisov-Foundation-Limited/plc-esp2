@@ -62,72 +62,17 @@ bool WebInterfaceControllersRingHelper::isStackRingView_(const WebInterface &web
 bool WebInterfaceControllersRingHelper::sendStackRingCmd_(WebInterface &web, uint32_t node_id, bool set_state,
                                                           bool state)
 {
-    if (!web._stack_master)
-        return false;
-    StaticJsonDocument<192> doc;
-    doc["cmd_id"] = web.nextStackCmdId_();
-    doc["feature"] = (uint8_t)StackFeature::Ring;
-    if (set_state)
-    {
-        doc["action"] = "set";
-        JsonObject params = doc["params"].to<JsonObject>();
-        params["state"] = state;
-    }
-    else
-    {
-        doc["action"] = "trigger";
-    }
-    const String key = web.stackApiKey_();
-    if (key.length())
-        doc["api_key"] = key;
-    char payload[128] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return false;
-    return web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet, (const uint8_t *)payload, len);
+    (void)web;
+    (void)node_id;
+    (void)set_state;
+    (void)state;
+    return false;
 }
 
 bool WebInterfaceControllersRingHelper::sendStackRingCmdAll_(WebInterface &web, bool set_state, bool state)
 {
-    if (!web._stack_master || web.stackRole_() != ConfigsManagerIface::StackRole::Master)
-        return false;
-    const size_t count = web._stack_master->nodeCount();
-    if (count == 0)
-        return false;
-    StaticJsonDocument<192> doc;
-    doc["cmd_id"] = web.nextStackCmdId_();
-    doc["feature"] = (uint8_t)StackFeature::Ring;
-    if (set_state)
-    {
-        doc["action"] = "set";
-        JsonObject params = doc["params"].to<JsonObject>();
-        params["state"] = state;
-    }
-    else
-    {
-        doc["action"] = "trigger";
-    }
-    const String key = web.stackApiKey_();
-    if (key.length())
-        doc["api_key"] = key;
-    char payload[128] = {};
-    const size_t len = serializeJson(doc, payload, sizeof(payload));
-    if (len == 0)
-        return false;
-    bool ok = true;
-    for (size_t i = 0; i < count; ++i)
-    {
-        if (!web._stack_master->sendTo(web._stack_master->nodeIdAt(i), (uint8_t)StackMsgType::CmdSet,
-                                       (const uint8_t *)payload, len))
-            ok = false;
-    }
-    return ok;
-}
-
-void WebInterfaceControllersRingHelper::onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame)
-{
-    if (!ctx)
-        return;
-    WebInterface *self = static_cast<WebInterface *>(ctx);
-    self->handleStackFrame_(node_id, frame);
+    (void)web;
+    (void)set_state;
+    (void)state;
+    return false;
 }

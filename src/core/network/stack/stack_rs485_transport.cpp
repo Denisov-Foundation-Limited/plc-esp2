@@ -343,12 +343,9 @@ bool StackRs485Transport::sendFrame_(uint8_t client_id, uint8_t msg_type, const 
         if (payload && size && StackJsonProtocol::parseRoute(payload, size, route))
         {
             route.meta = meta;
-            DynamicJsonDocument payload_doc(768);
-            JsonDocument *payload_ptr = nullptr;
-            if (route.payload.length() && !deserializeJson(payload_doc, route.payload))
-                payload_ptr = &payload_doc;
             const String normalized =
-                StackJsonProtocol::makeRoute(route.source_node, route.target_node, route.feature, route.action, payload_ptr, &route.meta);
+                StackJsonProtocol::makeRoute(route.source_node, route.target_node, route.feature, route.action,
+                                             route.payload_json, &route.meta);
             wire_payload = reinterpret_cast<const uint8_t *>(normalized.c_str());
             wire_payload_size = normalized.length();
             if (wire_payload_size > sizeof(route_payload))

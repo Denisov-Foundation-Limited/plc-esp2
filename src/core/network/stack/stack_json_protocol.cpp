@@ -107,26 +107,49 @@ bool StackJsonProtocol::parseRoute(const uint8_t *data, size_t size, RouteMessag
     if (!data || size == 0)
         return false;
 
-    DynamicJsonDocument doc(3072);
-    if (deserializeJson(doc, data, size))
+    out = RouteMessage{};
+    auto doc = std::make_shared<DynamicJsonDocument>(3072);
+    if (!doc)
         return false;
-    if (strcmp(doc["type"] | "", "route") != 0)
+    if (deserializeJson(*doc, data, size))
         return false;
-    if (!copyString_(doc["feature"], out.feature, sizeof(out.feature)))
+    if (strcmp((*doc)["type"] | "", "route") != 0)
         return false;
-    if (!copyString_(doc["action"], out.action, sizeof(out.action)))
+    if (!copyString_((*doc)["feature"], out.feature, sizeof(out.feature)))
+        return false;
+    if (!copyString_((*doc)["action"], out.action, sizeof(out.action)))
         return false;
 
-    out.source_node = doc["source_node"] | 0u;
-    out.target_node = doc["target_node"] | 0u;
-    out.meta.exchange_kind = exchangeKindFromString_(doc["meta"]["exchange"] | doc["exchange"] | "event");
-    out.meta.request_id = doc["meta"]["request_id"] | doc["request_id"] | 0u;
-    out.meta.reply_to = doc["meta"]["reply_to"] | doc["reply_to"] | 0u;
-    out.meta.expect_response = doc["meta"]["expect_response"] | doc["expect_response"] | false;
+    out.source_node = (*doc)["source_node"] | 0u;
+    out.target_node = (*doc)["target_node"] | 0u;
+    out.meta.exchange_kind = exchangeKindFromString_((*doc)["meta"]["exchange"] | (*doc)["exchange"] | "event");
+    out.meta.request_id = (*doc)["meta"]["request_id"] | (*doc)["request_id"] | 0u;
+    out.meta.reply_to = (*doc)["meta"]["reply_to"] | (*doc)["reply_to"] | 0u;
+    out.meta.expect_response = (*doc)["meta"]["expect_response"] | (*doc)["expect_response"] | false;
     out.payload = "";
-    if (doc["payload"].is<JsonVariantConst>())
-        serializeJson(doc["payload"], out.payload);
+    out.payload_storage = doc;
+    out.payload_json = (*doc)["payload"].as<JsonVariantConst>();
+    if (!out.payload_json.isNull())
+        serializeJson(out.payload_json, out.payload);
     return out.target_node != 0 && out.feature[0] != '\0' && out.action[0] != '\0';
+}
+
+bool StackJsonProtocol::parseRoutePayload(const String &payload, RouteMessage &out)
+{
+    out.payload = payload;
+    out.payload_storage.reset();
+    out.payload_json = JsonVariantConst();
+    if (!payload.length())
+        return true;
+    const size_t cap = (payload.length() * 2u) + 256u;
+    auto doc = std::make_shared<DynamicJsonDocument>(cap);
+    if (!doc)
+        return false;
+    if (deserializeJson(*doc, payload.c_str(), payload.length()))
+        return false;
+    out.payload_storage = doc;
+    out.payload_json = doc->as<JsonVariantConst>();
+    return true;
 }
 
 bool StackJsonProtocol::parseNotify(const uint8_t *data, size_t size, NotifyMessage &out)
@@ -156,6 +179,14 @@ bool StackJsonProtocol::parseNotify(const uint8_t *data, size_t size, NotifyMess
 String StackJsonProtocol::makeRoute(uint32_t source_node, uint32_t target_node, const char *feature, const char *action,
                                     const JsonDocument *payload, const StackTransport::RouteMeta *meta)
 {
+    return makeRoute(source_node, target_node, feature, action,
+                     payload ? payload->as<JsonVariantConst>() : JsonVariantConst(),
+                     meta);
+}
+
+String StackJsonProtocol::makeRoute(uint32_t source_node, uint32_t target_node, const char *feature, const char *action,
+                                    JsonVariantConst payload, const StackTransport::RouteMeta *meta)
+{
     DynamicJsonDocument doc(3072);
     doc["type"] = "route";
     doc["source_node"] = source_node;
@@ -167,8 +198,8 @@ String StackJsonProtocol::makeRoute(uint32_t source_node, uint32_t target_node, 
     meta_obj["request_id"] = meta ? meta->request_id : 0u;
     meta_obj["reply_to"] = meta ? meta->reply_to : 0u;
     meta_obj["expect_response"] = meta ? meta->expect_response : false;
-    if (payload)
-        doc["payload"].set(payload->as<JsonVariantConst>());
+    if (!payload.isNull())
+        doc["payload"].set(payload);
     else
         doc["payload"].to<JsonObject>();
     String out;

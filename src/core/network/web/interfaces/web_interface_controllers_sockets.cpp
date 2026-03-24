@@ -37,8 +37,11 @@ bool requestNextStackSocketsPage_(WebInterface &web, uint32_t node_id, uint16_t 
     DynamicJsonDocument req(64);
     req["offset"] = offset;
     req["limit"] = limit;
-    return web.network()->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
-                                                   StackRouteAdapter::Mode::Json, true);
+    const bool sent = web.network()->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
+                                                              StackRouteAdapter::Mode::Json, true);
+    if (!sent)
+        web.network()->clearStackSocketsPageRequest(node_id);
+    return sent;
 }
 }
 
@@ -616,12 +619,20 @@ bool WebInterfaceControllersSocketsHelper::requestStackSockets_(WebInterface &we
         if (!has_snapshot || snapshot.updated_ms == 0 ||
             (uint32_t)(now - snapshot.updated_ms) > 5000u)
         {
-            return web.requestStackIndexState_(node_id);
+            const bool refresh = web.requestStackIndexState_(node_id);
+            DynamicJsonDocument req(64);
+            req["offset"] = 0;
+            req["limit"] = 8;
+            const bool sockets_req = web.network()->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
+                                                                             StackRouteAdapter::Mode::Json, true);
+            return refresh || sockets_req;
         }
         if (snapshot.pending && (uint32_t)(now - snapshot.request_started_ms) < 1500u)
             return true;
         if (snapshot.sockets_enabled > snapshot.socket_count)
         {
+            if (!web.network()->prepareStackSocketsPageRequest(node_id, now, snapshot.socket_count, 4000u))
+                return true;
             return requestNextStackSocketsPage_(web, node_id, snapshot.socket_count, 8);
         }
         return true;

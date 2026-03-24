@@ -17,6 +17,8 @@
 
 #include "utils/rtos_lock.hpp"
 
+static constexpr uint32_t kStackCapController = 1u << 0;
+
 class StackDeviceRegistry
 {
 public:

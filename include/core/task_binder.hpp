@@ -267,7 +267,7 @@ private:
     {
         if (_stack_task_rtos == nullptr)
         {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::stackTaskEntry_, "stack_loop", 8192, this, 3,
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::stackTaskEntry_, "stack_loop", 12288, this, 3,
                                                     &_stack_task_rtos, tskNO_AFFINITY);
             if (ok != pdPASS)
                 _logs.error(F("TASK"), F("Bind failed: stack_loop"));
@@ -289,7 +289,7 @@ private:
     {
         if (_display_task_rtos == nullptr)
         {
-            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::displayTaskEntry_, "display", 3072, this, 1,
+            BaseType_t ok = xTaskCreatePinnedToCore(&TaskBinder::displayTaskEntry_, "display", 4096, this, 1,
                                                     &_display_task_rtos, tskNO_AFFINITY);
             if (ok != pdPASS)
                 _logs.error(F("TASK"), F("Bind failed: display"));

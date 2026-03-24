@@ -140,12 +140,7 @@ NetworkContext::NetworkContext(CoreContext &core, HardwareContext &hw, CommsCont
         : web(ActiveBoardProfile::WEB_PORT),
           fw_upgrade(web, ui.console, comms.wifi, core.configs, hw.plc, hw.rtc, core.logs, hw.ext, hw.i2c, hw.ow,
                      control.controllers, control.rules),
-          network(core.logs, comms.wifi, comms.gsm, fw_upgrade, web, control.controllers, hw.plc, hw.rtc),
-          stack_slave(hw.io, hw.ds18b20, hw.ow, hw.i2c, hw.plc, hw.rtc, core.logs, hw.ext,
-                      control.controllers.sockets(), control.controllers.meteo(), control.controllers.thermo(),
-                      control.controllers.septic(), control.controllers.security(), control.controllers.tanks(),
-                      control.controllers.watering(), control.controllers.ring(),
-                      control.controllers.avr(), control.controllers.leak(), control.controllers)
+          network(core.logs, comms.wifi, comms.gsm, fw_upgrade, web, control.controllers, hw.plc, hw.rtc)
 {
 }
 
@@ -174,9 +169,6 @@ ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContex
         net.fw_upgrade.setGsmModem(comms.gsm);
         net.fw_upgrade.setCloudClient(net.network.cloudClient());
         net.fw_upgrade.setNetwork(net.network);
-        net.fw_upgrade.setStackCache(runtime.stackCache());
-        net.fw_upgrade.setStackMaster(net.network.stackMaster());
-        net.fw_upgrade.setStackSlave(&net.stack_slave);
         net.network.cloudClient().setConfigsManager(&cfg.configs_manager);
         net.network.cloudClient().setUsersRegistry(&control.users);
         net.network.cloudClient().setRulesController(&control.rules);

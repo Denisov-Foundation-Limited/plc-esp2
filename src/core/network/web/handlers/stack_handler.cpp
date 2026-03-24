@@ -263,23 +263,14 @@ void StackHandler::handleOnlineSnapshot(WebInterface &web, AsyncWebServerRequest
             const uint32_t id = device.node_id;
             String name = device.name[0] ? String(device.name) : String();
             bool sync_ready = false;
-            if (web._stack_cache)
+            if (network)
             {
-                auto cacheReady = [](const auto *cache) -> bool {
-                    return cache && (cache->has_data || cache->last_ok || cache->last_error.length());
-                };
-                const auto *sockets = web._stack_cache->socketsCache(id);
-                const auto *lights = web._stack_cache->lightsCache(id);
-                const auto *meteo = web._stack_cache->meteoCache(id);
-                const auto *thermo = web._stack_cache->thermoCache(id);
-                const auto *tanks = web._stack_cache->tanksCache(id);
-                const auto *septic = web._stack_cache->septicCache(id);
-                const auto *security = web._stack_cache->securityCache(id);
-                const auto *watering = web._stack_cache->wateringCache(id);
-                const auto *leak = web._stack_cache->leakCache(id);
-                sync_ready = cacheReady(sockets) && cacheReady(lights) && cacheReady(meteo) &&
-                             cacheReady(thermo) && cacheReady(tanks) && cacheReady(septic) &&
-                             cacheReady(security) && cacheReady(watering) && cacheReady(leak);
+                StackUnitSnapshot::Snapshot snapshot{};
+                const bool has_snapshot = network->stackIndexStateSnapshot(id, snapshot);
+                sync_ready = has_snapshot &&
+                             snapshot.updated_ms != 0 &&
+                             snapshot.socket_count >= snapshot.sockets_enabled &&
+                             snapshot.light_count >= snapshot.lights_enabled;
             }
             if (!first)
                 out += ",";

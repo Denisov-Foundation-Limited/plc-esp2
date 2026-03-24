@@ -11,6 +11,29 @@
 
 #include "core/network/web/web_interface.hpp"
 
+namespace
+{
+bool displayStackSnapshot_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::Snapshot &out)
+{
+    return web.network() && node_id != 0 && web.network()->stackIndexStateSnapshot(node_id, out);
+}
+
+template <typename Fn>
+void forEachDisplayStackDevice_(const WebInterface &web, Fn &&fn)
+{
+    if (!web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+        return;
+    const size_t count = web.network()->stackOnlineDeviceCount();
+    for (size_t i = 0; i < count; ++i)
+    {
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!web.network()->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+            continue;
+        fn(device);
+    }
+}
+}
+
 String WebInterfaceControllersDisplayHelper::displaySlotsHtml_(const WebInterface &web) {
         String html;
         html.reserve(2048);
@@ -76,17 +99,10 @@ String WebInterfaceControllersDisplayHelper::displayDeviceOptionsJson_(const Web
             first = false;
         };
         append("0", "local");
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t id = web._stack_master->nodeIdAt(i);
-                String name = web._stack_master->nodeNameAt(i);
-                const String label = name.length() ? name : web.stackNodeIdHex_(id);
-                append(String((unsigned long)id), label);
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            const String label = device.name[0] ? String(device.name) : web.stackNodeIdHex_(device.node_id);
+            append(String((unsigned long)device.node_id), label);
+        });
         out += "]";
         return out;
     }
@@ -135,26 +151,22 @@ String WebInterfaceControllersDisplayHelper::displaySocketOptionsJson_(const Web
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackSocketsCache *cache = web.stackCache().socketsCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+                const uint32_t node_id = device.node_id;
+                StackUnitSnapshot::Snapshot snapshot{};
+                if (!displayStackSnapshot_(web, node_id, snapshot) || snapshot.updated_ms == 0)
                 {
-                    const_cast<StackCache *>(web._stack_cache)->requestSockets(node_id);
+                    const_cast<WebInterface &>(web).requestStackSockets_(node_id);
                     append_node(String((unsigned long)node_id), "[]");
-                    continue;
+                    return;
                 }
                 String list;
                 list.reserve(256);
                 list += "[";
                 bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
+                for (uint8_t k = 0; k < snapshot.socket_count && k < StackUnitSnapshot::kSocketCount; ++k)
                 {
-                    const auto &it = cache->items[k];
+                    const auto &it = snapshot.sockets[k];
                     if (!it.enabled)
                         continue;
                     if (!first_item)
@@ -170,9 +182,10 @@ String WebInterfaceControllersDisplayHelper::displaySocketOptionsJson_(const Web
                     first_item = false;
                 }
                 list += "]";
+                if (snapshot.sockets_enabled > snapshot.socket_count)
+                    const_cast<WebInterface &>(web).requestStackSockets_(node_id);
                 append_node(String((unsigned long)node_id), list);
-            }
-        }
+        });
         out += "}";
         return out;
     }
@@ -221,26 +234,22 @@ String WebInterfaceControllersDisplayHelper::displayLightOptionsJson_(const WebI
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackLightsCache *cache = web.stackCache().lightsCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+                const uint32_t node_id = device.node_id;
+                StackUnitSnapshot::Snapshot snapshot{};
+                if (!displayStackSnapshot_(web, node_id, snapshot) || snapshot.updated_ms == 0)
                 {
-                    const_cast<StackCache *>(web._stack_cache)->requestLights(node_id);
+                    const_cast<WebInterface &>(web).requestStackLights_(node_id);
                     append_node(String((unsigned long)node_id), "[]");
-                    continue;
+                    return;
                 }
                 String list;
                 list.reserve(256);
                 list += "[";
                 bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
+                for (uint8_t k = 0; k < snapshot.light_count && k < StackUnitSnapshot::kSocketCount; ++k)
                 {
-                    const auto &it = cache->items[k];
+                    const auto &it = snapshot.lights[k];
                     if (!it.enabled)
                         continue;
                     if (!first_item)
@@ -256,9 +265,10 @@ String WebInterfaceControllersDisplayHelper::displayLightOptionsJson_(const WebI
                     first_item = false;
                 }
                 list += "]";
+                if (snapshot.lights_enabled > snapshot.light_count)
+                    const_cast<WebInterface &>(web).requestStackLights_(node_id);
                 append_node(String((unsigned long)node_id), list);
-            }
-        }
+        });
         out += "}";
         return out;
     }
@@ -307,44 +317,9 @@ String WebInterfaceControllersDisplayHelper::displayMeteoOptionsJson_(const WebI
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackMeteoCache *cache = web.stackCache().meteoCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
-                {
-                    const_cast<StackCache *>(web._stack_cache)->requestMeteo(node_id);
-                    append_node(String((unsigned long)node_id), "[]");
-                    continue;
-                }
-                String list;
-                list.reserve(256);
-                list += "[";
-                bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
-                {
-                    const auto &it = cache->items[k];
-                    if (!it.enabled)
-                        continue;
-                    if (!first_item)
-                        list += ",";
-                    list += "{\"v\":";
-                    list += String((unsigned)it.id);
-                    list += ",\"l\":\"";
-                    if (it.name[0])
-                        web.appendJsonEscaped_(list, it.name);
-                    else
-                        list += String("Sensor #") + String((unsigned)it.id);
-                    list += "\"}";
-                    first_item = false;
-                }
-                list += "]";
-                append_node(String((unsigned long)node_id), list);
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            append_node(String((unsigned long)device.node_id), "[]");
+        });
         out += "}";
         return out;
     }
@@ -393,44 +368,9 @@ String WebInterfaceControllersDisplayHelper::displayThermoOptionsJson_(const Web
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackThermoCache *cache = web.stackCache().thermoCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
-                {
-                    const_cast<StackCache *>(web._stack_cache)->requestThermo(node_id);
-                    append_node(String((unsigned long)node_id), "[]");
-                    continue;
-                }
-                String list;
-                list.reserve(256);
-                list += "[";
-                bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
-                {
-                    const auto &it = cache->items[k];
-                    if (!it.enabled)
-                        continue;
-                    if (!first_item)
-                        list += ",";
-                    list += "{\"v\":";
-                    list += String((unsigned)it.id);
-                    list += ",\"l\":\"";
-                    if (it.name[0])
-                        web.appendJsonEscaped_(list, it.name);
-                    else
-                        list += String("Thermo #") + String((unsigned)it.id);
-                    list += "\"}";
-                    first_item = false;
-                }
-                list += "]";
-                append_node(String((unsigned long)node_id), list);
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            append_node(String((unsigned long)device.node_id), "[]");
+        });
         out += "}";
         return out;
     }
@@ -479,44 +419,9 @@ String WebInterfaceControllersDisplayHelper::displayTankOptionsJson_(const WebIn
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackTankCache *cache = web.stackCache().tanksCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
-                {
-                    const_cast<StackCache *>(web._stack_cache)->requestTanks(node_id);
-                    append_node(String((unsigned long)node_id), "[]");
-                    continue;
-                }
-                String list;
-                list.reserve(256);
-                list += "[";
-                bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
-                {
-                    const auto &it = cache->items[k];
-                    if (!it.enabled)
-                        continue;
-                    if (!first_item)
-                        list += ",";
-                    list += "{\"v\":";
-                    list += String((unsigned)it.id);
-                    list += ",\"l\":\"";
-                    if (it.name[0])
-                        web.appendJsonEscaped_(list, it.name);
-                    else
-                        list += String("Tank #") + String((unsigned)it.id);
-                    list += "\"}";
-                    first_item = false;
-                }
-                list += "]";
-                append_node(String((unsigned long)node_id), list);
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            append_node(String((unsigned long)device.node_id), "[]");
+        });
         out += "}";
         return out;
     }
@@ -565,44 +470,9 @@ String WebInterfaceControllersDisplayHelper::displaySepticOptionsJson_(const Web
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackSepticCache *cache = web.stackCache().septicCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
-                {
-                    const_cast<StackCache *>(web._stack_cache)->requestSeptic(node_id);
-                    append_node(String((unsigned long)node_id), "[]");
-                    continue;
-                }
-                String list;
-                list.reserve(256);
-                list += "[";
-                bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
-                {
-                    const auto &it = cache->items[k];
-                    if (!it.enabled)
-                        continue;
-                    if (!first_item)
-                        list += ",";
-                    list += "{\"v\":";
-                    list += String((unsigned)it.id);
-                    list += ",\"l\":\"";
-                    if (it.id)
-                        list += String("Septic #") + String((unsigned)it.id);
-                    else
-                        list += String("Septic");
-                    list += "\"}";
-                    first_item = false;
-                }
-                list += "]";
-                append_node(String((unsigned long)node_id), list);
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            append_node(String((unsigned long)device.node_id), "[]");
+        });
         out += "}";
         return out;
     }
@@ -624,22 +494,9 @@ String WebInterfaceControllersDisplayHelper::displayAvrOptionsJson_(const WebInt
     
         append_node("0", "[{\"v\":1,\"l\":\"AVR\"}]");
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackAvrCache *cache = web.stackCache().avrCache(node_id);
-                if (!cache || !cache->has_data)
-                {
-                    const_cast<StackCache *>(web._stack_cache)->requestAvr(node_id);
-                    append_node(String((unsigned long)node_id), "[]");
-                    continue;
-                }
-                append_node(String((unsigned long)node_id), "[{\"v\":1,\"l\":\"AVR\"}]");
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            append_node(String((unsigned long)device.node_id), "[]");
+        });
         out += "}";
         return out;
     }
@@ -688,44 +545,9 @@ String WebInterfaceControllersDisplayHelper::displayLeakOptionsJson_(const WebIn
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackLeakCache *cache = web.stackCache().leakCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
-                {
-                    const_cast<StackCache *>(web._stack_cache)->requestLeak(node_id);
-                    append_node(String((unsigned long)node_id), "[]");
-                    continue;
-                }
-                String list;
-                list.reserve(256);
-                list += "[";
-                bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
-                {
-                    const auto &it = cache->items[k];
-                    if (!it.enabled)
-                        continue;
-                    if (!first_item)
-                        list += ",";
-                    list += "{\"v\":";
-                    list += String((unsigned)it.id);
-                    list += ",\"l\":\"";
-                    if (it.name[0])
-                        web.appendJsonEscaped_(list, it.name);
-                    else
-                        list += String("Leak #") + String((unsigned)it.id);
-                    list += "\"}";
-                    first_item = false;
-                }
-                list += "]";
-                append_node(String((unsigned long)node_id), list);
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            append_node(String((unsigned long)device.node_id), "[]");
+        });
         out += "}";
         return out;
     }

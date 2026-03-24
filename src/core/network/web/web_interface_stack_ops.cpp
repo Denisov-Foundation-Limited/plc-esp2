@@ -117,68 +117,26 @@ String WebInterfaceStackOps::portsDeviceSelectHtml_(uint32_t selected_node_id, b
 
 String WebInterfaceStackOps::stackBusesStatusText_(uint32_t node_id) const
 {
-    const auto *i2c = _web._stack_cache ? _web._stack_cache->i2cCache(node_id) : nullptr;
-    const auto *ow = _web._stack_cache ? _web._stack_cache->owCache(node_id) : nullptr;
-    if (!i2c && !ow)
+    if (!hasOnlineNode_(_web, node_id))
         return WebUiRu::kNoDataFromSlave;
-    if ((i2c && i2c->pending) || (ow && ow->pending))
-        return "";
-    if (i2c && !i2c->last_ok && i2c->last_error.length())
-    {
-        String msg = WebUiRu::Controllers::kI2c;
-        msg += i2c->last_error;
-        return msg;
-    }
-    if (ow && !ow->last_ok && ow->last_error.length())
-    {
-        String msg = WebUiRu::Controllers::kOw;
-        msg += ow->last_error;
-        return msg;
-    }
-    const bool i2c_ok = i2c && i2c->has_data;
-    const bool ow_ok = ow && ow->has_data;
-    if (!i2c_ok && !ow_ok)
-        return WebUiRu::kNoDataFromSlave;
-    return WebUiRu::kStatusOk;
+    return WebUiRu::kNoDataFromSlave;
 }
 
 String WebInterfaceStackOps::stackPortsStatusText_(uint32_t node_id) const
 {
-    const auto *ports = _web._stack_cache ? _web._stack_cache->portsCache(node_id) : nullptr;
-    const auto *exts = _web._stack_cache ? _web._stack_cache->extendersCache(node_id) : nullptr;
-    if (!ports && !exts)
+    if (!hasOnlineNode_(_web, node_id))
         return WebUiRu::kNoDataFromSlave;
-    if ((ports && ports->pending) || (exts && exts->pending))
-        return "";
-    if (ports && !ports->last_ok && ports->last_error.length())
-    {
-        String msg = WebUiRu::Controllers::kPorts;
-        msg += ports->last_error;
-        return msg;
-    }
-    if (exts && !exts->last_ok && exts->last_error.length())
-    {
-        String msg = WebUiRu::Controllers::kExtenders;
-        msg += exts->last_error;
-        return msg;
-    }
-    const bool ports_ok = ports && ports->has_data;
-    const bool exts_ok = exts && exts->has_data;
-    if (!ports_ok && !exts_ok)
-        return WebUiRu::kNoDataFromSlave;
-    return WebUiRu::kStatusOk;
+    return WebUiRu::kNoDataFromSlave;
 }
 
 bool WebInterfaceStackOps::isStackBusesView_(uint32_t node_id) const
 {
-    return node_id != 0 && _web._stack_master &&
-           _web.stackRole_() == ConfigsManagerIface::StackRole::Master;
+    return hasOnlineNode_(_web, node_id);
 }
 
 bool WebInterfaceStackOps::isStackPortsView_(uint32_t node_id) const
 {
-    return node_id != 0 && _web._stack_master &&
-           _web.stackRole_() == ConfigsManagerIface::StackRole::Master;
+    return hasOnlineNode_(_web, node_id);
 }
 
 uint32_t WebInterfaceStackOps::parseStackNodeIdParam_(AsyncWebServerRequest *request) const
@@ -198,71 +156,48 @@ uint32_t WebInterfaceStackOps::parseStackNodeIdParam_(AsyncWebServerRequest *req
     return hasOnlineNode_(_web, node_id) ? node_id : 0;
 }
 
-void WebInterfaceStackOps::handleStackFrame_(uint32_t node_id, const StackFrame &frame)
-{
-    if (_web._stack_cache)
-        StackCache::onStackFrame_(_web._stack_cache, node_id, frame);
-}
-
 bool WebInterfaceStackOps::requestStackPorts_(uint32_t node_id)
 {
-    return _web._stack_cache && _web._stack_cache->requestPorts(node_id);
+    (void)node_id;
+    return false;
 }
 
 bool WebInterfaceStackOps::refreshStackPorts_(uint32_t node_id)
 {
-    if (!_web._stack_cache)
-        return false;
-    if (auto *cache = _web._stack_cache->portsCache(node_id))
-    {
-        cache->pending = false;
-        cache->pending_cmd_id = 0;
-        cache->parts_expected = 0;
-        cache->parts_received = 0;
-        cache->next_offset = 0;
-        cache->page_limit = 0;
-        cache->last_error = "";
-        cache->updated_ms = 0;
-        memset(cache->part_seen, 0, sizeof(cache->part_seen));
-        memset(cache->present, 0, sizeof(cache->present));
-    }
-    return _web._stack_cache->requestPorts(node_id);
+    (void)node_id;
+    return false;
 }
 
 bool WebInterfaceStackOps::requestStackExtenders_(uint32_t node_id)
 {
-    return _web._stack_cache && _web._stack_cache->requestExtenders(node_id);
+    (void)node_id;
+    return false;
 }
 
 bool WebInterfaceStackOps::requestStackI2c_(uint32_t node_id, bool run)
 {
-    return _web._stack_cache && _web._stack_cache->requestI2c(node_id, run);
+    (void)node_id;
+    (void)run;
+    return false;
 }
 
 bool WebInterfaceStackOps::requestStackOw_(uint32_t node_id, bool run)
 {
-    return _web._stack_cache && _web._stack_cache->requestOw(node_id, run);
+    (void)node_id;
+    (void)run;
+    return false;
 }
 
 bool WebInterfaceStackOps::requestStackTempSensors_(uint32_t node_id)
 {
-    return _web._stack_cache && _web._stack_cache->requestTempSensors(node_id);
+    (void)node_id;
+    return false;
 }
 
 bool WebInterfaceStackOps::refreshStackTempSensors_(uint32_t node_id)
 {
-    if (!_web._stack_cache)
-        return false;
-    if (auto *cache = _web._stack_cache->tempSensorsCache(node_id))
-    {
-        cache->pending = false;
-        cache->pending_cmd_id = 0;
-        cache->next_offset = 0;
-        cache->page_limit = 0;
-        cache->last_error = "";
-        cache->updated_ms = 0;
-    }
-    return _web._stack_cache->requestTempSensors(node_id);
+    (void)node_id;
+    return false;
 }
 
 bool WebInterfaceStackOps::requestStackIndexState_(uint32_t node_id)
@@ -290,12 +225,12 @@ bool WebInterfaceStackOps::requestStackIndexState_(uint32_t node_id)
 
 bool WebInterfaceStackOps::requestStackPlcStatus_(uint32_t node_id)
 {
-    return _web._stack_cache && _web._stack_cache->requestPlcStatus(node_id);
+    return requestStackIndexState_(node_id);
 }
 
 bool WebInterfaceStackOps::requestStackRtcStatus_(uint32_t node_id)
 {
-    return _web._stack_cache && _web._stack_cache->requestRtcStatus(node_id);
+    return requestStackIndexState_(node_id);
 }
 
 uint16_t WebInterfaceStackOps::nextStackCmdId_()

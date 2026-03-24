@@ -299,15 +299,8 @@ bool StackMasterRouter::handleRouteMessage_(const StackDeviceRegistry::DeviceInf
         return true;
     }
 
-    String forwarded =
-        StackJsonProtocol::makeRoute(route.source_node, route.target_node, route.feature, route.action, nullptr, &route.meta);
-    if (route.payload.length())
-    {
-        DynamicJsonDocument payload_doc(384);
-        if (!deserializeJson(payload_doc, route.payload))
-            forwarded = StackJsonProtocol::makeRoute(route.source_node, route.target_node, route.feature, route.action,
-                                                     &payload_doc, &route.meta);
-    }
+    String forwarded = StackJsonProtocol::makeRoute(route.source_node, route.target_node, route.feature, route.action,
+                                                    route.payload_json, &route.meta);
     if (!_transport.sendText(target.client_id, forwarded.c_str()))
     {
         _log.warn(F("STACK"), F("Route forward failed: src 0x%08lX dst 0x%08lX"), (unsigned long)device.node_id,

@@ -28,36 +28,6 @@ void AppRuntime::updateSecurityAlarms_(){
         if (st->is_detect)
             detail_mask |= (1u << (cfg->id - 1));
     }
-    if (stackMasterActive_())
-    {
-        const size_t count = net.network.stackOnlineDeviceCount();
-        for (size_t i = 0; i < count; ++i)
-        {
-            StackDeviceRegistry::DeviceInfo device{};
-            if (!net.network.stackDeviceSnapshotAt(i, device))
-                continue;
-            const uint32_t node_id = device.node_id;
-            if (node_id == 0)
-                continue;
-            const auto *cache = _stack_cache.securityCache(node_id);
-            if (!cache || !cache->has_data || !cache->items || !cache->last_ok)
-                continue;
-            for (size_t j = 0; j < cache->item_count; ++j)
-            {
-                const auto &it = cache->items[j];
-                if (!it.enabled || it.silent)
-                    continue;
-                if (it.id == 0 || it.id > 32)
-                    continue;
-                if (it.detect)
-                {
-                    detail_mask |= (1u << (it.id - 1));
-                    if (i < 32)
-                        unit_mask |= (1u << i);
-                }
-            }
-        }
-    }
     hw.plc.setAlarmDetailMask(PlcControl::AlarmModule::Security, detail_mask);
     hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Security, unit_mask);
 }
@@ -289,174 +259,11 @@ void AppRuntime::pollSecurityStatusFromMaster_(){
 }
 
 bool AppRuntime::collectRemoteSecurityDetections_(String &out, String *plain_out){
+    (void)out;
+    (void)plain_out;
     if (!stackMasterActive_())
         return false;
-    const size_t count = net.network.stackOnlineDeviceCount();
-    bool any = false;
-    bool missing = false;
-    uint32_t beep_nodes[StackMaster::MAX_SESSIONS] = {};
-    size_t beep_count = 0;
-    auto mark_beep = [&beep_nodes, &beep_count](uint32_t node_id) {
-        for (size_t i = 0; i < beep_count; ++i)
-        {
-            if (beep_nodes[i] == node_id)
-                return;
-        }
-        if (beep_count < StackMaster::MAX_SESSIONS)
-            beep_nodes[beep_count++] = node_id;
-    };
-    uint32_t pending_nodes[StackMaster::MAX_SESSIONS] = {};
-    uint32_t pending_req_ms[StackMaster::MAX_SESSIONS] = {};
-    size_t pending_count = 0;
-    const uint32_t now = millis();
-    for (size_t i = 0; i < count; ++i)
-    {
-        StackDeviceRegistry::DeviceInfo device{};
-        if (!net.network.stackDeviceSnapshotAt(i, device))
-            continue;
-        const uint32_t node_id = device.node_id;
-        if (node_id == 0 || !device.online || (uint32_t)(now - device.last_seen_ms) > kStackNodeStaleMs)
-            continue;
-        const auto *cache = _stack_cache.securityPrearmCache(node_id);
-        const bool stale = cache && cache->has_data && (uint32_t)(now - cache->updated_ms) > kPreArmFreshMs;
-        if (!cache || cache->pending || !cache->has_data || !cache->items || !cache->last_ok || stale)
-        {
-            _stack_cache.requestSecurityPrearmForce(node_id);
-            if (pending_count < StackMaster::MAX_SESSIONS)
-            {
-                pending_nodes[pending_count] = node_id;
-                pending_req_ms[pending_count] = millis();
-                ++pending_count;
-            }
-        }
-    }
-    if (pending_count)
-    {
-        const uint32_t wait_until = millis() + kPreArmWaitMs;
-        bool any_pending = true;
-        while (any_pending && (int32_t)(millis() - wait_until) < 0)
-        {
-            any_pending = false;
-            for (size_t i = 0; i < pending_count; ++i)
-            {
-                const uint32_t node_id = pending_nodes[i];
-                if (node_id == 0)
-                    continue;
-                const auto *cache = _stack_cache.securityPrearmCache(node_id);
-                if (!cache)
-                    continue;
-                if (cache->pending || !cache->has_data || !cache->items || !cache->last_ok ||
-                    cache->updated_ms < pending_req_ms[i])
-                {
-                    any_pending = true;
-                }
-            }
-            if (any_pending)
-                delay(20);
-        }
-    }
-    for (size_t i = 0; i < count; ++i)
-    {
-        StackDeviceRegistry::DeviceInfo device{};
-        if (!net.network.stackDeviceSnapshotAt(i, device))
-            continue;
-        const uint32_t node_id = device.node_id;
-        if (node_id == 0 || !device.online || (uint32_t)(millis() - device.last_seen_ms) > kStackNodeStaleMs)
-            continue;
-        const auto *cache = _stack_cache.securityPrearmCache(node_id);
-        const uint32_t now2 = millis();
-        uint32_t req_ms = 0;
-        for (size_t j = 0; j < pending_count; ++j)
-        {
-            if (pending_nodes[j] == node_id)
-            {
-                req_ms = pending_req_ms[j];
-                break;
-            }
-        }
-        const bool stale = cache && cache->has_data && (uint32_t)(now2 - cache->updated_ms) > kPreArmFreshMs;
-        if (!cache || cache->pending || !cache->has_data || !cache->items || !cache->last_ok || stale ||
-            (req_ms != 0 && cache->updated_ms < req_ms))
-        {
-            const String label = stackNodeLabel_(node_id);
-            if (out.length())
-                out += F("\n");
-            out += F("Р С•Р В¶Р С‘Р Т‘Р В°Р Р…Р С‘Р Вµ Р Т‘Р В°Р Р…Р Р…РЎвЂ№РЎвЂ¦: ");
-            out += escapeHtml_(label);
-            if (plain_out)
-            {
-                if (plain_out->length())
-                    *plain_out += F(", ");
-                *plain_out += F("Р С•Р В¶Р С‘Р Т‘Р В°Р Р…Р С‘Р Вµ Р Т‘Р В°Р Р…Р Р…РЎвЂ№РЎвЂ¦: ");
-                *plain_out += label;
-            }
-            core.logs.warn(F("SECURITY"), F("prearm waiting data from %s"), label.c_str());
-            missing = true;
-            any = true;
-            mark_beep(node_id);
-            continue;
-        }
-        String line;
-        String plain_line;
-        bool node_any = false;
-        for (size_t j = 0; j < cache->item_count; ++j)
-        {
-            const auto &it = cache->items[j];
-            if (!node_any)
-            {
-                const String label = stackNodeLabel_(node_id);
-                line += escapeHtml_(label);
-                line += F(": ");
-                plain_line += label;
-                plain_line += F(": ");
-            }
-            else
-            {
-                line += F(", ");
-                plain_line += F(", ");
-            }
-            line += String((unsigned)it.id);
-            plain_line += String((unsigned)it.id);
-            if (it.name[0])
-            {
-                const String name = String(it.name);
-                line += F(" (");
-                line += F("<b>");
-                line += escapeHtml_(name);
-                line += F("</b>");
-                line += F(")");
-                plain_line += F(" (");
-                plain_line += name;
-                plain_line += F(")");
-            }
-            core.logs.warn(F("SECURITY"), F("prearm blocked %s sensor %u (%s)"),
-                           stackNodeLabel_(node_id).c_str(),
-                           (unsigned)it.id,
-                           it.name[0] ? it.name : "-");
-            node_any = true;
-        }
-        if (!node_any)
-            continue;
-        mark_beep(node_id);
-        if (out.length())
-            out += F("\n");
-        out += line;
-        if (plain_out)
-        {
-            if (plain_out->length())
-                *plain_out += F(", ");
-            *plain_out += plain_line;
-        }
-        any = true;
-    }
-    if (beep_count)
-    {
-        for (size_t i = 0; i < beep_count; ++i)
-            sendSecurityBeepToNode_(beep_nodes[i], "reject");
-    }
-    if (missing)
-        return true;
-    return any;
+    return false;
 }
 
 void AppRuntime::broadcastSecurityAlarm_(bool alarm_on){
@@ -493,28 +300,7 @@ void AppRuntime::sendSecurityBeepToNode_(uint32_t node_id, const char *kind){
 }
 
 void AppRuntime::pollSecurityPrearmWarmup_(){
-    if (!stackMasterActive_())
-        return;
-    const uint32_t now = millis();
-    if ((uint32_t)(now - _last_prearm_poll_ms) < kPreArmPollMs)
-        return;
-    _last_prearm_poll_ms = now;
-    const size_t count = net.network.stackOnlineDeviceCount();
-    for (size_t i = 0; i < count; ++i)
-    {
-        StackDeviceRegistry::DeviceInfo device{};
-        if (!net.network.stackDeviceSnapshotAt(i, device))
-            continue;
-        const uint32_t node_id = device.node_id;
-        if (node_id == 0)
-            continue;
-        if (!device.online || (uint32_t)(now - device.last_seen_ms) > kStackNodeStaleMs)
-            continue;
-        const auto *cache = _stack_cache.securityPrearmCache(node_id);
-        const bool stale = cache && cache->has_data && (uint32_t)(now - cache->updated_ms) > kPreArmFreshMs;
-        if (!cache || !cache->has_data || !cache->items || !cache->last_ok || stale || cache->pending)
-            _stack_cache.requestSecurityPrearm(node_id);
-    }
+    return;
 }
 
 void AppRuntime::broadcastSecurityClear_(){

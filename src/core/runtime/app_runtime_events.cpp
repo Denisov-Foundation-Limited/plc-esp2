@@ -29,37 +29,6 @@ void AppRuntime::updateTankAlarms_(){
         if (!st->levels_ok || empty)
             detail_mask |= (1u << (cfg->id - 1));
     }
-    if (stackMasterActive_())
-    {
-        const size_t count = net.network.stackOnlineDeviceCount();
-        for (size_t i = 0; i < count; ++i)
-        {
-            StackDeviceRegistry::DeviceInfo device{};
-            if (!net.network.stackDeviceSnapshotAt(i, device))
-                continue;
-            const uint32_t node_id = device.node_id;
-            if (node_id == 0)
-                continue;
-            const auto *cache = _stack_cache.tanksCache(node_id);
-            if (!cache || !cache->has_data || !cache->last_ok)
-                continue;
-            for (size_t j = 0; j < cache->item_count; ++j)
-            {
-                const auto &it = cache->items[j];
-                if (!it.enabled)
-                    continue;
-                if (it.id == 0 || it.id > 32)
-                    continue;
-                const bool empty = !(it.level_low || it.level_mid || it.level_full);
-                if (!it.levels_ok || empty)
-                {
-                    detail_mask |= (1u << (it.id - 1));
-                    if (i < 32)
-                        unit_mask |= (1u << i);
-                }
-            }
-        }
-    }
     hw.plc.setAlarmDetailMask(PlcControl::AlarmModule::Tanks, detail_mask);
     hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Tanks, unit_mask);
 }
@@ -80,36 +49,6 @@ void AppRuntime::updateSepticAlarms_(){
         if (st->alarm)
             detail_mask |= (1u << (cfg->id - 1));
     }
-    if (stackMasterActive_())
-    {
-        const size_t count = net.network.stackOnlineDeviceCount();
-        for (size_t i = 0; i < count; ++i)
-        {
-            StackDeviceRegistry::DeviceInfo device{};
-            if (!net.network.stackDeviceSnapshotAt(i, device))
-                continue;
-            const uint32_t node_id = device.node_id;
-            if (node_id == 0)
-                continue;
-            const auto *cache = _stack_cache.septicCache(node_id);
-            if (!cache || !cache->has_data || !cache->items || !cache->last_ok)
-                continue;
-            for (size_t j = 0; j < cache->item_count; ++j)
-            {
-                const auto &it = cache->items[j];
-                if (!it.enabled)
-                    continue;
-                if (it.id == 0 || it.id > 32)
-                    continue;
-                if (it.alarm)
-                {
-                    detail_mask |= (1u << (it.id - 1));
-                    if (i < 32)
-                        unit_mask |= (1u << i);
-                }
-            }
-        }
-    }
     hw.plc.setAlarmDetailMask(PlcControl::AlarmModule::Septic, detail_mask);
     hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Septic, unit_mask);
 }
@@ -129,36 +68,6 @@ void AppRuntime::updateMeteoAlarms_(){
             continue;
         if (!st->ok)
             detail_mask |= (1u << (cfg->id - 1));
-    }
-    if (stackMasterActive_())
-    {
-        const size_t count = net.network.stackOnlineDeviceCount();
-        for (size_t i = 0; i < count; ++i)
-        {
-            StackDeviceRegistry::DeviceInfo device{};
-            if (!net.network.stackDeviceSnapshotAt(i, device))
-                continue;
-            const uint32_t node_id = device.node_id;
-            if (node_id == 0)
-                continue;
-            const auto *cache = _stack_cache.meteoCache(node_id);
-            if (!cache || !cache->has_data || !cache->items || !cache->last_ok)
-                continue;
-            for (size_t j = 0; j < cache->item_count; ++j)
-            {
-                const auto &it = cache->items[j];
-                if (!it.enabled)
-                    continue;
-                if (it.id == 0 || it.id > 32)
-                    continue;
-                if (!it.ok)
-                {
-                    detail_mask |= (1u << (it.id - 1));
-                    if (i < 32)
-                        unit_mask |= (1u << i);
-                }
-            }
-        }
     }
     hw.plc.setAlarmDetailMask(PlcControl::AlarmModule::Meteo, detail_mask);
     hw.plc.setAlarmUnitMask(PlcControl::AlarmModule::Meteo, unit_mask);
@@ -208,6 +117,8 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
         self->comms.wifi.task();
         self->net.network.clearStackIndexStatePending(node_id);
         self->net.network.invalidateStackIndexState(node_id);
+        self->net.network.clearStackSocketsPageRequest(node_id);
+        self->net.network.clearStackLightsPageRequest(node_id);
         self->core.logs.info(F("STACK"), F("Sync slave %s system info"), label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
                                                    StackRouteAdapter::Mode::Json, true);
@@ -220,6 +131,13 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
         self->core.logs.info(F("STACK"), F("Sync slave %s sockets: 0-7"),
                              label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &sockets_doc,
+                                                   StackRouteAdapter::Mode::Json, true);
+        DynamicJsonDocument lights_doc(64);
+        lights_doc["offset"] = 0;
+        lights_doc["limit"] = 8;
+        self->core.logs.info(F("STACK"), F("Sync slave %s lights: 0-7"),
+                             label.length() ? label.c_str() : "unknown");
+        self->net.network.stackRoute().sendRequest(node_id, "lights", "snapshot_req", &lights_doc,
                                                    StackRouteAdapter::Mode::Json, true);
         auto &sec = self->control.controllers.security();
         auto sec_guard = sec.lockGuard();
@@ -457,9 +375,13 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         return;
     DynamicJsonDocument payload_doc(512);
     JsonVariantConst params;
-    if (route.payload.length())
+    if (!route.payload_json.isNull())
     {
-        if (deserializeJson(payload_doc, route.payload))
+        params = route.payload_json;
+    }
+    else if (route.payload.length())
+    {
+        if (deserializeJson(payload_doc, route.payload.c_str(), route.payload.length()))
             return;
         params = payload_doc.as<JsonVariantConst>();
     }
@@ -650,11 +572,11 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             return;
         }
     }
-    if ((strcmp(route.feature, "web") == 0) || (strcmp(route.feature, "system") == 0))
+    if (strcmp(route.feature, "web") == 0)
     {
-        if (action == "index_state_req" || action == "snapshot_req")
+        if (action == "index_state_req")
         {
-            DynamicJsonDocument doc(1024);
+            DynamicJsonDocument doc(3072);
             Ds3231Mz::DateTime dt{};
             char date_buf[16] = {};
             char time_buf[16] = {};
@@ -682,11 +604,14 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                                   : "<span class=\"status-dot status-off\" title=\"disabled\"></span>";
             appendControllerSnapshotSummary_(doc.to<JsonObject>());
             appendSocketSnapshotItems_(doc.to<JsonObject>());
+            appendLightSnapshotItems_(doc.to<JsonObject>());
             const JsonArrayConst sockets = doc["controllers"]["sockets"].as<JsonArrayConst>();
             const size_t sockets_count = sockets.isNull() ? 0u : sockets.size();
-            core.logs.info(F("STACK"), F("Slave snapshot tx prepare: dst 0x%08lX req: %lu sockets: %u heap: %u"),
+            const JsonArrayConst lights = doc["controllers"]["lights"].as<JsonArrayConst>();
+            const size_t lights_count = lights.isNull() ? 0u : lights.size();
+            core.logs.info(F("STACK"), F("Slave snapshot tx prepare: dst 0x%08lX req: %lu sockets: %u lights: %u heap: %u"),
                            (unsigned long)route.source_node, (unsigned long)route.meta.request_id,
-                           (unsigned)sockets_count, (unsigned)ESP.getFreeHeap());
+                           (unsigned)sockets_count, (unsigned)lights_count, (unsigned)ESP.getFreeHeap());
             const bool sent = net.network.stackSlaveSendResponse(route.source_node, "system", "snapshot",
                                                                  route.meta.request_id, &doc);
             core.logs.info(F("STACK"), F("Slave snapshot tx result: dst 0x%08lX req: %lu sent: %u"),
@@ -694,7 +619,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                            (unsigned)(sent ? 1 : 0));
             return;
         }
-        if (action == "index_state" || action == "snapshot")
+        if (action == "index_state")
         {
             StackUnitSnapshot::Snapshot state{};
             state.node_id = node_id;
@@ -839,6 +764,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.leak_alert = leak_summary["alert"] | 0;
             JsonArrayConst sockets_items = params["controllers"]["sockets"].as<JsonArrayConst>();
             state.socket_count = 0;
+            memset(state.sockets, 0, sizeof(state.sockets));
             if (!sockets_items.isNull())
             {
                 for (JsonObjectConst item : sockets_items)
@@ -852,7 +778,32 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     dst.state = item["state"].is<bool>() ? item["state"].as<bool>()
                                                          : (item["state"].as<int>() != 0);
                     strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
+                    dst.button_port = (uint8_t)(item["button"] | SocketController::kInvalidPort);
+                    dst.relay_port = (uint8_t)(item["relay"] | SocketController::kInvalidPort);
+                    dst.group_id = (uint8_t)(item["group_id"] | 0);
                     ++state.socket_count;
+                }
+            }
+            JsonArrayConst lights_items = params["controllers"]["lights"].as<JsonArrayConst>();
+            state.light_count = 0;
+            memset(state.lights, 0, sizeof(state.lights));
+            if (!lights_items.isNull())
+            {
+                for (JsonObjectConst item : lights_items)
+                {
+                    if (state.light_count >= StackUnitSnapshot::kSocketCount)
+                        break;
+                    auto &dst = state.lights[state.light_count];
+                    dst.id = (uint8_t)(item["id"] | 0);
+                    dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                             : (item["enabled"].as<int>() != 0);
+                    dst.state = item["state"].is<bool>() ? item["state"].as<bool>()
+                                                         : (item["state"].as<int>() != 0);
+                    dst.button_port = (uint8_t)(item["button"] | SocketController::kInvalidPort);
+                    dst.relay_port = (uint8_t)(item["relay"] | SocketController::kInvalidPort);
+                    dst.group_id = (uint8_t)(item["group_id"] | 0);
+                    strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
+                    ++state.light_count;
                 }
             }
             if (state.socket_count > 0)
@@ -868,6 +819,26 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     item["id"] = src.id;
                     item["enabled"] = src.enabled;
                     item["state"] = src.state;
+                    if (src.name[0] != '\0')
+                        item["name"] = src.name;
+                }
+            }
+            if (state.light_count > 0)
+            {
+                JsonObject controllers = doc["controllers"].to<JsonObject>();
+                JsonArray lights = controllers["lights"].to<JsonArray>();
+                for (uint8_t i = 0; i < state.light_count && i < StackUnitSnapshot::kSocketCount; ++i)
+                {
+                    const auto &src = state.lights[i];
+                    if (src.id == 0)
+                        continue;
+                    JsonObject item = lights.add<JsonObject>();
+                    item["id"] = src.id;
+                    item["enabled"] = src.enabled;
+                    item["state"] = src.state;
+                    item["button"] = src.button_port;
+                    item["relay"] = src.relay_port;
+                    item["group_id"] = src.group_id;
                     if (src.name[0] != '\0')
                         item["name"] = src.name;
                 }
@@ -948,6 +919,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             const uint16_t summary_total = (uint16_t)(params["summary"]["sockets"]["enabled"] | 0);
             const JsonArrayConst sockets_items = params["controllers"]["sockets"].as<JsonArrayConst>();
             const uint16_t received_count = sockets_items.isNull() ? 0u : (uint16_t)sockets_items.size();
+            net.network.completeStackSocketsPageRequest(node_id, offset);
             if (offset == 0)
             {
                 state.socket_count = 0;
@@ -982,14 +954,95 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                                                                    : expected_total;
             if (target_total > 0 && state.socket_count < target_total)
             {
-                _pending_stack_sockets_page = true;
-                _pending_stack_sockets_node_id = node_id;
-                _pending_stack_sockets_offset = state.socket_count;
-                _pending_stack_sockets_limit = 8;
+                const uint16_t next_offset = state.socket_count;
+                if (net.network.prepareStackSocketsPageRequest(node_id, millis(), next_offset, 4000u))
+                {
+                    _pending_stack_sockets_page = true;
+                    _pending_stack_sockets_node_id = node_id;
+                    _pending_stack_sockets_offset = next_offset;
+                    _pending_stack_sockets_limit = 8;
+                    _pending_stack_sockets_log = shouldLogStackBootstrapSync_(node_id);
+                }
             }
             return;
         }
         handleSocketFrame_(node_id, action, params);
+        return;
+    }
+    if (strcmp(route.feature, "lights") == 0)
+    {
+        if (action == "snapshot_req")
+        {
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            uint16_t limit = (uint16_t)(params["limit"] | 8);
+            if (limit == 0)
+                limit = 8;
+            if (limit > 8)
+                limit = 8;
+            _pending_stack_lights_response = true;
+            _pending_stack_lights_target_node = route.source_node;
+            _pending_stack_lights_reply_to = route.meta.request_id;
+            _pending_stack_lights_response_offset = offset;
+            _pending_stack_lights_response_limit = limit;
+            return;
+        }
+        if (action == "snapshot")
+        {
+            StackUnitSnapshot::Snapshot state{};
+            net.network.stackIndexStateSnapshot(node_id, state);
+            state.node_id = node_id;
+            state.updated_ms = millis();
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            const uint16_t total = (uint16_t)(params["total"] | 0);
+            const uint16_t summary_total = (uint16_t)(params["summary"]["lights"]["enabled"] | 0);
+            const JsonArrayConst lights_items = params["controllers"]["lights"].as<JsonArrayConst>();
+            net.network.completeStackLightsPageRequest(node_id, offset);
+            if (offset == 0)
+            {
+                state.light_count = 0;
+                memset(state.lights, 0, sizeof(state.lights));
+            }
+            if (!lights_items.isNull())
+            {
+                uint16_t idx = offset;
+                for (JsonObjectConst item : lights_items)
+                {
+                    if (idx >= StackUnitSnapshot::kSocketCount)
+                        break;
+                    auto &dst = state.lights[idx];
+                    dst.id = (uint8_t)(item["id"] | 0);
+                    dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                             : (item["enabled"].as<int>() != 0);
+                    dst.state = item["state"].is<bool>() ? item["state"].as<bool>()
+                                                         : (item["state"].as<int>() != 0);
+                    dst.button_port = (uint8_t)(item["button"] | SocketController::kInvalidPort);
+                    dst.relay_port = (uint8_t)(item["relay"] | SocketController::kInvalidPort);
+                    dst.group_id = (uint8_t)(item["group_id"] | 0);
+                    strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
+                    ++idx;
+                }
+                if (idx > state.light_count)
+                    state.light_count = (uint8_t)idx;
+            }
+            net.network.updateStackIndexState(node_id, state);
+            const uint16_t expected_total = (total > 0) ? total : summary_total;
+            const uint16_t target_total =
+                (expected_total > StackUnitSnapshot::kSocketCount) ? (uint16_t)StackUnitSnapshot::kSocketCount
+                                                                   : expected_total;
+            if (target_total > 0 && state.light_count < target_total)
+            {
+                const uint16_t next_offset = state.light_count;
+                if (net.network.prepareStackLightsPageRequest(node_id, millis(), next_offset, 4000u))
+                {
+                    _pending_stack_lights_page = true;
+                    _pending_stack_lights_node_id = node_id;
+                    _pending_stack_lights_offset = next_offset;
+                    _pending_stack_lights_limit = 8;
+                    _pending_stack_lights_log = shouldLogStackBootstrapSync_(node_id);
+                }
+            }
+            return;
+        }
         return;
     }
     if (strcmp(route.feature, "septic") == 0)
@@ -1043,6 +1096,30 @@ void AppRuntime::handleSocketFrame_(uint32_t node_id, const String &action, Json
     const char *source_c = source.length() ? source.c_str() : "stack";
     const char *source_user_c = source_user.length() ? source_user.c_str() : "-";
     const String slave_name = hw.plc.deviceName();
+    auto logSwitch = [&](uint8_t id, bool state_after) {
+        if (lights)
+        {
+            const auto *cfg = sockets.lightConfig(id);
+            const char *name_c = (cfg && cfg->name.length()) ? cfg->name.c_str() : "-";
+            core.logs.info(F("STACK"), F("Light switched: slave: %s source: %s user: %s id: %u name: %s state: %s"),
+                           slave_name.length() ? slave_name.c_str() : "unknown",
+                           source_c,
+                           source_user_c,
+                           (unsigned)id,
+                           name_c,
+                           state_after ? "on" : "off");
+            return;
+        }
+        const auto *cfg = sockets.config(id);
+        const char *name_c = (cfg && cfg->name.length()) ? cfg->name.c_str() : "-";
+        core.logs.info(F("STACK"), F("Socket switched: slave: %s source: %s user: %s id: %u name: %s state: %s"),
+                       slave_name.length() ? slave_name.c_str() : "unknown",
+                       source_c,
+                       source_user_c,
+                       (unsigned)id,
+                       name_c,
+                       state_after ? "on" : "off");
+    };
     bool changed = false;
     for (JsonObjectConst item : items)
     {
@@ -1052,7 +1129,15 @@ void AppRuntime::handleSocketFrame_(uint32_t node_id, const String &action, Json
 
         bool state_before_known = false;
         bool state_before = false;
-        if (!lights)
+        if (lights)
+        {
+            if (const auto *st_before = sockets.lightState(id))
+            {
+                state_before = st_before->relay_on;
+                state_before_known = true;
+            }
+        }
+        else
         {
             if (const auto *st_before = sockets.state(id))
             {
@@ -1098,22 +1183,13 @@ void AppRuntime::handleSocketFrame_(uint32_t node_id, const String &action, Json
             const bool ok = lights ? sockets.setLightRelayById(id, state_on)
                                    : sockets.setRelayById(id, state_on);
             changed = ok || changed;
-            if (!lights && ok)
+            if (ok)
             {
-                    const auto *cfg = sockets.config(id);
-                    const auto *st = sockets.state(id);
-                    const bool state_after = st ? st->relay_on : state_on;
-                    if (!state_before_known || state_after != state_before)
-                    {
-                        const char *name_c = (cfg && cfg->name.length()) ? cfg->name.c_str() : "-";
-                        core.logs.info(F("STACK"), F("Socket switched: slave: %s source: %s user: %s id: %u name: %s state: %s"),
-                                   slave_name.length() ? slave_name.c_str() : "unknown",
-                                   source_c,
-                                   source_user_c,
-                                   (unsigned)id,
-                                   name_c,
-                                   state_after ? "on" : "off");
-                    }
+                const bool state_after = lights
+                                             ? (sockets.lightState(id) ? sockets.lightState(id)->relay_on : state_on)
+                                             : (sockets.state(id) ? sockets.state(id)->relay_on : state_on);
+                if (!state_before_known || state_after != state_before)
+                    logSwitch(id, state_after);
             }
             continue;
         }
@@ -1126,19 +1202,12 @@ void AppRuntime::handleSocketFrame_(uint32_t node_id, const String &action, Json
             const bool ok = lights ? sockets.toggleLightRelayById(id)
                                    : sockets.toggleRelayById(id);
             changed = ok || changed;
-            if (!lights && ok)
+            if (ok)
             {
-                const auto *cfg = sockets.config(id);
-                const auto *st = sockets.state(id);
-                const bool state_after = st ? st->relay_on : false;
-                const char *name_c = (cfg && cfg->name.length()) ? cfg->name.c_str() : "-";
-                core.logs.info(F("STACK"), F("Socket switched: slave: %s source: %s user: %s id: %u name: %s state: %s"),
-                               slave_name.length() ? slave_name.c_str() : "unknown",
-                               source_c,
-                               source_user_c,
-                               (unsigned)id,
-                               name_c,
-                               state_after ? "on" : "off");
+                const bool state_after = lights
+                                             ? (sockets.lightState(id) ? sockets.lightState(id)->relay_on : false)
+                                             : (sockets.state(id) ? sockets.state(id)->relay_on : false);
+                logSwitch(id, state_after);
             }
         }
     }
@@ -1235,6 +1304,30 @@ void AppRuntime::appendSocketSnapshotItems_(JsonObject root) const{
     }
 }
 
+void AppRuntime::appendLightSnapshotItems_(JsonObject root) const{
+    JsonObject controllers_out = root["controllers"].to<JsonObject>();
+    JsonArray lights_out = controllers_out["lights"].to<JsonArray>();
+
+    SocketController &sockets = control.controllers.sockets();
+    auto guard = sockets.lockGuard();
+    for (size_t i = 0; i < SocketController::kLightCount; ++i)
+    {
+        const auto *cfg = sockets.lightConfigByIndex(i);
+        const auto *st = sockets.lightStateByIndex(i);
+        if (!cfg || !st || !cfg->enabled)
+            continue;
+        JsonObject o = lights_out.add<JsonObject>();
+        o["id"] = cfg->id;
+        o["enabled"] = true;
+        o["state"] = st->relay_on;
+        o["button"] = cfg->button_port;
+        o["relay"] = cfg->relay_port;
+        o["group_id"] = cfg->group_id;
+        if (cfg->name.length())
+            o["name"] = cfg->name;
+    }
+}
+
 void AppRuntime::appendSocketSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const{
     JsonObject summary = root["summary"].to<JsonObject>();
     JsonObject sockets_summary = summary["sockets"].to<JsonObject>();
@@ -1283,6 +1376,56 @@ void AppRuntime::appendSocketSnapshotPage_(JsonObject root, uint16_t offset, uin
     root["offset"] = offset;
     root["limit"] = limit;
     root["total"] = sockets_enabled;
+}
+
+void AppRuntime::appendLightSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const{
+    JsonObject summary = root["summary"].to<JsonObject>();
+    JsonObject lights_summary = summary["lights"].to<JsonObject>();
+    JsonObject controllers_out = root["controllers"].to<JsonObject>();
+    JsonArray lights_out = controllers_out["lights"].to<JsonArray>();
+
+    uint16_t lights_enabled = 0;
+    uint16_t lights_on = 0;
+    uint16_t current_index = 0;
+
+    SocketController &sockets = control.controllers.sockets();
+    auto guard = sockets.lockGuard();
+    for (size_t i = 0; i < SocketController::kLightCount; ++i)
+    {
+        const auto *cfg = sockets.lightConfigByIndex(i);
+        const auto *st = sockets.lightStateByIndex(i);
+        if (!cfg || !st || !cfg->enabled)
+            continue;
+
+        ++lights_enabled;
+        if (st->relay_on)
+            ++lights_on;
+
+        if (current_index < offset)
+        {
+            ++current_index;
+            continue;
+        }
+        if ((uint16_t)lights_out.size() >= limit)
+            continue;
+
+        JsonObject o = lights_out.add<JsonObject>();
+        o["id"] = cfg->id;
+        o["enabled"] = true;
+        o["state"] = st->relay_on;
+        o["button"] = cfg->button_port;
+        o["relay"] = cfg->relay_port;
+        o["group_id"] = cfg->group_id;
+        if (cfg->name.length())
+            o["name"] = cfg->name;
+        ++current_index;
+    }
+
+    lights_summary["enabled"] = lights_enabled;
+    lights_summary["on"] = lights_on;
+    root["offset"] = offset;
+    root["limit"] = limit;
+    root["total"] = lights_enabled;
 }
 
 void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
@@ -1643,6 +1786,8 @@ void AppRuntime::flushPendingStackSocketsPage_(){
     if (!stackMasterActive_())
         return;
     _pending_stack_sockets_page = false;
+    const bool log_sync = _pending_stack_sockets_log;
+    _pending_stack_sockets_log = false;
 
     const uint32_t node_id = _pending_stack_sockets_node_id;
     const uint16_t offset = _pending_stack_sockets_offset;
@@ -1663,13 +1808,91 @@ void AppRuntime::flushPendingStackSocketsPage_(){
                                                            StackRouteAdapter::Mode::Json, true);
     if (sent)
     {
-        core.logs.info(F("STACK"), F("Sync slave %s sockets: %u-%u"),
-                       label.length() ? label.c_str() : "unknown",
-                       (unsigned)offset, (unsigned)range_end);
+        if (log_sync)
+        {
+            core.logs.info(F("STACK"), F("Sync slave %s sockets: %u-%u"),
+                           label.length() ? label.c_str() : "unknown",
+                           (unsigned)offset, (unsigned)range_end);
+        }
     }
     else
     {
+        net.network.clearStackSocketsPageRequest(node_id);
         core.logs.warn(F("STACK"), F("Sync slave sockets request failed: node 0x%08lX range: %u-%u"),
+                       (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
+    }
+}
+
+void AppRuntime::flushPendingStackLightsResponse_(){
+    if (!_pending_stack_lights_response)
+        return;
+    if (!stackSlaveActive_())
+        return;
+    if (!net.network.stackSlaveAuthorized())
+        return;
+
+    const uint32_t target_node = _pending_stack_lights_target_node;
+    const uint32_t reply_to = _pending_stack_lights_reply_to;
+    const uint16_t offset = _pending_stack_lights_response_offset;
+    uint16_t limit = _pending_stack_lights_response_limit;
+    if (target_node == 0)
+        return;
+    if (limit == 0)
+        limit = 8;
+    if (limit > 8)
+        limit = 8;
+
+    DynamicJsonDocument doc(1536);
+    appendLightSnapshotPage_(doc.to<JsonObject>(), offset, limit);
+    if (doc.overflowed())
+    {
+        core.logs.warn(F("STACK"), F("Slave lights snapshot overflow: range: %u-%u"),
+                       (unsigned)offset, (unsigned)(offset + limit - 1u));
+    }
+    const bool sent = net.network.stackSlaveSendResponse(target_node, "lights", "snapshot", reply_to, &doc);
+    if (sent)
+        _pending_stack_lights_response = false;
+}
+
+void AppRuntime::flushPendingStackLightsPage_(){
+    if (!_pending_stack_lights_page)
+        return;
+    if (!stackMasterActive_())
+        return;
+    _pending_stack_lights_page = false;
+    const bool log_sync = _pending_stack_lights_log;
+    _pending_stack_lights_log = false;
+
+    const uint32_t node_id = _pending_stack_lights_node_id;
+    const uint16_t offset = _pending_stack_lights_offset;
+    uint16_t limit = _pending_stack_lights_limit;
+    if (node_id == 0)
+        return;
+    if (limit == 0)
+        limit = 8;
+
+    DynamicJsonDocument req(64);
+    req["offset"] = offset;
+    req["limit"] = limit;
+
+    const uint16_t range_end = (uint16_t)(offset + limit - 1u);
+    const String label = stackNodeLabel_(node_id);
+
+    const bool sent = net.network.stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
+                                                           StackRouteAdapter::Mode::Json, true);
+    if (sent)
+    {
+        if (log_sync)
+        {
+            core.logs.info(F("STACK"), F("Sync slave %s lights: %u-%u"),
+                           label.length() ? label.c_str() : "unknown",
+                           (unsigned)offset, (unsigned)range_end);
+        }
+    }
+    else
+    {
+        net.network.clearStackLightsPageRequest(node_id);
+        core.logs.warn(F("STACK"), F("Sync slave lights request failed: node 0x%08lX range: %u-%u"),
                        (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
     }
 }
@@ -1765,29 +1988,24 @@ void AppRuntime::logStackNodeInventory_(uint32_t node_id){
     if (!state)
         return;
     const String node = stackNodeLabel_(node_id);
-    auto cacheReady = [](const auto *cache) -> bool {
-        // Treat cache as ready only after an actual response (Ack/Err), not after request dispatch.
-        return cache && (cache->has_data || cache->last_ok || cache->last_error.length());
-    };
-    auto cacheHasItemsForSyncLog = [](const auto *cache) -> bool {
-        return cache && cache->last_ok && cache->items && cache->item_count > 0;
-    };
+    StackUnitSnapshot::Snapshot snapshot{};
+    const bool has_snapshot = net.network.stackIndexStateSnapshot(node_id, snapshot);
+    const bool sockets_snapshot_ready =
+        has_snapshot && snapshot.updated_ms != 0 && snapshot.socket_count >= snapshot.sockets_enabled;
+    const bool lights_snapshot_ready =
+        has_snapshot && snapshot.updated_ms != 0 && snapshot.light_count >= snapshot.lights_enabled;
 
     if ((state->logged_mask & kInvSockets) == 0)
     {
-        const auto *cache = _stack_cache.socketsCache(node_id);
-        if (cacheReady(cache))
+        if (sockets_snapshot_ready)
         {
-            if (cacheHasItemsForSyncLog(cache))
+            for (uint8_t i = 0; i < snapshot.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: sockets id: %u name: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
-                }
+                const auto &it = snapshot.sockets[i];
+                if (!it.enabled)
+                    continue;
+                core.logs.info(F("STACK"), F("Sync slave unit: %s item: sockets id: %u name: %s"),
+                               node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
             }
             state->logged_mask |= kInvSockets;
         }
@@ -1795,176 +2013,22 @@ void AppRuntime::logStackNodeInventory_(uint32_t node_id){
 
     if ((state->logged_mask & kInvLights) == 0)
     {
-        const auto *cache = _stack_cache.lightsCache(node_id);
-        if (cacheReady(cache))
+        if (lights_snapshot_ready)
         {
-            if (cacheHasItemsForSyncLog(cache))
+            for (uint8_t i = 0; i < snapshot.light_count && i < StackUnitSnapshot::kSocketCount; ++i)
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: lights id: %u name: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
-                }
+                const auto &it = snapshot.lights[i];
+                if (!it.enabled)
+                    continue;
+                core.logs.info(F("STACK"), F("Sync slave unit: %s item: lights id: %u name: %s"),
+                               node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
             }
             state->logged_mask |= kInvLights;
         }
     }
 
-    if ((state->logged_mask & kInvMeteo) == 0)
-    {
-        const auto *cache = _stack_cache.meteoCache(node_id);
-        if (cacheReady(cache))
-        {
-            if (cacheHasItemsForSyncLog(cache))
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: meteo id: %u name: %s type: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
-                                   it.type[0] ? it.type : "none");
-                }
-            }
-            state->logged_mask |= kInvMeteo;
-        }
-    }
-
-    if ((state->logged_mask & kInvThermo) == 0)
-    {
-        const auto *cache = _stack_cache.thermoCache(node_id);
-        if (cacheReady(cache))
-        {
-            if (cacheHasItemsForSyncLog(cache))
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: thermo id: %u name: %s mode: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
-                                   it.mode[0] ? it.mode : "-");
-                }
-            }
-            state->logged_mask |= kInvThermo;
-        }
-    }
-
-    if ((state->logged_mask & kInvTanks) == 0)
-    {
-        const auto *cache = _stack_cache.tanksCache(node_id);
-        if (cacheReady(cache))
-        {
-            if (cacheHasItemsForSyncLog(cache))
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: tanks id: %u name: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
-                }
-            }
-            state->logged_mask |= kInvTanks;
-        }
-    }
-
-    if ((state->logged_mask & kInvSeptic) == 0)
-    {
-        const auto *cache = _stack_cache.septicCache(node_id);
-        if (cacheReady(cache))
-        {
-            if (cacheHasItemsForSyncLog(cache))
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: septic id: %u"),
-                                   node.c_str(), (unsigned)it.id);
-                }
-            }
-            state->logged_mask |= kInvSeptic;
-        }
-    }
-
-    if ((state->logged_mask & kInvSecurity) == 0)
-    {
-        const auto *cache = _stack_cache.securityCache(node_id);
-        if (cacheReady(cache))
-        {
-            if (cacheHasItemsForSyncLog(cache))
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"),
-                                   F("Sync slave unit: %s item: security id: %u name: %s type: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-",
-                                   it.type[0] ? it.type : "-");
-                }
-            }
-            state->logged_mask |= kInvSecurity;
-        }
-    }
-
-    if ((state->logged_mask & kInvWatering) == 0)
-    {
-        const auto *cache = _stack_cache.wateringCache(node_id);
-        if (cacheReady(cache))
-        {
-            if (cacheHasItemsForSyncLog(cache))
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: watering id: %u name: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
-                }
-            }
-            state->logged_mask |= kInvWatering;
-        }
-    }
-
-    if ((state->logged_mask & kInvLeak) == 0)
-    {
-        const auto *cache = _stack_cache.leakCache(node_id);
-        if (cacheReady(cache))
-        {
-            if (cacheHasItemsForSyncLog(cache))
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    core.logs.info(F("STACK"), F("Sync slave unit: %s item: leak id: %u name: %s"),
-                                   node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
-                }
-            }
-            state->logged_mask |= kInvLeak;
-        }
-    }
-
-    if ((state->logged_mask & kInvAvr) == 0)
-    {
-        const auto *cache = _stack_cache.avrCache(node_id);
-        if (cacheReady(cache))
-        {
-            state->logged_mask |= kInvAvr;
-        }
-    }
+    state->logged_mask |= (kInvMeteo | kInvThermo | kInvTanks | kInvSeptic |
+                           kInvSecurity | kInvWatering | kInvLeak | kInvAvr);
 
     if (!state->sync_complete_logged && (state->logged_mask & kInvAll) == kInvAll)
     {
@@ -1977,14 +2041,14 @@ void AppRuntime::logStackNodeInventory_(uint32_t node_id){
 AppRuntime::StackInventoryLogState *AppRuntime::inventoryLogState_(uint32_t node_id, bool create){
     if (node_id == 0)
         return nullptr;
-    for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
+    for (size_t i = 0; i < StackDeviceRegistry::kMaxDevices; ++i)
     {
         if (_stack_inventory_log[i].node_id == node_id)
             return &_stack_inventory_log[i];
     }
     if (!create)
         return nullptr;
-    for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
+    for (size_t i = 0; i < StackDeviceRegistry::kMaxDevices; ++i)
     {
         if (_stack_inventory_log[i].node_id == 0)
         {
@@ -2003,7 +2067,7 @@ AppRuntime::StackInventoryLogState *AppRuntime::inventoryLogState_(uint32_t node
 void AppRuntime::clearInventoryLogState_(uint32_t node_id){
     if (node_id == 0)
         return;
-    for (size_t i = 0; i < StackMaster::MAX_SESSIONS; ++i)
+    for (size_t i = 0; i < StackDeviceRegistry::kMaxDevices; ++i)
     {
         if (_stack_inventory_log[i].node_id != node_id)
             continue;

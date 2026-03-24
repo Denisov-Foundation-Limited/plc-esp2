@@ -18,7 +18,7 @@
 #include "controllers/controllers.hpp"
 #include "core/display.hpp"
 #include "hal/ds3231mz.hpp"
-#include "core/compat/stack_stub.hpp"
+#include "core/network/stack/stack_device_registry.hpp"
 #include "core/network/stack/stack_json_protocol.hpp"
 
 struct CoreContext;
@@ -43,8 +43,6 @@ public:
     AppRuntime(CoreContext &core, HardwareContext &hw, CommsContext &comms,
                  ControlContext &control, UiContext &ui, NetworkContext &net,
                  ConfigContext &cfg);
-
-    StackCache &stackCache();
 
     void bindCallbacks();
     void init();
@@ -87,6 +85,7 @@ private:
     void startStackBootstrapSync_(uint32_t node_id);
     void stopStackBootstrapSync_(bool timeout);
     bool bootstrapSyncCompleted_(uint32_t node_id) const;
+    bool shouldLogStackBootstrapSync_(uint32_t node_id) const;
 
     static bool onRemoteMeteo_(void *ctx, uint32_t node_id, uint8_t sensor_id, float &temp_c, bool &has_temp);
 
@@ -168,6 +167,8 @@ private:
     void appendSocketSnapshotSummary_(JsonObject root) const;
     void appendSocketSnapshotItems_(JsonObject root) const;
     void appendSocketSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
+    void appendLightSnapshotItems_(JsonObject root) const;
+    void appendLightSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
     void appendControllerSnapshotSummary_(JsonObject root) const;
 
     void handleWateringFrame_(uint32_t node_id, const String &action, JsonVariantConst params);
@@ -189,6 +190,8 @@ private:
     void flushPendingWateringEvent_();
     void flushPendingStackSocketsResponse_();
     void flushPendingStackSocketsPage_();
+    void flushPendingStackLightsResponse_();
+    void flushPendingStackLightsPage_();
 
     void flushPendingRfid_();
 
@@ -256,9 +259,7 @@ private:
     static constexpr uint16_t kInvWatering = 1u << 7;
     static constexpr uint16_t kInvLeak = 1u << 8;
     static constexpr uint16_t kInvAvr = 1u << 9;
-    static constexpr uint16_t kInvAll =
-        kInvSockets | kInvLights | kInvMeteo | kInvThermo | kInvTanks |
-        kInvSeptic | kInvSecurity | kInvWatering | kInvLeak;
+    static constexpr uint16_t kInvAll = kInvSockets | kInvLights;
 
     void broadcastSecurityAlarm_(bool alarm_on);
 
@@ -276,7 +277,8 @@ private:
     static constexpr uint32_t kStackBootstrapPollMs = 250;
     static constexpr uint32_t kStackBootstrapTimeoutMs = 25000;
     static constexpr uint8_t kStackBootstrapPasses = 2;
-    static constexpr uint8_t kStackPollFeatureCount = 15;
+    static constexpr uint8_t kStackPollFeatureCount = 4;
+    static constexpr uint8_t kStackBackgroundPollFeatureCount = 2;
 
     CoreContext &core;
     HardwareContext &hw;
@@ -286,7 +288,6 @@ private:
     NetworkContext &net;
     ConfigContext &cfg;
 
-    StackCache _stack_cache;
     TaskPhase _task_phase = TaskPhase::Idle;
 
     bool _pending_detect = false;
@@ -313,6 +314,17 @@ private:
     uint32_t _pending_stack_sockets_node_id = 0;
     uint16_t _pending_stack_sockets_offset = 0;
     uint16_t _pending_stack_sockets_limit = 0;
+    bool _pending_stack_sockets_log = false;
+    bool _pending_stack_lights_response = false;
+    uint32_t _pending_stack_lights_target_node = 0;
+    uint32_t _pending_stack_lights_reply_to = 0;
+    uint16_t _pending_stack_lights_response_offset = 0;
+    uint16_t _pending_stack_lights_response_limit = 0;
+    bool _pending_stack_lights_page = false;
+    uint32_t _pending_stack_lights_node_id = 0;
+    uint16_t _pending_stack_lights_offset = 0;
+    uint16_t _pending_stack_lights_limit = 0;
+    bool _pending_stack_lights_log = false;
     bool _pending_rfid = false;
     String _pending_rfid_uid;
     bool _pending_ibutton = false;
@@ -333,9 +345,9 @@ private:
     uint8_t _stack_bootstrap_feature_index = 0;
     uint8_t _stack_bootstrap_pass = 0;
     uint16_t _stack_bootstrap_feature_sent_mask = 0;
-    uint32_t _stack_bootstrap_queue[StackMaster::MAX_SESSIONS]{};
+    uint32_t _stack_bootstrap_queue[StackDeviceRegistry::kMaxDevices]{};
     uint8_t _stack_bootstrap_queue_count = 0;
-    StackInventoryLogState _stack_inventory_log[StackMaster::MAX_SESSIONS]{};
+    StackInventoryLogState _stack_inventory_log[StackDeviceRegistry::kMaxDevices]{};
     DisplaySlotConfig _display_slots[Display::kSlotCount]{};
     bool _display_rtc_cache_valid = false;
     Ds3231Mz::DateTime _display_rtc_cache{};

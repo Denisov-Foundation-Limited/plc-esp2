@@ -260,9 +260,8 @@ void LightsHandler::handleLightsPortsOptions(WebInterface &web, AsyncWebServerRe
                                        : web.globalUsedPortsJson_(PortIO::PinType::DInput);
         const String ruse = stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
                                        : web.globalUsedPortsJson_(PortIO::PinType::Relay);
-        const auto *pcache = stack_view && web._stack_cache ? web._stack_cache->portsCache(node_id) : nullptr;
-        const bool ready = !stack_view || (pcache && pcache->has_data);
-        const bool pending = stack_view && pcache && pcache->pending;
+        const bool ready = !stack_view;
+        const bool pending = false;
         String body;
         body.reserve(djson.length() + rjson.length() + duse.length() + ruse.length() + 128);
         body += "{\"ready\":";
@@ -304,14 +303,14 @@ void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *r
                     back += String((unsigned)pv);
                 }
             }
-            if (!web._stack_master || !web._stack_cache)
+            if (!web.network())
             {
                 web._lights_status = "Stack unavailable";
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            const auto *cache = web._stack_cache->lightsCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
+            StackUnitSnapshot::Snapshot snapshot{};
+            if (!web.network()->stackIndexStateSnapshot(node_id, snapshot) || snapshot.light_count == 0)
             {
                 web.requestStackLights_(node_id);
                 web.requestStackPorts_(node_id);
@@ -319,11 +318,10 @@ void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *r
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            auto *cache_mut = web._stack_cache->lightsCache(node_id);
             bool changed_stack = false;
-            for (size_t i = 0; i < cache->item_count; ++i)
+            for (size_t i = 0; i < snapshot.light_count; ++i)
             {
-                const auto &cfg = cache->items[i];
+                const auto &cfg = snapshot.lights[i];
                 const String idx = String((unsigned)cfg.id);
                 const String prefix = String("s") + idx + "_";
                 const String en_key = prefix + "en";
@@ -365,10 +363,10 @@ void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *r
                 bool desired_state = cfg.state;
                 bool set_state = false;
                 StaticJsonDocument<256> doc;
-                doc["cmd_id"] = web.nextStackCmdId_();
-                doc["feature"] = (uint8_t)StackFeature::Sockets;
-                doc["action"] = "set_lights";
-                JsonArray items = doc["params"]["items"].to<JsonArray>();
+                doc["source"] = "localweb";
+                if (const auto *u = web.sessionUser_())
+                    doc["source_user"] = u->username;
+                JsonArray items = doc["items"].to<JsonArray>();
                 JsonObject o = items.add<JsonObject>();
                 o["id"] = (unsigned)cfg.id;
                 if (cfg.enabled != enabled)
@@ -424,42 +422,20 @@ void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *r
                 }
                 if (!send)
                     continue;
-                char payload[256] = {};
-                const size_t len = serializeJson(doc, payload, sizeof(payload));
-                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                           reinterpret_cast<const uint8_t *>(payload), len))
+                if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set_lights", &doc, StackRouteAdapter::Mode::Json))
                 {
                     web._lights_status = String("Send failed for light ") + idx;
                     web.sendRedirect_(request, back, set_cookie);
                     return;
                 }
                 changed_stack = true;
-                if (cache_mut && cache_mut->items)
-                {
-                    for (size_t k = 0; k < cache_mut->item_count; ++k)
-                    {
-                        auto &dst = cache_mut->items[k];
-                        if (dst.id != cfg.id)
-                            continue;
-                        dst.enabled = enabled;
-                        if (set_state)
-                            dst.state = desired_state;
-                        dst.button_port = btn_port;
-                        dst.relay_port = relay_port;
-                        dst.group_id = group_id;
-                        const char *src = name.c_str();
-                        size_t p = 0;
-                        for (; p + 1 < sizeof(dst.name) && src[p]; ++p)
-                            dst.name[p] = src[p];
-                        dst.name[p] = '\0';
-                        break;
-                    }
-                    cache_mut->updated_ms = millis();
-                }
+                (void)desired_state;
+                (void)set_state;
             }
             if (changed_stack)
             {
                 web.requestStackLights_(node_id);
+                web.requestStackIndexState_(node_id);
                 web.refreshStackPorts_(node_id);
                 web._lights_status = "Updated";
             }
@@ -668,7 +644,7 @@ void LightsHandler::handleLightsEnable(WebInterface &web, AsyncWebServerRequest 
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackLightsView_(node_id))
         {
-            web.sendText_(request, 400, "text/plain", "Read-only", set_cookie);
+            web.handleStackLightsEnable_(request, node_id, set_cookie);
             return;
         }
         if (!web._controllers)

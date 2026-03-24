@@ -13,7 +13,6 @@
 
 #include "app.hpp"
 
-#include "core/compat/stack_stub.hpp"
 #include <esp_system.h>
 
 #ifndef STACK_BOOTSTRAP_DEBUG_LOGS
@@ -74,16 +73,8 @@ AppRuntime::AppRuntime(CoreContext &core, HardwareContext &hw, CommsContext &com
       control(control),
       ui(ui),
       net(net),
-      cfg(cfg),
-      _stack_cache()
+      cfg(cfg)
 {
-    _stack_cache.setLogger(&core.logs);
-    _stack_cache.setConfigsManager(&cfg.configs_manager);
-}
-
-StackCache &AppRuntime::stackCache()
-{
-    return _stack_cache;
 }
 
 void AppRuntime::bindCallbacks()
@@ -116,8 +107,6 @@ void AppRuntime::init()
 {
     const esp_reset_reason_t reset_reason = esp_reset_reason();
     core.logs.info(F("APP"), F("Reset reason: %s code: %d"), resetReasonText_(reset_reason), (int)reset_reason);
-    _stack_cache.initAllocations();
-    _stack_cache.logAllocations();
 }
 
 void AppRuntime::applyLoadedConfig()
@@ -150,6 +139,8 @@ void AppRuntime::flushPending()
     flushPendingWateringEvent_();
     flushPendingStackSocketsResponse_();
     flushPendingStackSocketsPage_();
+    flushPendingStackLightsResponse_();
+    flushPendingStackLightsPage_();
     flushPendingRfid_();
     flushPendingIButton_();
     flushPendingRingButton_();
@@ -210,7 +201,6 @@ void AppRuntime::updateStackMasterMode_(){
     if (_stack_master_effective != active)
     {
         _stack_master_effective = active;
-        _stack_cache.setMasterOverride(active);
         updateSecurityNotifyMode_();
         updateSepticNotifyMode_();
         updateTanksNotifyMode_();
@@ -221,21 +211,28 @@ void AppRuntime::updateStackMasterMode_(){
 bool AppRuntime::requestStackPollFeature_(uint32_t node_id, uint8_t feature){
     switch (feature)
     {
-    case 0:  return _stack_cache.requestPlcStatus(node_id);
-    case 1:  return _stack_cache.requestRtcStatus(node_id);
-    case 2:  return _stack_cache.requestSockets(node_id);
-    case 3:  return _stack_cache.requestLights(node_id);
-    case 4:  return _stack_cache.requestSecurity(node_id);
-    case 5:  return _stack_cache.requestSecurityPrearm(node_id);
-    case 6:  return _stack_cache.requestThermo(node_id);
-    case 7:  return _stack_cache.requestSeptic(node_id);
-    case 8:  return _stack_cache.requestTanks(node_id);
-    case 9:  return _stack_cache.requestMeteo(node_id);
-    case 10: return _stack_cache.requestWatering(node_id);
-    case 11: return _stack_cache.requestAvr(node_id);
-    case 12: return _stack_cache.requestLeak(node_id);
-    case 13: return _stack_cache.requestPorts(node_id);
-    case 14: return _stack_cache.requestTempSensors(node_id);
+    case 0:
+        return net.network.stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
+                                                    StackRouteAdapter::Mode::Json, true);
+    case 1:
+        return net.network.stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
+                                                    StackRouteAdapter::Mode::Json, true);
+    case 2:
+    {
+        DynamicJsonDocument req(64);
+        req["offset"] = 0;
+        req["limit"] = 8;
+        return net.network.stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
+                                                    StackRouteAdapter::Mode::Json, true);
+    }
+    case 3:
+    {
+        DynamicJsonDocument req(64);
+        req["offset"] = 0;
+        req["limit"] = 8;
+        return net.network.stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
+                                                    StackRouteAdapter::Mode::Json, true);
+    }
     default: return false;
     }
 }
@@ -246,6 +243,19 @@ bool AppRuntime::bootstrapSyncCompleted_(uint32_t node_id) const{
     AppRuntime *self = const_cast<AppRuntime *>(this);
     StackInventoryLogState *st = self->inventoryLogState_(node_id, false);
     return st && st->sync_complete_logged;
+}
+
+bool AppRuntime::shouldLogStackBootstrapSync_(uint32_t node_id) const{
+    if (node_id == 0)
+        return false;
+    if (_stack_bootstrap_node_id == node_id)
+        return true;
+    for (uint8_t i = 0; i < _stack_bootstrap_queue_count; ++i)
+    {
+        if (_stack_bootstrap_queue[i] == node_id)
+            return true;
+    }
+    return false;
 }
 
 void AppRuntime::enqueueStackBootstrapSync_(uint32_t node_id){
@@ -268,7 +278,7 @@ void AppRuntime::enqueueStackBootstrapSync_(uint32_t node_id){
         STACK_BOOTSTRAP_DBG((*this), "Bootstrap queue skip duplicate: id: 0x%08lX", (unsigned long)node_id);
         return;
     }
-    if (_stack_bootstrap_queue_count < StackMaster::MAX_SESSIONS)
+    if (_stack_bootstrap_queue_count < StackDeviceRegistry::kMaxDevices)
     {
         _stack_bootstrap_queue[_stack_bootstrap_queue_count++] = node_id;
     }
@@ -433,8 +443,9 @@ void AppRuntime::pollStackCaches_(){
         if (node_id == 0 || !device.online || (uint32_t)(now - device.last_seen_ms) > kStackNodeStaleMs)
             return;
         logStackNodeInventory_(node_id);
-        feature = (uint8_t)(_stack_poll_feature_index % kStackPollFeatureCount);
-        _stack_poll_feature_index = (uint8_t)((_stack_poll_feature_index + 1) % kStackPollFeatureCount);
+        feature = (uint8_t)(_stack_poll_feature_index % kStackBackgroundPollFeatureCount);
+        _stack_poll_feature_index =
+            (uint8_t)((_stack_poll_feature_index + 1) % kStackBackgroundPollFeatureCount);
     }
 
     const bool sent = requestStackPollFeature_(node_id, feature);
@@ -644,31 +655,9 @@ bool AppRuntime::onRemoteMeteo_(void *ctx, uint32_t node_id, uint8_t sensor_id, 
     if (!ctx || node_id == 0 || sensor_id == 0)
         return false;
     AppRuntime *self = static_cast<AppRuntime *>(ctx);
-    if (!self->stackMasterActive_() && !self->stackSlaveActive_())
-        return false;
-    if (self->stackMasterActive_())
-    {
-        auto &_stack_cache = self->_stack_cache;
-        const auto *cache = _stack_cache.meteoCache(node_id);
-        if (!cache || !cache->has_data)
-        {
-            _stack_cache.requestMeteo(node_id);
-            return false;
-        }
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &it = cache->items[i];
-            if (it.id != sensor_id)
-                continue;
-            temp_c = it.temp_c;
-            has_temp = it.has_temp;
-            return true;
-        }
-        return false;
-    }
-    if (self->net.stack_slave.remoteMeteoTemp(node_id, sensor_id, temp_c, has_temp))
-        return true;
-    self->net.stack_slave.requestRemoteMeteoAll();
+    (void)self;
+    (void)temp_c;
+    (void)has_temp;
     return false;
 }
 
@@ -677,33 +666,12 @@ bool AppRuntime::onRemoteMeteoProxy_(void *ctx, uint32_t node_id, uint8_t sensor
     if (!ctx || node_id == 0 || sensor_id == 0)
         return false;
     AppRuntime *self = static_cast<AppRuntime *>(ctx);
-    if (!self->stackMasterActive_() && !self->stackSlaveActive_())
-        return false;
-    if (self->stackMasterActive_())
-    {
-        const auto *cache = self->_stack_cache.meteoCache(node_id);
-        if (!cache || !cache->has_data)
-        {
-            self->_stack_cache.requestMeteo(node_id);
-            return false;
-        }
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &it = cache->items[i];
-            if (it.id != sensor_id)
-                continue;
-            temp_c = it.temp_c;
-            hum = it.hum;
-            has_temp = it.has_temp;
-            has_hum = it.has_hum;
-            ok = it.ok;
-            return true;
-        }
-        return false;
-    }
-    if (self->net.stack_slave.remoteMeteoRead(node_id, sensor_id, temp_c, has_temp, hum, has_hum, ok))
-        return true;
-    self->net.stack_slave.requestRemoteMeteoAll();
+    (void)self;
+    (void)temp_c;
+    (void)has_temp;
+    (void)hum;
+    (void)has_hum;
+    (void)ok;
     return false;
 }
 
@@ -721,48 +689,8 @@ bool AppRuntime::onRemoteSensorName_(void *ctx, uint32_t node_id, uint8_t sensor
     if (!ctx || node_id == 0 || sensor_id == 0)
         return false;
     AppRuntime *self = static_cast<AppRuntime *>(ctx);
-    if (!self->stackMasterActive_() && !self->stackSlaveActive_())
-        return false;
-    if (self->stackMasterActive_())
-    {
-        const auto *cache = self->_stack_cache.meteoCache(node_id);
-        if (!cache || !cache->has_data)
-        {
-            self->_stack_cache.requestMeteo(node_id);
-            return false;
-        }
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &it = cache->items[i];
-            if (it.id != sensor_id)
-                continue;
-            if (it.name[0])
-            {
-                out = it.name;
-                return true;
-            }
-            return false;
-        }
-        return false;
-    }
-    const auto *cache = self->net.stack_slave.remoteMeteoCache(node_id);
-    if (!cache || !cache->has_data || !cache->items)
-    {
-        self->net.stack_slave.requestRemoteMeteoAll();
-        return false;
-    }
-    for (size_t i = 0; i < cache->item_count; ++i)
-    {
-        const auto &it = cache->items[i];
-        if (it.id != sensor_id)
-            continue;
-        if (it.name[0])
-        {
-            out = it.name;
-            return true;
-        }
-        return false;
-    }
+    (void)self;
+    (void)out;
     return false;
 }
 
@@ -772,50 +700,6 @@ bool AppRuntime::onRemoteSensorType_(void *ctx, uint32_t node_id, uint8_t sensor
     if (!ctx || node_id == 0 || sensor_id == 0)
         return false;
     AppRuntime *self = static_cast<AppRuntime *>(ctx);
-    if (!self->stackMasterActive_() && !self->stackSlaveActive_())
-        return false;
-    auto parseType = [](const char *type) -> MeteoController::SensorType {
-        if (!type || !type[0])
-            return MeteoController::SensorType::None;
-        String t(type);
-        t.toLowerCase();
-        if (t == "ds18b20")
-            return MeteoController::SensorType::Ds18b20;
-        if (t == "dht22")
-            return MeteoController::SensorType::Dht22;
-        return MeteoController::SensorType::None;
-    };
-    if (self->stackMasterActive_())
-    {
-        const auto *cache = self->_stack_cache.meteoCache(node_id);
-        if (!cache || !cache->has_data)
-        {
-            self->_stack_cache.requestMeteo(node_id);
-            return false;
-        }
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &it = cache->items[i];
-            if (it.id != sensor_id)
-                continue;
-            out = parseType(it.type);
-            return out != MeteoController::SensorType::None;
-        }
-        return false;
-    }
-    const auto *cache = self->net.stack_slave.remoteMeteoCache(node_id);
-    if (!cache || !cache->has_data || !cache->items)
-    {
-        self->net.stack_slave.requestRemoteMeteoAll();
-        return false;
-    }
-    for (size_t i = 0; i < cache->item_count; ++i)
-    {
-        const auto &it = cache->items[i];
-        if (it.id != sensor_id)
-            continue;
-        out = parseType(it.type);
-        return out != MeteoController::SensorType::None;
-    }
+    (void)self;
     return false;
 }

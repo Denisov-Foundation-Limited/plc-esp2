@@ -45,9 +45,6 @@ uint32_t stackNodeIdFromMac_(uint64_t mac)
 Network::Network(Logger &logs, WifiManager &wifi, GsmModem &gsm, WebInterface &fw, AsyncWebServer &web,
         Controllers &controllers, PlcControl &plc, RTC &rtc)
     : _logs(logs), _wifi(wifi), _gsm(gsm), _fw_upgrade(fw), _web(web),
-      _stack_server(kStackPort),
-      _stack_master(_stack_server, _logs),
-      _stack_node(_logs),
       _stack_master_server(_logs),
       _stack_rs485_server(_logs),
       _stack_slave_client(_logs),
@@ -56,7 +53,6 @@ Network::Network(Logger &logs, WifiManager &wifi, GsmModem &gsm, WebInterface &f
 {
     _cloud.setGsm(&gsm);
     _cloud.setNetwork(this);
-    _cloud.setStackMaster(&_stack_master);
     _cloud.setStackNodeNameProvider(&Network::provideCloudStackNodeName_, this);
     _stack_route.bindMaster(_stack_master_server);
     _stack_route.bindRs485Master(_stack_rs485_server);
@@ -361,15 +357,6 @@ void Network::beginStack_()
     _logs.info(F("STACK"), F("Role: slave transport: %s master: %s"),
                transport == ConfigsManagerIface::StackTransportKind::Rs485 ? "rs485" : "websocket",
                _stack_primary_host.c_str());
-    uint64_t mac = ESP.getEfuseMac();
-    _stack_node.setNodeId(stackNodeIdFromMac_(mac));
-    uint32_t caps = 0;
-    if (_stack_cfg && _stack_cfg->stackSlaveController())
-        caps |= StackCapController;
-    _stack_node.setCaps(caps);
-    _stack_node.setServer(_stack_primary_host, kStackPort);
-    if (_stack_device_name.length() > 0)
-        _stack_node.setDeviceName(_stack_device_name);
     if (transport == ConfigsManagerIface::StackTransportKind::Rs485)
     {
         ensureStackSlaveStarted_();
@@ -431,7 +418,7 @@ void Network::ensureStackSlaveStarted_()
     cfg.device_name = _stack_device_name;
     cfg.node_id = stackNodeIdFromMac_(ESP.getEfuseMac());
     _stack_route.setLocalNodeId(cfg.node_id);
-    cfg.caps = (_stack_cfg && _stack_cfg->stackSlaveController()) ? StackCapController : 0u;
+    cfg.caps = (_stack_cfg && _stack_cfg->stackSlaveController()) ? kStackCapController : 0u;
     if (transport == ConfigsManagerIface::StackTransportKind::Rs485)
         cfg.transport = StackSlaveClient::Config::TransportKind::Rs485Stub;
     _stack_slave_client.setConfig(cfg);
@@ -450,8 +437,7 @@ void Network::switchStackTarget_(StackTarget target)
     if (!host.length())
         return;
     _stack_target = target;
-    _stack_node.setServer(host, kStackPort);
-    _stack_node.disconnect();
+    _stack_slave_client.disconnect();
     ensureStackSlaveStarted_();
     if (target == StackTarget::Primary)
         _logs.info(F("STACK"), F("Switch stack host to primary: %s"), host.c_str());
@@ -563,10 +549,6 @@ void Network::updateStackFallback_()
     else if (switch_to_primary)
         requestStackCommand_(StackCommand::SwitchTargetPrimary);
 }
-StackNode &Network::stackNode()
-{ return _stack_node; }
-StackMaster &Network::stackMaster()
-{ return _stack_master; }
 StackRs485Server &Network::stackRs485Server()
 { return _stack_rs485_server; }
 StackRouteAdapter &Network::stackRoute()
@@ -646,9 +628,64 @@ bool Network::prepareStackIndexStateRequest(uint32_t node_id, uint32_t now_ms, u
     return _stack_unit_snapshot.prepareRequest(node_id, now_ms, fresh_ms, pending_ms);
 }
 
+bool Network::stackIndexState(uint32_t node_id, StackUnitSnapshot::State &out) const
+{
+    return _stack_unit_snapshot.state(node_id, out);
+}
+
 bool Network::stackIndexStateSnapshot(uint32_t node_id, StackUnitSnapshot::Snapshot &out) const
 {
     return _stack_unit_snapshot.snapshot(node_id, out);
+}
+
+bool Network::stackIndexSocketById(uint32_t node_id, uint8_t id, StackUnitSnapshot::SocketItem &out) const
+{
+    return _stack_unit_snapshot.socketById(node_id, id, out);
+}
+
+bool Network::stackIndexSocketAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::SocketItem &out) const
+{
+    return _stack_unit_snapshot.socketAt(node_id, index, out);
+}
+
+bool Network::stackIndexLightById(uint32_t node_id, uint8_t id, StackUnitSnapshot::SocketItem &out) const
+{
+    return _stack_unit_snapshot.lightById(node_id, id, out);
+}
+
+bool Network::stackIndexLightAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::SocketItem &out) const
+{
+    return _stack_unit_snapshot.lightAt(node_id, index, out);
+}
+
+bool Network::prepareStackSocketsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
+{
+    return _stack_unit_snapshot.prepareSocketsPageRequest(node_id, now_ms, offset, pending_ms);
+}
+
+bool Network::prepareStackLightsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
+{
+    return _stack_unit_snapshot.prepareLightsPageRequest(node_id, now_ms, offset, pending_ms);
+}
+
+void Network::completeStackSocketsPageRequest(uint32_t node_id, uint16_t offset)
+{
+    _stack_unit_snapshot.completeSocketsPageRequest(node_id, offset);
+}
+
+void Network::completeStackLightsPageRequest(uint32_t node_id, uint16_t offset)
+{
+    _stack_unit_snapshot.completeLightsPageRequest(node_id, offset);
+}
+
+void Network::clearStackSocketsPageRequest(uint32_t node_id)
+{
+    _stack_unit_snapshot.clearSocketsPageRequest(node_id);
+}
+
+void Network::clearStackLightsPageRequest(uint32_t node_id)
+{
+    _stack_unit_snapshot.clearLightsPageRequest(node_id);
 }
 
 void Network::clearStackIndexStatePending(uint32_t node_id)
@@ -776,7 +813,7 @@ void Network::handleStackNotify_(uint32_t source_node, const StackJsonProtocol::
     if (notify.payload.length())
     {
         DynamicJsonDocument extra(384);
-        if (!deserializeJson(extra, notify.payload))
+        if (!deserializeJson(extra, notify.payload.c_str(), notify.payload.length()))
             payload["data"].set(extra.as<JsonVariantConst>());
         else
             payload["raw"] = notify.payload;

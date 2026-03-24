@@ -606,13 +606,12 @@ bool StackRouteAdapter::handleExchangeRoute_(uint32_t source_node, const StackJs
 
 bool StackRouteAdapter::handleExchangeSyncRequest_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route)
 {
-    DynamicJsonDocument req(2048);
     uint32_t ack_out_upto = 0;
     JsonArrayConst deliver;
-    if (route.payload.length() && !deserializeJson(req, route.payload))
+    if (!route.payload_json.isNull())
     {
-        ack_out_upto = req["ack_out_upto"] | 0u;
-        deliver = req["deliver"].as<JsonArrayConst>();
+        ack_out_upto = route.payload_json["ack_out_upto"] | 0u;
+        deliver = route.payload_json["deliver"].as<JsonArrayConst>();
     }
 
     {
@@ -654,17 +653,16 @@ bool StackRouteAdapter::handleExchangeSyncResponse_(uint32_t source_node, const 
             return true;
     }
 
-    DynamicJsonDocument doc(4096);
-    if (route.payload.length() && !deserializeJson(doc, route.payload))
+    JsonArrayConst outbound;
+    if (!route.payload_json.isNull())
     {
-        const uint32_t ack_in_upto = doc["ack_in_upto"] | 0u;
+        const uint32_t ack_in_upto = route.payload_json["ack_in_upto"] | 0u;
         {
             const auto guard = _lock.guard();
             if (ack_in_upto)
                 ackMasterInboxUpTo_(source_node, ack_in_upto);
         }
-
-        JsonArrayConst outbound = doc["outbound"].as<JsonArrayConst>();
+        outbound = route.payload_json["outbound"].as<JsonArrayConst>();
         uint32_t max_out_id = 0;
         for (JsonObjectConst item : outbound)
         {
@@ -1042,7 +1040,7 @@ void StackRouteAdapter::routeOutboundExchange_(const ExchangeRecord &record, Def
             json_invoke.route.meta = record.meta;
             copyText_(json_invoke.route.feature, sizeof(json_invoke.route.feature), record.feature);
             copyText_(json_invoke.route.action, sizeof(json_invoke.route.action), record.action);
-            json_invoke.route.payload = record.payload;
+            StackJsonProtocol::parseRoutePayload(record.payload, json_invoke.route);
             const auto guard = _lock.guard();
             appendExchangeHistory_(record, ExchangeStatus::LocalHandled);
             updateExchangeDiag_(ExchangeStatus::LocalHandled, false);
@@ -1128,7 +1126,7 @@ void StackRouteAdapter::emitExchangeToSlave_(const ExchangeRecord &record, Defer
     json_invoke.route.meta = record.meta;
     copyText_(json_invoke.route.feature, sizeof(json_invoke.route.feature), record.feature);
     copyText_(json_invoke.route.action, sizeof(json_invoke.route.action), record.action);
-    json_invoke.route.payload = record.payload;
+    StackJsonProtocol::parseRoutePayload(record.payload, json_invoke.route);
 }
 
 void StackRouteAdapter::appendExchangeHistory_(const ExchangeRecord &record, ExchangeStatus status)
@@ -1227,7 +1225,7 @@ void StackRouteAdapter::writeExchangeToJson_(JsonObject obj, const ExchangeRecor
         else
         {
             DynamicJsonDocument payload_doc(768);
-            if (!deserializeJson(payload_doc, record.payload))
+            if (!deserializeJson(payload_doc, record.payload.c_str(), record.payload.length()))
                 obj["payload"].set(payload_doc.as<JsonVariantConst>());
             else
                 obj["payload_raw"] = record.payload;
@@ -1369,11 +1367,10 @@ bool StackRouteAdapter::handleNotificationRoute_(uint32_t source_node, const Sta
 
 bool StackRouteAdapter::handleNotificationPullRequest_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route)
 {
-    DynamicJsonDocument req(256);
     size_t limit = 4;
-    if (route.payload.length() && !deserializeJson(req, route.payload))
+    if (!route.payload_json.isNull())
     {
-        const size_t parsed_limit = req["limit"] | 4u;
+        const size_t parsed_limit = route.payload_json["limit"] | 4u;
         if (parsed_limit > 0)
             limit = parsed_limit;
     }
@@ -1387,10 +1384,9 @@ bool StackRouteAdapter::handleNotificationPullRequest_(uint32_t source_node, con
 
 bool StackRouteAdapter::handleNotificationAckRequest_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route)
 {
-    DynamicJsonDocument req(256);
     uint32_t upto_id = 0;
-    if (route.payload.length() && !deserializeJson(req, route.payload))
-        upto_id = req["upto_id"] | 0u;
+    if (!route.payload_json.isNull())
+        upto_id = route.payload_json["upto_id"] | 0u;
     {
         const auto guard = _lock.guard();
         if (upto_id)
@@ -1412,11 +1408,10 @@ bool StackRouteAdapter::handleNotificationPullResponse_(uint32_t source_node, co
             return true;
     }
 
-    DynamicJsonDocument doc(2048);
     uint32_t max_id = 0;
-    if (route.payload.length() && !deserializeJson(doc, route.payload))
+    if (!route.payload_json.isNull())
     {
-        JsonArrayConst items = doc["items"].as<JsonArrayConst>();
+        JsonArrayConst items = route.payload_json["items"].as<JsonArrayConst>();
         for (JsonObjectConst item : items)
         {
             NotificationRecord record;
@@ -1438,7 +1433,7 @@ bool StackRouteAdapter::handleNotificationPullResponse_(uint32_t source_node, co
             emitNotification_(record, &invoke);
             invokeDeferredNotify_(invoke);
         }
-        const uint32_t payload_max = doc["max_id"] | 0u;
+        const uint32_t payload_max = route.payload_json["max_id"] | 0u;
         if (payload_max > max_id)
             max_id = payload_max;
     }
@@ -1653,7 +1648,7 @@ bool StackRouteAdapter::buildPullResponsePayload_(DynamicJsonDocument &doc, size
             if (slot.payload.length())
             {
                 DynamicJsonDocument payload_doc(384);
-                if (!deserializeJson(payload_doc, slot.payload))
+                if (!deserializeJson(payload_doc, slot.payload.c_str(), slot.payload.length()))
                     item["payload"].set(payload_doc.as<JsonVariantConst>());
                 else
                     item["payload_raw"] = slot.payload;

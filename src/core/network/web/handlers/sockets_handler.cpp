@@ -160,8 +160,6 @@ void SocketsHandler::handleSockets(WebInterface &web, AsyncWebServerRequest *req
         page.replace("%SOCKETS_PAGES%", String((unsigned)max_pages));
         if (stack_view)
         {
-            const auto *pcache = web._stack_cache ? web._stack_cache->portsCache(node_id) : nullptr;
-            (void)pcache;
             page.replace("%DINPUT_JSON%", "[]");
             page.replace("%RELAY_JSON%", "[]");
             page.replace("%DINPUT_USED_JSON%", "[]");
@@ -663,9 +661,8 @@ void SocketsHandler::handleSocketsPortsOptions(WebInterface &web, AsyncWebServer
                                        : web.globalUsedPortsJson_(PortIO::PinType::DInput);
         const String ruse = stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
                                        : web.globalUsedPortsJson_(PortIO::PinType::Relay);
-        const auto *pcache = stack_view && web._stack_cache ? web._stack_cache->portsCache(node_id) : nullptr;
-        const bool ready = !stack_view || (pcache && pcache->has_data);
-        const bool pending = stack_view && pcache && pcache->pending;
+        const bool ready = !stack_view;
+        const bool pending = false;
         String body;
         body.reserve(djson.length() + rjson.length() + duse.length() + ruse.length() + 128);
         body += "{\"ready\":";

@@ -38,8 +38,6 @@
 #define _ow _web._ow
 #define _plc _web._plc
 #define _session_user_idx _web._session_user_idx
-#define _stack_cache _web._stack_cache
-#define _stack_master _web._stack_master
 #define _stack_status _web._stack_status
 #define _upload _web._upload
 #define _upload_error _web._upload_error
@@ -181,96 +179,14 @@ String WebInterfaceControllersOps::listExtendersHtml_()
 
 String WebInterfaceControllersOps::listStackPortsHtml_(uint32_t node_id) const
 {
-    const auto *cache = _stack_cache ? _stack_cache->portsCache(node_id) : nullptr;
-    if (!cache)
-        return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
-    if (cache->pending)
-        return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>pending</strong></td></tr>";
-    if (!cache->has_data)
-        return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>no data</strong></td></tr>";
-    String items;
-    items.reserve(cache->item_count * 120 + 128);
-    for (size_t i = 0; i < cache->item_count; ++i)
-    {
-        const auto &it = cache->items[i];
-        items += "<tr><td class=\"right\"><strong>";
-        items += String((unsigned)it.id);
-        items += "</strong></td><td><strong>";
-        if (it.backend[0])
-            appendHtmlEscaped_(items, it.backend);
-        else
-            items += "n/a";
-        items += "</strong></td><td><strong>";
-        if (it.loc[0])
-            appendHtmlEscaped_(items, it.loc);
-        else
-            items += "n/a";
-        items += "</strong></td><td><strong>";
-        if (it.type[0])
-            appendHtmlEscaped_(items, it.type);
-        else
-            items += "n/a";
-        items += "</strong></td><td><strong>";
-        items += it.ctrl ? "yes" : "no";
-        items += "</strong></td><td class=\"right\"><strong>";
-        if (it.is_extender)
-            items += String((int)it.dev);
-        else
-            items += "--";
-        items += "</strong></td><td class=\"right\"><strong>";
-        if (it.pin >= 0)
-            items += String((int)it.pin);
-        else
-            items += "--";
-        items += "</strong></td><td><strong>n/a";
-        items += "</strong></td><td><strong>";
-        if (it.hw[0])
-            appendHtmlEscaped_(items, it.hw);
-        else
-            items += "n/a";
-        items += "</strong></td></tr>";
-    }
-    if (items.length() == 0)
-        items = "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>No ports</strong></td></tr>";
-    return items;
+    (void)node_id;
+    return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>not migrated</strong></td></tr>";
 }
 
 String WebInterfaceControllersOps::listStackExtendersHtml_(uint32_t node_id) const
 {
-    const auto *cache = _stack_cache ? _stack_cache->extendersCache(node_id) : nullptr;
-    if (!cache)
-        return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
-    if (cache->pending)
-        return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>pending</strong></td></tr>";
-    if (!cache->has_data)
-        return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>no data</strong></td></tr>";
-    String items;
-    items.reserve(cache->item_count * 64 + 96);
-    for (size_t i = 0; i < cache->item_count; ++i)
-    {
-        const auto &it = cache->items[i];
-        if (!it.present)
-            continue;
-        items += "<tr><td class=\"right\"><strong>";
-        items += String((unsigned)it.id);
-        items += "</strong></td><td class=\"right\"><strong>";
-        items += String((unsigned)it.bus);
-        items += "</strong></td><td><strong>";
-        if (it.addr[0])
-            appendHtmlEscaped_(items, it.addr);
-        else
-            items += "n/a";
-        items += "</strong></td><td><strong>";
-        if (it.type[0])
-            appendHtmlEscaped_(items, it.type);
-        else
-            items += "n/a";
-        items += "</strong></td></tr>";
-    }
-    if (items.length() == 0)
-        items = String("<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>") +
-                WebUiRu::WebCore::kExtendersAbsent + "</strong></td></tr>";
-    return items;
+    (void)node_id;
+    return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>not migrated</strong></td></tr>";
 }
 
 String WebInterfaceControllersOps::listI2cHtml_()
@@ -309,29 +225,8 @@ String WebInterfaceControllersOps::listI2cHtml_()
 
 String WebInterfaceControllersOps::listStackI2cHtml_(uint32_t node_id) const
 {
-    const auto *cache = _stack_cache ? _stack_cache->i2cCache(node_id) : nullptr;
-    if (!cache)
-        return "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
-    if (cache->pending)
-        return "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>pending</strong></td></tr>";
-    if (!cache->has_data)
-        return "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>no data</strong></td></tr>";
-    String items;
-    items.reserve(cache->item_count * 32 + 64);
-    for (size_t i = 0; i < cache->item_count; ++i)
-    {
-        const auto &it = cache->items[i];
-        char addr_buf[8] = {};
-        snprintf(addr_buf, sizeof(addr_buf), "0x%02X", (unsigned)it.addr);
-        items += "<tr><td class=\"right\"><strong>";
-        items += String((unsigned)it.bus);
-        items += "</strong></td><td><strong>";
-        items += addr_buf;
-        items += "</strong></td></tr>";
-    }
-    if (items.length() == 0)
-        items = "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>none</strong></td></tr>";
-    return items;
+    (void)node_id;
+    return "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>not migrated</strong></td></tr>";
 }
 
 String WebInterfaceControllersOps::stackNodesBlockHtml_() const
@@ -356,34 +251,38 @@ String WebInterfaceControllersOps::listStackNodesStatusHtml_() const
     html += "<tr><th>";
     html += WebUiRu::Controllers::kIpRtcCpu;
     html += "</th></tr>";
-    if (!_stack_master)
+    if (!_web._network)
         return WebUiRu::Controllers::kText3;
-    const size_t count = _stack_master->nodeCount();
+    const size_t count = _web._network->stackOnlineDeviceCount();
     if (count == 0)
         return WebUiRu::Controllers::kText4;
     for (size_t i = 0; i < count; ++i)
     {
-        const uint32_t id = _stack_master->nodeIdAt(i);
-        const auto *cache = _stack_cache ? _stack_cache->statusCache(id) : nullptr;
-        const bool has_rtc = cache && cache->has_rtc && cache->last_rtc_ok;
-        const bool has_plc = cache && cache->has_plc && cache->last_plc_ok;
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!_web._network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+            continue;
+        StackUnitSnapshot::Snapshot snapshot{};
+        const bool has_snapshot = _web._network->stackIndexStateSnapshot(device.node_id, snapshot) && snapshot.updated_ms != 0;
         html += "<tr><td><strong>";
-        html += _stack_master->nodeNameAt(i);
+        if (device.name[0])
+            appendHtmlEscaped_(html, device.name);
+        else
+            html += stackNodeIdHex_(device.node_id);
         html += "</strong></td><td><strong>";
-        html += _stack_master->nodeIpAt(i);
+        appendHtmlEscaped_(html, device.ip);
         html += "</strong></td><td><strong>";
-        html += has_rtc ? safeHtmlValue_(cache->rtc_date, "n/a") : "n/a";
+        html += has_snapshot ? safeHtmlValue_(snapshot.rtc_date, "n/a") : "n/a";
         html += "</strong></td><td><strong>";
-        html += has_rtc ? safeHtmlValue_(cache->rtc_time, "n/a") : "n/a";
+        html += has_snapshot ? safeHtmlValue_(snapshot.rtc_time, "n/a") : "n/a";
         html += "</strong></td><td><strong>";
-        html += has_rtc ? formatTemp_(cache->rtc_temp) : "n/a";
+        html += has_snapshot ? formatTemp_(snapshot.rtc_temp) : "n/a";
         html += "</strong></td><td><strong>";
-        html += has_plc ? formatTemp_(cache->board_temp) : "n/a";
+        html += has_snapshot ? formatTemp_(snapshot.board_temp) : "n/a";
         html += "</strong></td><td><strong>";
         html += "n/a";
         html += "</strong></td><td class=\"center\"><strong>";
-        if (has_plc)
-            html += fanStatusIcon_(cache->fan_on);
+        if (has_snapshot)
+            html += fanStatusIcon_(snapshot.fan_on);
         else
             html += "n/a";
         html += "</strong></td></tr>";
@@ -394,7 +293,7 @@ String WebInterfaceControllersOps::listStackNodesStatusHtml_() const
 String WebInterfaceControllersOps::listStackNodesHtml_() const
 {
     if (!_web._network)
-        return !_stack_master ? WebUiRu::Controllers::kText3 : WebUiRu::Controllers::kText4;
+        return WebUiRu::Controllers::kText3;
     const size_t count = _web._network->stackOnlineDeviceCount();
     if (count == 0)
         return WebUiRu::Controllers::kText4;
@@ -417,7 +316,7 @@ String WebInterfaceControllersOps::listStackNodesHtml_() const
         items += "</strong></td><td><strong>";
         appendHtmlEscaped_(items, device.ip);
         items += "</strong></td><td><strong>";
-        items += (device.caps & StackCapController) ? WebUiRu::Controllers::kText5 : WebUiRu::Controllers::kText6;
+        items += (device.caps & kStackCapController) ? WebUiRu::Controllers::kText5 : WebUiRu::Controllers::kText6;
         items += "</strong></td></tr>";
     }
     return items;
@@ -445,225 +344,37 @@ String WebInterfaceControllersOps::globalUsedPortsJson_(PortIO::PinType type) co
     return out;
 }
 
-bool WebInterfaceControllersOps::stackPortTypeMatch_(const StackCache::StackPortItem &it, PortIO::PinType type) const
-{
-        const bool has_pin_type = (it.pin_type != 0xFFu);
-        if (has_pin_type && ((uint8_t)type == it.pin_type))
-            return true;
-
-        String t = it.type;
-        t.toLowerCase();
-        switch (type)
-        {
-        case PortIO::PinType::Relay:
-            return t == "relay" || t == "output" || t == "out" || t == "rly";
-        case PortIO::PinType::DInput:
-            return t == "dinput" || t == "din" || t == "input" || t == "button" || t == "btn" || t == "switch";
-        case PortIO::PinType::Sensor:
-            return t == "sensor";
-        case PortIO::PinType::Button:
-            return t == "button" || t == "btn" || t == "dinput" || t == "din" || t == "input" || t == "switch";
-        case PortIO::PinType::Led:
-            return t == "led";
-        case PortIO::PinType::System:
-            return t == "system";
-        case PortIO::PinType::Buzzer:
-            return t == "buzzer";
-        case PortIO::PinType::Fan:
-            return t == "fan";
-        default:
-            break;
-        }
-        return false;
-    }
-
-
 
     String WebInterfaceControllersOps::stackPortOptionsJson_(uint32_t node_id, PortIO::PinType type) const
 {
-        String out;
-        out.reserve(256);
-        out += "[";
-        const auto *cache = _stack_cache ? _stack_cache->portsCache(node_id) : nullptr;
-        if (!cache || !cache->has_data || !cache->items)
-            return "[]";
-
-        const bool pending_indexed = (cache->pending && cache->parts_received > 0 && cache->parts_expected > 0);
-        bool first = true;
-        size_t matched = 0;
-        const size_t scan_limit = pending_indexed ? (size_t)PortIO::PORT_COUNT : cache->item_count;
-        for (size_t i = 0; i < scan_limit; ++i)
-        {
-            if (pending_indexed && !cache->present[i])
-                continue;
-            const auto &it = cache->items[i];
-            if (!stackPortTypeMatch_(it, type))
-                continue;
-            ++matched;
-            if (!first)
-                out += ",";
-            out += "{\"v\":";
-            out += String((unsigned)it.id);
-            out += ",\"l\":\"";
-            if (it.alias[0])
-                appendJsonEscaped_(out, it.alias);
-            else
-            {
-                out += "#";
-                out += String((unsigned)it.id);
-                out += " ";
-                if (it.type[0])
-                    appendJsonEscaped_(out, it.type);
-                else
-                    out += "Port";
-                if (it.loc[0])
-                {
-                    out += " @";
-                    appendJsonEscaped_(out, it.loc);
-                }
-                if (it.pin >= 0)
-                {
-                    out += " GPIO";
-                    out += String((int)it.pin);
-                }
-            }
-            out += "\"}";
-            first = false;
-        }
-        // Fallback: old/incompatible slave may send unknown type/ptype values.
-        // Keep dropdown usable by exposing all controllable ports.
-        if (matched == 0)
-        {
-            for (size_t i = 0; i < scan_limit; ++i)
-            {
-                if (pending_indexed && !cache->present[i])
-                    continue;
-                const auto &it = cache->items[i];
-                if (!it.ctrl)
-                    continue;
-                if (!first)
-                    out += ",";
-                out += "{\"v\":";
-                out += String((unsigned)it.id);
-                out += ",\"l\":\"";
-                if (it.alias[0])
-                {
-                    appendJsonEscaped_(out, it.alias);
-                }
-                else
-                {
-                    out += "#";
-                    out += String((unsigned)it.id);
-                    if (it.type[0])
-                    {
-                        out += " ";
-                        appendJsonEscaped_(out, it.type);
-                    }
-                    if (it.loc[0])
-                    {
-                        out += " @";
-                        appendJsonEscaped_(out, it.loc);
-                    }
-                    if (it.pin >= 0)
-                    {
-                        out += " GPIO";
-                        out += String((int)it.pin);
-                    }
-                }
-                out += "\"}";
-                first = false;
-            }
-        }
-        out += "]";
-        return out;
+        (void)node_id;
+        (void)type;
+        return "[]";
     }
 
 
 
     String WebInterfaceControllersOps::stackUsedPortsJson_(uint32_t node_id, PortIO::PinType type) const
 {
-        String out;
-        out.reserve(128);
-        out += "[";
-        const auto *cache = _stack_cache ? _stack_cache->portsCache(node_id) : nullptr;
-        if (!cache || !cache->has_data || !cache->items)
-            return "[]";
-
-        const bool pending_indexed = (cache->pending && cache->parts_received > 0 && cache->parts_expected > 0);
-        const size_t scan_limit = pending_indexed ? (size_t)PortIO::PORT_COUNT : cache->item_count;
-        bool first = true;
-        for (size_t i = 0; i < scan_limit; ++i)
-        {
-            if (pending_indexed && !cache->present[i])
-                continue;
-            const auto &it = cache->items[i];
-            if (!stackPortTypeMatch_(it, type))
-                continue;
-            if (!it.used)
-                continue;
-            if (!first)
-                out += ",";
-            out += String((unsigned)it.id);
-            first = false;
-        }
-        out += "]";
-        return out;
+        (void)node_id;
+        (void)type;
+        return "[]";
     }
 
 
 
     String WebInterfaceControllersOps::stackMeteoDs18OptionsJson_(uint32_t node_id) const
 {
-        String out;
-        out.reserve(256);
-        out += "[";
-        const auto *cache = _stack_cache ? _stack_cache->tempSensorsCache(node_id) : nullptr;
-        if (!cache || !cache->has_data || !cache->items)
-            return "[]";
-        bool first = true;
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &it = cache->items[i];
-            if (!it.addr[0])
-                continue;
-            if (!first)
-                out += ",";
-            out += "{\"v\":\"";
-            appendJsonEscaped_(out, it.addr);
-            out += "\",\"l\":\"";
-            appendJsonEscaped_(out, it.addr);
-            out += "\"}";
-            first = false;
-        }
-        out += "]";
-        return out;
+        (void)node_id;
+        return "[]";
     }
 
 
 
     String WebInterfaceControllersOps::stackMeteoDs18UsedJson_(uint32_t node_id) const
 {
-        String out;
-        out.reserve(128);
-        out += "[";
-        const auto *cache = _stack_cache ? _stack_cache->tempSensorsCache(node_id) : nullptr;
-        if (!cache || !cache->has_data || !cache->items)
-            return "[]";
-        bool first = true;
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &it = cache->items[i];
-            if (!it.used || !it.addr[0])
-                continue;
-            if (!first)
-                out += ",";
-            out += "\"";
-            appendJsonEscaped_(out, it.addr);
-            out += "\"";
-            first = false;
-        }
-        out += "]";
-        return out;
+        (void)node_id;
+        return "[]";
     }
 
 
@@ -709,35 +420,8 @@ bool WebInterfaceControllersOps::stackPortTypeMatch_(const StackCache::StackPort
 
     String WebInterfaceControllersOps::listStackOwHtml_(uint32_t node_id) const
 {
-        const auto *cache = _stack_cache ? _stack_cache->owCache(node_id) : nullptr;
-        if (!cache)
-            return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
-        if (cache->pending)
-            return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>pending</strong></td></tr>";
-        if (!cache->has_data)
-            return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>no data</strong></td></tr>";
-        String items;
-        items.reserve(cache->item_count * 48 + 64);
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &it = cache->items[i];
-            items += "<tr><td class=\"right\"><strong>";
-            items += String((unsigned)it.bus);
-            items += "</strong></td><td><strong>";
-            if (it.addr[0])
-                appendHtmlEscaped_(items, it.addr);
-            else
-                items += "n/a";
-            items += "</strong></td><td><strong>";
-            if (it.type[0])
-                appendHtmlEscaped_(items, it.type);
-            else
-                items += "n/a";
-            items += "</strong></td></tr>";
-        }
-        if (items.length() == 0)
-            items = "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>none</strong></td></tr>";
-        return items;
+        (void)node_id;
+        return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>not migrated</strong></td></tr>";
     }
 
 
@@ -1468,11 +1152,15 @@ sendRedirect_(request, "/", set_cookie);
 {
         if (node_id == 0)
             return 0;
-        if (!_stack_master)
+        if (!_web._network)
             return UsersRegistry::kAclUnitCount;
-        for (size_t i = 0; i < _stack_master->nodeCount(); ++i)
+        const size_t count = _web._network->stackOnlineDeviceCount();
+        for (size_t i = 0; i < count; ++i)
         {
-            if (_stack_master->nodeIdAt(i) == node_id)
+            StackDeviceRegistry::DeviceInfo device{};
+            if (!_web._network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+                continue;
+            if (device.node_id == node_id)
             {
                 const size_t unit = i + 1u;
                 if (unit >= (size_t)UsersRegistry::kAclUnitCount)
@@ -2338,7 +2026,6 @@ bool WebInterfaceControllersOps::parseThermoFloat_(const String &input, float &o
 #undef _upload_ok
 #undef _upload_in_progress
 #undef _upload
-#undef _stack_master
 #undef _session_user_idx
 #undef _ow
 #undef _ota_set_cookie
@@ -2387,8 +2074,6 @@ bool WebInterfaceControllersOps::parseThermoFloat_(const String &input, float &o
 #undef _upload_error
 #undef _upload
 #undef _stack_status
-#undef _stack_master
-#undef _stack_cache
 #undef _session_user_idx
 #undef _plc
 #undef _ow

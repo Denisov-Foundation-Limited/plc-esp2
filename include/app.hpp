@@ -24,7 +24,6 @@
 #include "core/display.hpp"
 #include "core/eeprom_storage.hpp"
 #include "core/network/network.hpp"
-#include "core/compat/stack_stub.hpp"
 #include "core/cli/cli_console.hpp"
 #include "core/network/web/web_interface.hpp"
 #include "core/plc_scan.hpp"
@@ -135,7 +134,6 @@ struct NetworkContext
     AsyncWebServer web;
     WebInterface fw_upgrade;
     Network network;
-    StackSlaveHandler stack_slave;
 
     NetworkContext(CoreContext &core, HardwareContext &hw, CommsContext &comms, ControlContext &control, UiContext &ui);
 };

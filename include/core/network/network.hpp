@@ -19,7 +19,6 @@
 #include <utility>
 
 #include "utils/logger.hpp"
-#include "core/compat/stack_stub.hpp"
 #include "core/network/cloud/cloud_client.hpp"
 #include "core/network/cloud/cloud_http_transport.hpp"
 #include "core/network/stack/stack_route_adapter.hpp"
@@ -135,9 +134,6 @@ private:
     static constexpr uint16_t kStackPort = 9010;
     static constexpr uint32_t kStackFallbackDelayMs = 10000;
     static constexpr uint32_t kStackFallbackRetryPrimaryMs = 30000;
-    AsyncServer _stack_server;
-    StackMaster _stack_master;
-    StackNode _stack_node;
     StackMasterServer _stack_master_server;
     StackRs485Server _stack_rs485_server;
     StackSlaveClient _stack_slave_client;
@@ -183,8 +179,6 @@ private:
     bool cloudStackNodeName_(uint32_t node_id, String &out) const;
 
 public:
-    StackNode &stackNode();
-    StackMaster &stackMaster();
     StackRs485Server &stackRs485Server();
     StackRouteAdapter &stackRoute();
     CloudClient &cloudClient();
@@ -196,7 +190,18 @@ public:
     bool stackDeviceSnapshotAt(size_t idx, StackDeviceRegistry::DeviceInfo &out) const;
     bool stackDeviceSnapshotByNodeId(uint32_t node_id, StackDeviceRegistry::DeviceInfo &out) const;
     bool prepareStackIndexStateRequest(uint32_t node_id, uint32_t now_ms, uint32_t fresh_ms, uint32_t pending_ms);
+    bool stackIndexState(uint32_t node_id, StackUnitSnapshot::State &out) const;
     bool stackIndexStateSnapshot(uint32_t node_id, StackUnitSnapshot::Snapshot &out) const;
+    bool stackIndexSocketById(uint32_t node_id, uint8_t id, StackUnitSnapshot::SocketItem &out) const;
+    bool stackIndexSocketAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::SocketItem &out) const;
+    bool stackIndexLightById(uint32_t node_id, uint8_t id, StackUnitSnapshot::SocketItem &out) const;
+    bool stackIndexLightAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::SocketItem &out) const;
+    bool prepareStackSocketsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
+    bool prepareStackLightsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
+    void completeStackSocketsPageRequest(uint32_t node_id, uint16_t offset);
+    void completeStackLightsPageRequest(uint32_t node_id, uint16_t offset);
+    void clearStackSocketsPageRequest(uint32_t node_id);
+    void clearStackLightsPageRequest(uint32_t node_id);
     void clearStackIndexStatePending(uint32_t node_id);
     void updateStackIndexState(uint32_t node_id, const StackUnitSnapshot::Snapshot &state);
     void invalidateStackIndexState(uint32_t node_id);
