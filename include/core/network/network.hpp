@@ -196,14 +196,35 @@ public:
     bool stackIndexSocketAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::SocketItem &out) const;
     bool stackIndexLightById(uint32_t node_id, uint8_t id, StackUnitSnapshot::SocketItem &out) const;
     bool stackIndexLightAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::SocketItem &out) const;
+    bool stackIndexMeteoById(uint32_t node_id, uint8_t id, StackUnitSnapshot::MeteoItem &out) const;
+    bool stackIndexMeteoAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::MeteoItem &out) const;
+    bool stackIndexThermoById(uint32_t node_id, uint8_t id, StackUnitSnapshot::ThermoItem &out) const;
+    bool stackIndexThermoAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::ThermoItem &out) const;
+    bool stackIndexTankById(uint32_t node_id, uint8_t id, StackUnitSnapshot::TankItem &out) const;
+    bool stackIndexTankAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::TankItem &out) const;
     bool prepareStackSocketsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
     bool prepareStackLightsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
+    bool prepareStackMeteoPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
+    bool prepareStackThermoPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
+    bool prepareStackTanksPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
     void completeStackSocketsPageRequest(uint32_t node_id, uint16_t offset);
     void completeStackLightsPageRequest(uint32_t node_id, uint16_t offset);
+    void completeStackMeteoPageRequest(uint32_t node_id, uint16_t offset);
+    void completeStackThermoPageRequest(uint32_t node_id, uint16_t offset);
+    void completeStackTanksPageRequest(uint32_t node_id, uint16_t offset);
     void clearStackSocketsPageRequest(uint32_t node_id);
     void clearStackLightsPageRequest(uint32_t node_id);
+    void clearStackMeteoPageRequest(uint32_t node_id);
+    void clearStackThermoPageRequest(uint32_t node_id);
+    void clearStackTanksPageRequest(uint32_t node_id);
     void clearStackIndexStatePending(uint32_t node_id);
     void updateStackIndexState(uint32_t node_id, const StackUnitSnapshot::Snapshot &state);
+    void updateStackIndexMeteoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t ok_total,
+                                   const StackUnitSnapshot::MeteoItem *items, uint8_t item_count, uint32_t updated_ms);
+    void updateStackIndexThermoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t active_total,
+                                    const StackUnitSnapshot::ThermoItem *items, uint8_t item_count, uint32_t updated_ms);
+    void updateStackIndexTanksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
+                                   const StackUnitSnapshot::TankItem *items, uint8_t item_count, uint32_t updated_ms);
     void invalidateStackIndexState(uint32_t node_id);
     bool stackSlaveSendResponse(uint32_t target_node, const char *feature, const char *action, uint32_t reply_to,
                                 const JsonDocument *payload = nullptr);

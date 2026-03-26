@@ -11,6 +11,28 @@
 
 #include "core/network/web/web_interface.hpp"
 
+namespace
+{
+bool stackThermoState_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::State &out)
+{
+    return web.network() && node_id != 0 && web.network()->stackIndexState(node_id, out);
+}
+
+bool requestNextStackThermoPage_(WebInterface &web, uint32_t node_id, uint16_t offset, uint16_t limit)
+{
+    if (!web.network() || node_id == 0 || limit == 0)
+        return false;
+    DynamicJsonDocument req(64);
+    req["offset"] = offset;
+    req["limit"] = limit;
+    const bool sent = web.network()->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
+                                                              StackRouteAdapter::Mode::Json, true);
+    if (!sent)
+        web.network()->clearStackThermoPageRequest(node_id);
+    return sent;
+}
+}
+
 size_t WebInterfaceControllersThermoHelper::thermoLocalRenderCount_(const WebInterface &web) {
         if (!web._controllers)
             return 0;
@@ -66,9 +88,17 @@ String WebInterfaceControllersThermoHelper::thermoDeviceSelectHtml_(const WebInt
     }
 
 String WebInterfaceControllersThermoHelper::stackThermoStatusText_(const WebInterface &web, uint32_t node_id) {
-            (void)web;
-            (void)node_id;
-            return WebUiRu::kNoDataFromSlave;
+            StackUnitSnapshot::State snapshot{};
+            if (!stackThermoState_(web, node_id, snapshot))
+                return WebUiRu::kNoDataFromSlave;
+            if (snapshot.pending &&
+                (uint32_t)(millis() - snapshot.request_started_ms) > 15000u)
+                return WebUiRu::Sockets::kText10;
+            if (snapshot.pending)
+                return "";
+            if (snapshot.updated_ms == 0)
+                return WebUiRu::kNoDataFromSlave;
+            return WebUiRu::kStatusOk;
     }
 
 bool WebInterfaceControllersThermoHelper::isStackThermoView_(const WebInterface &web, uint32_t node_id) {
@@ -79,23 +109,361 @@ bool WebInterfaceControllersThermoHelper::isStackThermoView_(const WebInterface 
     }
 
 bool WebInterfaceControllersThermoHelper::requestStackThermo_(WebInterface &web, uint32_t node_id) {
-        (void)web;
-        (void)node_id;
-        return false;
+        if (!web.network() || node_id == 0)
+            return false;
+        const uint32_t now = millis();
+        StackUnitSnapshot::State snapshot{};
+        const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+        if (!has_snapshot || snapshot.updated_ms == 0 ||
+            (uint32_t)(now - snapshot.updated_ms) > 5000u)
+        {
+            const bool refresh = web.requestStackIndexState_(node_id);
+            DynamicJsonDocument req(64);
+            req["offset"] = 0;
+            req["limit"] = 8;
+            const bool thermo_req = web.network()->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
+                                                                            StackRouteAdapter::Mode::Json, true);
+            return refresh || thermo_req;
+        }
+        if (snapshot.pending && (uint32_t)(now - snapshot.request_started_ms) < 1500u)
+            return true;
+        if (snapshot.thermo_enabled > snapshot.thermo_count)
+        {
+            if (!web.network()->prepareStackThermoPageRequest(node_id, now, snapshot.thermo_count, 4000u))
+                return true;
+            return requestNextStackThermoPage_(web, node_id, snapshot.thermo_count, 8);
+        }
+        return true;
     }
 
 size_t WebInterfaceControllersThermoHelper::stackThermoVisibleCount_(const WebInterface &web, uint32_t node_id) {
-            (void)web;
-            (void)node_id;
-            return 0;
+            StackUnitSnapshot::State snapshot{};
+            if (!stackThermoState_(web, node_id, snapshot))
+                return 0;
+            if (snapshot.thermo_count == 0)
+                return 0;
+            const bool can_view_disabled = web.webSessionIsAdmin_();
+            uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
+            uint32_t remote_used[ThermoController::kDeviceCount] = {};
+            size_t remote_used_count = 0;
+            size_t render_count = snapshot.thermo_count;
+            if (can_view_disabled)
+            {
+                size_t last_enabled_idx = SIZE_MAX;
+                for (uint8_t i = 0; i < snapshot.thermo_count && i < StackUnitSnapshot::kThermoCount; ++i)
+                {
+                    StackUnitSnapshot::ThermoItem item{};
+                    if (!web.network()->stackIndexThermoAt(node_id, i, item))
+                        continue;
+                    if (item.enabled)
+                        last_enabled_idx = i;
+                }
+                if (last_enabled_idx == SIZE_MAX)
+                    render_count = snapshot.thermo_count ? 1u : 0u;
+                else
+                {
+                    const size_t rc = last_enabled_idx + 2u;
+                    render_count = rc > snapshot.thermo_count ? snapshot.thermo_count : rc;
+                }
+            }
+            size_t count = 0;
+            for (size_t i = 0; i < render_count; ++i)
+            {
+                StackUnitSnapshot::ThermoItem item{};
+                if (!web.network()->stackIndexThermoAt(node_id, (uint8_t)i, item))
+                    continue;
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Thermo, item.id, node_id))
+                    continue;
+                if (!can_view_disabled && !item.enabled)
+                    continue;
+                ++count;
+            }
+            return count;
     }
 
 String WebInterfaceControllersThermoHelper::listStackThermoHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
-            (void)web;
-            (void)node_id;
-            (void)offset;
-            (void)limit;
-            return WebUiRu::Thermo::kText;
+        StackUnitSnapshot::State snapshot{};
+        if (!stackThermoState_(web, node_id, snapshot))
+            return "<div class=\"tile empty\"><strong>Thermo unavailable</strong></div>";
+        if (snapshot.thermo_count == 0)
+            return "<div class=\"tile empty\"><strong>Thermo empty</strong></div>";
+        String items;
+        const size_t page_limit = (limit == 0) ? 1u : ((limit == SIZE_MAX) ? snapshot.thermo_count : limit);
+        size_t reserve = 2048u + page_limit * 900u;
+        if (reserve < 8192u)
+            reserve = 8192u;
+        items.reserve(reserve);
+        const bool can_view_disabled = web.webSessionIsAdmin_();
+        uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
+        uint32_t remote_used[ThermoController::kDeviceCount] = {};
+        size_t remote_used_count = 0;
+        size_t render_count = snapshot.thermo_count;
+        if (can_view_disabled)
+        {
+            size_t last_enabled_idx = SIZE_MAX;
+            for (uint8_t i = 0; i < snapshot.thermo_count && i < StackUnitSnapshot::kThermoCount; ++i)
+            {
+                StackUnitSnapshot::ThermoItem item{};
+                if (!web.network()->stackIndexThermoAt(node_id, i, item))
+                    continue;
+                if (item.enabled)
+                    last_enabled_idx = i;
+            }
+            if (last_enabled_idx == SIZE_MAX)
+                render_count = snapshot.thermo_count ? 1u : 0u;
+            else
+            {
+                const size_t rc = last_enabled_idx + 2u;
+                render_count = rc > snapshot.thermo_count ? snapshot.thermo_count : rc;
+            }
+        }
+        size_t rendered = 0;
+        size_t visible_idx = 0;
+        for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
+        {
+            StackUnitSnapshot::ThermoItem cfg{};
+            if (!web.network()->stackIndexThermoAt(node_id, (uint8_t)i, cfg))
+                continue;
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Thermo, cfg.id, node_id))
+                continue;
+            if (!can_view_disabled && !cfg.enabled)
+                continue;
+            if (visible_idx < offset)
+            {
+                ++visible_idx;
+                continue;
+            }
+            ++visible_idx;
+            const bool can_admin = web.webSessionIsAdmin_();
+            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, cfg.id, node_id);
+            const bool can_edit = can_admin && can_control;
+            const char *sensor_label = WebUiRu::Thermo::kText8;
+            const char *sensor_suffix = "";
+            char sensor_buf[16] = {};
+            if (cfg.sensor_id != ThermoController::kInvalidSensor)
+            {
+                if (cfg.sensor_node_id != 0)
+                {
+                    sensor_label = "--";
+                }
+                else
+                {
+                    StackUnitSnapshot::MeteoItem sensor{};
+                    if (web.network()->stackIndexMeteoById(node_id, cfg.sensor_id, sensor) &&
+                        sensor.enabled && sensor.has_temp)
+                    {
+                        dtostrf(sensor.temp_c, 0, 1, sensor_buf);
+                        sensor_label = sensor_buf;
+                        sensor_suffix = "&deg;C";
+                    }
+                    else
+                    {
+                        sensor_label = "--";
+                    }
+                }
+            }
+            const char *mode_label = WebUiRu::Thermo::kText3;
+            if (cfg.mode == (uint8_t)ThermoController::Mode::Off)
+                mode_label = WebUiRu::Thermo::kText4;
+            else if (cfg.mode == (uint8_t)ThermoController::Mode::Heat)
+                mode_label = WebUiRu::Thermo::kText5;
+            else if (cfg.mode == (uint8_t)ThermoController::Mode::Cool)
+                mode_label = WebUiRu::Thermo::kText6;
+            const char *state_label = WebUiRu::Thermo::kText7;
+            const char *state_class = "status-idle";
+            if (cfg.heat_on)
+            {
+                state_label = WebUiRu::Thermo::kText5;
+                state_class = "status-heat";
+            }
+            else if (cfg.cool_on)
+            {
+                state_label = WebUiRu::Thermo::kText6;
+                state_class = "status-cool";
+            }
+            bool show_heat = true;
+            bool show_cool = true;
+            String heat_class = "icon heat ";
+            String cool_class = "icon cool ";
+            if (cfg.mode == (uint8_t)ThermoController::Mode::Off)
+            {
+                show_heat = false;
+                show_cool = false;
+            }
+            else if (cfg.mode == (uint8_t)ThermoController::Mode::Heat)
+            {
+                show_cool = false;
+                heat_class += cfg.heat_on ? "active" : "inactive";
+            }
+            else if (cfg.mode == (uint8_t)ThermoController::Mode::Cool)
+            {
+                show_heat = false;
+                cool_class += cfg.cool_on ? "active" : "inactive";
+            }
+            else
+            {
+                heat_class += cfg.heat_on ? "active" : "inactive";
+                cool_class += cfg.cool_on ? "active" : "inactive";
+            }
+            items += "<div class=\"tile js-group-item";
+            if (!cfg.enabled)
+                items += " disabled";
+            items += "\" data-group-id=\"";
+            items += String((unsigned)cfg.group_id);
+            items += "\"";
+            items += web.groupVisibilityStyleAttr_(cfg.group_id, node_id);
+            items += WebUiRu::Thermo::kText9;
+            items += sensor_label;
+            items += sensor_suffix;
+            items += "</span>";
+            items += WebUiRu::Thermo::kText15;
+            items += String((int)(cfg.target_c + 0.5f));
+            items += "&deg;C</span></div>";
+            if (show_heat)
+            {
+                items += "<svg class=\"";
+                items += heat_class;
+                items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"22\" y=\"30\" width=\"76\" height=\"60\" rx=\"10\"/><line x1=\"36\" y1=\"40\" x2=\"36\" y2=\"80\"/><line x1=\"52\" y1=\"40\" x2=\"52\" y2=\"80\"/><line x1=\"68\" y1=\"40\" x2=\"68\" y2=\"80\"/><line x1=\"84\" y1=\"40\" x2=\"84\" y2=\"80\"/></svg>";
+            }
+            if (show_cool)
+            {
+                items += "<svg class=\"";
+                items += cool_class;
+                items += "\" viewBox=\"0 0 120 120\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"18\" y=\"28\" width=\"84\" height=\"46\" rx=\"10\"/><line x1=\"28\" y1=\"44\" x2=\"92\" y2=\"44\"/><line x1=\"28\" y1=\"56\" x2=\"92\" y2=\"56\"/><line x1=\"40\" y1=\"78\" x2=\"34\" y2=\"92\"/><line x1=\"60\" y1=\"78\" x2=\"60\" y2=\"94\"/><line x1=\"80\" y1=\"78\" x2=\"86\" y2=\"92\"/></svg>";
+            }
+            items += "</div>";
+            items += WebUiRu::Thermo::kNum;
+            items += String((unsigned)cfg.id);
+            items += "</strong> <span class=\"badge\">";
+            items += mode_label;
+            items += "</span>";
+            if (!cfg.enabled)
+                items += WebUiRu::Thermo::kText16;
+            items += "</div><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-enable\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_en\"";
+            if (cfg.enabled)
+                items += " checked";
+            if (!(can_admin && can_control))
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            items += "</div>";
+            items += String("<div class=\"form-row\"><label>") + WebUiRu::Thermo::kLabelName + "</label><input class=\"field name\" type=\"text\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_name\" value=\"";
+            web.appendHtmlEscaped_(items, cfg.name);
+            items += "\"";
+            if (!can_edit)
+                items += " readonly";
+            items += "></div>";
+            items += String("<div class=\"form-row\" style=\"margin-top:8px;margin-bottom:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_group\"";
+            if (!can_edit || !web.hasGroups_(node_id))
+                items += " disabled";
+            items += ">";
+            items += web.groupOptionsHtml_(cfg.group_id, true, true, node_id);
+            items += "</select></div>";
+            items += "<div class=\"form-grid\"><div class=\"form-row\"><label>";
+            items += WebUiRu::Thermo::kLabelActive;
+            items += "</label><label class=\"switch\"><input type=\"checkbox\" class=\"thermo-power\" data-action=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_power\"";
+            const bool ui_power_on = cfg.enabled ? cfg.power_on : false;
+            if (ui_power_on)
+                items += " checked";
+            if (!cfg.enabled || !can_control)
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+            items += "<div class=\"form-row\"><label>";
+            items += WebUiRu::Thermo::kLabelStatus;
+            items += "</label><div class=\"status-line\" style=\"margin:0;\"><span class=\"status-dot ";
+            items += state_class;
+            items += "\"></span><span><span class=\"status-value ";
+            if (strcmp(state_class, "status-heat") == 0)
+                items += "status-text-heat";
+            else if (strcmp(state_class, "status-cool") == 0)
+                items += "status-text-cool";
+            else
+                items += "status-text-idle";
+            items += "\">";
+            items += state_label;
+            items += "</span></span></div></div>";
+            items += "<input type=\"hidden\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_en_force\" value=\"\">";
+            items += WebUiRu::Thermo::kSelectClassFieldMiniNameT;
+            items += String((unsigned)cfg.id);
+            items += "_sensor\"";
+            if (!can_edit)
+                items += " disabled";
+            items += ">";
+            items += web.meteoSensorOptionsHtml_(cfg.sensor_id, cfg.sensor_node_id, sensor_used, remote_used, remote_used_count);
+            items += WebUiRu::Thermo::kSelectClassFieldMiniNameT2;
+            items += String((unsigned)cfg.id);
+            items += "_mode\"";
+            if (!can_control)
+                items += " disabled";
+            items += "><option value=\"off\"";
+            if (cfg.mode == (uint8_t)ThermoController::Mode::Off)
+                items += " selected";
+            items += ">off</option><option value=\"heat\"";
+            if (cfg.mode == (uint8_t)ThermoController::Mode::Heat)
+                items += " selected";
+            items += ">heat only</option><option value=\"cool\"";
+            if (cfg.mode == (uint8_t)ThermoController::Mode::Cool)
+                items += " selected";
+            items += ">cool only</option><option value=\"auto\"";
+            if (cfg.mode == (uint8_t)ThermoController::Mode::Auto)
+                items += " selected";
+            items += WebUiRu::Thermo::kAutoInputClassFieldTempTypeNumber;
+            items += String((unsigned)cfg.id);
+            items += "_target\" value=\"";
+            items += String((int)(cfg.target_c + 0.5f));
+            items += "\"";
+            if (!can_control)
+                items += " disabled";
+            items += WebUiRu::Thermo::kInputClassFieldTempTypeNumberStep;
+            items += String((unsigned)cfg.id);
+            items += "_hyst\" value=\"";
+            items += String((int)(cfg.hysteresis + 0.5f));
+            items += "\"";
+            if (!can_control)
+                items += " disabled";
+            items += WebUiRu::Thermo::kSelectClassFieldMiniThermoSelectData;
+            if (cfg.heat_port != ThermoController::kInvalidPort)
+                items += String((unsigned)cfg.heat_port);
+            items += "\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_heat\"";
+            if (!can_edit)
+                items += " disabled";
+            items += WebUiRu::Thermo::kSelectClassFieldMiniThermoSelectData2;
+            if (cfg.cool_port != ThermoController::kInvalidPort)
+                items += String((unsigned)cfg.cool_port);
+            items += "\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_cool\"";
+            if (!can_edit)
+                items += " disabled";
+            items += WebUiRu::Thermo::kSelectClassFieldMiniThermoSelectData3;
+            if (cfg.button_port != ThermoController::kInvalidPort)
+                items += String((unsigned)cfg.button_port);
+            items += "\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_button\"";
+            if (!can_edit)
+                items += " disabled";
+            items += "></select></div></div>";
+            items += "<input type=\"hidden\" name=\"t";
+            items += String((unsigned)cfg.id);
+            items += "_power\" value=\"\">";
+            items += "</div></div>";
+            ++rendered;
+        }
+        if (items.length() == 0)
+            items = "<div class=\"tile empty\"><strong>Thermo empty</strong></div>";
+        return items;
     }
 
 String WebInterfaceControllersThermoHelper::listThermoHtml_(WebInterface &web, size_t offset, size_t limit) {

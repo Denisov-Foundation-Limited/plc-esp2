@@ -658,6 +658,36 @@ bool Network::stackIndexLightAt(uint32_t node_id, uint8_t index, StackUnitSnapsh
     return _stack_unit_snapshot.lightAt(node_id, index, out);
 }
 
+bool Network::stackIndexMeteoById(uint32_t node_id, uint8_t id, StackUnitSnapshot::MeteoItem &out) const
+{
+    return _stack_unit_snapshot.meteoById(node_id, id, out);
+}
+
+bool Network::stackIndexMeteoAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::MeteoItem &out) const
+{
+    return _stack_unit_snapshot.meteoAt(node_id, index, out);
+}
+
+bool Network::stackIndexThermoById(uint32_t node_id, uint8_t id, StackUnitSnapshot::ThermoItem &out) const
+{
+    return _stack_unit_snapshot.thermoById(node_id, id, out);
+}
+
+bool Network::stackIndexThermoAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::ThermoItem &out) const
+{
+    return _stack_unit_snapshot.thermoAt(node_id, index, out);
+}
+
+bool Network::stackIndexTankById(uint32_t node_id, uint8_t id, StackUnitSnapshot::TankItem &out) const
+{
+    return _stack_unit_snapshot.tankById(node_id, id, out);
+}
+
+bool Network::stackIndexTankAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::TankItem &out) const
+{
+    return _stack_unit_snapshot.tankAt(node_id, index, out);
+}
+
 bool Network::prepareStackSocketsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
 {
     return _stack_unit_snapshot.prepareSocketsPageRequest(node_id, now_ms, offset, pending_ms);
@@ -666,6 +696,21 @@ bool Network::prepareStackSocketsPageRequest(uint32_t node_id, uint32_t now_ms, 
 bool Network::prepareStackLightsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
 {
     return _stack_unit_snapshot.prepareLightsPageRequest(node_id, now_ms, offset, pending_ms);
+}
+
+bool Network::prepareStackMeteoPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
+{
+    return _stack_unit_snapshot.prepareMeteoPageRequest(node_id, now_ms, offset, pending_ms);
+}
+
+bool Network::prepareStackThermoPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
+{
+    return _stack_unit_snapshot.prepareThermoPageRequest(node_id, now_ms, offset, pending_ms);
+}
+
+bool Network::prepareStackTanksPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
+{
+    return _stack_unit_snapshot.prepareTanksPageRequest(node_id, now_ms, offset, pending_ms);
 }
 
 void Network::completeStackSocketsPageRequest(uint32_t node_id, uint16_t offset)
@@ -678,6 +723,21 @@ void Network::completeStackLightsPageRequest(uint32_t node_id, uint16_t offset)
     _stack_unit_snapshot.completeLightsPageRequest(node_id, offset);
 }
 
+void Network::completeStackMeteoPageRequest(uint32_t node_id, uint16_t offset)
+{
+    _stack_unit_snapshot.completeMeteoPageRequest(node_id, offset);
+}
+
+void Network::completeStackThermoPageRequest(uint32_t node_id, uint16_t offset)
+{
+    _stack_unit_snapshot.completeThermoPageRequest(node_id, offset);
+}
+
+void Network::completeStackTanksPageRequest(uint32_t node_id, uint16_t offset)
+{
+    _stack_unit_snapshot.completeTanksPageRequest(node_id, offset);
+}
+
 void Network::clearStackSocketsPageRequest(uint32_t node_id)
 {
     _stack_unit_snapshot.clearSocketsPageRequest(node_id);
@@ -688,6 +748,21 @@ void Network::clearStackLightsPageRequest(uint32_t node_id)
     _stack_unit_snapshot.clearLightsPageRequest(node_id);
 }
 
+void Network::clearStackMeteoPageRequest(uint32_t node_id)
+{
+    _stack_unit_snapshot.clearMeteoPageRequest(node_id);
+}
+
+void Network::clearStackThermoPageRequest(uint32_t node_id)
+{
+    _stack_unit_snapshot.clearThermoPageRequest(node_id);
+}
+
+void Network::clearStackTanksPageRequest(uint32_t node_id)
+{
+    _stack_unit_snapshot.clearTanksPageRequest(node_id);
+}
+
 void Network::clearStackIndexStatePending(uint32_t node_id)
 {
     _stack_unit_snapshot.clearPending(node_id);
@@ -696,6 +771,27 @@ void Network::clearStackIndexStatePending(uint32_t node_id)
 void Network::updateStackIndexState(uint32_t node_id, const StackUnitSnapshot::Snapshot &state)
 {
     _stack_unit_snapshot.update(node_id, state);
+}
+
+void Network::updateStackIndexMeteoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t ok_total,
+                                        const StackUnitSnapshot::MeteoItem *items, uint8_t item_count,
+                                        uint32_t updated_ms)
+{
+    _stack_unit_snapshot.updateMeteoPage(node_id, offset, enabled_total, ok_total, items, item_count, updated_ms);
+}
+
+void Network::updateStackIndexThermoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t active_total,
+                                         const StackUnitSnapshot::ThermoItem *items, uint8_t item_count,
+                                         uint32_t updated_ms)
+{
+    _stack_unit_snapshot.updateThermoPage(node_id, offset, enabled_total, active_total, items, item_count, updated_ms);
+}
+
+void Network::updateStackIndexTanksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
+                                        const StackUnitSnapshot::TankItem *items, uint8_t item_count,
+                                        uint32_t updated_ms)
+{
+    _stack_unit_snapshot.updateTanksPage(node_id, offset, enabled_total, alert_total, items, item_count, updated_ms);
 }
 
 void Network::invalidateStackIndexState(uint32_t node_id)

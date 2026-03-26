@@ -768,7 +768,8 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
         sendError_(req_id, "stack master missing");
         return;
     }
-    const auto requestStackSnapshotRefresh = [&](bool refresh_sockets, bool refresh_lights) {
+    const auto requestStackSnapshotRefresh = [&](bool refresh_sockets, bool refresh_lights,
+                                                 bool refresh_meteo, bool refresh_thermo) {
         if (!_network)
             return;
         _network->stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
@@ -789,6 +790,22 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
             req["offset"] = 0;
             req["limit"] = 8;
             _network->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
+                                               StackRouteAdapter::Mode::Json, true);
+        }
+        if (refresh_meteo)
+        {
+            DynamicJsonDocument req(64);
+            req["offset"] = 0;
+            req["limit"] = 8;
+            _network->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
+                                               StackRouteAdapter::Mode::Json, true);
+        }
+        if (refresh_thermo)
+        {
+            DynamicJsonDocument req(64);
+            req["offset"] = 0;
+            req["limit"] = 8;
+            _network->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
                                                StackRouteAdapter::Mode::Json, true);
         }
     };
@@ -829,7 +846,7 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
             sendError_(req_id, "stack route send failed");
             return;
         }
-        requestStackSnapshotRefresh(true, false);
+        requestStackSnapshotRefresh(true, false, false, false);
         sendAck_(req_id, true, "");
         return;
     }
@@ -870,7 +887,139 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
             sendError_(req_id, "stack route send failed");
             return;
         }
-        requestStackSnapshotRefresh(false, true);
+        requestStackSnapshotRefresh(false, true, false, false);
+        sendAck_(req_id, true, "");
+        return;
+    }
+    if (ctrl_key == "meteo")
+    {
+        const uint32_t item_id = (uint32_t)(args["id"] | 0);
+        if (item_id == 0)
+        {
+            sendError_(req_id, "bad id");
+            return;
+        }
+        if (action_key != "set")
+        {
+            sendError_(req_id, "unsupported action");
+            return;
+        }
+        if (!_network)
+        {
+            sendError_(req_id, "stack route missing");
+            return;
+        }
+        DynamicJsonDocument params(384);
+        params["source"] = "cloud";
+        params["source_user"] = actor.resolved_user.length() ? actor.resolved_user
+                                                             : (actor.plc_username.length() ? actor.plc_username : String("cloud"));
+        JsonArray items = params["items"].to<JsonArray>();
+        JsonObject o = items.add<JsonObject>();
+        o["id"] = (unsigned)item_id;
+        if (args.containsKey("enabled"))
+            o["enabled"] = args["enabled"];
+        if (args.containsKey("name"))
+            o["name"] = args["name"];
+        if (args.containsKey("group_id"))
+            o["group_id"] = args["group_id"];
+        if (args.containsKey("type_id"))
+            o["type_id"] = args["type_id"];
+        if (args.containsKey("pin"))
+            o["pin"] = args["pin"];
+        if (args.containsKey("addr"))
+        {
+            o["addr_set"] = true;
+            o["addr"] = args["addr"];
+        }
+        if (args.containsKey("addr_set"))
+            o["addr_set"] = args["addr_set"];
+        if (args.containsKey("src_node"))
+            o["src_node"] = args["src_node"];
+        if (args.containsKey("src_sensor"))
+            o["src_sensor"] = args["src_sensor"];
+        const bool sent = _network->stackRoute().sendEvent(node_id, "meteo", "set", &params,
+                                                           StackRouteAdapter::Mode::Json);
+        if (!sent)
+        {
+            sendError_(req_id, "stack route send failed");
+            return;
+        }
+        _network->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
+                                           StackRouteAdapter::Mode::Json, true);
+        DynamicJsonDocument req(64);
+        req["offset"] = 0;
+        req["limit"] = 8;
+        _network->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
+                                           StackRouteAdapter::Mode::Json, true);
+        sendAck_(req_id, true, "");
+        return;
+    }
+    if (ctrl_key == "thermo")
+    {
+        const uint32_t item_id = (uint32_t)(args["id"] | 0);
+        if (item_id == 0)
+        {
+            sendError_(req_id, "bad id");
+            return;
+        }
+        if (action_key != "toggle" && action_key != "set")
+        {
+            sendError_(req_id, "unsupported action");
+            return;
+        }
+        if (!_network)
+        {
+            sendError_(req_id, "stack route missing");
+            return;
+        }
+        DynamicJsonDocument params(384);
+        params["source"] = "cloud";
+        params["source_user"] = actor.resolved_user.length() ? actor.resolved_user
+                                                             : (actor.plc_username.length() ? actor.plc_username : String("cloud"));
+        JsonArray items = params["items"].to<JsonArray>();
+        JsonObject o = items.add<JsonObject>();
+        o["id"] = (unsigned)item_id;
+        if (action_key == "toggle")
+        {
+            o["toggle"] = true;
+        }
+        else
+        {
+            if (args.containsKey("enabled"))
+                o["enabled"] = args["enabled"];
+            if (args.containsKey("name"))
+                o["name"] = args["name"];
+            if (args.containsKey("group_id"))
+                o["group_id"] = args["group_id"];
+            if (args.containsKey("sensor_id"))
+                o["sensor_id"] = args["sensor_id"];
+            if (args.containsKey("sensor_node_id"))
+                o["sensor_node_id"] = args["sensor_node_id"];
+            if (args.containsKey("mode_id"))
+                o["mode_id"] = args["mode_id"];
+            if (args.containsKey("target_c"))
+                o["target_c"] = args["target_c"];
+            if (args.containsKey("hyst"))
+                o["hyst"] = args["hyst"];
+            if (args.containsKey("heat_port"))
+                o["heat_port"] = args["heat_port"];
+            if (args.containsKey("cool_port"))
+                o["cool_port"] = args["cool_port"];
+            if (args.containsKey("button_port"))
+                o["button_port"] = args["button_port"];
+            if (args.containsKey("power_on"))
+                o["power_on"] = args["power_on"];
+            else if (args.containsKey("state"))
+                o["power_on"] = (String(args["state"] | "") == "on");
+        }
+        const bool sent = _network->stackRoute().sendEvent(node_id, "thermo", "set", &params,
+                                                           StackRouteAdapter::Mode::Json);
+        if (!sent)
+        {
+            sendError_(req_id, "stack route send failed");
+            return;
+        }
+        requestStackSnapshotRefresh(false, false, false, true);
         sendAck_(req_id, true, "");
         return;
     }
@@ -2035,15 +2184,94 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                 has_any = has_any || (snapshot.lights_enabled > 0);
             }
 
-            JsonObject meteo = out.createNestedObject("meteo");
-            meteo["enabled_count"] = snapshot.meteo_enabled;
-            meteo["ok_count"] = snapshot.meteo_ok;
-            has_any = has_any || (snapshot.meteo_enabled > 0);
+            if (snapshot.meteo_count > 0)
+            {
+                JsonArray meteo = out.createNestedArray("meteo");
+                for (uint8_t i = 0; i < snapshot.meteo_count && i < StackUnitSnapshot::kMeteoCount; ++i)
+                {
+                    StackUnitSnapshot::MeteoItem it{};
+                    if (!_network->stackIndexMeteoAt(node_id, i, it) || it.id == 0)
+                        continue;
+                    JsonObject o = meteo.add<JsonObject>();
+                    o["id"] = it.id;
+                    o["group_id"] = it.group_id;
+                    o["enabled"] = it.enabled;
+                    o["type"] = MeteoController::typeName((MeteoController::SensorType)it.type);
+                    o["type_id"] = it.type;
+                    if (it.name[0])
+                        o["name"] = it.name;
+                    if (it.dht_pin != MeteoController::kInvalidPin)
+                        o["pin"] = it.dht_pin;
+                    if (it.ds18_addr_set)
+                    {
+                        char hex[17] = {};
+                        MeteoController::formatHexAddr(it.ds18_addr, hex);
+                        o["addr"] = hex;
+                    }
+                    if (it.source_node_id != 0)
+                        o["src_node"] = (unsigned long)it.source_node_id;
+                    if (it.source_sensor_id != 0)
+                        o["src_sensor"] = it.source_sensor_id;
+                    if (it.has_temp)
+                        o["temp_c"] = it.temp_c;
+                    if (it.has_humidity)
+                        o["hum"] = it.humidity;
+                    o["has_temp"] = it.has_temp;
+                    o["has_hum"] = it.has_humidity;
+                    o["has_read"] = it.has_read;
+                    o["ok"] = it.ok;
+                    o["age_s"] = it.age_s;
+                }
+                has_any = true;
+            }
+            else
+            {
+                JsonObject meteo = out.createNestedObject("meteo");
+                meteo["enabled_count"] = snapshot.meteo_enabled;
+                meteo["ok_count"] = snapshot.meteo_ok;
+                has_any = has_any || (snapshot.meteo_enabled > 0);
+            }
 
-            JsonObject thermo = out.createNestedObject("thermo");
-            thermo["enabled_count"] = snapshot.thermo_enabled;
-            thermo["active_count"] = snapshot.thermo_active;
-            has_any = has_any || (snapshot.thermo_enabled > 0);
+            if (snapshot.thermo_count > 0)
+            {
+                JsonArray thermo = out.createNestedArray("thermo");
+                for (uint8_t i = 0; i < snapshot.thermo_count && i < StackUnitSnapshot::kThermoCount; ++i)
+                {
+                    StackUnitSnapshot::ThermoItem it{};
+                    if (!_network->stackIndexThermoAt(node_id, i, it) || it.id == 0)
+                        continue;
+                    JsonObject o = thermo.add<JsonObject>();
+                    o["id"] = it.id;
+                    o["group_id"] = it.group_id;
+                    o["enabled"] = it.enabled;
+                    o["sensor_id"] = it.sensor_id;
+                    if (it.sensor_node_id != 0)
+                        o["sensor_node_id"] = (unsigned long)it.sensor_node_id;
+                    if (it.heat_port != ThermoController::kInvalidPort)
+                        o["heat_port"] = it.heat_port;
+                    if (it.cool_port != ThermoController::kInvalidPort)
+                        o["cool_port"] = it.cool_port;
+                    if (it.button_port != ThermoController::kInvalidPort)
+                        o["button_port"] = it.button_port;
+                    o["mode_id"] = it.mode;
+                    o["mode"] = ThermoController::modeName((ThermoController::Mode)it.mode);
+                    o["target_c"] = it.target_c;
+                    o["hyst"] = it.hysteresis;
+                    o["power_on"] = it.power_on;
+                    o["heat_on"] = it.heat_on;
+                    o["cool_on"] = it.cool_on;
+                    if (it.name[0])
+                        o["name"] = it.name;
+                }
+                has_any = true;
+            }
+            else
+            {
+                JsonObject thermo = out.createNestedObject("thermo");
+                thermo["enabled_count"] = snapshot.thermo_enabled;
+                thermo["active_count"] = snapshot.thermo_active;
+                has_any = has_any || (snapshot.thermo_enabled > 0);
+            }
 
             JsonObject tanks = out.createNestedObject("tanks");
             tanks["enabled_count"] = snapshot.tanks_enabled;
@@ -2115,6 +2343,30 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             if (!_network->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
                                                     StackRouteAdapter::Mode::Json, true))
                 _network->clearStackLightsPageRequest(node_id);
+        }
+    }
+    if (snapshot.meteo_enabled > 0 && snapshot.meteo_count < snapshot.meteo_enabled)
+    {
+        if (_network->prepareStackMeteoPageRequest(node_id, now, snapshot.meteo_count, 4000u))
+        {
+            DynamicJsonDocument req(64);
+            req["offset"] = snapshot.meteo_count;
+            req["limit"] = 8;
+            if (!_network->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
+                                                    StackRouteAdapter::Mode::Json, true))
+                _network->clearStackMeteoPageRequest(node_id);
+        }
+    }
+    if (snapshot.thermo_enabled > 0 && snapshot.thermo_count < snapshot.thermo_enabled)
+    {
+        if (_network->prepareStackThermoPageRequest(node_id, now, snapshot.thermo_count, 4000u))
+        {
+            DynamicJsonDocument req(64);
+            req["offset"] = snapshot.thermo_count;
+            req["limit"] = 8;
+            if (!_network->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
+                                                    StackRouteAdapter::Mode::Json, true))
+                _network->clearStackThermoPageRequest(node_id);
         }
     }
     return has_any;

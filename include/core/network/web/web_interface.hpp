@@ -342,6 +342,8 @@ private:
     String listMeteoHtml_(size_t offset, size_t limit);
     String meteoPortOptionsJson_() const;
     String meteoUsedPinsJson_() const;
+    String stackMeteoPortOptionsJson_(uint32_t node_id) const;
+    String stackMeteoUsedPinsJson_(uint32_t node_id) const;
     String meteoSensorOptionsHtml_(uint8_t selected_id, uint32_t selected_node_id,
                                    const uint8_t used_local[MeteoController::kSensorCount + 1],
                                    const uint32_t *used_remote, size_t used_remote_count) const;

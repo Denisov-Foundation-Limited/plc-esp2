@@ -290,7 +290,59 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         else if (is_master)
         {
-            memcpy(out, "ERR ", 4);
+            StackUnitSnapshot::State snapshot{};
+            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+            {
+                queueDisplayStackSnapshotPage_(node_id, "meteo", 0);
+                return false;
+            }
+            const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
+            if (age_ms > 3000u)
+                queueDisplayStackSnapshotPage_(node_id, "meteo", 0);
+            if (age_ms > kStackNodeStaleMs)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            StackUnitSnapshot::MeteoItem item{};
+            if (!net.network.stackIndexMeteoById(node_id, slot.index, item))
+            {
+                if (snapshot.meteo_enabled > snapshot.meteo_count)
+                    queueDisplayStackSnapshotPage_(node_id, "meteo", snapshot.meteo_count);
+                return false;
+            }
+            if (!item.enabled || !item.ok)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            if (slot.field == DisplaySlotField::MeteoHum)
+            {
+                if (!item.has_humidity)
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                const int h = (int)roundf(item.humidity);
+                snprintf(out, 5, "%2d%%", h);
+            }
+            else
+            {
+                if (!item.has_temp)
+                {
+                    memcpy(out, "ERR ", 4);
+                    return true;
+                }
+                const int t = (int)roundf(item.temp_c);
+                formatTemp3_(out, t);
+            }
+            if (strlen(out) < 4)
+            {
+                size_t len = strlen(out);
+                while (len < 4)
+                    out[len++] = ' ';
+                out[4] = '\0';
+            }
             return true;
         }
         else
@@ -330,7 +382,37 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            memcpy(out, "ERR ", 4);
+            StackUnitSnapshot::State snapshot{};
+            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+            {
+                queueDisplayStackSnapshotPage_(node_id, "thermo", 0);
+                return false;
+            }
+            const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
+            if (age_ms > 3000u)
+                queueDisplayStackSnapshotPage_(node_id, "thermo", 0);
+            if (age_ms > kStackNodeStaleMs)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            StackUnitSnapshot::ThermoItem item{};
+            if (!net.network.stackIndexThermoById(node_id, slot.index, item))
+            {
+                if (snapshot.thermo_enabled > snapshot.thermo_count)
+                    queueDisplayStackSnapshotPage_(node_id, "thermo", snapshot.thermo_count);
+                return false;
+            }
+            if (!item.enabled)
+                return false;
+            if (!item.power_on)
+                memcpy(out, "IDL ", 4);
+            else if (item.heat_on)
+                memcpy(out, "HET ", 4);
+            else if (item.cool_on)
+                memcpy(out, "COL ", 4);
+            else
+                memcpy(out, "IDL ", 4);
             return true;
         }
         if (!is_slave)

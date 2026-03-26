@@ -13,11 +13,6 @@
 
 namespace
 {
-bool displayStackSnapshot_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::Snapshot &out)
-{
-    return web.network() && node_id != 0 && web.network()->stackIndexStateSnapshot(node_id, out);
-}
-
 template <typename Fn>
 void forEachDisplayStackDevice_(const WebInterface &web, Fn &&fn)
 {
@@ -153,8 +148,8 @@ String WebInterfaceControllersDisplayHelper::displaySocketOptionsJson_(const Web
     
         forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
                 const uint32_t node_id = device.node_id;
-                StackUnitSnapshot::Snapshot snapshot{};
-                if (!displayStackSnapshot_(web, node_id, snapshot) || snapshot.updated_ms == 0)
+                StackUnitSnapshot::State snapshot{};
+                if (!web.network()->stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
                 {
                     const_cast<WebInterface &>(web).requestStackSockets_(node_id);
                     append_node(String((unsigned long)node_id), "[]");
@@ -166,7 +161,9 @@ String WebInterfaceControllersDisplayHelper::displaySocketOptionsJson_(const Web
                 bool first_item = true;
                 for (uint8_t k = 0; k < snapshot.socket_count && k < StackUnitSnapshot::kSocketCount; ++k)
                 {
-                    const auto &it = snapshot.sockets[k];
+                    StackUnitSnapshot::SocketItem it{};
+                    if (!web.network()->stackIndexSocketAt(node_id, k, it))
+                        continue;
                     if (!it.enabled)
                         continue;
                     if (!first_item)
@@ -236,8 +233,8 @@ String WebInterfaceControllersDisplayHelper::displayLightOptionsJson_(const WebI
     
         forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
                 const uint32_t node_id = device.node_id;
-                StackUnitSnapshot::Snapshot snapshot{};
-                if (!displayStackSnapshot_(web, node_id, snapshot) || snapshot.updated_ms == 0)
+                StackUnitSnapshot::State snapshot{};
+                if (!web.network()->stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
                 {
                     const_cast<WebInterface &>(web).requestStackLights_(node_id);
                     append_node(String((unsigned long)node_id), "[]");
@@ -249,7 +246,9 @@ String WebInterfaceControllersDisplayHelper::displayLightOptionsJson_(const WebI
                 bool first_item = true;
                 for (uint8_t k = 0; k < snapshot.light_count && k < StackUnitSnapshot::kSocketCount; ++k)
                 {
-                    const auto &it = snapshot.lights[k];
+                    StackUnitSnapshot::SocketItem it{};
+                    if (!web.network()->stackIndexLightAt(node_id, k, it))
+                        continue;
                     if (!it.enabled)
                         continue;
                     if (!first_item)

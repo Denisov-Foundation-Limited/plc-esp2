@@ -205,8 +205,8 @@ bool WebInterfaceStackOps::requestStackIndexState_(uint32_t node_id)
     if (!_web.network() || node_id == 0)
         return false;
     const uint32_t now = millis();
-    StackUnitSnapshot::Snapshot snapshot{};
-    if (_web.network()->stackIndexStateSnapshot(node_id, snapshot))
+    StackUnitSnapshot::State snapshot{};
+    if (_web.network()->stackIndexState(node_id, snapshot))
     {
         const bool fresh_plc = snapshot.has_plc && (uint32_t)(now - snapshot.updated_ms) < 5000u;
         const bool fresh_rtc = snapshot.has_rtc && (uint32_t)(now - snapshot.updated_ms) < 5000u;

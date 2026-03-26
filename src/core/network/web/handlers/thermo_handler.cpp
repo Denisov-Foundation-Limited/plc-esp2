@@ -261,7 +261,92 @@ void ThermoHandler::handleThermoSave(WebInterface &web, AsyncWebServerRequest *r
                     back += String((unsigned)pv);
                 }
             }
-            web._thermo_status = "not migrated";
+            if (!web.network())
+            {
+                web._thermo_status = "Stack unavailable";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            DynamicJsonDocument doc(1536);
+            doc["source"] = "localweb";
+            if (const auto *u = web.sessionUser_())
+                doc["source_user"] = u->username;
+            JsonArray items = doc["items"].to<JsonArray>();
+            for (uint8_t i = 1; i <= ThermoController::kDeviceCount; ++i)
+            {
+                const String idx = String((unsigned)i);
+                const String prefix = String("t") + idx + "_";
+                const bool has_any = request->hasParam(prefix + "en", true) ||
+                                     request->hasParam(prefix + "name", true) ||
+                                     request->hasParam(prefix + "sensor", true) ||
+                                     request->hasParam(prefix + "mode", true) ||
+                                     request->hasParam(prefix + "target", true) ||
+                                     request->hasParam(prefix + "hyst", true) ||
+                                     request->hasParam(prefix + "heat", true) ||
+                                     request->hasParam(prefix + "cool", true) ||
+                                     request->hasParam(prefix + "button", true) ||
+                                     request->hasParam(prefix + "group", true) ||
+                                     request->hasParam(prefix + "power", true);
+                if (!has_any || !web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, i, node_id))
+                    continue;
+                JsonObject o = items.add<JsonObject>();
+                o["id"] = i;
+                const String en_force_str = web.paramValue_(request, prefix + "en_force");
+                const bool en_force_known = (en_force_str == "1" || en_force_str == "0" ||
+                                             en_force_str == "true" || en_force_str == "false" ||
+                                             en_force_str == "on" || en_force_str == "off");
+                if (en_force_known)
+                    o["enabled"] = (en_force_str == "1" || en_force_str == "true" || en_force_str == "on");
+                const String name = web.paramValue_(request, prefix + "name");
+                if (name.length())
+                    o["name"] = name;
+                o["group_id"] = web.parseGroupIdParam_(request, prefix + "group");
+                uint8_t sensor_id = ThermoController::kInvalidSensor;
+                uint32_t sensor_node_id = 0;
+                const String sensor_str = web.paramValue_(request, prefix + "sensor");
+                if (web.parseThermoSensor_(sensor_str, sensor_id, sensor_node_id))
+                {
+                    o["sensor_id"] = sensor_id;
+                    o["sensor_node_id"] = sensor_node_id;
+                }
+                ThermoController::Mode mode = ThermoController::Mode::Off;
+                if (web.parseThermoMode_(web.paramValue_(request, prefix + "mode"), mode))
+                    o["mode_id"] = (uint8_t)mode;
+                float target = 0.0f;
+                if (web.parseThermoFloat_(web.paramValue_(request, prefix + "target"), target))
+                    o["target_c"] = target;
+                float hyst = 0.0f;
+                if (web.parseThermoFloat_(web.paramValue_(request, prefix + "hyst"), hyst))
+                    o["hyst"] = hyst;
+                uint8_t heat_port = ThermoController::kInvalidPort;
+                uint8_t cool_port = ThermoController::kInvalidPort;
+                uint8_t button_port = ThermoController::kInvalidPort;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "heat"), heat_port))
+                    o["heat_port"] = heat_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "cool"), cool_port))
+                    o["cool_port"] = cool_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "button"), button_port))
+                    o["button_port"] = button_port;
+                const String power_str = web.paramValue_(request, prefix + "power");
+                if (power_str == "on" || power_str == "off" || power_str == "1" || power_str == "0" ||
+                    power_str == "true" || power_str == "false")
+                    o["power_on"] = (power_str == "on" || power_str == "1" || power_str == "true");
+            }
+            if (items.size() == 0)
+            {
+                web._thermo_status = "No changes";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            if (!web.network()->stackRoute().sendEvent(node_id, "thermo", "set", &doc, StackRouteAdapter::Mode::Json))
+            {
+                web._thermo_status = "Send failed";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            web.requestStackThermo_(node_id);
+            web.requestStackIndexState_(node_id);
+            web._thermo_status = "Updated";
             web.sendRedirect_(request, back, set_cookie);
             return;
         }
@@ -601,8 +686,60 @@ void ThermoHandler::handleThermoToggle(WebInterface &web, AsyncWebServerRequest 
 
         if (web.isStackThermoView_(node_id))
         {
-            (void)action;
-            web.sendText_(request, 200, "text/plain", "not migrated", set_cookie);
+            if (!web.network())
+            {
+                web.sendText_(request, 400, "text/plain", "Stack unavailable", set_cookie);
+                return;
+            }
+            StackUnitSnapshot::State snapshot{};
+            const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+            StackUnitSnapshot::ThermoItem item{};
+            const bool has_item = has_snapshot && web.network()->stackIndexThermoById(node_id, (uint8_t)id, item);
+            if (action == "state")
+            {
+                const bool stale = !has_snapshot || snapshot.updated_ms == 0 ||
+                    (uint32_t)(millis() - snapshot.updated_ms) > 1500u;
+                const bool partial = has_snapshot && snapshot.thermo_enabled > snapshot.thermo_count;
+                if (stale || partial)
+                {
+                    web.requestStackThermo_(node_id);
+                    web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                    return;
+                }
+                if (has_snapshot && snapshot.pending)
+                {
+                    web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                    return;
+                }
+                if (!has_item)
+                {
+                    web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
+                    return;
+                }
+                send_state(item.power_on, item.heat_on, item.cool_on);
+                return;
+            }
+            StaticJsonDocument<224> doc;
+            doc["source"] = "localweb";
+            if (const auto *u = web.sessionUser_())
+                doc["source_user"] = u->username;
+            JsonArray items = doc["items"].to<JsonArray>();
+            JsonObject o = items.add<JsonObject>();
+            o["id"] = id;
+            if (action == "on")
+                o["power_on"] = true;
+            else if (action == "off")
+                o["power_on"] = false;
+            else
+                o["toggle"] = true;
+            if (!web.network()->stackRoute().sendEvent(node_id, "thermo", "set", &doc, StackRouteAdapter::Mode::Json))
+            {
+                web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
+                return;
+            }
+            web.requestStackThermo_(node_id);
+            web.requestStackIndexState_(node_id);
+            web.sendText_(request, 200, "text/plain", "OK", set_cookie);
             return;
         }
 

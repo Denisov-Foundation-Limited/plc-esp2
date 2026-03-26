@@ -119,6 +119,9 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
         self->net.network.invalidateStackIndexState(node_id);
         self->net.network.clearStackSocketsPageRequest(node_id);
         self->net.network.clearStackLightsPageRequest(node_id);
+        self->net.network.clearStackMeteoPageRequest(node_id);
+        self->net.network.clearStackThermoPageRequest(node_id);
+        self->net.network.clearStackTanksPageRequest(node_id);
         self->core.logs.info(F("STACK"), F("Sync slave %s system info"), label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
                                                    StackRouteAdapter::Mode::Json, true);
@@ -138,6 +141,27 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
         self->core.logs.info(F("STACK"), F("Sync slave %s lights: 0-7"),
                              label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequest(node_id, "lights", "snapshot_req", &lights_doc,
+                                                   StackRouteAdapter::Mode::Json, true);
+        DynamicJsonDocument meteo_doc(64);
+        meteo_doc["offset"] = 0;
+        meteo_doc["limit"] = 8;
+        self->core.logs.info(F("STACK"), F("Sync slave %s meteo: 0-7"),
+                             label.length() ? label.c_str() : "unknown");
+        self->net.network.stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &meteo_doc,
+                                                   StackRouteAdapter::Mode::Json, true);
+        DynamicJsonDocument thermo_doc(64);
+        thermo_doc["offset"] = 0;
+        thermo_doc["limit"] = 8;
+        self->core.logs.info(F("STACK"), F("Sync slave %s thermo: 0-7"),
+                             label.length() ? label.c_str() : "unknown");
+        self->net.network.stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &thermo_doc,
+                                                   StackRouteAdapter::Mode::Json, true);
+        DynamicJsonDocument tanks_doc(64);
+        tanks_doc["offset"] = 0;
+        tanks_doc["limit"] = 8;
+        self->core.logs.info(F("STACK"), F("Sync slave %s tanks: 0-7"),
+                             label.length() ? label.c_str() : "unknown");
+        self->net.network.stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &tanks_doc,
                                                    StackRouteAdapter::Mode::Json, true);
         auto &sec = self->control.controllers.security();
         auto sec_guard = sec.lockGuard();
@@ -1063,6 +1087,292 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         }
         return;
     }
+    if (strcmp(route.feature, "meteo") == 0)
+    {
+        if (action == "snapshot_req")
+        {
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            uint16_t limit = (uint16_t)(params["limit"] | 8);
+            if (limit == 0)
+                limit = 8;
+            if (limit > 8)
+                limit = 8;
+            DynamicJsonDocument doc(2048);
+            appendMeteoSnapshotPage_(doc.to<JsonObject>(), offset, limit);
+            net.network.stackSlaveSendResponse(route.source_node, "meteo", "snapshot",
+                                               route.meta.request_id, &doc);
+            return;
+        }
+        if (action == "snapshot")
+        {
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            const uint16_t total = (uint16_t)(params["total"] | 0);
+            const uint16_t summary_total = (uint16_t)(params["summary"]["meteo"]["enabled"] | 0);
+            const uint16_t ok_total = (uint16_t)(params["summary"]["meteo"]["ok"] | 0);
+            StackUnitSnapshot::MeteoItem items[8]{};
+            uint8_t item_count = 0;
+            const JsonArrayConst meteo_items = params["controllers"]["meteo"].as<JsonArrayConst>();
+            if (!meteo_items.isNull())
+            {
+                for (JsonObjectConst item : meteo_items)
+                {
+                    if (item_count >= 8)
+                        break;
+                    auto &dst = items[item_count];
+                    dst.id = (uint8_t)(item["id"] | 0);
+                    dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                             : (item["enabled"].as<int>() != 0);
+                    dst.group_id = (uint8_t)(item["group_id"] | 0);
+                    dst.type = (uint8_t)(item["type_id"] | 0);
+                    dst.dht_pin = (uint8_t)(item["pin"] | MeteoController::kInvalidPin);
+                    dst.ds18_addr_set = item["addr_set"].is<bool>() ? item["addr_set"].as<bool>()
+                                                                    : (item["addr_set"].as<int>() != 0);
+                    const char *addr_hex = item["addr"] | "";
+                    if (dst.ds18_addr_set && addr_hex && addr_hex[0] != '\0')
+                        MeteoController::parseHexAddr(addr_hex, dst.ds18_addr);
+                    dst.source_node_id = (uint32_t)(item["src_node"] | 0u);
+                    dst.source_sensor_id = (uint8_t)(item["src_sensor"] | 0);
+                    dst.has_read = item["has_read"].is<bool>() ? item["has_read"].as<bool>()
+                                                               : (item["has_read"].as<int>() != 0);
+                    dst.ok = item["ok"].is<bool>() ? item["ok"].as<bool>()
+                                                   : (item["ok"].as<int>() != 0);
+                    dst.has_temp = item["has_temp"].is<bool>() ? item["has_temp"].as<bool>()
+                                                               : (item["has_temp"].as<int>() != 0);
+                    dst.has_humidity = item["has_hum"].is<bool>() ? item["has_hum"].as<bool>()
+                                                                  : (item["has_hum"].as<int>() != 0);
+                    dst.temp_c = item["temp_c"].is<float>() ? item["temp_c"].as<float>()
+                                                            : (float)(item["temp_c"] | 0.0);
+                    dst.humidity = item["hum"].is<float>() ? item["hum"].as<float>()
+                                                           : (float)(item["hum"] | 0.0);
+                    dst.age_s = (uint16_t)(item["age_s"] | 0);
+                    strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
+                    ++item_count;
+                }
+            }
+            net.network.completeStackMeteoPageRequest(node_id, offset);
+            net.network.updateStackIndexMeteoPage(node_id, offset, total > 0 ? total : summary_total, ok_total,
+                                                  items, item_count, millis());
+            StackUnitSnapshot::State state{};
+            if (net.network.stackIndexState(node_id, state))
+            {
+                const uint16_t expected_total = (total > 0) ? total : summary_total;
+                const uint16_t target_total =
+                    (expected_total > StackUnitSnapshot::kMeteoCount) ? (uint16_t)StackUnitSnapshot::kMeteoCount
+                                                                      : expected_total;
+                if (target_total > 0 && state.meteo_count < target_total)
+                {
+                    const uint16_t next_offset = state.meteo_count;
+                    if (net.network.prepareStackMeteoPageRequest(node_id, millis(), next_offset, 4000u))
+                    {
+                        _pending_stack_meteo_page = true;
+                        _pending_stack_meteo_node_id = node_id;
+                        _pending_stack_meteo_offset = next_offset;
+                        _pending_stack_meteo_limit = 8;
+                        const bool bootstrap_log = shouldLogStackBootstrapSync_(node_id);
+                        _pending_stack_meteo_log =
+                            bootstrap_log &&
+                            !(_stack_bootstrap_logged_meteo_node_id == node_id &&
+                              _stack_bootstrap_logged_meteo_offset == next_offset);
+                        if (_pending_stack_meteo_log)
+                        {
+                            _stack_bootstrap_logged_meteo_node_id = node_id;
+                            _stack_bootstrap_logged_meteo_offset = next_offset;
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        if (action == "set")
+        {
+            MeteoController &meteo = control.controllers.meteo();
+            auto guard = meteo.lockGuard();
+            const JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            for (JsonObjectConst item : items)
+            {
+                const uint8_t id = (uint8_t)(item["id"] | 0);
+                if (id == 0)
+                    continue;
+                if (item.containsKey("enabled"))
+                {
+                    const bool enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                                    : (item["enabled"].as<int>() != 0);
+                    meteo.setEnabled(id, enabled);
+                }
+                if (item.containsKey("name"))
+                    meteo.setName(id, String(item["name"] | ""));
+                if (item.containsKey("group_id"))
+                    meteo.setGroupId(id, (uint8_t)(item["group_id"] | 0));
+                if (item.containsKey("type_id"))
+                    meteo.setType(id, (MeteoController::SensorType)(uint8_t)(item["type_id"] | 0));
+                if (item.containsKey("pin"))
+                    meteo.setDht22Pin(id, (uint8_t)(item["pin"] | MeteoController::kInvalidPin));
+                if (item.containsKey("addr_set"))
+                {
+                    uint8_t addr[MeteoController::kAddrLen] = {};
+                    const bool addr_set = item["addr_set"].is<bool>() ? item["addr_set"].as<bool>()
+                                                                       : (item["addr_set"].as<int>() != 0);
+                    const char *addr_hex = item["addr"] | "";
+                    if (addr_set && addr_hex && addr_hex[0] != '\0' &&
+                        MeteoController::parseHexAddr(addr_hex, addr))
+                        meteo.setDs18b20Addr(id, addr, true);
+                    else if (!addr_set)
+                        meteo.setDs18b20Addr(id, addr, false);
+                }
+                if (item.containsKey("src_node") || item.containsKey("src_sensor"))
+                    meteo.setRemoteSource(id, (uint32_t)(item["src_node"] | 0u), (uint8_t)(item["src_sensor"] | 0));
+            }
+            return;
+        }
+        return;
+    }
+    if (strcmp(route.feature, "thermo") == 0)
+    {
+        if (action == "snapshot_req")
+        {
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            uint16_t limit = (uint16_t)(params["limit"] | 8);
+            if (limit == 0)
+                limit = 8;
+            if (limit > 8)
+                limit = 8;
+            DynamicJsonDocument doc(2048);
+            appendThermoSnapshotPage_(doc.to<JsonObject>(), offset, limit);
+            net.network.stackSlaveSendResponse(route.source_node, "thermo", "snapshot",
+                                               route.meta.request_id, &doc);
+            return;
+        }
+        if (action == "snapshot")
+        {
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            const uint16_t total = (uint16_t)(params["total"] | 0);
+            const uint16_t summary_total = (uint16_t)(params["summary"]["thermo"]["enabled"] | 0);
+            const uint16_t active_total = (uint16_t)(params["summary"]["thermo"]["active"] | 0);
+            StackUnitSnapshot::ThermoItem items[8]{};
+            uint8_t item_count = 0;
+            const JsonArrayConst thermo_items = params["controllers"]["thermo"].as<JsonArrayConst>();
+            if (!thermo_items.isNull())
+            {
+                for (JsonObjectConst item : thermo_items)
+                {
+                    if (item_count >= 8)
+                        break;
+                    auto &dst = items[item_count];
+                    dst.id = (uint8_t)(item["id"] | 0);
+                    dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                             : (item["enabled"].as<int>() != 0);
+                    dst.group_id = (uint8_t)(item["group_id"] | 0);
+                    dst.sensor_id = (uint8_t)(item["sensor_id"] | 0);
+                    dst.sensor_node_id = (uint32_t)(item["sensor_node_id"] | 0u);
+                    dst.heat_port = (uint8_t)(item["heat_port"] | ThermoController::kInvalidPort);
+                    dst.cool_port = (uint8_t)(item["cool_port"] | ThermoController::kInvalidPort);
+                    dst.button_port = (uint8_t)(item["button_port"] | ThermoController::kInvalidPort);
+                    dst.mode = (uint8_t)(item["mode_id"] | 0);
+                    dst.target_c = item["target_c"].is<float>() ? item["target_c"].as<float>()
+                                                                : (float)(item["target_c"] | 0.0);
+                    dst.hysteresis = item["hyst"].is<float>() ? item["hyst"].as<float>()
+                                                              : (float)(item["hyst"] | 0.0);
+                    dst.power_on = item["power_on"].is<bool>() ? item["power_on"].as<bool>()
+                                                               : (item["power_on"].as<int>() != 0);
+                    dst.heat_on = item["heat_on"].is<bool>() ? item["heat_on"].as<bool>()
+                                                             : (item["heat_on"].as<int>() != 0);
+                    dst.cool_on = item["cool_on"].is<bool>() ? item["cool_on"].as<bool>()
+                                                             : (item["cool_on"].as<int>() != 0);
+                    strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
+                    ++item_count;
+                }
+            }
+            net.network.completeStackThermoPageRequest(node_id, offset);
+            net.network.updateStackIndexThermoPage(node_id, offset, total > 0 ? total : summary_total, active_total,
+                                                   items, item_count, millis());
+            StackUnitSnapshot::State state{};
+            if (net.network.stackIndexState(node_id, state))
+            {
+                const uint16_t expected_total = (total > 0) ? total : summary_total;
+                const uint16_t target_total =
+                    (expected_total > StackUnitSnapshot::kThermoCount) ? (uint16_t)StackUnitSnapshot::kThermoCount
+                                                                       : expected_total;
+                if (target_total > 0 && state.thermo_count < target_total)
+                {
+                    const uint16_t next_offset = state.thermo_count;
+                    if (net.network.prepareStackThermoPageRequest(node_id, millis(), next_offset, 4000u))
+                    {
+                        _pending_stack_thermo_page = true;
+                        _pending_stack_thermo_node_id = node_id;
+                        _pending_stack_thermo_offset = next_offset;
+                        _pending_stack_thermo_limit = 8;
+                        const bool bootstrap_log = shouldLogStackBootstrapSync_(node_id);
+                        _pending_stack_thermo_log =
+                            bootstrap_log &&
+                            !(_stack_bootstrap_logged_thermo_node_id == node_id &&
+                              _stack_bootstrap_logged_thermo_offset == next_offset);
+                        if (_pending_stack_thermo_log)
+                        {
+                            _stack_bootstrap_logged_thermo_node_id = node_id;
+                            _stack_bootstrap_logged_thermo_offset = next_offset;
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        if (action == "set")
+        {
+            ThermoController &thermo = control.controllers.thermo();
+            auto guard = thermo.lockGuard();
+            const JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            for (JsonObjectConst item : items)
+            {
+                const uint8_t id = (uint8_t)(item["id"] | 0);
+                if (id == 0)
+                    continue;
+                if (item.containsKey("enabled"))
+                {
+                    const bool enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                                    : (item["enabled"].as<int>() != 0);
+                    thermo.setEnabled(id, enabled);
+                }
+                if (item.containsKey("name"))
+                    thermo.setName(id, String(item["name"] | ""));
+                if (item.containsKey("group_id"))
+                    thermo.setGroupId(id, (uint8_t)(item["group_id"] | 0));
+                if (item.containsKey("sensor_node_id") || item.containsKey("sensor_id"))
+                {
+                    const uint32_t sensor_node_id = (uint32_t)(item["sensor_node_id"] | 0u);
+                    const uint8_t sensor_id = (uint8_t)(item["sensor_id"] | 0);
+                    if (sensor_node_id != 0)
+                        thermo.setSensorSource(id, sensor_node_id, sensor_id);
+                    else
+                        thermo.setSensor(id, sensor_id);
+                }
+                if (item.containsKey("mode_id"))
+                    thermo.setMode(id, (ThermoController::Mode)(uint8_t)(item["mode_id"] | 0));
+                if (item.containsKey("target_c"))
+                    thermo.setTarget(id, item["target_c"].is<float>() ? item["target_c"].as<float>()
+                                                                      : (float)(item["target_c"] | 0.0));
+                if (item.containsKey("hyst"))
+                    thermo.setHysteresis(id, item["hyst"].is<float>() ? item["hyst"].as<float>()
+                                                                      : (float)(item["hyst"] | 0.0));
+                if (item.containsKey("heat_port"))
+                    thermo.setHeatPort(id, (uint8_t)(item["heat_port"] | ThermoController::kInvalidPort));
+                if (item.containsKey("cool_port"))
+                    thermo.setCoolPort(id, (uint8_t)(item["cool_port"] | ThermoController::kInvalidPort));
+                if (item.containsKey("button_port"))
+                    thermo.setButtonPort(id, (uint8_t)(item["button_port"] | ThermoController::kInvalidPort));
+                const String source = item["source"] | (params["source"] | "stack");
+                if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
+                    thermo.togglePower(id, source.c_str());
+                else if (item.containsKey("power_on"))
+                {
+                    const bool power_on = item["power_on"].is<bool>() ? item["power_on"].as<bool>()
+                                                                      : (item["power_on"].as<int>() != 0);
+                    thermo.setPower(id, power_on, source.c_str());
+                }
+            }
+            return;
+        }
+        return;
+    }
     if (strcmp(route.feature, "septic") == 0)
     {
         handleSepticFrame_(node_id, action, params);
@@ -1070,6 +1380,147 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
     }
     if (strcmp(route.feature, "tanks") == 0)
     {
+        if (action == "snapshot_req")
+        {
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            uint16_t limit = (uint16_t)(params["limit"] | 8);
+            if (limit == 0)
+                limit = 8;
+            if (limit > 8)
+                limit = 8;
+            DynamicJsonDocument doc(2048);
+            appendTankSnapshotPage_(doc.to<JsonObject>(), offset, limit);
+            net.network.stackSlaveSendResponse(route.source_node, "tanks", "snapshot",
+                                               route.meta.request_id, &doc);
+            return;
+        }
+        if (action == "snapshot")
+        {
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            const uint16_t total = (uint16_t)(params["total"] | 0);
+            const uint16_t summary_total = (uint16_t)(params["summary"]["tanks"]["enabled"] | 0);
+            const uint16_t alert_total = (uint16_t)(params["summary"]["tanks"]["alert"] | 0);
+            StackUnitSnapshot::TankItem items[8]{};
+            uint8_t item_count = 0;
+            const JsonArrayConst tanks_items = params["controllers"]["tanks"].as<JsonArrayConst>();
+            if (!tanks_items.isNull())
+            {
+                for (JsonObjectConst item : tanks_items)
+                {
+                    if (item_count >= 8)
+                        break;
+                    auto &dst = items[item_count];
+                    dst.id = (uint8_t)(item["id"] | 0);
+                    dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                             : (item["enabled"].as<int>() != 0);
+                    dst.group_id = (uint8_t)(item["group_id"] | 0);
+                    dst.power_on = item["power_on"].is<bool>() ? item["power_on"].as<bool>()
+                                                               : (item["power_on"].as<int>() != 0);
+                    dst.level_low_port = (uint8_t)(item["low"] | TankController::kInvalidPort);
+                    dst.level_mid_port = (uint8_t)(item["mid"] | TankController::kInvalidPort);
+                    dst.level_full_port = (uint8_t)(item["full"] | TankController::kInvalidPort);
+                    dst.relay_valve_port = (uint8_t)(item["valve"] | TankController::kInvalidPort);
+                    dst.relay_pump_port = (uint8_t)(item["pump"] | TankController::kInvalidPort);
+                    dst.relay_alarm_port = (uint8_t)(item["alarm"] | TankController::kInvalidPort);
+                    dst.level_low = item["level_low"].is<bool>() ? item["level_low"].as<bool>()
+                                                                  : (item["level_low"].as<int>() != 0);
+                    dst.level_mid = item["level_mid"].is<bool>() ? item["level_mid"].as<bool>()
+                                                                  : (item["level_mid"].as<int>() != 0);
+                    dst.level_full = item["level_full"].is<bool>() ? item["level_full"].as<bool>()
+                                                                    : (item["level_full"].as<int>() != 0);
+                    dst.levels_ok = item["levels_ok"].is<bool>() ? item["levels_ok"].as<bool>()
+                                                                  : (item["levels_ok"].as<int>() != 0);
+                    dst.valve_on = item["valve_on"].is<bool>() ? item["valve_on"].as<bool>()
+                                                                : (item["valve_on"].as<int>() != 0);
+                    dst.pump_on = item["pump_on"].is<bool>() ? item["pump_on"].as<bool>()
+                                                              : (item["pump_on"].as<int>() != 0);
+                    dst.alarm_on = item["alarm_on"].is<bool>() ? item["alarm_on"].as<bool>()
+                                                                : (item["alarm_on"].as<int>() != 0);
+                    strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
+                    ++item_count;
+                }
+            }
+            net.network.completeStackTanksPageRequest(node_id, offset);
+            net.network.updateStackIndexTanksPage(node_id, offset, total > 0 ? total : summary_total, alert_total,
+                                                  items, item_count, millis());
+            StackUnitSnapshot::State state{};
+            if (net.network.stackIndexState(node_id, state))
+            {
+                const uint16_t expected_total = (total > 0) ? total : summary_total;
+                const uint16_t target_total =
+                    (expected_total > StackUnitSnapshot::kTankCount) ? (uint16_t)StackUnitSnapshot::kTankCount
+                                                                     : expected_total;
+                if (target_total > 0 && state.tank_count < target_total)
+                {
+                    const uint16_t next_offset = state.tank_count;
+                    if (net.network.prepareStackTanksPageRequest(node_id, millis(), next_offset, 4000u))
+                    {
+                        _pending_stack_tanks_page = true;
+                        _pending_stack_tanks_node_id = node_id;
+                        _pending_stack_tanks_offset = next_offset;
+                        _pending_stack_tanks_limit = 8;
+                        const bool bootstrap_log = shouldLogStackBootstrapSync_(node_id);
+                        _pending_stack_tanks_log =
+                            bootstrap_log &&
+                            !(_stack_bootstrap_logged_tanks_node_id == node_id &&
+                              _stack_bootstrap_logged_tanks_offset == next_offset);
+                        if (_pending_stack_tanks_log)
+                        {
+                            _stack_bootstrap_logged_tanks_node_id = node_id;
+                            _stack_bootstrap_logged_tanks_offset = next_offset;
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        if (action == "set")
+        {
+            TankController &tanks = control.controllers.tanks();
+            auto guard = tanks.lockGuard();
+            const JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            for (JsonObjectConst item : items)
+            {
+                const uint8_t id = (uint8_t)(item["id"] | 0);
+                if (id == 0)
+                    continue;
+                if (item.containsKey("enabled"))
+                {
+                    const bool enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                                    : (item["enabled"].as<int>() != 0);
+                    tanks.setEnabled(id, enabled);
+                }
+                if (item.containsKey("toggle"))
+                {
+                    const auto *cfg = tanks.config(id);
+                    if (cfg)
+                        tanks.setPower(id, !cfg->power_on);
+                }
+                else if (item.containsKey("power_on"))
+                {
+                    const bool power_on = item["power_on"].is<bool>() ? item["power_on"].as<bool>()
+                                                                      : (item["power_on"].as<int>() != 0);
+                    tanks.setPower(id, power_on);
+                }
+                if (item.containsKey("name"))
+                    tanks.setName(id, String(item["name"] | ""));
+                if (item.containsKey("group_id"))
+                    tanks.setGroupId(id, (uint8_t)(item["group_id"] | 0));
+                if (item.containsKey("low"))
+                    tanks.setLevelLow(id, (uint8_t)(item["low"] | TankController::kInvalidPort));
+                if (item.containsKey("mid"))
+                    tanks.setLevelMid(id, (uint8_t)(item["mid"] | TankController::kInvalidPort));
+                if (item.containsKey("full"))
+                    tanks.setLevelFull(id, (uint8_t)(item["full"] | TankController::kInvalidPort));
+                if (item.containsKey("valve"))
+                    tanks.setValveRelay(id, (uint8_t)(item["valve"] | TankController::kInvalidPort));
+                if (item.containsKey("pump"))
+                    tanks.setPumpRelay(id, (uint8_t)(item["pump"] | TankController::kInvalidPort));
+                if (item.containsKey("alarm"))
+                    tanks.setAlarmRelay(id, (uint8_t)(item["alarm"] | TankController::kInvalidPort));
+            }
+            return;
+        }
         handleTankFrame_(node_id, action, params);
         return;
     }
@@ -1444,6 +1895,195 @@ void AppRuntime::appendLightSnapshotPage_(JsonObject root, uint16_t offset, uint
     root["offset"] = offset;
     root["limit"] = limit;
     root["total"] = lights_enabled;
+}
+
+void AppRuntime::appendMeteoSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const{
+    JsonObject summary = root["summary"].to<JsonObject>();
+    JsonObject meteo_summary = summary["meteo"].to<JsonObject>();
+    JsonObject controllers_out = root["controllers"].to<JsonObject>();
+    JsonArray meteo_out = controllers_out["meteo"].to<JsonArray>();
+
+    uint16_t meteo_enabled = 0;
+    uint16_t meteo_ok = 0;
+    uint16_t current_index = 0;
+
+    MeteoController &meteo = control.controllers.meteo();
+    auto guard = meteo.lockGuard();
+    for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+    {
+        const auto *cfg = meteo.configByIndex(i);
+        const auto *st = meteo.stateByIndex(i);
+        if (!cfg || !st || !cfg->enabled)
+            continue;
+
+        ++meteo_enabled;
+        if (st->ok)
+            ++meteo_ok;
+
+        if (current_index < offset)
+        {
+            ++current_index;
+            continue;
+        }
+        if ((uint16_t)meteo_out.size() >= limit)
+            continue;
+
+        JsonObject o = meteo_out.add<JsonObject>();
+        o["id"] = cfg->id;
+        o["enabled"] = true;
+        o["group_id"] = cfg->group_id;
+        o["type_id"] = (uint8_t)cfg->type;
+        o["type"] = MeteoController::typeName(cfg->type);
+        o["pin"] = cfg->dht_pin;
+        o["addr_set"] = cfg->ds18_addr_set;
+        if (cfg->ds18_addr_set)
+        {
+            char hex[17] = {};
+            MeteoController::formatHexAddr(cfg->ds18_addr, hex);
+            o["addr"] = hex;
+        }
+        o["src_node"] = (unsigned long)cfg->source_node_id;
+        o["src_sensor"] = cfg->source_sensor_id;
+        o["has_read"] = (st->last_read_ms != 0);
+        o["ok"] = st->ok;
+        o["has_temp"] = st->has_temp;
+        o["has_hum"] = st->has_humidity;
+        if (st->has_temp)
+            o["temp_c"] = st->temp_c;
+        if (st->has_humidity)
+            o["hum"] = st->humidity;
+        const uint32_t age_s = st->last_read_ms ? (uint32_t)((millis() - st->last_read_ms) / 1000u) : 0u;
+        o["age_s"] = age_s;
+        if (cfg->name.length())
+            o["name"] = cfg->name;
+        ++current_index;
+    }
+
+    meteo_summary["enabled"] = meteo_enabled;
+    meteo_summary["ok"] = meteo_ok;
+    root["offset"] = offset;
+    root["limit"] = limit;
+    root["total"] = meteo_enabled;
+}
+
+void AppRuntime::appendThermoSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const{
+    JsonObject summary = root["summary"].to<JsonObject>();
+    JsonObject thermo_summary = summary["thermo"].to<JsonObject>();
+    JsonObject controllers_out = root["controllers"].to<JsonObject>();
+    JsonArray thermo_out = controllers_out["thermo"].to<JsonArray>();
+
+    uint16_t thermo_enabled = 0;
+    uint16_t thermo_active = 0;
+    uint16_t current_index = 0;
+
+    ThermoController &thermo = control.controllers.thermo();
+    auto guard = thermo.lockGuard();
+    for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+    {
+        const auto *cfg = thermo.configByIndex(i);
+        const auto *st = thermo.stateByIndex(i);
+        if (!cfg || !st || !cfg->enabled)
+            continue;
+
+        ++thermo_enabled;
+        if (st->heat_on || st->cool_on)
+            ++thermo_active;
+
+        if (current_index < offset)
+        {
+            ++current_index;
+            continue;
+        }
+        if ((uint16_t)thermo_out.size() >= limit)
+            continue;
+
+        JsonObject o = thermo_out.add<JsonObject>();
+        o["id"] = cfg->id;
+        o["enabled"] = true;
+        o["group_id"] = cfg->group_id;
+        o["sensor_id"] = cfg->sensor_id;
+        o["sensor_node_id"] = (unsigned long)cfg->sensor_node_id;
+        o["heat_port"] = cfg->heat_port;
+        o["cool_port"] = cfg->cool_port;
+        o["button_port"] = cfg->button_port;
+        o["mode_id"] = (uint8_t)cfg->mode;
+        o["mode"] = ThermoController::modeName(cfg->mode);
+        o["target_c"] = cfg->target_c;
+        o["hyst"] = cfg->hysteresis;
+        o["power_on"] = st->power_on;
+        o["heat_on"] = st->heat_on;
+        o["cool_on"] = st->cool_on;
+        if (cfg->name.length())
+            o["name"] = cfg->name;
+        ++current_index;
+    }
+
+    thermo_summary["enabled"] = thermo_enabled;
+    thermo_summary["active"] = thermo_active;
+    root["offset"] = offset;
+    root["limit"] = limit;
+    root["total"] = thermo_enabled;
+}
+
+void AppRuntime::appendTankSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const{
+    JsonObject summary = root["summary"].to<JsonObject>();
+    JsonObject tanks_summary = summary["tanks"].to<JsonObject>();
+    JsonObject controllers_out = root["controllers"].to<JsonObject>();
+    JsonArray tanks_out = controllers_out["tanks"].to<JsonArray>();
+
+    uint16_t tanks_enabled = 0;
+    uint16_t tanks_alert = 0;
+    uint16_t current_index = 0;
+
+    TankController &tanks = control.controllers.tanks();
+    auto guard = tanks.lockGuard();
+    for (size_t i = 0; i < TankController::kTankCount; ++i)
+    {
+        const auto *cfg = tanks.configByIndex(i);
+        const auto *st = tanks.stateByIndex(i);
+        if (!cfg || !st || !cfg->enabled)
+            continue;
+
+        ++tanks_enabled;
+        if (!st->levels_ok || (!st->level_low && !st->level_mid && !st->level_full) || st->alarm_on || st->pump_on)
+            ++tanks_alert;
+
+        if (current_index < offset)
+        {
+            ++current_index;
+            continue;
+        }
+        if ((uint16_t)tanks_out.size() >= limit)
+            continue;
+
+        JsonObject o = tanks_out.add<JsonObject>();
+        o["id"] = cfg->id;
+        o["enabled"] = true;
+        o["group_id"] = cfg->group_id;
+        o["power_on"] = cfg->power_on;
+        o["low"] = cfg->level_low;
+        o["mid"] = cfg->level_mid;
+        o["full"] = cfg->level_full;
+        o["valve"] = cfg->relay_valve;
+        o["pump"] = cfg->relay_pump;
+        o["alarm"] = cfg->relay_alarm;
+        o["level_low"] = st->level_low;
+        o["level_mid"] = st->level_mid;
+        o["level_full"] = st->level_full;
+        o["levels_ok"] = st->levels_ok;
+        o["valve_on"] = st->valve_on;
+        o["pump_on"] = st->pump_on;
+        o["alarm_on"] = st->alarm_on;
+        if (cfg->name.length())
+            o["name"] = cfg->name;
+        ++current_index;
+    }
+
+    tanks_summary["enabled"] = tanks_enabled;
+    tanks_summary["alert"] = tanks_alert;
+    root["offset"] = offset;
+    root["limit"] = limit;
+    root["total"] = tanks_enabled;
 }
 
 void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
@@ -1911,6 +2551,135 @@ void AppRuntime::flushPendingStackLightsPage_(){
     {
         net.network.clearStackLightsPageRequest(node_id);
         core.logs.warn(F("STACK"), F("Sync slave lights request failed: node 0x%08lX range: %u-%u"),
+                       (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
+    }
+}
+
+void AppRuntime::flushPendingStackMeteoPage_(){
+    if (!_pending_stack_meteo_page)
+        return;
+    if (!stackMasterActive_())
+        return;
+    _pending_stack_meteo_page = false;
+    const bool log_sync = _pending_stack_meteo_log;
+    _pending_stack_meteo_log = false;
+
+    const uint32_t node_id = _pending_stack_meteo_node_id;
+    const uint16_t offset = _pending_stack_meteo_offset;
+    uint16_t limit = _pending_stack_meteo_limit;
+    if (node_id == 0)
+        return;
+    if (limit == 0)
+        limit = 8;
+
+    DynamicJsonDocument req(64);
+    req["offset"] = offset;
+    req["limit"] = limit;
+
+    const uint16_t range_end = (uint16_t)(offset + limit - 1u);
+    const String label = stackNodeLabel_(node_id);
+
+    const bool sent = net.network.stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
+                                                           StackRouteAdapter::Mode::Json, true);
+    if (sent)
+    {
+        if (log_sync)
+        {
+            core.logs.info(F("STACK"), F("Sync slave %s meteo: %u-%u"),
+                           label.length() ? label.c_str() : "unknown",
+                           (unsigned)offset, (unsigned)range_end);
+        }
+    }
+    else
+    {
+        net.network.clearStackMeteoPageRequest(node_id);
+        core.logs.warn(F("STACK"), F("Sync slave meteo request failed: node 0x%08lX range: %u-%u"),
+                       (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
+    }
+}
+
+void AppRuntime::flushPendingStackThermoPage_(){
+    if (!_pending_stack_thermo_page)
+        return;
+    if (!stackMasterActive_())
+        return;
+    _pending_stack_thermo_page = false;
+    const bool log_sync = _pending_stack_thermo_log;
+    _pending_stack_thermo_log = false;
+
+    const uint32_t node_id = _pending_stack_thermo_node_id;
+    const uint16_t offset = _pending_stack_thermo_offset;
+    uint16_t limit = _pending_stack_thermo_limit;
+    if (node_id == 0)
+        return;
+    if (limit == 0)
+        limit = 8;
+
+    DynamicJsonDocument req(64);
+    req["offset"] = offset;
+    req["limit"] = limit;
+
+    const uint16_t range_end = (uint16_t)(offset + limit - 1u);
+    const String label = stackNodeLabel_(node_id);
+
+    const bool sent = net.network.stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
+                                                           StackRouteAdapter::Mode::Json, true);
+    if (sent)
+    {
+        if (log_sync)
+        {
+            core.logs.info(F("STACK"), F("Sync slave %s thermo: %u-%u"),
+                           label.length() ? label.c_str() : "unknown",
+                           (unsigned)offset, (unsigned)range_end);
+        }
+    }
+    else
+    {
+        net.network.clearStackThermoPageRequest(node_id);
+        core.logs.warn(F("STACK"), F("Sync slave thermo request failed: node 0x%08lX range: %u-%u"),
+                       (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
+    }
+}
+
+void AppRuntime::flushPendingStackTanksPage_(){
+    if (!_pending_stack_tanks_page)
+        return;
+    if (!stackMasterActive_())
+        return;
+    _pending_stack_tanks_page = false;
+    const bool log_sync = _pending_stack_tanks_log;
+    _pending_stack_tanks_log = false;
+
+    const uint32_t node_id = _pending_stack_tanks_node_id;
+    const uint16_t offset = _pending_stack_tanks_offset;
+    uint16_t limit = _pending_stack_tanks_limit;
+    if (node_id == 0)
+        return;
+    if (limit == 0)
+        limit = 8;
+
+    DynamicJsonDocument req(64);
+    req["offset"] = offset;
+    req["limit"] = limit;
+
+    const uint16_t range_end = (uint16_t)(offset + limit - 1u);
+    const String label = stackNodeLabel_(node_id);
+
+    const bool sent = net.network.stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &req,
+                                                           StackRouteAdapter::Mode::Json, true);
+    if (sent)
+    {
+        if (log_sync)
+        {
+            core.logs.info(F("STACK"), F("Sync slave %s tanks: %u-%u"),
+                           label.length() ? label.c_str() : "unknown",
+                           (unsigned)offset, (unsigned)range_end);
+        }
+    }
+    else
+    {
+        net.network.clearStackTanksPageRequest(node_id);
+        core.logs.warn(F("STACK"), F("Sync slave tanks request failed: node 0x%08lX range: %u-%u"),
                        (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
     }
 }

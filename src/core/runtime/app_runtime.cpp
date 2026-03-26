@@ -141,6 +141,9 @@ void AppRuntime::flushPending()
     flushPendingStackSocketsPage_();
     flushPendingStackLightsResponse_();
     flushPendingStackLightsPage_();
+    flushPendingStackMeteoPage_();
+    flushPendingStackThermoPage_();
+    flushPendingStackTanksPage_();
     flushPendingRfid_();
     flushPendingIButton_();
     flushPendingRingButton_();
@@ -197,6 +200,48 @@ void AppRuntime::taskFlush()
             _pending_stack_lights_log = false;
         }
     }
+    if (_pending_display_stack_meteo_page && !_pending_stack_meteo_page)
+    {
+        const uint32_t node_id = _pending_display_stack_meteo_node_id;
+        const uint16_t offset = _pending_display_stack_meteo_offset;
+        _pending_display_stack_meteo_page = false;
+        if (node_id != 0 && net.network.prepareStackMeteoPageRequest(node_id, millis(), offset, 4000u))
+        {
+            _pending_stack_meteo_page = true;
+            _pending_stack_meteo_node_id = node_id;
+            _pending_stack_meteo_offset = offset;
+            _pending_stack_meteo_limit = 8;
+            _pending_stack_meteo_log = false;
+        }
+    }
+    if (_pending_display_stack_thermo_page && !_pending_stack_thermo_page)
+    {
+        const uint32_t node_id = _pending_display_stack_thermo_node_id;
+        const uint16_t offset = _pending_display_stack_thermo_offset;
+        _pending_display_stack_thermo_page = false;
+        if (node_id != 0 && net.network.prepareStackThermoPageRequest(node_id, millis(), offset, 4000u))
+        {
+            _pending_stack_thermo_page = true;
+            _pending_stack_thermo_node_id = node_id;
+            _pending_stack_thermo_offset = offset;
+            _pending_stack_thermo_limit = 8;
+            _pending_stack_thermo_log = false;
+        }
+    }
+    if (_pending_display_stack_tanks_page && !_pending_stack_tanks_page)
+    {
+        const uint32_t node_id = _pending_display_stack_tanks_node_id;
+        const uint16_t offset = _pending_display_stack_tanks_offset;
+        _pending_display_stack_tanks_page = false;
+        if (node_id != 0 && net.network.prepareStackTanksPageRequest(node_id, millis(), offset, 4000u))
+        {
+            _pending_stack_tanks_page = true;
+            _pending_stack_tanks_node_id = node_id;
+            _pending_stack_tanks_offset = offset;
+            _pending_stack_tanks_limit = 8;
+            _pending_stack_tanks_log = false;
+        }
+    }
     flushPending();
 }
 
@@ -250,10 +295,34 @@ bool AppRuntime::requestStackPollFeature_(uint32_t node_id, uint8_t feature){
         DynamicJsonDocument req(64);
         req["offset"] = 0;
         req["limit"] = 8;
-        return net.network.stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
+        return net.network.stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
                                                     StackRouteAdapter::Mode::Json, true);
     }
     case 3:
+    {
+        DynamicJsonDocument req(64);
+        req["offset"] = 0;
+        req["limit"] = 8;
+        return net.network.stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
+                                                    StackRouteAdapter::Mode::Json, true);
+    }
+    case 4:
+    {
+        DynamicJsonDocument req(64);
+        req["offset"] = 0;
+        req["limit"] = 8;
+        return net.network.stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &req,
+                                                    StackRouteAdapter::Mode::Json, true);
+    }
+    case 5:
+    {
+        DynamicJsonDocument req(64);
+        req["offset"] = 0;
+        req["limit"] = 8;
+        return net.network.stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
+                                                    StackRouteAdapter::Mode::Json, true);
+    }
+    case 6:
     {
         DynamicJsonDocument req(64);
         req["offset"] = 0;
@@ -273,7 +342,10 @@ bool AppRuntime::bootstrapSyncCompleted_(uint32_t node_id) const{
         return false;
     const bool sockets_ready = snapshot.socket_count >= snapshot.sockets_enabled;
     const bool lights_ready = snapshot.light_count >= snapshot.lights_enabled;
-    return sockets_ready && lights_ready;
+    const bool meteo_ready = snapshot.meteo_count >= snapshot.meteo_enabled;
+    const bool thermo_ready = snapshot.thermo_count >= snapshot.thermo_enabled;
+    const bool tanks_ready = snapshot.tank_count >= snapshot.tanks_enabled;
+    return sockets_ready && lights_ready && meteo_ready && thermo_ready && tanks_ready;
 }
 
 bool AppRuntime::shouldLogStackBootstrapSync_(uint32_t node_id) const{
@@ -308,6 +380,33 @@ bool AppRuntime::queueDisplayStackSnapshotPage_(uint32_t node_id, const char *fe
         _pending_display_stack_lights_page = true;
         _pending_display_stack_lights_node_id = node_id;
         _pending_display_stack_lights_offset = offset;
+        return true;
+    }
+    if (strcmp(feature, "meteo") == 0)
+    {
+        if (_pending_stack_meteo_page || _pending_display_stack_meteo_page)
+            return false;
+        _pending_display_stack_meteo_page = true;
+        _pending_display_stack_meteo_node_id = node_id;
+        _pending_display_stack_meteo_offset = offset;
+        return true;
+    }
+    if (strcmp(feature, "thermo") == 0)
+    {
+        if (_pending_stack_thermo_page || _pending_display_stack_thermo_page)
+            return false;
+        _pending_display_stack_thermo_page = true;
+        _pending_display_stack_thermo_node_id = node_id;
+        _pending_display_stack_thermo_offset = offset;
+        return true;
+    }
+    if (strcmp(feature, "tanks") == 0)
+    {
+        if (_pending_stack_tanks_page || _pending_display_stack_tanks_page)
+            return false;
+        _pending_display_stack_tanks_page = true;
+        _pending_display_stack_tanks_node_id = node_id;
+        _pending_display_stack_tanks_offset = offset;
         return true;
     }
     return false;
@@ -393,8 +492,14 @@ void AppRuntime::startStackBootstrapSync_(uint32_t node_id){
     _stack_bootstrap_feature_sent_mask = 0;
     _stack_bootstrap_logged_sockets_node_id = 0;
     _stack_bootstrap_logged_lights_node_id = 0;
+    _stack_bootstrap_logged_meteo_node_id = 0;
+    _stack_bootstrap_logged_thermo_node_id = 0;
+    _stack_bootstrap_logged_tanks_node_id = 0;
     _stack_bootstrap_logged_sockets_offset = 0xFFFF;
     _stack_bootstrap_logged_lights_offset = 0xFFFF;
+    _stack_bootstrap_logged_meteo_offset = 0xFFFF;
+    _stack_bootstrap_logged_thermo_offset = 0xFFFF;
+    _stack_bootstrap_logged_tanks_offset = 0xFFFF;
     _last_stack_poll_ms = 0; // allow first bootstrap request on the next loop tick
     STACK_BOOTSTRAP_EVT_INFO((*this), "Bootstrap sync start: %s", stackNodeLabel_(node_id).c_str());
     STACK_BOOTSTRAP_DBG((*this), "Bootstrap active: id: 0x%08lX q:%u",
@@ -418,8 +523,14 @@ void AppRuntime::stopStackBootstrapSync_(bool timeout){
     _stack_bootstrap_feature_sent_mask = 0;
     _stack_bootstrap_logged_sockets_node_id = 0;
     _stack_bootstrap_logged_lights_node_id = 0;
+    _stack_bootstrap_logged_meteo_node_id = 0;
+    _stack_bootstrap_logged_thermo_node_id = 0;
+    _stack_bootstrap_logged_tanks_node_id = 0;
     _stack_bootstrap_logged_sockets_offset = 0xFFFF;
     _stack_bootstrap_logged_lights_offset = 0xFFFF;
+    _stack_bootstrap_logged_meteo_offset = 0xFFFF;
+    _stack_bootstrap_logged_thermo_offset = 0xFFFF;
+    _stack_bootstrap_logged_tanks_offset = 0xFFFF;
     if (prev_node_id != 0)
         tryStartNextStackBootstrapSync_();
 }
@@ -718,10 +829,14 @@ bool AppRuntime::onRemoteMeteo_(void *ctx, uint32_t node_id, uint8_t sensor_id, 
     if (!ctx || node_id == 0 || sensor_id == 0)
         return false;
     AppRuntime *self = static_cast<AppRuntime *>(ctx);
-    (void)self;
-    (void)temp_c;
-    (void)has_temp;
-    return false;
+    StackUnitSnapshot::MeteoItem item{};
+    if (!self->net.network.stackIndexMeteoById(node_id, sensor_id, item))
+        return false;
+    if (!item.enabled || !item.ok || !item.has_temp)
+        return false;
+    temp_c = item.temp_c;
+    has_temp = true;
+    return true;
 }
 
 bool AppRuntime::onRemoteMeteoProxy_(void *ctx, uint32_t node_id, uint8_t sensor_id,
@@ -729,13 +844,17 @@ bool AppRuntime::onRemoteMeteoProxy_(void *ctx, uint32_t node_id, uint8_t sensor
     if (!ctx || node_id == 0 || sensor_id == 0)
         return false;
     AppRuntime *self = static_cast<AppRuntime *>(ctx);
-    (void)self;
-    (void)temp_c;
-    (void)has_temp;
-    (void)hum;
-    (void)has_hum;
-    (void)ok;
-    return false;
+    StackUnitSnapshot::MeteoItem item{};
+    if (!self->net.network.stackIndexMeteoById(node_id, sensor_id, item))
+        return false;
+    if (!item.enabled)
+        return false;
+    temp_c = item.temp_c;
+    has_temp = item.has_temp;
+    hum = item.humidity;
+    has_hum = item.has_humidity;
+    ok = item.ok;
+    return item.has_read;
 }
 
 bool AppRuntime::onRemoteNodeName_(void *ctx, uint32_t node_id, String &out){
@@ -752,9 +871,14 @@ bool AppRuntime::onRemoteSensorName_(void *ctx, uint32_t node_id, uint8_t sensor
     if (!ctx || node_id == 0 || sensor_id == 0)
         return false;
     AppRuntime *self = static_cast<AppRuntime *>(ctx);
-    (void)self;
-    (void)out;
-    return false;
+    StackUnitSnapshot::MeteoItem item{};
+    if (!self->net.network.stackIndexMeteoById(node_id, sensor_id, item))
+        return false;
+    if (item.name[0] != '\0')
+        out = item.name;
+    else
+        out = String("Sensor ") + String((unsigned)sensor_id);
+    return out.length() > 0;
 }
 
 bool AppRuntime::onRemoteSensorType_(void *ctx, uint32_t node_id, uint8_t sensor_id,
@@ -763,6 +887,9 @@ bool AppRuntime::onRemoteSensorType_(void *ctx, uint32_t node_id, uint8_t sensor
     if (!ctx || node_id == 0 || sensor_id == 0)
         return false;
     AppRuntime *self = static_cast<AppRuntime *>(ctx);
-    (void)self;
-    return false;
+    StackUnitSnapshot::MeteoItem item{};
+    if (!self->net.network.stackIndexMeteoById(node_id, sensor_id, item))
+        return false;
+    out = (MeteoController::SensorType)item.type;
+    return out != MeteoController::SensorType::None;
 }

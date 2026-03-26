@@ -145,6 +145,23 @@ void TankHandler::handleTanks(WebInterface &web, AsyncWebServerRequest *request)
         page.replace("%TANK_RELAY_USED_JSON%",
                      stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
                                 : web.globalUsedPortsJson_(PortIO::PinType::Relay));
+        if (stack_view)
+        {
+            String hidden;
+            hidden.reserve(96);
+            hidden += "<input type=\"hidden\" name=\"unit\" value=\"stack\">";
+            hidden += "<input type=\"hidden\" name=\"node\" value=\"";
+            hidden += String((unsigned long)node_id);
+            hidden += "\">";
+            hidden += "<input type=\"hidden\" name=\"page\" value=\"";
+            hidden += String((unsigned)(page_idx + 1));
+            hidden += "\">";
+            page.replace("%TANK_FORM_HIDDEN%", hidden);
+        }
+        else
+        {
+            page.replace("%TANK_FORM_HIDDEN%", "");
+        }
         page.replace("%TANK_DEVICE_SELECT%",
                      web.composeTopFiltersHtml_(web.tanksDeviceSelectHtml_(node_id, stack_view),
                                                 groups_available ? web.groupFilterHtml_("tanks-group-filter", stack_view ? node_id : 0u) : String("")));
@@ -222,7 +239,81 @@ void TankHandler::handleTanksSave(WebInterface &web, AsyncWebServerRequest *requ
                     back += String((unsigned)pv);
                 }
             }
-            web._tanks_status = "not migrated";
+            if (!web.network())
+            {
+                web._tanks_status = "Stack unavailable";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            DynamicJsonDocument doc(1536);
+            doc["source"] = "localweb";
+            if (const auto *u = web.sessionUser_())
+                doc["source_user"] = u->username;
+            JsonArray items = doc["items"].to<JsonArray>();
+            for (uint8_t i = 1; i <= TankController::kTankCount; ++i)
+            {
+                const String idx = String((unsigned)i);
+                const String prefix = String("k") + idx + "_";
+                const bool has_any = request->hasParam(prefix + "en", true) ||
+                                     request->hasParam(prefix + "name", true) ||
+                                     request->hasParam(prefix + "low", true) ||
+                                     request->hasParam(prefix + "mid", true) ||
+                                     request->hasParam(prefix + "full", true) ||
+                                     request->hasParam(prefix + "valve", true) ||
+                                     request->hasParam(prefix + "pump", true) ||
+                                     request->hasParam(prefix + "alarm", true) ||
+                                     request->hasParam(prefix + "group", true) ||
+                                     request->hasParam(prefix + "power", true);
+                if (!has_any || !web.webAclCanControlItem_(UsersRegistry::AclController::Tanks, i, node_id))
+                    continue;
+                JsonObject o = items.add<JsonObject>();
+                o["id"] = i;
+                o["enabled"] = request->hasParam(prefix + "en", true);
+
+                String name = web.paramValue_(request, prefix + "name");
+                name.trim();
+                o["name"] = name;
+                o["group_id"] = web.parseGroupIdParam_(request, prefix + "group");
+
+                uint8_t low_port = TankController::kInvalidPort;
+                uint8_t mid_port = TankController::kInvalidPort;
+                uint8_t full_port = TankController::kInvalidPort;
+                uint8_t valve_port = TankController::kInvalidPort;
+                uint8_t pump_port = TankController::kInvalidPort;
+                uint8_t alarm_port = TankController::kInvalidPort;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "low"), low_port))
+                    o["low"] = low_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "mid"), mid_port))
+                    o["mid"] = mid_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "full"), full_port))
+                    o["full"] = full_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "valve"), valve_port))
+                    o["valve"] = valve_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "pump"), pump_port))
+                    o["pump"] = pump_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "alarm"), alarm_port))
+                    o["alarm"] = alarm_port;
+
+                const String power_str = web.paramValue_(request, prefix + "power");
+                if (power_str == "on" || power_str == "off" || power_str == "1" || power_str == "0" ||
+                    power_str == "true" || power_str == "false")
+                    o["power_on"] = (power_str == "on" || power_str == "1" || power_str == "true");
+            }
+            if (items.size() == 0)
+            {
+                web._tanks_status = "No changes";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            if (!web.network()->stackRoute().sendEvent(node_id, "tanks", "set", &doc, StackRouteAdapter::Mode::Json))
+            {
+                web._tanks_status = "Send failed";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            web.requestStackTanks_(node_id);
+            web.requestStackIndexState_(node_id);
+            web._tanks_status = "Updated";
             web.sendRedirect_(request, back, set_cookie);
             return;
         }
@@ -431,8 +522,77 @@ void TankHandler::handleTanksToggle(WebInterface &web, AsyncWebServerRequest *re
 
         if (web.isStackTanksView_(node_id))
         {
-            (void)action;
-            web.sendText_(request, 200, "text/plain", "not migrated", set_cookie);
+            if (action == "state")
+            {
+                if (!web.network())
+                {
+                    web.sendText_(request, 400, "text/plain", "Stack unavailable", set_cookie);
+                    return;
+                }
+                StackUnitSnapshot::State snapshot{};
+                const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+                StackUnitSnapshot::TankItem item{};
+                const bool has_item = has_snapshot && web.network()->stackIndexTankById(node_id, (uint8_t)id, item);
+                const bool stale = !has_snapshot || snapshot.updated_ms == 0 ||
+                                   (uint32_t)(millis() - snapshot.updated_ms) > 1500u;
+                const bool partial = has_snapshot && snapshot.tanks_enabled > snapshot.tank_count;
+                if (stale || partial)
+                {
+                    web.requestStackTanks_(node_id);
+                    web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                    return;
+                }
+                if (has_snapshot && snapshot.pending)
+                {
+                    web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                    return;
+                }
+                if (!has_item)
+                {
+                    web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
+                    return;
+                }
+
+                StaticJsonDocument<224> out;
+                out["power"] = item.power_on;
+                out["level_low"] = item.level_low;
+                out["level_mid"] = item.level_mid;
+                out["level_full"] = item.level_full;
+                out["levels_ok"] = item.levels_ok;
+                out["valve"] = item.valve_on;
+                out["pump"] = item.pump_on;
+                out["alarm"] = item.alarm_on;
+                String body;
+                serializeJson(out, body);
+                web.sendText_(request, 200, "application/json", body, set_cookie);
+                return;
+            }
+            if (!web.network())
+            {
+                web.sendText_(request, 400, "text/plain", "Stack unavailable", set_cookie);
+                return;
+            }
+            StaticJsonDocument<224> doc;
+            doc["source"] = "localweb";
+            if (const auto *u = web.sessionUser_())
+                doc["source_user"] = u->username;
+            JsonArray items = doc["items"].to<JsonArray>();
+            JsonObject o = items.add<JsonObject>();
+            o["id"] = id;
+            if (action == "on")
+                o["power_on"] = true;
+            else if (action == "off")
+                o["power_on"] = false;
+            else
+                o["toggle"] = true;
+            if (!web.network()->stackRoute().sendEvent(node_id, "tanks", "set", &doc, StackRouteAdapter::Mode::Json))
+            {
+                web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
+                return;
+            }
+            web.requestStackTanks_(node_id);
+            web.requestStackIndexState_(node_id);
+            web.sendText_(request, 200, "text/plain", "pending", set_cookie);
             return;
         }
 

@@ -42,6 +42,14 @@ public:
 
     static String meteoUsedPinsJson_(const WebInterface &web);
 
+    static String stackMeteoPortOptionsJson_(const WebInterface &web, uint32_t node_id);
+
+    static String stackMeteoUsedPinsJson_(const WebInterface &web, uint32_t node_id);
+
+    static String stackMeteoDs18OptionsJson_(const WebInterface &web, uint32_t node_id);
+
+    static String stackMeteoDs18UsedJson_(const WebInterface &web, uint32_t node_id);
+
     static String meteoSensorOptionsHtml_(const WebInterface &web, uint8_t selected_id, uint32_t selected_node_id,
                                           const uint8_t used_local[MeteoController::kSensorCount + 1],
                                           const uint32_t *used_remote, size_t used_remote_count);

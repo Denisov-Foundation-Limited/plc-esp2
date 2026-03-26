@@ -287,6 +287,7 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       %TANK_DEVICE_SELECT%
       %TANK_PAGINATION%
       <form method="POST" action="/tanks" id="tanks-form">
+        %TANK_FORM_HIDDEN%
         <div class="grid" id="tanks-grid">
           %TANK_ITEMS%
         </div>

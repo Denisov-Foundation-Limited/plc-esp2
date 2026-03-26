@@ -579,14 +579,14 @@ bool WebInterface::sendStackRingCmdAll_(bool set_state, bool state)
 
     String WebInterface::stackMeteoDs18OptionsJson_(uint32_t node_id) const
 {
-    return _controllers_ops.stackMeteoDs18OptionsJson_(node_id);
+    return WebInterfaceControllersMeteoHelper::stackMeteoDs18OptionsJson_(*this, node_id);
 }
 
 
 
     String WebInterface::stackMeteoDs18UsedJson_(uint32_t node_id) const
 {
-    return _controllers_ops.stackMeteoDs18UsedJson_(node_id);
+    return WebInterfaceControllersMeteoHelper::stackMeteoDs18UsedJson_(*this, node_id);
 }
 
 
