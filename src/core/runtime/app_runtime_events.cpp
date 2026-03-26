@@ -117,11 +117,11 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
         self->comms.wifi.task();
         self->net.network.clearStackIndexStatePending(node_id);
         self->net.network.invalidateStackIndexState(node_id);
-        self->net.network.clearStackSocketsPageRequest(node_id);
-        self->net.network.clearStackLightsPageRequest(node_id);
-        self->net.network.clearStackMeteoPageRequest(node_id);
-        self->net.network.clearStackThermoPageRequest(node_id);
-        self->net.network.clearStackTanksPageRequest(node_id);
+        self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id);
+        self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id);
+        self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id);
+        self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id);
+        self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id);
         self->core.logs.info(F("STACK"), F("Sync slave %s system info"), label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
                                                    StackRouteAdapter::Mode::Json, true);
@@ -130,35 +130,35 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
                                                    StackRouteAdapter::Mode::Json, true);
         DynamicJsonDocument sockets_doc(64);
         sockets_doc["offset"] = 0;
-        sockets_doc["limit"] = 8;
+        sockets_doc["limit"] = StackUnitSnapshot::kPageSize;
         self->core.logs.info(F("STACK"), F("Sync slave %s sockets: 0-7"),
                              label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &sockets_doc,
                                                    StackRouteAdapter::Mode::Json, true);
         DynamicJsonDocument lights_doc(64);
         lights_doc["offset"] = 0;
-        lights_doc["limit"] = 8;
+        lights_doc["limit"] = StackUnitSnapshot::kPageSize;
         self->core.logs.info(F("STACK"), F("Sync slave %s lights: 0-7"),
                              label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequest(node_id, "lights", "snapshot_req", &lights_doc,
                                                    StackRouteAdapter::Mode::Json, true);
         DynamicJsonDocument meteo_doc(64);
         meteo_doc["offset"] = 0;
-        meteo_doc["limit"] = 8;
+        meteo_doc["limit"] = StackUnitSnapshot::kPageSize;
         self->core.logs.info(F("STACK"), F("Sync slave %s meteo: 0-7"),
                              label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &meteo_doc,
                                                    StackRouteAdapter::Mode::Json, true);
         DynamicJsonDocument thermo_doc(64);
         thermo_doc["offset"] = 0;
-        thermo_doc["limit"] = 8;
+        thermo_doc["limit"] = StackUnitSnapshot::kPageSize;
         self->core.logs.info(F("STACK"), F("Sync slave %s thermo: 0-7"),
                              label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &thermo_doc,
                                                    StackRouteAdapter::Mode::Json, true);
         DynamicJsonDocument tanks_doc(64);
         tanks_doc["offset"] = 0;
-        tanks_doc["limit"] = 8;
+        tanks_doc["limit"] = StackUnitSnapshot::kPageSize;
         self->core.logs.info(F("STACK"), F("Sync slave %s tanks: 0-7"),
                              label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &tanks_doc,
@@ -517,11 +517,10 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         }
         if (action == "snapshot")
         {
-            StackUnitSnapshot::Snapshot state{};
-            net.network.stackIndexStateSnapshot(node_id, state);
+            StackUnitSnapshot::State state{};
+            net.network.stackIndexState(node_id, state);
             state.node_id = node_id;
             state.updated_ms = millis();
-            state.pending = false;
             state.has_plc = true;
             state.has_rtc = true;
             strlcpy(state.rtc_date, params["rtc_date"] | "", sizeof(state.rtc_date));
@@ -536,7 +535,8 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.fan_on = params["fan_on"].is<bool>() ? params["fan_on"].as<bool>() : ((int)(params["fan_on"] | 0) != 0);
             if (state.rtc_date[0] == '\0' || state.rtc_time[0] == '\0')
                 state.has_rtc = false;
-            net.network.updateStackIndexState(node_id, state);
+            net.network.applyStackIndexSystemState(node_id, state);
+            net.network.clearStackIndexStatePending(node_id);
             return;
         }
     }
@@ -552,8 +552,8 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         }
         if (action == "summary")
         {
-            StackUnitSnapshot::Snapshot state{};
-            net.network.stackIndexStateSnapshot(node_id, state);
+            StackUnitSnapshot::State state{};
+            net.network.stackIndexState(node_id, state);
             state.node_id = node_id;
             state.updated_ms = millis();
             JsonVariantConst sockets_summary = params["summary"]["sockets"];
@@ -592,7 +592,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.avr_active_source = (uint8_t)(avr_summary["active_source_id"] | 0);
             state.leak_enabled = leak_summary["enabled"] | 0;
             state.leak_alert = leak_summary["alert"] | 0;
-            net.network.updateStackIndexState(node_id, state);
+            net.network.applyStackIndexControllerSummary(node_id, state);
             return;
         }
     }
@@ -645,10 +645,9 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         }
         if (action == "index_state")
         {
-            StackUnitSnapshot::Snapshot state{};
+            StackUnitSnapshot::State state{};
             state.node_id = node_id;
             state.updated_ms = millis();
-            state.pending = false;
             state.has_plc = true;
             state.has_rtc = true;
             strlcpy(state.rtc_date, params["rtc_date"] | "", sizeof(state.rtc_date));
@@ -681,8 +680,8 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                 rtc["temp_c"] = state.rtc_temp;
             }
             JsonObject summary = doc["summary"].to<JsonObject>();
-            JsonVariantConst sockets_summary = params["summary"]["sockets"];
-            JsonVariantConst lights_summary = params["summary"]["lights"];
+            const JsonVariantConst sockets_summary = params["summary"]["sockets"];
+            const JsonVariantConst lights_summary = params["summary"]["lights"];
             if (!sockets_summary.isNull())
             {
                 JsonObject sockets = summary["sockets"].to<JsonObject>();
@@ -695,15 +694,15 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                 lights["enabled"] = lights_summary["enabled"] | 0;
                 lights["on"] = lights_summary["on"] | 0;
             }
-            JsonVariantConst meteo_summary = params["summary"]["meteo"];
-            JsonVariantConst thermo_summary = params["summary"]["thermo"];
-            JsonVariantConst tanks_summary = params["summary"]["tanks"];
-            JsonVariantConst septic_summary = params["summary"]["septic"];
-            JsonVariantConst watering_summary = params["summary"]["watering"];
-            JsonVariantConst security_summary = params["summary"]["security"];
-            JsonVariantConst ring_summary = params["summary"]["ring"];
-            JsonVariantConst avr_summary = params["summary"]["avr"];
-            JsonVariantConst leak_summary = params["summary"]["leak"];
+            const JsonVariantConst meteo_summary = params["summary"]["meteo"];
+            const JsonVariantConst thermo_summary = params["summary"]["thermo"];
+            const JsonVariantConst tanks_summary = params["summary"]["tanks"];
+            const JsonVariantConst septic_summary = params["summary"]["septic"];
+            const JsonVariantConst watering_summary = params["summary"]["watering"];
+            const JsonVariantConst security_summary = params["summary"]["security"];
+            const JsonVariantConst ring_summary = params["summary"]["ring"];
+            const JsonVariantConst avr_summary = params["summary"]["avr"];
+            const JsonVariantConst leak_summary = params["summary"]["leak"];
             if (!meteo_summary.isNull())
             {
                 JsonObject meteo = summary["meteo"].to<JsonObject>();
@@ -786,88 +785,125 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.avr_active_source = (uint8_t)(avr_summary["active_source_id"] | 0);
             state.leak_enabled = leak_summary["enabled"] | 0;
             state.leak_alert = leak_summary["alert"] | 0;
-            JsonArrayConst sockets_items = params["controllers"]["sockets"].as<JsonArrayConst>();
-            state.socket_count = 0;
-            memset(state.sockets, 0, sizeof(state.sockets));
+
+            const JsonArrayConst sockets_items = params["controllers"]["sockets"].as<JsonArrayConst>();
+            uint16_t socket_total = 0;
             if (!sockets_items.isNull())
             {
-                for (JsonObjectConst item : sockets_items)
-                {
-                    if (state.socket_count >= StackUnitSnapshot::kSocketCount)
-                        break;
-                    auto &dst = state.sockets[state.socket_count];
-                    dst.id = (uint8_t)(item["id"] | 0);
-                    dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
-                                                             : (item["enabled"].as<int>() != 0);
-                    dst.state = item["state"].is<bool>() ? item["state"].as<bool>()
-                                                         : (item["state"].as<int>() != 0);
-                    strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
-                    dst.button_port = (uint8_t)(item["button"] | SocketController::kInvalidPort);
-                    dst.relay_port = (uint8_t)(item["relay"] | SocketController::kInvalidPort);
-                    dst.group_id = (uint8_t)(item["group_id"] | 0);
-                    ++state.socket_count;
-                }
-            }
-            JsonArrayConst lights_items = params["controllers"]["lights"].as<JsonArrayConst>();
-            state.light_count = 0;
-            memset(state.lights, 0, sizeof(state.lights));
-            if (!lights_items.isNull())
-            {
-                for (JsonObjectConst item : lights_items)
-                {
-                    if (state.light_count >= StackUnitSnapshot::kSocketCount)
-                        break;
-                    auto &dst = state.lights[state.light_count];
-                    dst.id = (uint8_t)(item["id"] | 0);
-                    dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
-                                                             : (item["enabled"].as<int>() != 0);
-                    dst.state = item["state"].is<bool>() ? item["state"].as<bool>()
-                                                         : (item["state"].as<int>() != 0);
-                    dst.button_port = (uint8_t)(item["button"] | SocketController::kInvalidPort);
-                    dst.relay_port = (uint8_t)(item["relay"] | SocketController::kInvalidPort);
-                    dst.group_id = (uint8_t)(item["group_id"] | 0);
-                    strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
-                    ++state.light_count;
-                }
-            }
-            if (state.socket_count > 0)
-            {
+                StackUnitSnapshot::SocketItem page[StackUnitSnapshot::kPageSize]{};
+                uint8_t page_count = 0;
+                uint16_t offset = 0;
                 JsonObject controllers = doc["controllers"].to<JsonObject>();
                 JsonArray sockets = controllers["sockets"].to<JsonArray>();
-                for (uint8_t i = 0; i < state.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
+                for (JsonObjectConst src : sockets_items)
                 {
-                    const auto &src = state.sockets[i];
-                    if (src.id == 0)
-                        continue;
-                    JsonObject item = sockets.add<JsonObject>();
-                    item["id"] = src.id;
-                    item["enabled"] = src.enabled;
-                    item["state"] = src.state;
-                    if (src.name[0] != '\0')
-                        item["name"] = src.name;
+                    if (offset >= StackUnitSnapshot::kSocketCount)
+                        break;
+                    auto &dst = page[page_count];
+                    dst.id = (uint8_t)(src["id"] | 0);
+                    dst.enabled = src["enabled"].is<bool>() ? src["enabled"].as<bool>()
+                                                            : (src["enabled"].as<int>() != 0);
+                    dst.state = src["state"].is<bool>() ? src["state"].as<bool>()
+                                                        : (src["state"].as<int>() != 0);
+                    strlcpy(dst.name, src["name"] | "", sizeof(dst.name));
+                    dst.button_port = (uint8_t)(src["button"] | SocketController::kInvalidPort);
+                    dst.relay_port = (uint8_t)(src["relay"] | SocketController::kInvalidPort);
+                    dst.group_id = (uint8_t)(src["group_id"] | 0);
+                    if (dst.id != 0)
+                    {
+                        JsonObject item = sockets.add<JsonObject>();
+                        item["id"] = dst.id;
+                        item["enabled"] = dst.enabled;
+                        item["state"] = dst.state;
+                        if (dst.name[0] != '\0')
+                            item["name"] = dst.name;
+                    }
+                    ++page_count;
+                    ++socket_total;
+                    ++offset;
+                    if (page_count >= StackUnitSnapshot::kPageSize)
+                    {
+                        net.network.updateStackIndexSocketsPage(node_id, (uint16_t)(offset - page_count),
+                                                                state.sockets_enabled, state.sockets_on,
+                                                                page, page_count, state.updated_ms);
+                        page_count = 0;
+                        memset(page, 0, sizeof(page));
+                    }
+                }
+                if (page_count > 0)
+                {
+                    net.network.updateStackIndexSocketsPage(node_id, (uint16_t)(offset - page_count),
+                                                            state.sockets_enabled, state.sockets_on,
+                                                            page, page_count, state.updated_ms);
                 }
             }
-            if (state.light_count > 0)
+            else
             {
+                net.network.updateStackIndexSocketsPage(node_id, 0, state.sockets_enabled, state.sockets_on,
+                                                        nullptr, 0, state.updated_ms);
+            }
+            const JsonArrayConst lights_items = params["controllers"]["lights"].as<JsonArrayConst>();
+            uint16_t light_total = 0;
+            if (!lights_items.isNull())
+            {
+                StackUnitSnapshot::SocketItem page[StackUnitSnapshot::kPageSize]{};
+                uint8_t page_count = 0;
+                uint16_t offset = 0;
                 JsonObject controllers = doc["controllers"].to<JsonObject>();
                 JsonArray lights = controllers["lights"].to<JsonArray>();
-                for (uint8_t i = 0; i < state.light_count && i < StackUnitSnapshot::kSocketCount; ++i)
+                for (JsonObjectConst src : lights_items)
                 {
-                    const auto &src = state.lights[i];
-                    if (src.id == 0)
-                        continue;
-                    JsonObject item = lights.add<JsonObject>();
-                    item["id"] = src.id;
-                    item["enabled"] = src.enabled;
-                    item["state"] = src.state;
-                    item["button"] = src.button_port;
-                    item["relay"] = src.relay_port;
-                    item["group_id"] = src.group_id;
-                    if (src.name[0] != '\0')
-                        item["name"] = src.name;
+                    if (offset >= StackUnitSnapshot::kSocketCount)
+                        break;
+                    auto &dst = page[page_count];
+                    dst.id = (uint8_t)(src["id"] | 0);
+                    dst.enabled = src["enabled"].is<bool>() ? src["enabled"].as<bool>()
+                                                            : (src["enabled"].as<int>() != 0);
+                    dst.state = src["state"].is<bool>() ? src["state"].as<bool>()
+                                                        : (src["state"].as<int>() != 0);
+                    dst.button_port = (uint8_t)(src["button"] | SocketController::kInvalidPort);
+                    dst.relay_port = (uint8_t)(src["relay"] | SocketController::kInvalidPort);
+                    dst.group_id = (uint8_t)(src["group_id"] | 0);
+                    strlcpy(dst.name, src["name"] | "", sizeof(dst.name));
+                    if (dst.id != 0)
+                    {
+                        JsonObject item = lights.add<JsonObject>();
+                        item["id"] = dst.id;
+                        item["enabled"] = dst.enabled;
+                        item["state"] = dst.state;
+                        item["button"] = dst.button_port;
+                        item["relay"] = dst.relay_port;
+                        item["group_id"] = dst.group_id;
+                        if (dst.name[0] != '\0')
+                            item["name"] = dst.name;
+                    }
+                    ++page_count;
+                    ++light_total;
+                    ++offset;
+                    if (page_count >= StackUnitSnapshot::kPageSize)
+                    {
+                        net.network.updateStackIndexLightsPage(node_id, (uint16_t)(offset - page_count),
+                                                               state.lights_enabled, state.lights_on,
+                                                               page, page_count, state.updated_ms);
+                        page_count = 0;
+                        memset(page, 0, sizeof(page));
+                    }
+                }
+                if (page_count > 0)
+                {
+                    net.network.updateStackIndexLightsPage(node_id, (uint16_t)(offset - page_count),
+                                                           state.lights_enabled, state.lights_on,
+                                                           page, page_count, state.updated_ms);
                 }
             }
-            net.network.updateStackIndexState(node_id, state);
+            else
+            {
+                net.network.updateStackIndexLightsPage(node_id, 0, state.lights_enabled, state.lights_on,
+                                                       nullptr, 0, state.updated_ms);
+            }
+            net.network.applyStackIndexSystemState(node_id, state);
+            net.network.applyStackIndexControllerSummary(node_id, state);
+            net.network.clearStackIndexStatePending(node_id);
             String json;
             serializeJson(doc, json);
             publishCloudStackEvent_(node_id, "stack.snapshot", "update", json);
@@ -898,11 +934,9 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         if (action == "snapshot_req")
         {
             const uint16_t offset = (uint16_t)(params["offset"] | 0);
-            uint16_t limit = (uint16_t)(params["limit"] | 8);
-            if (limit == 0)
-                limit = 8;
-            if (limit > 8)
-                limit = 8;
+            uint16_t limit = (uint16_t)(params["limit"] | StackUnitSnapshot::kPageSize);
+            if (limit == 0 || limit > StackUnitSnapshot::kPageSize)
+                limit = StackUnitSnapshot::kPageSize;
             const uint16_t range_end = (limit == 0) ? offset : (uint16_t)(offset + limit - 1u);
             SocketController &sockets = control.controllers.sockets();
             size_t sockets_count = 0;
@@ -934,29 +968,25 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         }
         if (action == "snapshot")
         {
-            StackUnitSnapshot::Snapshot state{};
-            net.network.stackIndexStateSnapshot(node_id, state);
-            state.node_id = node_id;
-            state.updated_ms = millis();
+            StackUnitSnapshot::State state{};
+            StackUnitSnapshot::CacheState cache{};
+            net.network.stackIndexState(node_id, state);
+            net.network.stackIndexCacheState(node_id, cache);
             const uint16_t offset = (uint16_t)(params["offset"] | 0);
             const uint16_t total = (uint16_t)(params["total"] | 0);
             const uint16_t summary_total = (uint16_t)(params["summary"]["sockets"]["enabled"] | 0);
+            const uint16_t on_total = (uint16_t)(params["summary"]["sockets"]["on"] | 0);
             const JsonArrayConst sockets_items = params["controllers"]["sockets"].as<JsonArrayConst>();
-            const uint16_t received_count = sockets_items.isNull() ? 0u : (uint16_t)sockets_items.size();
-            net.network.completeStackSocketsPageRequest(node_id, offset);
-            if (offset == 0)
-            {
-                state.socket_count = 0;
-                memset(state.sockets, 0, sizeof(state.sockets));
-            }
+            uint8_t item_count = 0;
+            net.network.completeStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id, offset);
+            memset(_stack_socket_page_items, 0, sizeof(_stack_socket_page_items));
             if (!sockets_items.isNull())
             {
-                uint16_t idx = offset;
                 for (JsonObjectConst item : sockets_items)
                 {
-                    if (idx >= StackUnitSnapshot::kSocketCount)
+                    if (item_count >= StackUnitSnapshot::kPageSize)
                         break;
-                    auto &dst = state.sockets[idx];
+                    auto &dst = _stack_socket_page_items[item_count];
                     dst.id = (uint8_t)(item["id"] | 0);
                     dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
                                                              : (item["enabled"].as<int>() != 0);
@@ -966,25 +996,26 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     dst.relay_port = (uint8_t)(item["relay"] | SocketController::kInvalidPort);
                     dst.group_id = (uint8_t)(item["group_id"] | 0);
                     strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
-                    ++idx;
+                    ++item_count;
                 }
-                if (idx > state.socket_count)
-                    state.socket_count = (uint8_t)idx;
             }
-            net.network.updateStackIndexState(node_id, state);
+            net.network.updateStackIndexSocketsPage(node_id, offset, total > 0 ? total : summary_total, on_total,
+                                                    _stack_socket_page_items, item_count, millis());
+            net.network.stackIndexState(node_id, state);
             const uint16_t expected_total = (total > 0) ? total : summary_total;
             const uint16_t target_total =
                 (expected_total > StackUnitSnapshot::kSocketCount) ? (uint16_t)StackUnitSnapshot::kSocketCount
                                                                    : expected_total;
-            if (target_total > 0 && state.socket_count < target_total)
+            if (target_total > 0 && cache.socket_count < target_total)
             {
-                const uint16_t next_offset = state.socket_count;
-                if (net.network.prepareStackSocketsPageRequest(node_id, millis(), next_offset, 4000u))
+                const uint16_t next_offset = cache.socket_count;
+                if (net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id, millis(),
+                                                        next_offset, 4000u))
                 {
                     _pending_stack_sockets_page = true;
                     _pending_stack_sockets_node_id = node_id;
                     _pending_stack_sockets_offset = next_offset;
-                    _pending_stack_sockets_limit = 8;
+                    _pending_stack_sockets_limit = StackUnitSnapshot::kPageSize;
                     const bool bootstrap_log = shouldLogStackBootstrapSync_(node_id);
                     _pending_stack_sockets_log =
                         bootstrap_log &&
@@ -1007,11 +1038,9 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         if (action == "snapshot_req")
         {
             const uint16_t offset = (uint16_t)(params["offset"] | 0);
-            uint16_t limit = (uint16_t)(params["limit"] | 8);
-            if (limit == 0)
-                limit = 8;
-            if (limit > 8)
-                limit = 8;
+            uint16_t limit = (uint16_t)(params["limit"] | StackUnitSnapshot::kPageSize);
+            if (limit == 0 || limit > StackUnitSnapshot::kPageSize)
+                limit = StackUnitSnapshot::kPageSize;
             _pending_stack_lights_response = true;
             _pending_stack_lights_target_node = route.source_node;
             _pending_stack_lights_reply_to = route.meta.request_id;
@@ -1021,28 +1050,25 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         }
         if (action == "snapshot")
         {
-            StackUnitSnapshot::Snapshot state{};
-            net.network.stackIndexStateSnapshot(node_id, state);
-            state.node_id = node_id;
-            state.updated_ms = millis();
+            StackUnitSnapshot::State state{};
+            StackUnitSnapshot::CacheState cache{};
+            net.network.stackIndexState(node_id, state);
+            net.network.stackIndexCacheState(node_id, cache);
             const uint16_t offset = (uint16_t)(params["offset"] | 0);
             const uint16_t total = (uint16_t)(params["total"] | 0);
             const uint16_t summary_total = (uint16_t)(params["summary"]["lights"]["enabled"] | 0);
+            const uint16_t on_total = (uint16_t)(params["summary"]["lights"]["on"] | 0);
             const JsonArrayConst lights_items = params["controllers"]["lights"].as<JsonArrayConst>();
-            net.network.completeStackLightsPageRequest(node_id, offset);
-            if (offset == 0)
-            {
-                state.light_count = 0;
-                memset(state.lights, 0, sizeof(state.lights));
-            }
+            uint8_t item_count = 0;
+            net.network.completeStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id, offset);
+            memset(_stack_light_page_items, 0, sizeof(_stack_light_page_items));
             if (!lights_items.isNull())
             {
-                uint16_t idx = offset;
                 for (JsonObjectConst item : lights_items)
                 {
-                    if (idx >= StackUnitSnapshot::kSocketCount)
+                    if (item_count >= StackUnitSnapshot::kPageSize)
                         break;
-                    auto &dst = state.lights[idx];
+                    auto &dst = _stack_light_page_items[item_count];
                     dst.id = (uint8_t)(item["id"] | 0);
                     dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
                                                              : (item["enabled"].as<int>() != 0);
@@ -1052,25 +1078,26 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     dst.relay_port = (uint8_t)(item["relay"] | SocketController::kInvalidPort);
                     dst.group_id = (uint8_t)(item["group_id"] | 0);
                     strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
-                    ++idx;
+                    ++item_count;
                 }
-                if (idx > state.light_count)
-                    state.light_count = (uint8_t)idx;
             }
-            net.network.updateStackIndexState(node_id, state);
+            net.network.updateStackIndexLightsPage(node_id, offset, total > 0 ? total : summary_total, on_total,
+                                                   _stack_light_page_items, item_count, millis());
+            net.network.stackIndexState(node_id, state);
             const uint16_t expected_total = (total > 0) ? total : summary_total;
             const uint16_t target_total =
                 (expected_total > StackUnitSnapshot::kSocketCount) ? (uint16_t)StackUnitSnapshot::kSocketCount
                                                                    : expected_total;
-            if (target_total > 0 && state.light_count < target_total)
+            if (target_total > 0 && cache.light_count < target_total)
             {
-                const uint16_t next_offset = state.light_count;
-                if (net.network.prepareStackLightsPageRequest(node_id, millis(), next_offset, 4000u))
+                const uint16_t next_offset = cache.light_count;
+                if (net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id, millis(),
+                                                        next_offset, 4000u))
                 {
                     _pending_stack_lights_page = true;
                     _pending_stack_lights_node_id = node_id;
                     _pending_stack_lights_offset = next_offset;
-                    _pending_stack_lights_limit = 8;
+                    _pending_stack_lights_limit = StackUnitSnapshot::kPageSize;
                     const bool bootstrap_log = shouldLogStackBootstrapSync_(node_id);
                     _pending_stack_lights_log =
                         bootstrap_log &&
@@ -1092,11 +1119,9 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         if (action == "snapshot_req")
         {
             const uint16_t offset = (uint16_t)(params["offset"] | 0);
-            uint16_t limit = (uint16_t)(params["limit"] | 8);
-            if (limit == 0)
-                limit = 8;
-            if (limit > 8)
-                limit = 8;
+            uint16_t limit = (uint16_t)(params["limit"] | StackUnitSnapshot::kPageSize);
+            if (limit == 0 || limit > StackUnitSnapshot::kPageSize)
+                limit = StackUnitSnapshot::kPageSize;
             DynamicJsonDocument doc(2048);
             appendMeteoSnapshotPage_(doc.to<JsonObject>(), offset, limit);
             net.network.stackSlaveSendResponse(route.source_node, "meteo", "snapshot",
@@ -1109,16 +1134,16 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             const uint16_t total = (uint16_t)(params["total"] | 0);
             const uint16_t summary_total = (uint16_t)(params["summary"]["meteo"]["enabled"] | 0);
             const uint16_t ok_total = (uint16_t)(params["summary"]["meteo"]["ok"] | 0);
-            StackUnitSnapshot::MeteoItem items[8]{};
             uint8_t item_count = 0;
             const JsonArrayConst meteo_items = params["controllers"]["meteo"].as<JsonArrayConst>();
+            memset(_stack_meteo_page_items, 0, sizeof(_stack_meteo_page_items));
             if (!meteo_items.isNull())
             {
                 for (JsonObjectConst item : meteo_items)
                 {
-                    if (item_count >= 8)
+                    if (item_count >= StackUnitSnapshot::kPageSize)
                         break;
-                    auto &dst = items[item_count];
+                    auto &dst = _stack_meteo_page_items[item_count];
                     dst.id = (uint8_t)(item["id"] | 0);
                     dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
                                                              : (item["enabled"].as<int>() != 0);
@@ -1149,25 +1174,27 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     ++item_count;
                 }
             }
-            net.network.completeStackMeteoPageRequest(node_id, offset);
+            net.network.completeStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id, offset);
             net.network.updateStackIndexMeteoPage(node_id, offset, total > 0 ? total : summary_total, ok_total,
-                                                  items, item_count, millis());
+                                                  _stack_meteo_page_items, item_count, millis());
             StackUnitSnapshot::State state{};
-            if (net.network.stackIndexState(node_id, state))
+            StackUnitSnapshot::CacheState cache{};
+            if (net.network.stackIndexState(node_id, state) && net.network.stackIndexCacheState(node_id, cache))
             {
                 const uint16_t expected_total = (total > 0) ? total : summary_total;
                 const uint16_t target_total =
                     (expected_total > StackUnitSnapshot::kMeteoCount) ? (uint16_t)StackUnitSnapshot::kMeteoCount
                                                                       : expected_total;
-                if (target_total > 0 && state.meteo_count < target_total)
+                if (target_total > 0 && cache.meteo_count < target_total)
                 {
-                    const uint16_t next_offset = state.meteo_count;
-                    if (net.network.prepareStackMeteoPageRequest(node_id, millis(), next_offset, 4000u))
+                    const uint16_t next_offset = cache.meteo_count;
+                    if (net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id, millis(),
+                                                            next_offset, 4000u))
                     {
                         _pending_stack_meteo_page = true;
                         _pending_stack_meteo_node_id = node_id;
                         _pending_stack_meteo_offset = next_offset;
-                        _pending_stack_meteo_limit = 8;
+                        _pending_stack_meteo_limit = StackUnitSnapshot::kPageSize;
                         const bool bootstrap_log = shouldLogStackBootstrapSync_(node_id);
                         _pending_stack_meteo_log =
                             bootstrap_log &&
@@ -1231,11 +1258,9 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         if (action == "snapshot_req")
         {
             const uint16_t offset = (uint16_t)(params["offset"] | 0);
-            uint16_t limit = (uint16_t)(params["limit"] | 8);
-            if (limit == 0)
-                limit = 8;
-            if (limit > 8)
-                limit = 8;
+            uint16_t limit = (uint16_t)(params["limit"] | StackUnitSnapshot::kPageSize);
+            if (limit == 0 || limit > StackUnitSnapshot::kPageSize)
+                limit = StackUnitSnapshot::kPageSize;
             DynamicJsonDocument doc(2048);
             appendThermoSnapshotPage_(doc.to<JsonObject>(), offset, limit);
             net.network.stackSlaveSendResponse(route.source_node, "thermo", "snapshot",
@@ -1248,16 +1273,16 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             const uint16_t total = (uint16_t)(params["total"] | 0);
             const uint16_t summary_total = (uint16_t)(params["summary"]["thermo"]["enabled"] | 0);
             const uint16_t active_total = (uint16_t)(params["summary"]["thermo"]["active"] | 0);
-            StackUnitSnapshot::ThermoItem items[8]{};
             uint8_t item_count = 0;
             const JsonArrayConst thermo_items = params["controllers"]["thermo"].as<JsonArrayConst>();
+            memset(_stack_thermo_page_items, 0, sizeof(_stack_thermo_page_items));
             if (!thermo_items.isNull())
             {
                 for (JsonObjectConst item : thermo_items)
                 {
-                    if (item_count >= 8)
+                    if (item_count >= StackUnitSnapshot::kPageSize)
                         break;
-                    auto &dst = items[item_count];
+                    auto &dst = _stack_thermo_page_items[item_count];
                     dst.id = (uint8_t)(item["id"] | 0);
                     dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
                                                              : (item["enabled"].as<int>() != 0);
@@ -1282,25 +1307,27 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     ++item_count;
                 }
             }
-            net.network.completeStackThermoPageRequest(node_id, offset);
+            net.network.completeStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id, offset);
             net.network.updateStackIndexThermoPage(node_id, offset, total > 0 ? total : summary_total, active_total,
-                                                   items, item_count, millis());
+                                                   _stack_thermo_page_items, item_count, millis());
             StackUnitSnapshot::State state{};
-            if (net.network.stackIndexState(node_id, state))
+            StackUnitSnapshot::CacheState cache{};
+            if (net.network.stackIndexState(node_id, state) && net.network.stackIndexCacheState(node_id, cache))
             {
                 const uint16_t expected_total = (total > 0) ? total : summary_total;
                 const uint16_t target_total =
                     (expected_total > StackUnitSnapshot::kThermoCount) ? (uint16_t)StackUnitSnapshot::kThermoCount
                                                                        : expected_total;
-                if (target_total > 0 && state.thermo_count < target_total)
+                if (target_total > 0 && cache.thermo_count < target_total)
                 {
-                    const uint16_t next_offset = state.thermo_count;
-                    if (net.network.prepareStackThermoPageRequest(node_id, millis(), next_offset, 4000u))
+                    const uint16_t next_offset = cache.thermo_count;
+                    if (net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id, millis(),
+                                                            next_offset, 4000u))
                     {
                         _pending_stack_thermo_page = true;
                         _pending_stack_thermo_node_id = node_id;
                         _pending_stack_thermo_offset = next_offset;
-                        _pending_stack_thermo_limit = 8;
+                        _pending_stack_thermo_limit = StackUnitSnapshot::kPageSize;
                         const bool bootstrap_log = shouldLogStackBootstrapSync_(node_id);
                         _pending_stack_thermo_log =
                             bootstrap_log &&
@@ -1383,11 +1410,9 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         if (action == "snapshot_req")
         {
             const uint16_t offset = (uint16_t)(params["offset"] | 0);
-            uint16_t limit = (uint16_t)(params["limit"] | 8);
-            if (limit == 0)
-                limit = 8;
-            if (limit > 8)
-                limit = 8;
+            uint16_t limit = (uint16_t)(params["limit"] | StackUnitSnapshot::kPageSize);
+            if (limit == 0 || limit > StackUnitSnapshot::kPageSize)
+                limit = StackUnitSnapshot::kPageSize;
             DynamicJsonDocument doc(2048);
             appendTankSnapshotPage_(doc.to<JsonObject>(), offset, limit);
             net.network.stackSlaveSendResponse(route.source_node, "tanks", "snapshot",
@@ -1400,16 +1425,16 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             const uint16_t total = (uint16_t)(params["total"] | 0);
             const uint16_t summary_total = (uint16_t)(params["summary"]["tanks"]["enabled"] | 0);
             const uint16_t alert_total = (uint16_t)(params["summary"]["tanks"]["alert"] | 0);
-            StackUnitSnapshot::TankItem items[8]{};
             uint8_t item_count = 0;
             const JsonArrayConst tanks_items = params["controllers"]["tanks"].as<JsonArrayConst>();
+            memset(_stack_tank_page_items, 0, sizeof(_stack_tank_page_items));
             if (!tanks_items.isNull())
             {
                 for (JsonObjectConst item : tanks_items)
                 {
-                    if (item_count >= 8)
+                    if (item_count >= StackUnitSnapshot::kPageSize)
                         break;
-                    auto &dst = items[item_count];
+                    auto &dst = _stack_tank_page_items[item_count];
                     dst.id = (uint8_t)(item["id"] | 0);
                     dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
                                                              : (item["enabled"].as<int>() != 0);
@@ -1440,25 +1465,27 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     ++item_count;
                 }
             }
-            net.network.completeStackTanksPageRequest(node_id, offset);
+            net.network.completeStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id, offset);
             net.network.updateStackIndexTanksPage(node_id, offset, total > 0 ? total : summary_total, alert_total,
-                                                  items, item_count, millis());
+                                                  _stack_tank_page_items, item_count, millis());
             StackUnitSnapshot::State state{};
-            if (net.network.stackIndexState(node_id, state))
+            StackUnitSnapshot::CacheState cache{};
+            if (net.network.stackIndexState(node_id, state) && net.network.stackIndexCacheState(node_id, cache))
             {
                 const uint16_t expected_total = (total > 0) ? total : summary_total;
                 const uint16_t target_total =
                     (expected_total > StackUnitSnapshot::kTankCount) ? (uint16_t)StackUnitSnapshot::kTankCount
                                                                      : expected_total;
-                if (target_total > 0 && state.tank_count < target_total)
+                if (target_total > 0 && cache.tank_count < target_total)
                 {
-                    const uint16_t next_offset = state.tank_count;
-                    if (net.network.prepareStackTanksPageRequest(node_id, millis(), next_offset, 4000u))
+                    const uint16_t next_offset = cache.tank_count;
+                    if (net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id, millis(),
+                                                            next_offset, 4000u))
                     {
                         _pending_stack_tanks_page = true;
                         _pending_stack_tanks_node_id = node_id;
                         _pending_stack_tanks_offset = next_offset;
-                        _pending_stack_tanks_limit = 8;
+                        _pending_stack_tanks_limit = StackUnitSnapshot::kPageSize;
                         const bool bootstrap_log = shouldLogStackBootstrapSync_(node_id);
                         _pending_stack_tanks_log =
                             bootstrap_log &&
@@ -2422,9 +2449,9 @@ void AppRuntime::flushPendingStackSocketsResponse_(){
     if (target_node == 0)
         return;
     if (limit == 0)
-        limit = 8;
-    if (limit > 8)
-        limit = 8;
+        limit = StackUnitSnapshot::kPageSize;
+    if (limit > StackUnitSnapshot::kPageSize)
+        limit = StackUnitSnapshot::kPageSize;
 
     DynamicJsonDocument doc(1536);
     appendSocketSnapshotPage_(doc.to<JsonObject>(), offset, limit);
@@ -2453,7 +2480,7 @@ void AppRuntime::flushPendingStackSocketsPage_(){
     if (node_id == 0)
         return;
     if (limit == 0)
-        limit = 8;
+        limit = StackUnitSnapshot::kPageSize;
 
     DynamicJsonDocument req(64);
     req["offset"] = offset;
@@ -2475,7 +2502,7 @@ void AppRuntime::flushPendingStackSocketsPage_(){
     }
     else
     {
-        net.network.clearStackSocketsPageRequest(node_id);
+        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id);
         core.logs.warn(F("STACK"), F("Sync slave sockets request failed: node 0x%08lX range: %u-%u"),
                        (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
     }
@@ -2496,9 +2523,9 @@ void AppRuntime::flushPendingStackLightsResponse_(){
     if (target_node == 0)
         return;
     if (limit == 0)
-        limit = 8;
-    if (limit > 8)
-        limit = 8;
+        limit = StackUnitSnapshot::kPageSize;
+    if (limit > StackUnitSnapshot::kPageSize)
+        limit = StackUnitSnapshot::kPageSize;
 
     DynamicJsonDocument doc(1536);
     appendLightSnapshotPage_(doc.to<JsonObject>(), offset, limit);
@@ -2527,7 +2554,7 @@ void AppRuntime::flushPendingStackLightsPage_(){
     if (node_id == 0)
         return;
     if (limit == 0)
-        limit = 8;
+        limit = StackUnitSnapshot::kPageSize;
 
     DynamicJsonDocument req(64);
     req["offset"] = offset;
@@ -2549,7 +2576,7 @@ void AppRuntime::flushPendingStackLightsPage_(){
     }
     else
     {
-        net.network.clearStackLightsPageRequest(node_id);
+        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id);
         core.logs.warn(F("STACK"), F("Sync slave lights request failed: node 0x%08lX range: %u-%u"),
                        (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
     }
@@ -2570,7 +2597,7 @@ void AppRuntime::flushPendingStackMeteoPage_(){
     if (node_id == 0)
         return;
     if (limit == 0)
-        limit = 8;
+        limit = StackUnitSnapshot::kPageSize;
 
     DynamicJsonDocument req(64);
     req["offset"] = offset;
@@ -2592,7 +2619,7 @@ void AppRuntime::flushPendingStackMeteoPage_(){
     }
     else
     {
-        net.network.clearStackMeteoPageRequest(node_id);
+        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id);
         core.logs.warn(F("STACK"), F("Sync slave meteo request failed: node 0x%08lX range: %u-%u"),
                        (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
     }
@@ -2613,7 +2640,7 @@ void AppRuntime::flushPendingStackThermoPage_(){
     if (node_id == 0)
         return;
     if (limit == 0)
-        limit = 8;
+        limit = StackUnitSnapshot::kPageSize;
 
     DynamicJsonDocument req(64);
     req["offset"] = offset;
@@ -2635,7 +2662,7 @@ void AppRuntime::flushPendingStackThermoPage_(){
     }
     else
     {
-        net.network.clearStackThermoPageRequest(node_id);
+        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id);
         core.logs.warn(F("STACK"), F("Sync slave thermo request failed: node 0x%08lX range: %u-%u"),
                        (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
     }
@@ -2656,7 +2683,7 @@ void AppRuntime::flushPendingStackTanksPage_(){
     if (node_id == 0)
         return;
     if (limit == 0)
-        limit = 8;
+        limit = StackUnitSnapshot::kPageSize;
 
     DynamicJsonDocument req(64);
     req["offset"] = offset;
@@ -2678,7 +2705,7 @@ void AppRuntime::flushPendingStackTanksPage_(){
     }
     else
     {
-        net.network.clearStackTanksPageRequest(node_id);
+        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id);
         core.logs.warn(F("STACK"), F("Sync slave tanks request failed: node 0x%08lX range: %u-%u"),
                        (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
     }
@@ -2775,25 +2802,25 @@ void AppRuntime::logStackNodeInventory_(uint32_t node_id){
     if (!state)
         return;
     const String node = stackNodeLabel_(node_id);
-    StackUnitSnapshot::Snapshot snapshot{};
-    const bool has_snapshot = net.network.stackIndexStateSnapshot(node_id, snapshot);
+    StackUnitSnapshot::State snapshot{};
+    StackUnitSnapshot::CacheState cache{};
+    const bool has_snapshot = net.network.stackIndexState(node_id, snapshot);
+    const bool has_cache = net.network.stackIndexCacheState(node_id, cache);
     const bool sockets_snapshot_ready =
-        has_snapshot && snapshot.updated_ms != 0 && snapshot.socket_count >= snapshot.sockets_enabled;
+        has_snapshot && has_cache && snapshot.updated_ms != 0 && cache.socket_count >= snapshot.sockets_enabled;
     const bool lights_snapshot_ready =
-        has_snapshot && snapshot.updated_ms != 0 && snapshot.light_count >= snapshot.lights_enabled;
+        has_snapshot && has_cache && snapshot.updated_ms != 0 && cache.light_count >= snapshot.lights_enabled;
 
     if ((state->logged_mask & kInvSockets) == 0)
     {
         if (sockets_snapshot_ready)
         {
-            for (uint8_t i = 0; i < snapshot.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
-            {
-                const auto &it = snapshot.sockets[i];
+            net.network.forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                 if (!it.enabled)
-                    continue;
+                    return;
                 core.logs.info(F("STACK"), F("Sync slave unit: %s item: sockets id: %u name: %s"),
                                node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
-            }
+            });
             state->logged_mask |= kInvSockets;
         }
     }
@@ -2802,14 +2829,12 @@ void AppRuntime::logStackNodeInventory_(uint32_t node_id){
     {
         if (lights_snapshot_ready)
         {
-            for (uint8_t i = 0; i < snapshot.light_count && i < StackUnitSnapshot::kSocketCount; ++i)
-            {
-                const auto &it = snapshot.lights[i];
+            net.network.forEachStackLight(node_id, cache.light_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                 if (!it.enabled)
-                    continue;
+                    return;
                 core.logs.info(F("STACK"), F("Sync slave unit: %s item: lights id: %u name: %s"),
                                node.c_str(), (unsigned)it.id, it.name[0] ? it.name : "-");
-            }
+            });
             state->logged_mask |= kInvLights;
         }
     }

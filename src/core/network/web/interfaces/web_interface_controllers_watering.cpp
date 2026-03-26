@@ -11,6 +11,43 @@
 
 #include "core/network/web/web_interface.hpp"
 
+namespace
+{
+void loadLocalWateringItems_(WateringController &watering, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto guard = watering.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.watering_valid[i] = false;
+        const auto *cfg = watering.configByIndex(i);
+        const auto *st = watering.stateByIndex(i);
+        if (!cfg || !st)
+            continue;
+        scratch.watering_valid[i] = true;
+        scratch.watering_cfg[i] = *cfg;
+        scratch.watering_st[i] = *st;
+    }
+}
+
+void loadLocalWateringTankItems_(const TankController &tanks, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto guard = tanks.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.tank_valid[i] = false;
+        const auto *cfg = tanks.configByIndex(i);
+        if (!cfg || !cfg->enabled)
+            continue;
+        scratch.tank_valid[i] = true;
+        scratch.tank_cfg[i] = *cfg;
+    }
+}
+}
+
 size_t WebInterfaceControllersWateringHelper::wateringLocalRenderCount_(const WebInterface &web) {
         if (!web._controllers)
             return 0;
@@ -103,8 +140,12 @@ String WebInterfaceControllersWateringHelper::listWateringHtml_(WebInterface &we
             return WebUiRu::Watering::kText27;
         String items;
         items.reserve(16384);
+        auto scratch_guard = web.scratchLockGuard_();
+        WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+        if (!scratch)
+            return "";
         WateringController &watering = web._controllers->watering();
-        auto guard = watering.lockGuard();
+        loadLocalWateringItems_(watering, *scratch, WateringController::kRuleCount);
         auto appendRule = [&](const WateringController::RuleConfig &cfg, const WateringController::RuleState &st)
         {
             const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Watering, cfg.id);
@@ -264,13 +305,11 @@ String WebInterfaceControllersWateringHelper::listWateringHtml_(WebInterface &we
         {
             if (rendered >= page_limit)
                 break;
-            const auto *cfg = watering.configByIndex(i);
-            const auto *st = watering.stateByIndex(i);
-            if (!cfg || !st)
+            if (!scratch->watering_valid[i])
                 continue;
-            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Watering, cfg->id))
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Watering, scratch->watering_cfg[i].id))
                 continue;
-            if (!can_view_disabled && !cfg->enabled)
+            if (!can_view_disabled && !scratch->watering_cfg[i].enabled)
                 continue;
             if (visible_idx < offset)
             {
@@ -278,7 +317,7 @@ String WebInterfaceControllersWateringHelper::listWateringHtml_(WebInterface &we
                 continue;
             }
             ++visible_idx;
-            appendRule(*cfg, *st);
+            appendRule(scratch->watering_cfg[i], scratch->watering_st[i]);
             ++rendered;
         }
         return items;
@@ -299,22 +338,26 @@ String WebInterfaceControllersWateringHelper::wateringTankOptionsJson_(const Web
         bool first = true;
         if (web._controllers)
         {
+            auto scratch_guard = web.scratchLockGuard_();
+            WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+            if (!scratch)
+                return "[]";
             const TankController &tanks = web._controllers->tanks();
-            auto guard = tanks.lockGuard();
+            loadLocalWateringTankItems_(tanks, *scratch, TankController::kTankCount);
             for (size_t i = 0; i < TankController::kTankCount; ++i)
             {
-                const auto *cfg = tanks.configByIndex(i);
-                if (!cfg || !cfg->enabled)
+                if (!scratch->tank_valid[i])
                     continue;
+                const auto &cfg = scratch->tank_cfg[i];
                 if (!first)
                     out += ",";
                 out += "{\"v\":";
-                out += String((unsigned)cfg->id);
+                out += String((unsigned)cfg.id);
                 out += ",\"l\":\"";
-                if (cfg->name.length())
-                    web.appendJsonEscaped_(out, cfg->name);
+                if (cfg.name.length())
+                    web.appendJsonEscaped_(out, cfg.name);
                 else
-                    out += String("Tank #") + String((unsigned)cfg->id);
+                    out += String("Tank #") + String((unsigned)cfg.id);
                 out += "\"}";
                 first = false;
             }

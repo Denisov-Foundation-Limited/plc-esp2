@@ -261,8 +261,8 @@ String WebInterfaceControllersOps::listStackNodesStatusHtml_() const
         StackDeviceRegistry::DeviceInfo device{};
         if (!_web._network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
             continue;
-        StackUnitSnapshot::Snapshot snapshot{};
-        const bool has_snapshot = _web._network->stackIndexStateSnapshot(device.node_id, snapshot) && snapshot.updated_ms != 0;
+        StackUnitSnapshot::State snapshot{};
+        const bool has_snapshot = _web._network->stackIndexState(device.node_id, snapshot) && snapshot.updated_ms != 0;
         html += "<tr><td><strong>";
         if (device.name[0])
             appendHtmlEscaped_(html, device.name);

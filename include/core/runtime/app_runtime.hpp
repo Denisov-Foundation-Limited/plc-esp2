@@ -19,6 +19,7 @@
 #include "core/display.hpp"
 #include "hal/ds3231mz.hpp"
 #include "core/network/stack/stack_device_registry.hpp"
+#include "core/network/stack/stack_unit_snapshot.hpp"
 #include "core/network/stack/stack_json_protocol.hpp"
 
 struct CoreContext;
@@ -399,4 +400,9 @@ private:
     bool _display_rtc_cache_valid = false;
     Ds3231Mz::DateTime _display_rtc_cache{};
     uint32_t _display_rtc_cache_ms = 0;
+    StackUnitSnapshot::SocketItem _stack_socket_page_items[StackUnitSnapshot::kPageSize]{};
+    StackUnitSnapshot::SocketItem _stack_light_page_items[StackUnitSnapshot::kPageSize]{};
+    StackUnitSnapshot::MeteoItem _stack_meteo_page_items[StackUnitSnapshot::kPageSize]{};
+    StackUnitSnapshot::ThermoItem _stack_thermo_page_items[StackUnitSnapshot::kPageSize]{};
+    StackUnitSnapshot::TankItem _stack_tank_page_items[StackUnitSnapshot::kPageSize]{};
 };

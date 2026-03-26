@@ -14,6 +14,8 @@
 #include <WiFi.h>
 #include <stdlib.h>
 #include <string.h>
+#include "esp32-hal-psram.h"
+#include "esp_heap_caps.h"
 
 #include "boards/board_profile.hpp"
 #include "controllers/controllers.hpp"
@@ -60,6 +62,90 @@ uint32_t cloudBackoffMs_(uint8_t streak, uint32_t base_ms)
 
 } // namespace
 
+struct CloudClient::ScratchBuffer
+{
+    struct SocketSnapshotItem
+    {
+        bool valid = false;
+        SocketController::SocketConfig cfg{};
+        SocketController::SocketState st{};
+    };
+
+    struct MeteoSnapshotItem
+    {
+        bool valid = false;
+        MeteoController::SensorConfig cfg{};
+        MeteoController::SensorState st{};
+    };
+
+    struct ThermoSnapshotItem
+    {
+        bool valid = false;
+        ThermoController::DeviceConfig cfg{};
+        ThermoController::DeviceState st{};
+    };
+
+    struct ThermoSensorItem
+    {
+        bool found = false;
+        String name;
+        bool has_temp = false;
+        float temp_c = 0.0f;
+    };
+
+    struct TankSnapshotItem
+    {
+        bool valid = false;
+        TankController::TankConfig cfg{};
+        TankController::TankState st{};
+    };
+
+    struct SepticSnapshotItem
+    {
+        bool valid = false;
+        SepticController::SepticConfig cfg{};
+        SepticController::SepticState st{};
+    };
+
+    struct WateringSnapshotItem
+    {
+        bool valid = false;
+        WateringController::RuleConfig cfg{};
+        WateringController::RuleState st{};
+    };
+
+    struct TankNameItem
+    {
+        bool valid = false;
+        String name;
+    };
+
+    struct SecuritySnapshotItem
+    {
+        bool valid = false;
+        SecurityController::SensorConfig cfg{};
+        SecurityController::SensorState st{};
+    };
+
+    struct LeakSnapshotItem
+    {
+        bool valid = false;
+        LeakController::ZoneConfig cfg{};
+        LeakController::ZoneState st{};
+    };
+
+    SocketSnapshotItem sockets[SocketController::kSocketCount]{};
+    MeteoSnapshotItem meteo[MeteoController::kSensorCount]{};
+    ThermoSnapshotItem thermo[ThermoController::kDeviceCount]{};
+    ThermoSensorItem thermo_sensors[MeteoController::kSensorCount + 1]{};
+    TankSnapshotItem tanks[TankController::kTankCount]{};
+    SepticSnapshotItem septic[SepticController::kSepticCount]{};
+    WateringSnapshotItem watering[WateringController::kRuleCount]{};
+    TankNameItem watering_tanks[TankController::kTankCount + 1]{};
+    SecuritySnapshotItem security[SecurityController::kSensorCount]{};
+    LeakSnapshotItem leak[LeakController::kZoneCount]{};
+};
+
 CloudClient::CloudClient(Logger &log, Controllers &controllers, PlcControl &plc, WifiManager &wifi, RTC &rtc)
     : _log(log),
       _controllers(controllers),
@@ -68,6 +154,11 @@ CloudClient::CloudClient(Logger &log, Controllers &controllers, PlcControl &plc,
       _rtc(rtc)
 {
     setTransport(_default_transport);
+}
+
+CloudClient::~CloudClient()
+{
+    releaseScratch_();
 }
 void CloudClient::setGsm(GsmModem *gsm)
 { _gsm = gsm; }
@@ -114,6 +205,43 @@ void CloudClient::bindRuleCallbacks()
 {
     if (_rules)
         _rules->setTriggerHandler(&CloudClient::onRuleTriggered_, this);
+}
+
+bool CloudClient::ensureScratch_() const
+{
+    if (_scratch)
+        return true;
+    const auto guard = _scratch_lock.guard();
+    if (_scratch)
+        return true;
+    const size_t bytes = sizeof(ScratchBuffer);
+    void *mem = nullptr;
+#if defined(ESP32)
+    if (psramFound())
+        mem = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+    if (!mem)
+        mem = calloc(1, bytes);
+    if (!mem)
+        return false;
+    memset(mem, 0, bytes);
+    _scratch = static_cast<ScratchBuffer *>(mem);
+    return true;
+}
+
+CloudClient::ScratchBuffer *CloudClient::scratch_() const
+{
+    return ensureScratch_() ? _scratch : nullptr;
+}
+
+void CloudClient::releaseScratch_()
+{
+    const auto guard = _scratch_lock.guard();
+    if (_scratch)
+    {
+        free(_scratch);
+        _scratch = nullptr;
+    }
 }
 bool CloudClient::publishEvent(const String &kind, const String &reason, const String &data_json)
 {
@@ -780,7 +908,7 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
         {
             DynamicJsonDocument req(64);
             req["offset"] = 0;
-            req["limit"] = 8;
+            req["limit"] = StackUnitSnapshot::kPageSize;
             _network->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
                                                StackRouteAdapter::Mode::Json, true);
         }
@@ -788,7 +916,7 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
         {
             DynamicJsonDocument req(64);
             req["offset"] = 0;
-            req["limit"] = 8;
+            req["limit"] = StackUnitSnapshot::kPageSize;
             _network->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
                                                StackRouteAdapter::Mode::Json, true);
         }
@@ -796,7 +924,7 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
         {
             DynamicJsonDocument req(64);
             req["offset"] = 0;
-            req["limit"] = 8;
+            req["limit"] = StackUnitSnapshot::kPageSize;
             _network->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
                                                StackRouteAdapter::Mode::Json, true);
         }
@@ -804,7 +932,7 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
         {
             DynamicJsonDocument req(64);
             req["offset"] = 0;
-            req["limit"] = 8;
+            req["limit"] = StackUnitSnapshot::kPageSize;
             _network->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
                                                StackRouteAdapter::Mode::Json, true);
         }
@@ -948,7 +1076,7 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
                                            StackRouteAdapter::Mode::Json, true);
         DynamicJsonDocument req(64);
         req["offset"] = 0;
-        req["limit"] = 8;
+        req["limit"] = StackUnitSnapshot::kPageSize;
         _network->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
                                            StackRouteAdapter::Mode::Json, true);
         sendAck_(req_id, true, "");
@@ -1662,313 +1790,482 @@ void CloudClient::fillGroups_(JsonArray out)
 }
 void CloudClient::fillSockets_(JsonArray out, bool lights)
 {
-    auto guard = _controllers.sockets().lockGuard(kSnapshotLockTimeoutMs);
-    if (!guard.locked())
-    {
-        _log.warn(F("CLOUD"), F("Snapshot lock timeout: sockets lights: %u"), lights ? 1u : 0u);
+    ScratchBuffer *scratch = scratch_();
+    if (!scratch)
         return;
-    }
     const size_t count = lights ? SocketController::kLightCount : SocketController::kSocketCount;
-    for (size_t i = 0; i < count; ++i)
     {
-        const auto *cfg = lights ? _controllers.sockets().lightConfigByIndex(i)
-                                 : _controllers.sockets().configByIndex(i);
-        const auto *st = lights ? _controllers.sockets().lightStateByIndex(i)
-                                : _controllers.sockets().stateByIndex(i);
-        if (!cfg || !st || !cfg->enabled)
+        const auto scratch_guard = _scratch_lock.guard();
+        auto guard = _controllers.sockets().lockGuard(kSnapshotLockTimeoutMs);
+        if (!guard.locked())
+        {
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: sockets lights: %u"), lights ? 1u : 0u);
+            return;
+        }
+        for (size_t i = 0; i < count; ++i)
+        {
+            const auto *cfg = lights ? _controllers.sockets().lightConfigByIndex(i)
+                                     : _controllers.sockets().configByIndex(i);
+            const auto *st = lights ? _controllers.sockets().lightStateByIndex(i)
+                                    : _controllers.sockets().stateByIndex(i);
+            scratch->sockets[i].valid = false;
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            scratch->sockets[i].valid = true;
+            scratch->sockets[i].cfg = *cfg;
+            scratch->sockets[i].st = *st;
+        }
+        for (size_t i = 0; i < count; ++i)
+        {
+        const auto &item = scratch->sockets[i];
+        if (!item.valid)
             continue;
+        const auto &cfg = item.cfg;
+        const auto &st = item.st;
         JsonObject o = out.add<JsonObject>();
-        o["id"] = (unsigned)cfg->id;
-        o["group_id"] = (unsigned)cfg->group_id;
-        o["enabled"] = cfg->enabled;
-        if (cfg->name.length())
-            o["name"] = cfg->name;
-        if (cfg->button_port != SocketController::kInvalidPort)
-            o["button"] = cfg->button_port;
-        if (cfg->relay_port != SocketController::kInvalidPort)
-            o["relay"] = cfg->relay_port;
-        o["state"] = st->relay_on;
+        o["id"] = (unsigned)cfg.id;
+        o["group_id"] = (unsigned)cfg.group_id;
+        o["enabled"] = cfg.enabled;
+        if (cfg.name.length())
+            o["name"] = cfg.name;
+        if (cfg.button_port != SocketController::kInvalidPort)
+            o["button"] = cfg.button_port;
+        if (cfg.relay_port != SocketController::kInvalidPort)
+            o["relay"] = cfg.relay_port;
+        o["state"] = st.relay_on;
+    }
     }
 }
 void CloudClient::fillMeteo_(JsonArray out)
 {
-    auto guard = _controllers.meteo().lockGuard(kSnapshotLockTimeoutMs);
-    if (!guard.locked())
-    {
-        static uint32_t last_warn_ms = 0;
-        const uint32_t now = millis();
-        if (last_warn_ms == 0 || (uint32_t)(now - last_warn_ms) >= kSnapshotWarnIntervalMs)
-        {
-            last_warn_ms = now;
-            _log.warn(F("CLOUD"), F("Snapshot lock timeout: meteo"));
-        }
+    ScratchBuffer *scratch = scratch_();
+    if (!scratch)
         return;
-    }
-    for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
     {
-        const auto *cfg = _controllers.meteo().configByIndex(i);
-        const auto *st = _controllers.meteo().stateByIndex(i);
-        if (!cfg || !st || !cfg->enabled)
+        const auto scratch_guard = _scratch_lock.guard();
+        auto guard = _controllers.meteo().lockGuard(kSnapshotLockTimeoutMs);
+        if (!guard.locked())
+        {
+            static uint32_t last_warn_ms = 0;
+            const uint32_t now = millis();
+            if (last_warn_ms == 0 || (uint32_t)(now - last_warn_ms) >= kSnapshotWarnIntervalMs)
+            {
+                last_warn_ms = now;
+                _log.warn(F("CLOUD"), F("Snapshot lock timeout: meteo"));
+            }
+            return;
+        }
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = _controllers.meteo().configByIndex(i);
+            const auto *st = _controllers.meteo().stateByIndex(i);
+            scratch->meteo[i].valid = false;
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            scratch->meteo[i].valid = true;
+            scratch->meteo[i].cfg = *cfg;
+            scratch->meteo[i].st = *st;
+        }
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+        const auto &item = scratch->meteo[i];
+        if (!item.valid)
             continue;
+        const auto &cfg = item.cfg;
+        const auto &st = item.st;
         JsonObject o = out.add<JsonObject>();
-        o["id"] = (unsigned)cfg->id;
-        o["group_id"] = (unsigned)cfg->group_id;
-        o["enabled"] = cfg->enabled;
-        if (cfg->name.length())
-            o["name"] = cfg->name;
-        o["type"] = MeteoController::typeName(cfg->type);
-        if (cfg->type == MeteoController::SensorType::Dht22 &&
-            cfg->dht_pin != MeteoController::kInvalidPin)
-            o["pin"] = cfg->dht_pin;
-        if (cfg->type == MeteoController::SensorType::Ds18b20 && cfg->ds18_addr_set)
+        o["id"] = (unsigned)cfg.id;
+        o["group_id"] = (unsigned)cfg.group_id;
+        o["enabled"] = cfg.enabled;
+        if (cfg.name.length())
+            o["name"] = cfg.name;
+        o["type"] = MeteoController::typeName(cfg.type);
+        if (cfg.type == MeteoController::SensorType::Dht22 &&
+            cfg.dht_pin != MeteoController::kInvalidPin)
+            o["pin"] = cfg.dht_pin;
+        if (cfg.type == MeteoController::SensorType::Ds18b20 && cfg.ds18_addr_set)
         {
             char hex[17] = {};
-            MeteoController::formatHexAddr(cfg->ds18_addr, hex);
+            MeteoController::formatHexAddr(cfg.ds18_addr, hex);
             o["addr"] = hex;
         }
-        if (st->has_temp)
-            o["temp_c"] = st->temp_c;
-        if (st->has_humidity)
-            o["hum"] = st->humidity;
-        o["has_temp"] = st->has_temp;
-        o["has_hum"] = st->has_humidity;
-        o["ok"] = st->ok;
+        if (st.has_temp)
+            o["temp_c"] = st.temp_c;
+        if (st.has_humidity)
+            o["hum"] = st.humidity;
+        o["has_temp"] = st.has_temp;
+        o["has_hum"] = st.has_humidity;
+        o["ok"] = st.ok;
+    }
     }
 }
 void CloudClient::fillThermo_(JsonArray out)
 {
-    auto guard = _controllers.thermo().lockGuard(kSnapshotLockTimeoutMs);
-    if (!guard.locked())
-    {
-        _log.warn(F("CLOUD"), F("Snapshot lock timeout: thermo"));
+    ScratchBuffer *scratch = scratch_();
+    if (!scratch)
         return;
-    }
-    for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
     {
-        const auto *cfg = _controllers.thermo().configByIndex(i);
-        const auto *st = _controllers.thermo().stateByIndex(i);
-        if (!cfg || !st || !cfg->enabled)
-            continue;
-        JsonObject o = out.add<JsonObject>();
-        o["id"] = (unsigned)cfg->id;
-        o["group_id"] = (unsigned)cfg->group_id;
-        o["enabled"] = cfg->enabled;
-        if (cfg->name.length())
-            o["name"] = cfg->name;
-        o["sensor"] = (unsigned)cfg->sensor_id;
-        if (cfg->sensor_node_id != 0)
-            o["sensor_node"] = (unsigned long)cfg->sensor_node_id;
-        o["mode"] = ThermoController::modeName(cfg->mode);
-        o["target"] = cfg->target_c;
-        o["hyst"] = cfg->hysteresis;
-        if (cfg->heat_port != ThermoController::kInvalidPort)
-            o["heat"] = cfg->heat_port;
-        if (cfg->cool_port != ThermoController::kInvalidPort)
-            o["cool"] = cfg->cool_port;
-        if (cfg->button_port != ThermoController::kInvalidPort)
-            o["button"] = cfg->button_port;
-        o["power_on"] = st->power_on;
-        o["heat_on"] = st->heat_on;
-        o["cool_on"] = st->cool_on;
-
-        if (cfg->sensor_id != ThermoController::kInvalidSensor)
+        const auto scratch_guard = _scratch_lock.guard();
+        auto guard = _controllers.thermo().lockGuard(kSnapshotLockTimeoutMs);
+        if (!guard.locked())
         {
-            if (cfg->sensor_node_id == 0)
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: thermo"));
+            return;
+        }
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = _controllers.thermo().configByIndex(i);
+            const auto *st = _controllers.thermo().stateByIndex(i);
+            scratch->thermo[i].valid = false;
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            scratch->thermo[i].valid = true;
+            scratch->thermo[i].cfg = *cfg;
+            scratch->thermo[i].st = *st;
+        }
+        auto meteo_guard = _controllers.meteo().lockGuard(kSnapshotLockTimeoutMs);
+        if (meteo_guard.locked())
+        {
+            for (size_t i = 0; i <= MeteoController::kSensorCount; ++i)
+                scratch->thermo_sensors[i] = ScratchBuffer::ThermoSensorItem{};
+            for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
             {
-                auto meteo_guard = _controllers.meteo().lockGuard(kSnapshotLockTimeoutMs);
-                if (meteo_guard.locked())
+                const auto *cfg = _controllers.meteo().configByIndex(i);
+                const auto *st = _controllers.meteo().stateByIndex(i);
+                if (!cfg || cfg->id == 0 || cfg->id > MeteoController::kSensorCount)
+                    continue;
+                auto &dst = scratch->thermo_sensors[cfg->id];
+                dst.found = true;
+                if (cfg->name.length())
+                    dst.name = cfg->name;
+                if (st)
                 {
-                    const auto *sensor_cfg = _controllers.meteo().config(cfg->sensor_id);
-                    const auto *sensor_st = _controllers.meteo().state(cfg->sensor_id);
-                    if (sensor_cfg && sensor_cfg->name.length())
-                        o["sensor_name"] = sensor_cfg->name;
-                    if (sensor_st)
-                    {
-                        o["has_temp"] = sensor_st->has_temp;
-                        if (sensor_st->has_temp)
-                            o["temp_c"] = sensor_st->temp_c;
-                    }
+                    dst.has_temp = st->has_temp;
+                    dst.temp_c = st->temp_c;
+                }
+            }
+        }
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+        const auto &item = scratch->thermo[i];
+        if (!item.valid)
+            continue;
+        const auto &cfg = item.cfg;
+        const auto &st = item.st;
+        JsonObject o = out.add<JsonObject>();
+        o["id"] = (unsigned)cfg.id;
+        o["group_id"] = (unsigned)cfg.group_id;
+        o["enabled"] = cfg.enabled;
+        if (cfg.name.length())
+            o["name"] = cfg.name;
+        o["sensor"] = (unsigned)cfg.sensor_id;
+        if (cfg.sensor_node_id != 0)
+            o["sensor_node"] = (unsigned long)cfg.sensor_node_id;
+        o["mode"] = ThermoController::modeName(cfg.mode);
+        o["target"] = cfg.target_c;
+        o["hyst"] = cfg.hysteresis;
+        if (cfg.heat_port != ThermoController::kInvalidPort)
+            o["heat"] = cfg.heat_port;
+        if (cfg.cool_port != ThermoController::kInvalidPort)
+            o["cool"] = cfg.cool_port;
+        if (cfg.button_port != ThermoController::kInvalidPort)
+            o["button"] = cfg.button_port;
+        o["power_on"] = st.power_on;
+        o["heat_on"] = st.heat_on;
+        o["cool_on"] = st.cool_on;
+
+        if (cfg.sensor_id != ThermoController::kInvalidSensor &&
+            cfg.sensor_node_id == 0 &&
+            cfg.sensor_id <= MeteoController::kSensorCount)
+        {
+            const auto &sensor = scratch->thermo_sensors[cfg.sensor_id];
+            if (sensor.found)
+            {
+                if (sensor.name.length())
+                    o["sensor_name"] = sensor.name;
+                o["has_temp"] = sensor.has_temp;
+                if (sensor.has_temp)
+                {
+                    o["temp_c"] = sensor.temp_c;
                 }
             }
         }
     }
+    }
 }
 void CloudClient::fillTanks_(JsonArray out)
 {
-    auto guard = _controllers.tanks().lockGuard(kSnapshotLockTimeoutMs);
-    if (!guard.locked())
-    {
-        _log.warn(F("CLOUD"), F("Snapshot lock timeout: tanks"));
+    ScratchBuffer *scratch = scratch_();
+    if (!scratch)
         return;
-    }
-    for (size_t i = 0; i < TankController::kTankCount; ++i)
     {
-        const auto *cfg = _controllers.tanks().configByIndex(i);
-        const auto *st = _controllers.tanks().stateByIndex(i);
-        if (!cfg || !st || !cfg->enabled)
+        const auto scratch_guard = _scratch_lock.guard();
+        auto guard = _controllers.tanks().lockGuard(kSnapshotLockTimeoutMs);
+        if (!guard.locked())
+        {
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: tanks"));
+            return;
+        }
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = _controllers.tanks().configByIndex(i);
+            const auto *st = _controllers.tanks().stateByIndex(i);
+            scratch->tanks[i].valid = false;
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            scratch->tanks[i].valid = true;
+            scratch->tanks[i].cfg = *cfg;
+            scratch->tanks[i].st = *st;
+        }
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+        const auto &item = scratch->tanks[i];
+        if (!item.valid)
             continue;
+        const auto &cfg = item.cfg;
+        const auto &st = item.st;
         JsonObject o = out.add<JsonObject>();
-        o["id"] = (unsigned)cfg->id;
-        o["group_id"] = (unsigned)cfg->group_id;
-        o["enabled"] = cfg->enabled;
-        o["power_on"] = cfg->power_on;
-        if (cfg->name.length())
-            o["name"] = cfg->name;
-        if (cfg->level_low != TankController::kInvalidPort)
-            o["low"] = cfg->level_low;
-        if (cfg->level_mid != TankController::kInvalidPort)
-            o["mid"] = cfg->level_mid;
-        if (cfg->level_full != TankController::kInvalidPort)
-            o["full"] = cfg->level_full;
-        if (cfg->relay_valve != TankController::kInvalidPort)
-            o["valve"] = cfg->relay_valve;
-        if (cfg->relay_pump != TankController::kInvalidPort)
-            o["pump"] = cfg->relay_pump;
-        if (cfg->relay_alarm != TankController::kInvalidPort)
-            o["alarm"] = cfg->relay_alarm;
-        o["level_low"] = st->level_low;
-        o["level_mid"] = st->level_mid;
-        o["level_full"] = st->level_full;
-        o["levels_ok"] = st->levels_ok;
-        o["valve_on"] = st->valve_on;
-        o["pump_on"] = st->pump_on;
-        o["alarm_on"] = st->alarm_on;
+        o["id"] = (unsigned)cfg.id;
+        o["group_id"] = (unsigned)cfg.group_id;
+        o["enabled"] = cfg.enabled;
+        o["power_on"] = cfg.power_on;
+        if (cfg.name.length())
+            o["name"] = cfg.name;
+        if (cfg.level_low != TankController::kInvalidPort)
+            o["low"] = cfg.level_low;
+        if (cfg.level_mid != TankController::kInvalidPort)
+            o["mid"] = cfg.level_mid;
+        if (cfg.level_full != TankController::kInvalidPort)
+            o["full"] = cfg.level_full;
+        if (cfg.relay_valve != TankController::kInvalidPort)
+            o["valve"] = cfg.relay_valve;
+        if (cfg.relay_pump != TankController::kInvalidPort)
+            o["pump"] = cfg.relay_pump;
+        if (cfg.relay_alarm != TankController::kInvalidPort)
+            o["alarm"] = cfg.relay_alarm;
+        o["level_low"] = st.level_low;
+        o["level_mid"] = st.level_mid;
+        o["level_full"] = st.level_full;
+        o["levels_ok"] = st.levels_ok;
+        o["valve_on"] = st.valve_on;
+        o["pump_on"] = st.pump_on;
+        o["alarm_on"] = st.alarm_on;
+    }
     }
 }
 void CloudClient::fillSeptic_(JsonArray out)
 {
-    auto guard = _controllers.septic().lockGuard(kSnapshotLockTimeoutMs);
-    if (!guard.locked())
-    {
-        _log.warn(F("CLOUD"), F("Snapshot lock timeout: septic"));
+    ScratchBuffer *scratch = scratch_();
+    if (!scratch)
         return;
-    }
-    for (size_t i = 0; i < SepticController::kSepticCount; ++i)
     {
-        const auto *cfg = _controllers.septic().configByIndex(i);
-        const auto *st = _controllers.septic().stateByIndex(i);
-        if (!cfg || !st || !cfg->enabled)
+        const auto scratch_guard = _scratch_lock.guard();
+        auto guard = _controllers.septic().lockGuard(kSnapshotLockTimeoutMs);
+        if (!guard.locked())
+        {
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: septic"));
+            return;
+        }
+        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        {
+            const auto *cfg = _controllers.septic().configByIndex(i);
+            const auto *st = _controllers.septic().stateByIndex(i);
+            scratch->septic[i].valid = false;
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            scratch->septic[i].valid = true;
+            scratch->septic[i].cfg = *cfg;
+            scratch->septic[i].st = *st;
+        }
+        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        {
+        const auto &item = scratch->septic[i];
+        if (!item.valid)
             continue;
+        const auto &cfg = item.cfg;
+        const auto &st = item.st;
         JsonObject o = out.add<JsonObject>();
-        o["id"] = (unsigned)cfg->id;
-        o["group_id"] = (unsigned)cfg->group_id;
-        o["enabled"] = cfg->enabled;
-        if (cfg->name.length())
-            o["name"] = cfg->name;
-        o["monitor"] = cfg->monitoring_on;
-        if (cfg->warning_port != SepticController::kInvalidPort)
-            o["warning_port"] = cfg->warning_port;
-        if (cfg->alarm_port != SepticController::kInvalidPort)
-            o["alarm_port"] = cfg->alarm_port;
-        if (cfg->relay_warning != SepticController::kInvalidPort)
-            o["relay_warning"] = cfg->relay_warning;
-        if (cfg->relay_alarm != SepticController::kInvalidPort)
-            o["relay_alarm"] = cfg->relay_alarm;
-        o["warning"] = st->warning;
-        o["alarm"] = st->alarm;
+        o["id"] = (unsigned)cfg.id;
+        o["group_id"] = (unsigned)cfg.group_id;
+        o["enabled"] = cfg.enabled;
+        if (cfg.name.length())
+            o["name"] = cfg.name;
+        o["monitor"] = cfg.monitoring_on;
+        if (cfg.warning_port != SepticController::kInvalidPort)
+            o["warning_port"] = cfg.warning_port;
+        if (cfg.alarm_port != SepticController::kInvalidPort)
+            o["alarm_port"] = cfg.alarm_port;
+        if (cfg.relay_warning != SepticController::kInvalidPort)
+            o["relay_warning"] = cfg.relay_warning;
+        if (cfg.relay_alarm != SepticController::kInvalidPort)
+            o["relay_alarm"] = cfg.relay_alarm;
+        o["warning"] = st.warning;
+        o["alarm"] = st.alarm;
+    }
     }
 }
 void CloudClient::fillWatering_(JsonArray out)
 {
-    auto guard = _controllers.watering().lockGuard(kSnapshotLockTimeoutMs);
-    if (!guard.locked())
-    {
-        _log.warn(F("CLOUD"), F("Snapshot lock timeout: watering"));
+    ScratchBuffer *scratch = scratch_();
+    if (!scratch)
         return;
-    }
-    for (size_t i = 0; i < WateringController::kRuleCount; ++i)
     {
-        const auto *cfg = _controllers.watering().configByIndex(i);
-        const auto *st = _controllers.watering().stateByIndex(i);
-        if (!cfg || !st || !cfg->enabled)
+        const auto scratch_guard = _scratch_lock.guard();
+        auto guard = _controllers.watering().lockGuard(kSnapshotLockTimeoutMs);
+        if (!guard.locked())
+        {
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: watering"));
+            return;
+        }
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+            const auto *cfg = _controllers.watering().configByIndex(i);
+            const auto *st = _controllers.watering().stateByIndex(i);
+            scratch->watering[i].valid = false;
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            scratch->watering[i].valid = true;
+            scratch->watering[i].cfg = *cfg;
+            scratch->watering[i].st = *st;
+        }
+        auto tank_guard = _controllers.tanks().lockGuard(kSnapshotLockTimeoutMs);
+        if (tank_guard.locked())
+        {
+            for (size_t i = 0; i <= TankController::kTankCount; ++i)
+                scratch->watering_tanks[i] = ScratchBuffer::TankNameItem{};
+            for (size_t i = 0; i < TankController::kTankCount; ++i)
+            {
+                const auto *cfg = _controllers.tanks().configByIndex(i);
+                if (!cfg || cfg->id == 0 || cfg->id > TankController::kTankCount || !cfg->name.length())
+                    continue;
+                scratch->watering_tanks[cfg->id].valid = true;
+                scratch->watering_tanks[cfg->id].name = cfg->name;
+            }
+        }
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+        const auto &item = scratch->watering[i];
+        if (!item.valid)
             continue;
+        const auto &cfg = item.cfg;
+        const auto &st = item.st;
         JsonObject o = out.add<JsonObject>();
-        o["id"] = (unsigned)cfg->id;
-        o["enabled"] = cfg->enabled;
-        o["status"] = st->status;
-        if (cfg->name.length())
-            o["name"] = cfg->name;
-        if (cfg->port != WateringController::kInvalidPort)
-            o["port"] = cfg->port;
-        if (cfg->tank_id)
+        o["id"] = (unsigned)cfg.id;
+        o["enabled"] = cfg.enabled;
+        o["status"] = st.status;
+        if (cfg.name.length())
+            o["name"] = cfg.name;
+        if (cfg.port != WateringController::kInvalidPort)
+            o["port"] = cfg.port;
+        if (cfg.tank_id)
         {
-            o["tank"] = cfg->tank_id;
-            const auto *tank_cfg = _controllers.tanks().config(cfg->tank_id);
-            if (tank_cfg && tank_cfg->name.length())
-                o["tank_name"] = tank_cfg->name;
+            o["tank"] = cfg.tank_id;
+            if (cfg.tank_id <= TankController::kTankCount && scratch->watering_tanks[cfg.tank_id].valid)
+                o["tank_name"] = scratch->watering_tanks[cfg.tank_id].name;
         }
-        if (cfg->weekdays_mask)
-            o["weekdays_mask"] = cfg->weekdays_mask;
-        if (cfg->duration_sec && cfg->hour <= 23 && cfg->minute <= 59)
+        if (cfg.weekdays_mask)
+            o["weekdays_mask"] = cfg.weekdays_mask;
+        if (cfg.duration_sec && cfg.hour <= 23 && cfg.minute <= 59)
         {
-            o["hour"] = cfg->hour;
-            o["minute"] = cfg->minute;
-            o["duration_s"] = cfg->duration_sec;
+            o["hour"] = cfg.hour;
+            o["minute"] = cfg.minute;
+            o["duration_s"] = cfg.duration_sec;
         }
-        if (cfg->duration2_sec && cfg->hour2 <= 23 && cfg->minute2 <= 59)
+        if (cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
         {
-            o["hour2"] = cfg->hour2;
-            o["minute2"] = cfg->minute2;
-            o["duration2_s"] = cfg->duration2_sec;
+            o["hour2"] = cfg.hour2;
+            o["minute2"] = cfg.minute2;
+            o["duration2_s"] = cfg.duration2_sec;
         }
-        if (cfg->duration3_sec && cfg->hour3 <= 23 && cfg->minute3 <= 59)
+        if (cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
         {
-            o["hour3"] = cfg->hour3;
-            o["minute3"] = cfg->minute3;
-            o["duration3_s"] = cfg->duration3_sec;
+            o["hour3"] = cfg.hour3;
+            o["minute3"] = cfg.minute3;
+            o["duration3_s"] = cfg.duration3_sec;
         }
-        o["resume"] = cfg->resume_after_refill;
-        o["resume_level"] = cfg->resume_level;
-        o["active"] = st->active;
-        o["paused"] = st->paused;
-        if (st->remaining_ms)
-            o["remaining_ms"] = st->remaining_ms;
+        o["resume"] = cfg.resume_after_refill;
+        o["resume_level"] = cfg.resume_level;
+        o["active"] = st.active;
+        o["paused"] = st.paused;
+        if (st.remaining_ms)
+            o["remaining_ms"] = st.remaining_ms;
+    }
     }
 }
 void CloudClient::fillSecurity_(JsonObject out)
 {
-    auto guard = _controllers.security().lockGuard(kSnapshotLockTimeoutMs);
-    if (!guard.locked())
-    {
-        _log.warn(F("CLOUD"), F("Snapshot lock timeout: security"));
+    ScratchBuffer *scratch = scratch_();
+    if (!scratch)
         return;
-    }
-    out["enabled"] = _controllers.security().controllerEnabled();
-    out["armed"] = _controllers.security().armed();
-    out["alarm"] = _controllers.security().alarmOn();
-    if (_controllers.security().sirenPort() != SecurityController::kInvalidPort)
-        out["siren"] = (unsigned)_controllers.security().sirenPort();
-
-    JsonArray arr = out["sensors"].to<JsonArray>();
-    for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+    bool controller_enabled = false;
+    bool armed = false;
+    bool alarm = false;
+    uint8_t siren_port = SecurityController::kInvalidPort;
     {
-        const auto *cfg = _controllers.security().configByIndex(i);
-        const auto *st = _controllers.security().stateByIndex(i);
-        if (!cfg || !st || !cfg->enabled)
+        const auto scratch_guard = _scratch_lock.guard();
+        auto guard = _controllers.security().lockGuard(kSnapshotLockTimeoutMs);
+        if (!guard.locked())
+        {
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: security"));
+            return;
+        }
+        controller_enabled = _controllers.security().controllerEnabled();
+        armed = _controllers.security().armed();
+        alarm = _controllers.security().alarmOn();
+        siren_port = _controllers.security().sirenPort();
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+            const auto *cfg = _controllers.security().configByIndex(i);
+            const auto *st = _controllers.security().stateByIndex(i);
+            scratch->security[i].valid = false;
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            scratch->security[i].valid = true;
+            scratch->security[i].cfg = *cfg;
+            scratch->security[i].st = *st;
+        }
+        out["enabled"] = controller_enabled;
+        out["armed"] = armed;
+        out["alarm"] = alarm;
+        if (siren_port != SecurityController::kInvalidPort)
+            out["siren"] = (unsigned)siren_port;
+
+        JsonArray arr = out["sensors"].to<JsonArray>();
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+        const auto &item = scratch->security[i];
+        if (!item.valid)
             continue;
+        const auto &cfg = item.cfg;
+        const auto &st = item.st;
         JsonObject o = arr.add<JsonObject>();
-        o["id"] = (unsigned)cfg->id;
-        o["group_id"] = (unsigned)cfg->group_id;
-        o["enabled"] = cfg->enabled;
-        o["type"] = (cfg->type == SecurityController::SensorType::Reed) ? "reed" : "pir";
-        if (cfg->port != SecurityController::kInvalidPort)
-            o["port"] = cfg->port;
-        if (cfg->name.length())
-            o["name"] = cfg->name;
-        o["silent"] = cfg->silent;
-        o["detect"] = st->is_detect;
+        o["id"] = (unsigned)cfg.id;
+        o["group_id"] = (unsigned)cfg.group_id;
+        o["enabled"] = cfg.enabled;
+        o["type"] = (cfg.type == SecurityController::SensorType::Reed) ? "reed" : "pir";
+        if (cfg.port != SecurityController::kInvalidPort)
+            o["port"] = cfg.port;
+        if (cfg.name.length())
+            o["name"] = cfg.name;
+        o["silent"] = cfg.silent;
+        o["detect"] = st.is_detect;
+    }
     }
 }
 void CloudClient::fillRing_(JsonObject out)
 {
-    auto guard = _controllers.ring().lockGuard(kSnapshotLockTimeoutMs);
-    if (!guard.locked())
+    RingController::Config cfg{};
+    RingController::State st{};
     {
-        _log.warn(F("CLOUD"), F("Snapshot lock timeout: ring"));
-        return;
+        auto guard = _controllers.ring().lockGuard(kSnapshotLockTimeoutMs);
+        if (!guard.locked())
+        {
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: ring"));
+            return;
+        }
+        cfg = _controllers.ring().config();
+        st = _controllers.ring().state();
     }
-    const auto &cfg = _controllers.ring().config();
-    const auto &st = _controllers.ring().state();
     out["enabled"] = cfg.enabled;
     if (cfg.button_port != RingController::kInvalidPort)
         out["button"] = cfg.button_port;
@@ -1978,27 +2275,31 @@ void CloudClient::fillRing_(JsonObject out)
 }
 void CloudClient::fillAvr_(JsonObject out)
 {
-    auto guard = _controllers.avr().lockGuard(kSnapshotLockTimeoutMs);
-    if (!guard.locked())
+    AvrController::Config cfg{};
+    AvrController::State st{};
     {
-        static uint32_t last_warn_ms = 0;
-        const uint32_t now = millis();
-        if (last_warn_ms == 0 || (uint32_t)(now - last_warn_ms) >= kSnapshotWarnIntervalMs)
+        auto guard = _controllers.avr().lockGuard(kSnapshotLockTimeoutMs);
+        if (!guard.locked())
         {
-            last_warn_ms = now;
+            static uint32_t last_warn_ms = 0;
+            const uint32_t now = millis();
+            if (last_warn_ms == 0 || (uint32_t)(now - last_warn_ms) >= kSnapshotWarnIntervalMs)
+            {
+                last_warn_ms = now;
 #if RTOS_LOCK_DIAG
-            const char *owner = _controllers.avr().lockOwnerName();
-            const uint32_t held_ms = _controllers.avr().lockHeldMs();
-            _log.warn(F("CLOUD"), F("Snapshot lock timeout: avr owner: %s held_ms: %lu"),
-                      owner ? owner : "-", (unsigned long)held_ms);
+                const char *owner = _controllers.avr().lockOwnerName();
+                const uint32_t held_ms = _controllers.avr().lockHeldMs();
+                _log.warn(F("CLOUD"), F("Snapshot lock timeout: avr owner: %s held_ms: %lu"),
+                          owner ? owner : "-", (unsigned long)held_ms);
 #else
-            _log.warn(F("CLOUD"), F("Snapshot lock timeout: avr"));
+                _log.warn(F("CLOUD"), F("Snapshot lock timeout: avr"));
 #endif
+            }
+            return;
         }
-        return;
+        cfg = _controllers.avr().config();
+        st = _controllers.avr().state();
     }
-    const auto &cfg = _controllers.avr().config();
-    const auto &st = _controllers.avr().state();
     out["enabled"] = cfg.enabled;
     out["auto_mode"] = cfg.auto_mode;
     out["prefer_main"] = cfg.prefer_main;
@@ -2026,33 +2327,51 @@ void CloudClient::fillAvr_(JsonObject out)
 }
 void CloudClient::fillLeak_(JsonArray out)
 {
-    auto guard = _controllers.leak().lockGuard(kSnapshotLockTimeoutMs);
-    if (!guard.locked())
-    {
-        _log.warn(F("CLOUD"), F("Snapshot lock timeout: leak"));
+    ScratchBuffer *scratch = scratch_();
+    if (!scratch)
         return;
-    }
-    for (size_t i = 0; i < LeakController::kZoneCount; ++i)
     {
-        const auto *cfg = _controllers.leak().configByIndex(i);
-        const auto *st = _controllers.leak().stateByIndex(i);
-        if (!cfg || !st || !cfg->enabled)
+        const auto scratch_guard = _scratch_lock.guard();
+        auto guard = _controllers.leak().lockGuard(kSnapshotLockTimeoutMs);
+        if (!guard.locked())
+        {
+            _log.warn(F("CLOUD"), F("Snapshot lock timeout: leak"));
+            return;
+        }
+        for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+        {
+            const auto *cfg = _controllers.leak().configByIndex(i);
+            const auto *st = _controllers.leak().stateByIndex(i);
+            scratch->leak[i].valid = false;
+            if (!cfg || !st || !cfg->enabled)
+                continue;
+            scratch->leak[i].valid = true;
+            scratch->leak[i].cfg = *cfg;
+            scratch->leak[i].st = *st;
+        }
+        for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+        {
+        const auto &item = scratch->leak[i];
+        if (!item.valid)
             continue;
+        const auto &cfg = item.cfg;
+        const auto &st = item.st;
         JsonObject o = out.add<JsonObject>();
-        o["id"] = (unsigned)cfg->id;
-        o["enabled"] = cfg->enabled;
-        o["power_on"] = cfg->power_on;
-        o["sensor_active_low"] = cfg->sensor_active_low;
-        if (cfg->sensor_port != LeakController::kInvalidPort)
-            o["sensor"] = cfg->sensor_port;
-        if (cfg->valve_port != LeakController::kInvalidPort)
-            o["valve"] = cfg->valve_port;
-        if (cfg->alarm_port != LeakController::kInvalidPort)
-            o["alarm"] = cfg->alarm_port;
-        if (cfg->name.length())
-            o["name"] = cfg->name;
-        o["wet"] = st->wet;
-        o["alarm_latched"] = st->alarm_latched;
+        o["id"] = (unsigned)cfg.id;
+        o["enabled"] = cfg.enabled;
+        o["power_on"] = cfg.power_on;
+        o["sensor_active_low"] = cfg.sensor_active_low;
+        if (cfg.sensor_port != LeakController::kInvalidPort)
+            o["sensor"] = cfg.sensor_port;
+        if (cfg.valve_port != LeakController::kInvalidPort)
+            o["valve"] = cfg.valve_port;
+        if (cfg.alarm_port != LeakController::kInvalidPort)
+            o["alarm"] = cfg.alarm_port;
+        if (cfg.name.length())
+            o["name"] = cfg.name;
+        o["wet"] = st.wet;
+        o["alarm_latched"] = st.alarm_latched;
+    }
     }
 }
 void CloudClient::fillStackInfo_(JsonObject out)
@@ -2123,25 +2442,22 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
     const uint32_t now = millis();
     const uint32_t stale_ms = 15000;
     StackUnitSnapshot::State snapshot{};
-    if (_network->stackIndexState(node_id, snapshot))
+    StackUnitSnapshot::CacheState cache{};
+    if (_network->stackIndexState(node_id, snapshot) && _network->stackIndexCacheState(node_id, cache))
     {
-            if (snapshot.socket_count > 0)
+            if (cache.socket_count > 0)
             {
                 JsonArray sockets = out.createNestedArray("sockets");
-                for (uint8_t i = 0; i < snapshot.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
-                {
-                    StackUnitSnapshot::SocketItem it{};
-                    if (!_network->stackIndexSocketAt(node_id, i, it))
-                        continue;
+                _network->forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                     if (it.id == 0)
-                        continue;
+                        return;
                     JsonObject o = sockets.add<JsonObject>();
                     o["id"] = it.id;
                     o["enabled"] = it.enabled;
                     o["state"] = it.state;
                     if (it.name[0])
                         o["name"] = it.name;
-                }
+                });
                 has_any = true;
             }
             else
@@ -2152,16 +2468,12 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                 has_any = has_any || (snapshot.sockets_enabled > 0);
             }
 
-            if (snapshot.light_count > 0)
+            if (cache.light_count > 0)
             {
                 JsonArray lights = out.createNestedArray("lights");
-                for (uint8_t i = 0; i < snapshot.light_count && i < StackUnitSnapshot::kSocketCount; ++i)
-                {
-                    StackUnitSnapshot::SocketItem it{};
-                    if (!_network->stackIndexLightAt(node_id, i, it))
-                        continue;
+                _network->forEachStackLight(node_id, cache.light_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                     if (it.id == 0)
-                        continue;
+                        return;
                     JsonObject o = lights.add<JsonObject>();
                     o["id"] = it.id;
                     o["group_id"] = it.group_id;
@@ -2173,7 +2485,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                     if (it.relay_port != SocketController::kInvalidPort)
                         o["relay"] = it.relay_port;
                     o["state"] = it.state;
-                }
+                });
                 has_any = true;
             }
             else
@@ -2184,14 +2496,12 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                 has_any = has_any || (snapshot.lights_enabled > 0);
             }
 
-            if (snapshot.meteo_count > 0)
+            if (cache.meteo_count > 0)
             {
                 JsonArray meteo = out.createNestedArray("meteo");
-                for (uint8_t i = 0; i < snapshot.meteo_count && i < StackUnitSnapshot::kMeteoCount; ++i)
-                {
-                    StackUnitSnapshot::MeteoItem it{};
-                    if (!_network->stackIndexMeteoAt(node_id, i, it) || it.id == 0)
-                        continue;
+                _network->forEachStackMeteo(node_id, cache.meteo_count, [&](uint8_t, const StackUnitSnapshot::MeteoItem &it) {
+                    if (it.id == 0)
+                        return;
                     JsonObject o = meteo.add<JsonObject>();
                     o["id"] = it.id;
                     o["group_id"] = it.group_id;
@@ -2221,7 +2531,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                     o["has_read"] = it.has_read;
                     o["ok"] = it.ok;
                     o["age_s"] = it.age_s;
-                }
+                });
                 has_any = true;
             }
             else
@@ -2232,14 +2542,12 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                 has_any = has_any || (snapshot.meteo_enabled > 0);
             }
 
-            if (snapshot.thermo_count > 0)
+            if (cache.thermo_count > 0)
             {
                 JsonArray thermo = out.createNestedArray("thermo");
-                for (uint8_t i = 0; i < snapshot.thermo_count && i < StackUnitSnapshot::kThermoCount; ++i)
-                {
-                    StackUnitSnapshot::ThermoItem it{};
-                    if (!_network->stackIndexThermoAt(node_id, i, it) || it.id == 0)
-                        continue;
+                _network->forEachStackThermo(node_id, cache.thermo_count, [&](uint8_t, const StackUnitSnapshot::ThermoItem &it) {
+                    if (it.id == 0)
+                        return;
                     JsonObject o = thermo.add<JsonObject>();
                     o["id"] = it.id;
                     o["group_id"] = it.group_id;
@@ -2262,7 +2570,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                     o["cool_on"] = it.cool_on;
                     if (it.name[0])
                         o["name"] = it.name;
-                }
+                });
                 has_any = true;
             }
             else
@@ -2321,52 +2629,56 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
         _network->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
                                            StackRouteAdapter::Mode::Json, true);
     }
-    if (snapshot.sockets_enabled > 0 && snapshot.socket_count < snapshot.sockets_enabled)
+    if (snapshot.sockets_enabled > 0 && cache.socket_count < snapshot.sockets_enabled)
     {
-        if (_network->prepareStackSocketsPageRequest(node_id, now, snapshot.socket_count, 4000u))
+        if (_network->prepareStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id, now, cache.socket_count,
+                                             4000u))
         {
             DynamicJsonDocument req(64);
-            req["offset"] = snapshot.socket_count;
-            req["limit"] = 8;
+            req["offset"] = cache.socket_count;
+            req["limit"] = StackUnitSnapshot::kPageSize;
             if (!_network->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
                                                     StackRouteAdapter::Mode::Json, true))
-                _network->clearStackSocketsPageRequest(node_id);
+                _network->clearStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id);
         }
     }
-    if (snapshot.lights_enabled > 0 && snapshot.light_count < snapshot.lights_enabled)
+    if (snapshot.lights_enabled > 0 && cache.light_count < snapshot.lights_enabled)
     {
-        if (_network->prepareStackLightsPageRequest(node_id, now, snapshot.light_count, 4000u))
+        if (_network->prepareStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id, now, cache.light_count,
+                                             4000u))
         {
             DynamicJsonDocument req(64);
-            req["offset"] = snapshot.light_count;
-            req["limit"] = 8;
+            req["offset"] = cache.light_count;
+            req["limit"] = StackUnitSnapshot::kPageSize;
             if (!_network->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
                                                     StackRouteAdapter::Mode::Json, true))
-                _network->clearStackLightsPageRequest(node_id);
+                _network->clearStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id);
         }
     }
-    if (snapshot.meteo_enabled > 0 && snapshot.meteo_count < snapshot.meteo_enabled)
+    if (snapshot.meteo_enabled > 0 && cache.meteo_count < snapshot.meteo_enabled)
     {
-        if (_network->prepareStackMeteoPageRequest(node_id, now, snapshot.meteo_count, 4000u))
+        if (_network->prepareStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id, now, cache.meteo_count,
+                                             4000u))
         {
             DynamicJsonDocument req(64);
-            req["offset"] = snapshot.meteo_count;
-            req["limit"] = 8;
+            req["offset"] = cache.meteo_count;
+            req["limit"] = StackUnitSnapshot::kPageSize;
             if (!_network->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
                                                     StackRouteAdapter::Mode::Json, true))
-                _network->clearStackMeteoPageRequest(node_id);
+                _network->clearStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id);
         }
     }
-    if (snapshot.thermo_enabled > 0 && snapshot.thermo_count < snapshot.thermo_enabled)
+    if (snapshot.thermo_enabled > 0 && cache.thermo_count < snapshot.thermo_enabled)
     {
-        if (_network->prepareStackThermoPageRequest(node_id, now, snapshot.thermo_count, 4000u))
+        if (_network->prepareStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id, now, cache.thermo_count,
+                                             4000u))
         {
             DynamicJsonDocument req(64);
-            req["offset"] = snapshot.thermo_count;
-            req["limit"] = 8;
+            req["offset"] = cache.thermo_count;
+            req["limit"] = StackUnitSnapshot::kPageSize;
             if (!_network->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
                                                     StackRouteAdapter::Mode::Json, true))
-                _network->clearStackThermoPageRequest(node_id);
+                _network->clearStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id);
         }
     }
     return has_any;

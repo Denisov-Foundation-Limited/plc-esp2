@@ -265,12 +265,15 @@ void StackHandler::handleOnlineSnapshot(WebInterface &web, AsyncWebServerRequest
             bool sync_ready = false;
             if (network)
             {
-                StackUnitSnapshot::Snapshot snapshot{};
-                const bool has_snapshot = network->stackIndexStateSnapshot(id, snapshot);
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                const bool has_snapshot = network->stackIndexState(id, snapshot);
+                const bool has_cache = network->stackIndexCacheState(id, cache);
                 sync_ready = has_snapshot &&
+                             has_cache &&
                              snapshot.updated_ms != 0 &&
-                             snapshot.socket_count >= snapshot.sockets_enabled &&
-                             snapshot.light_count >= snapshot.lights_enabled;
+                             cache.socket_count >= snapshot.sockets_enabled &&
+                             cache.light_count >= snapshot.lights_enabled;
             }
             if (!first)
                 out += ",";

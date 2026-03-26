@@ -60,7 +60,42 @@
 class WebInterface
 {
 public:
-    ~WebInterface() = default;
+    struct ScratchBuffer
+    {
+        bool socket_valid[SocketController::kSocketCount] = {};
+        SocketController::SocketConfig socket_cfg[SocketController::kSocketCount]{};
+        bool socket_relay_on[SocketController::kSocketCount] = {};
+        bool light_valid[SocketController::kLightCount] = {};
+        SocketController::LightConfig light_cfg[SocketController::kLightCount]{};
+        bool light_relay_on[SocketController::kLightCount] = {};
+        bool meteo_valid[MeteoController::kSensorCount] = {};
+        MeteoController::SensorConfig meteo_cfg[MeteoController::kSensorCount]{};
+        MeteoController::SensorState meteo_st[MeteoController::kSensorCount]{};
+        char meteo_ds18_list[32][17] = {};
+        size_t meteo_ds18_count = 0;
+        char meteo_ds18_used[MeteoController::kSensorCount][17] = {};
+        bool thermo_valid[ThermoController::kDeviceCount] = {};
+        ThermoController::DeviceConfig thermo_cfg[ThermoController::kDeviceCount]{};
+        ThermoController::DeviceState thermo_st[ThermoController::kDeviceCount]{};
+        uint8_t thermo_sensor_used[MeteoController::kSensorCount + 1] = {};
+        uint32_t thermo_remote_used[ThermoController::kDeviceCount] = {};
+        bool tank_valid[TankController::kTankCount] = {};
+        TankController::TankConfig tank_cfg[TankController::kTankCount]{};
+        TankController::TankState tank_st[TankController::kTankCount]{};
+        bool septic_valid[SepticController::kSepticCount] = {};
+        SepticController::SepticConfig septic_cfg[SepticController::kSepticCount]{};
+        SepticController::SepticState septic_st[SepticController::kSepticCount]{};
+        bool security_valid[SecurityController::kSensorCount] = {};
+        SecurityController::SensorConfig security_cfg[SecurityController::kSensorCount]{};
+        SecurityController::SensorState security_st[SecurityController::kSensorCount]{};
+        bool watering_valid[WateringController::kRuleCount] = {};
+        WateringController::RuleConfig watering_cfg[WateringController::kRuleCount]{};
+        WateringController::RuleState watering_st[WateringController::kRuleCount]{};
+        bool leak_valid[LeakController::kZoneCount] = {};
+        LeakController::ZoneConfig leak_cfg[LeakController::kZoneCount]{};
+    };
+
+    ~WebInterface();
 
     WebInterface(AsyncWebServer &server, CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
                  RTC &rtc, Logger &logs,
@@ -92,6 +127,8 @@ public:
     void setRules(RulesController &rules);
 
     class Network *network() const;
+    ScratchBuffer *scratchBuffer_() const;
+    RtosRecursiveLock::Guard scratchLockGuard_(uint32_t timeout_ms = 0xFFFFFFFFu) const;
 
     void registerRoutes();
 
@@ -588,6 +625,8 @@ private:
 
 
     bool sessionPrincipalValid_() const;
+    bool ensureScratch_() const;
+    void releaseScratch_();
 
 
     String gsmStatusLabel_() const;
@@ -663,4 +702,6 @@ private:
     bool _upload_set_cookie = false;
     bool _ota_set_cookie = false;
     bool _ota_in_progress = false;
+    mutable ScratchBuffer *_scratch = nullptr;
+    mutable RtosRecursiveLock _scratch_lock;
 };

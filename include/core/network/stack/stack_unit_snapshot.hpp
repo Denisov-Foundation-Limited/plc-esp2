@@ -30,6 +30,7 @@ public:
     static constexpr size_t kThermoCount = 20;
     static constexpr size_t kTankNameLen = 24;
     static constexpr size_t kTankCount = 20;
+    static constexpr uint8_t kPageSize = 8;
 
     struct SocketItem
     {
@@ -108,8 +109,6 @@ public:
     {
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
-        uint32_t request_started_ms = 0;
-        bool pending = false;
         bool has_plc = false;
         bool has_rtc = false;
         bool rtc_temp_ok = false;
@@ -124,13 +123,10 @@ public:
         uint16_t lights_on = 0;
         uint16_t meteo_enabled = 0;
         uint16_t meteo_ok = 0;
-        uint8_t meteo_count = 0;
         uint16_t thermo_enabled = 0;
         uint16_t thermo_active = 0;
-        uint8_t thermo_count = 0;
         uint16_t tanks_enabled = 0;
         uint16_t tanks_alert = 0;
-        uint8_t tank_count = 0;
         uint16_t septic_enabled = 0;
         uint16_t septic_alert = 0;
         uint16_t watering_enabled = 0;
@@ -146,29 +142,37 @@ public:
         bool avr_enabled = false;
         bool avr_fault = false;
         uint8_t avr_active_source = 0;
-        uint8_t socket_count = 0;
-        uint8_t light_count = 0;
-        uint32_t sockets_page_request_started_ms = 0;
-        uint32_t lights_page_request_started_ms = 0;
-        uint32_t meteo_page_request_started_ms = 0;
-        uint32_t thermo_page_request_started_ms = 0;
-        uint32_t tanks_page_request_started_ms = 0;
-        uint16_t sockets_page_request_offset = 0;
-        uint16_t lights_page_request_offset = 0;
-        uint16_t meteo_page_request_offset = 0;
-        uint16_t thermo_page_request_offset = 0;
-        uint16_t tanks_page_request_offset = 0;
-        bool sockets_page_pending = false;
-        bool lights_page_pending = false;
-        bool meteo_page_pending = false;
-        bool thermo_page_pending = false;
-        bool tanks_page_pending = false;
     };
 
-    struct Snapshot : State
+    struct CacheState
     {
-        SocketItem sockets[kSocketCount]{};
-        SocketItem lights[kSocketCount]{};
+        uint8_t socket_count = 0;
+        uint8_t light_count = 0;
+        uint8_t meteo_count = 0;
+        uint8_t thermo_count = 0;
+        uint8_t tank_count = 0;
+    };
+
+    struct RequestState
+    {
+        uint32_t started_ms = 0;
+        bool pending = false;
+    };
+
+    struct PageRequestState
+    {
+        uint32_t started_ms = 0;
+        uint16_t offset = 0;
+        bool pending = false;
+    };
+
+    enum class PageKind : uint8_t
+    {
+        Sockets = 0,
+        Lights,
+        Meteo,
+        Thermo,
+        Tanks,
     };
 
     StackUnitSnapshot();
@@ -176,17 +180,24 @@ public:
 
     bool prepareRequest(uint32_t node_id, uint32_t now_ms, uint32_t fresh_ms, uint32_t pending_ms);
     bool state(uint32_t node_id, State &out) const;
-    bool snapshot(uint32_t node_id, Snapshot &out) const;
+    bool cacheState(uint32_t node_id, CacheState &out) const;
+    bool requestState(uint32_t node_id, RequestState &out) const;
+    bool pageRequestState(uint32_t node_id, PageKind kind, PageRequestState &out) const;
     bool socketById(uint32_t node_id, uint8_t id, SocketItem &out) const;
     bool socketAt(uint32_t node_id, uint8_t index, SocketItem &out) const;
+    bool socketsPage(uint32_t node_id, uint8_t offset, SocketItem *out, uint8_t capacity, uint8_t &out_count) const;
     bool lightById(uint32_t node_id, uint8_t id, SocketItem &out) const;
     bool lightAt(uint32_t node_id, uint8_t index, SocketItem &out) const;
+    bool lightsPage(uint32_t node_id, uint8_t offset, SocketItem *out, uint8_t capacity, uint8_t &out_count) const;
     bool meteoById(uint32_t node_id, uint8_t id, MeteoItem &out) const;
     bool meteoAt(uint32_t node_id, uint8_t index, MeteoItem &out) const;
+    bool meteoPage(uint32_t node_id, uint8_t offset, MeteoItem *out, uint8_t capacity, uint8_t &out_count) const;
     bool thermoById(uint32_t node_id, uint8_t id, ThermoItem &out) const;
     bool thermoAt(uint32_t node_id, uint8_t index, ThermoItem &out) const;
+    bool thermoPage(uint32_t node_id, uint8_t offset, ThermoItem *out, uint8_t capacity, uint8_t &out_count) const;
     bool tankById(uint32_t node_id, uint8_t id, TankItem &out) const;
     bool tankAt(uint32_t node_id, uint8_t index, TankItem &out) const;
+    bool tanksPage(uint32_t node_id, uint8_t offset, TankItem *out, uint8_t capacity, uint8_t &out_count) const;
     bool prepareSocketsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
     bool prepareLightsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
     bool prepareMeteoPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
@@ -203,35 +214,67 @@ public:
     void clearThermoPageRequest(uint32_t node_id);
     void clearTanksPageRequest(uint32_t node_id);
     void clearPending(uint32_t node_id);
-    void update(uint32_t node_id, const Snapshot &state);
-    void updateMeteoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t ok_total,
-                         const MeteoItem *items, uint8_t item_count, uint32_t updated_ms);
-    void updateThermoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t active_total,
-                          const ThermoItem *items, uint8_t item_count, uint32_t updated_ms);
-    void updateTanksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
-                         const TankItem *items, uint8_t item_count, uint32_t updated_ms);
+    void applySystemState(uint32_t node_id, const State &state);
+    void applyControllerSummary(uint32_t node_id, const State &state);
+    void applySocketsPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t on_total,
+                          const SocketItem *items, uint8_t item_count, uint32_t updated_ms);
+    void applyLightsPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t on_total,
+                         const SocketItem *items, uint8_t item_count, uint32_t updated_ms);
+    void applyMeteoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t ok_total,
+                        const MeteoItem *items, uint8_t item_count, uint32_t updated_ms);
+    void applyThermoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t active_total,
+                         const ThermoItem *items, uint8_t item_count, uint32_t updated_ms);
+    void applyTanksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
+                        const TankItem *items, uint8_t item_count, uint32_t updated_ms);
     void invalidate(uint32_t node_id);
 
 private:
-    struct Entry : State
+    template <typename ItemT, size_t N>
+    struct PageCache
+    {
+        ItemT items[N]{};
+    };
+
+    struct Entry
     {
         bool used = false;
-        SocketItem sockets[kSocketCount]{};
-        SocketItem lights[kSocketCount]{};
-        MeteoItem meteo[kMeteoCount]{};
-        ThermoItem thermo[kThermoCount]{};
-        TankItem tanks[kTankCount]{};
+        State state{};
+        CacheState cache{};
+        RequestState request{};
+        PageRequestState sockets_request{};
+        PageRequestState lights_request{};
+        PageRequestState meteo_request{};
+        PageRequestState thermo_request{};
+        PageRequestState tanks_request{};
+        PageCache<SocketItem, kSocketCount> sockets{};
+        PageCache<SocketItem, kSocketCount> lights{};
+        PageCache<MeteoItem, kMeteoCount> meteo{};
+        PageCache<ThermoItem, kThermoCount> thermo{};
+        PageCache<TankItem, kTankCount> tanks{};
     };
 
     static void copyState_(State &dst, const State &src);
-    static bool copyItemById_(const SocketItem *items, uint8_t count, uint8_t id, SocketItem &out);
-    static bool copyItemAt_(const SocketItem *items, uint8_t count, uint8_t index, SocketItem &out);
-    static bool copyMeteoItemById_(const MeteoItem *items, uint8_t count, uint8_t id, MeteoItem &out);
-    static bool copyMeteoItemAt_(const MeteoItem *items, uint8_t count, uint8_t index, MeteoItem &out);
-    static bool copyThermoItemById_(const ThermoItem *items, uint8_t count, uint8_t id, ThermoItem &out);
-    static bool copyThermoItemAt_(const ThermoItem *items, uint8_t count, uint8_t index, ThermoItem &out);
-    static bool copyTankItemById_(const TankItem *items, uint8_t count, uint8_t id, TankItem &out);
-    static bool copyTankItemAt_(const TankItem *items, uint8_t count, uint8_t index, TankItem &out);
+    static void copyCacheState_(CacheState &dst, const CacheState &src);
+    static void copyRequestState_(RequestState &dst, const RequestState &src);
+    static void copyPageRequestState_(PageRequestState &dst, const PageRequestState &src);
+    template <typename ItemT, size_t N>
+    static bool copyItemById_(const ItemT *items, uint8_t count, uint8_t id, ItemT &out);
+    template <typename ItemT, size_t N>
+    static bool copyItemAt_(const ItemT *items, uint8_t count, uint8_t index, ItemT &out);
+    template <typename ItemT, size_t N>
+    static bool copyPage_(const ItemT *items, uint8_t count, uint8_t offset, ItemT *out, uint8_t capacity, uint8_t &out_count);
+    static void mergeSystemState_(State &dst, const State &src);
+    static void mergeControllerSummary_(State &dst, const State &src);
+    static uint8_t clampCount_(uint16_t count, size_t max_count);
+    static PageRequestState &pageRequestState_(Entry &entry, PageKind kind);
+    static const PageRequestState &pageRequestState_(const Entry &entry, PageKind kind);
+    template <typename ItemT, size_t N>
+    static void clearPageCache_(PageCache<ItemT, N> &cache);
+    template <typename ItemT, size_t N>
+    static uint8_t applyPage_(PageCache<ItemT, N> &cache, uint16_t offset, const ItemT *items, uint8_t item_count);
+    bool preparePageRequest_(uint32_t node_id, PageKind kind, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
+    void completePageRequest_(uint32_t node_id, PageKind kind, uint16_t offset);
+    void clearPageRequest_(uint32_t node_id, PageKind kind);
 
     Entry *findEntry_(uint32_t node_id);
     const Entry *findEntry_(uint32_t node_id) const;

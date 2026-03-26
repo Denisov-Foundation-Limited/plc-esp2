@@ -692,21 +692,25 @@ void ThermoHandler::handleThermoToggle(WebInterface &web, AsyncWebServerRequest 
                 return;
             }
             StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            StackUnitSnapshot::RequestState request_state{};
             const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+            const bool has_cache = web.network()->stackIndexCacheState(node_id, cache);
+            const bool has_request = web.network()->stackIndexRequestState(node_id, request_state);
             StackUnitSnapshot::ThermoItem item{};
             const bool has_item = has_snapshot && web.network()->stackIndexThermoById(node_id, (uint8_t)id, item);
             if (action == "state")
             {
                 const bool stale = !has_snapshot || snapshot.updated_ms == 0 ||
                     (uint32_t)(millis() - snapshot.updated_ms) > 1500u;
-                const bool partial = has_snapshot && snapshot.thermo_enabled > snapshot.thermo_count;
+                const bool partial = has_snapshot && has_cache && snapshot.thermo_enabled > cache.thermo_count;
                 if (stale || partial)
                 {
                     web.requestStackThermo_(node_id);
                     web.sendText_(request, 200, "text/plain", "pending", set_cookie);
                     return;
                 }
-                if (has_snapshot && snapshot.pending)
+                if (has_request && request_state.pending)
                 {
                     web.sendText_(request, 200, "text/plain", "pending", set_cookie);
                     return;

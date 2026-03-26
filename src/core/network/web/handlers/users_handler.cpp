@@ -724,17 +724,17 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
         {
         case UsersRegistry::AclController::Sockets:
         {
-            StackUnitSnapshot::Snapshot snapshot{};
-            if (web.network() && web.network()->stackIndexStateSnapshot(node_id, snapshot) && snapshot.updated_ms != 0)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                web.network()->stackIndexCacheState(node_id, cache) && snapshot.updated_ms != 0)
             {
-                for (uint8_t i = 0; i < snapshot.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
-                {
-                    const auto &it = snapshot.sockets[i];
+                web.network()->forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                     if (!it.enabled)
-                        continue;
+                        return;
                     fn(it.id, aclItemLabel_(WebUiRu::Users::kItemSocket, it.id, it.name[0] ? String(it.name) : String()));
-                }
-                if (snapshot.sockets_enabled > snapshot.socket_count)
+                });
+                if (snapshot.sockets_enabled > cache.socket_count)
                 {
                     web.requestStackSockets_(node_id);
                     if (loading)
@@ -751,17 +751,17 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
         }
         case UsersRegistry::AclController::Lights:
         {
-            StackUnitSnapshot::Snapshot snapshot{};
-            if (web.network() && web.network()->stackIndexStateSnapshot(node_id, snapshot) && snapshot.updated_ms != 0)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                web.network()->stackIndexCacheState(node_id, cache) && snapshot.updated_ms != 0)
             {
-                for (uint8_t i = 0; i < snapshot.light_count && i < StackUnitSnapshot::kSocketCount; ++i)
-                {
-                    const auto &it = snapshot.lights[i];
+                web.network()->forEachStackLight(node_id, cache.light_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                     if (!it.enabled)
-                        continue;
+                        return;
                     fn(it.id, aclItemLabel_(WebUiRu::Users::kItemLight, it.id, it.name[0] ? String(it.name) : String()));
-                }
-                if (snapshot.lights_enabled > snapshot.light_count)
+                });
+                if (snapshot.lights_enabled > cache.light_count)
                 {
                     web.requestStackLights_(node_id);
                     if (loading)

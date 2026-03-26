@@ -199,8 +199,8 @@ IndexHandler::IndexState IndexHandler::collectIndexState_(WebInterface &web, uin
         if (web.network())
         {
             web.requestStackIndexState_(node_id);
-            StackUnitSnapshot::Snapshot cache{};
-            if (web.network()->stackIndexStateSnapshot(node_id, cache))
+            StackUnitSnapshot::State cache{};
+            if (web.network()->stackIndexState(node_id, cache))
             {
                 out.rtc_date = cache.has_rtc ? String(cache.rtc_date) : "n/a";
                 out.rtc_time = cache.has_rtc ? String(cache.rtc_time) : "n/a";

@@ -237,118 +237,141 @@ void Network::maintainStackWsReadiness_()
 
 void Network::beginStack_()
 {
-    const auto guard = _stack_lock.guard();
     StackRouteAdapter::ExchangePolicy policy = StackRouteAdapter::ExchangePolicy::Auto;
-    if (_stack_cfg)
-    {
-        switch (_stack_cfg->stackExchangePolicy())
-        {
-        case ConfigsManagerIface::StackExchangePolicy::Direct:
-            policy = StackRouteAdapter::ExchangePolicy::Direct;
-            break;
-        case ConfigsManagerIface::StackExchangePolicy::Poll:
-            policy = StackRouteAdapter::ExchangePolicy::Poll;
-            break;
-        case ConfigsManagerIface::StackExchangePolicy::Auto:
-        default:
-            policy = StackRouteAdapter::ExchangePolicy::Auto;
-            break;
-        }
-    }
-    _stack_route.setExchangePolicy(policy);
-
     StackRouteAdapter::PayloadMode payload_mode = StackRouteAdapter::PayloadMode::Auto;
-    if (_stack_cfg)
+    ConfigsManagerIface::StackRole role = ConfigsManagerIface::StackRole::Master;
+    ConfigsManagerIface::StackTransportKind transport = ConfigsManagerIface::StackTransportKind::WebSocket;
+    bool ws_deferred = false;
+    bool fallback_enabled = false;
+    String fallback_host;
+    String primary_host;
+    String api_key;
+    String device_name;
+    const uint32_t local_node_id = stackNodeIdFromMac_(ESP.getEfuseMac());
+
     {
-        switch (_stack_cfg->stackPayloadMode())
+        const auto guard = _stack_lock.guard();
+        if (_stack_cfg)
         {
-        case ConfigsManagerIface::StackPayloadMode::Json:
-            payload_mode = StackRouteAdapter::PayloadMode::Json;
-            break;
-        case ConfigsManagerIface::StackPayloadMode::Binary:
-            payload_mode = StackRouteAdapter::PayloadMode::Binary;
-            break;
-        case ConfigsManagerIface::StackPayloadMode::Auto:
-        default:
-            payload_mode = StackRouteAdapter::PayloadMode::Auto;
-            break;
+            switch (_stack_cfg->stackExchangePolicy())
+            {
+            case ConfigsManagerIface::StackExchangePolicy::Direct:
+                policy = StackRouteAdapter::ExchangePolicy::Direct;
+                break;
+            case ConfigsManagerIface::StackExchangePolicy::Poll:
+                policy = StackRouteAdapter::ExchangePolicy::Poll;
+                break;
+            case ConfigsManagerIface::StackExchangePolicy::Auto:
+            default:
+                policy = StackRouteAdapter::ExchangePolicy::Auto;
+                break;
+            }
+
+            switch (_stack_cfg->stackPayloadMode())
+            {
+            case ConfigsManagerIface::StackPayloadMode::Json:
+                payload_mode = StackRouteAdapter::PayloadMode::Json;
+                break;
+            case ConfigsManagerIface::StackPayloadMode::Binary:
+                payload_mode = StackRouteAdapter::PayloadMode::Binary;
+                break;
+            case ConfigsManagerIface::StackPayloadMode::Auto:
+            default:
+                payload_mode = StackRouteAdapter::PayloadMode::Auto;
+                break;
+            }
+
+            role = _stack_cfg->stackRole();
+            transport = _stack_cfg->stackTransport();
+            fallback_enabled = _stack_cfg->stackFallbackEnabled();
+            fallback_host = _stack_cfg->stackFallbackHost();
+            primary_host = _stack_cfg->stackMasterHost();
+            api_key = _stack_cfg->stackApiKey();
+        }
+
+        _stack_master_started = false;
+        _stack_role = role;
+        _stack_fallback_enabled = fallback_enabled;
+        _stack_fallback_host = fallback_host;
+        _stack_primary_host = primary_host;
+        _stack_fallback_active = false;
+        _stack_disconnect_ms = 0;
+        _stack_last_primary_try_ms = 0;
+        _stack_target = StackTarget::Primary;
+        _stack_ws_start_deferred = false;
+        device_name = _stack_device_name;
+        if (transport == ConfigsManagerIface::StackTransportKind::WebSocket && !stackWsNetworkReady_())
+        {
+            _stack_ws_start_deferred = true;
+            ws_deferred = true;
         }
     }
-    _stack_route.setPayloadMode(payload_mode);
 
+    _stack_route.setExchangePolicy(policy);
+    _stack_route.setPayloadMode(payload_mode);
     setStackRuntimeState_(StackRuntimeState::Starting);
     _stack_master_server.stop();
     _stack_rs485_server.stop();
     _stack_slave_client.disconnect();
     _stack_route.setRuntimeBindings(false, false, false);
-    _stack_master_started = false;
-    _stack_role = _stack_cfg ? _stack_cfg->stackRole() : ConfigsManagerIface::StackRole::Master;
-    _stack_fallback_enabled = _stack_cfg ? _stack_cfg->stackFallbackEnabled() : false;
-    _stack_fallback_host = _stack_cfg ? _stack_cfg->stackFallbackHost() : String();
-    _stack_primary_host = _stack_cfg ? _stack_cfg->stackMasterHost() : String();
-    _stack_fallback_active = false;
-    _stack_disconnect_ms = 0;
-    _stack_last_primary_try_ms = 0;
-    _stack_target = StackTarget::Primary;
-    const ConfigsManagerIface::StackTransportKind transport =
-        _stack_cfg ? _stack_cfg->stackTransport() : ConfigsManagerIface::StackTransportKind::WebSocket;
-    if (transport == ConfigsManagerIface::StackTransportKind::WebSocket && !stackWsNetworkReady_())
+    if (ws_deferred)
     {
-        _stack_ws_start_deferred = true;
         _logs.warn(F("STACK"), F("WS start deferred: network not ready"));
         setStackRuntimeState_(StackRuntimeState::Starting);
         return;
     }
-    _stack_ws_start_deferred = false;
-    if (_stack_role == ConfigsManagerIface::StackRole::Master)
+    if (role == ConfigsManagerIface::StackRole::Master)
     {
         _logs.info(F("STACK"), F("Role: master transport: %s"),
                    transport == ConfigsManagerIface::StackTransportKind::Rs485 ? "rs485" : "websocket");
-        const uint32_t local_node_id = stackNodeIdFromMac_(ESP.getEfuseMac());
         _stack_route.setLocalNodeId(local_node_id);
         bool started = false;
         if (transport == ConfigsManagerIface::StackTransportKind::Rs485)
         {
             StackRs485Server::Config cfg;
             cfg.port = kStackPort;
-            cfg.api_key = _stack_cfg ? _stack_cfg->stackApiKey() : String();
+            cfg.api_key = api_key;
             cfg.local_node_id = local_node_id;
             _stack_rs485_server.setConfig(cfg);
             started = _stack_rs485_server.begin();
-            _stack_route.setRuntimeBindings(false, true, false);
         }
         else
         {
             StackMasterServer::Config cfg;
             cfg.port = kStackPort;
-            cfg.api_key = _stack_cfg ? _stack_cfg->stackApiKey() : String();
+            cfg.api_key = api_key;
             cfg.local_node_id = local_node_id;
             _stack_master_server.setConfig(cfg);
             started = _stack_master_server.begin();
-            _stack_route.setRuntimeBindings(true, false, false);
         }
         if (started)
         {
+            _stack_route.setRuntimeBindings(transport != ConfigsManagerIface::StackTransportKind::Rs485,
+                                            transport == ConfigsManagerIface::StackTransportKind::Rs485,
+                                            false);
+            {
+                const auto guard = _stack_lock.guard();
+                _stack_master_started = true;
+            }
             _logs.info(F("STACK"), F("Master started: name: %s transport: %s node_id: 0x%08lX port: %u"),
-                       _stack_device_name.length() ? _stack_device_name.c_str() : "-",
+                       device_name.length() ? device_name.c_str() : "-",
                        transport == ConfigsManagerIface::StackTransportKind::Rs485 ? "rs485" : "websocket",
                        (unsigned long)local_node_id, (unsigned)kStackPort);
         }
         else
         {
             _logs.error(F("STACK"), F("Master start failed: name: %s transport: %s node_id: 0x%08lX port: %u"),
-                        _stack_device_name.length() ? _stack_device_name.c_str() : "-",
+                        device_name.length() ? device_name.c_str() : "-",
                         transport == ConfigsManagerIface::StackTransportKind::Rs485 ? "rs485" : "websocket",
                         (unsigned long)local_node_id, (unsigned)kStackPort);
             setStackRuntimeState_(StackRuntimeState::Degraded);
             return;
         }
-        _stack_master_started = true;
         setStackRuntimeState_(StackRuntimeState::Online);
         return;
     }
 
-    if (_stack_primary_host.length() == 0)
+    if (primary_host.length() == 0)
     {
         _logs.warn(F("STACK"), F("Role: slave, master host missing"));
         setStackRuntimeState_(StackRuntimeState::Degraded);
@@ -356,69 +379,86 @@ void Network::beginStack_()
     }
     _logs.info(F("STACK"), F("Role: slave transport: %s master: %s"),
                transport == ConfigsManagerIface::StackTransportKind::Rs485 ? "rs485" : "websocket",
-               _stack_primary_host.c_str());
-    if (transport == ConfigsManagerIface::StackTransportKind::Rs485)
-    {
-        ensureStackSlaveStarted_();
-        return;
-    }
+               primary_host.c_str());
     ensureStackSlaveStarted_();
 }
 
 void Network::stopStack_()
 {
-    const auto guard = _stack_lock.guard();
     _stack_master_server.stop();
     _stack_rs485_server.stop();
     _stack_slave_client.disconnect();
     _stack_route.setRuntimeBindings(false, false, false);
-    _stack_master_started = false;
-    _stack_fallback_active = false;
-    _stack_disconnect_ms = 0;
+    {
+        const auto guard = _stack_lock.guard();
+        _stack_master_started = false;
+        _stack_fallback_active = false;
+        _stack_disconnect_ms = 0;
+    }
     setStackRuntimeState_(StackRuntimeState::Stopped);
 }
 void Network::ensureStackMasterStarted_()
 {
-    const auto guard = _stack_lock.guard();
-    if (_stack_master_started)
-        return;
-    const ConfigsManagerIface::StackTransportKind transport =
-        _stack_cfg ? _stack_cfg->stackTransport() : ConfigsManagerIface::StackTransportKind::WebSocket;
+    ConfigsManagerIface::StackTransportKind transport = ConfigsManagerIface::StackTransportKind::WebSocket;
+    String api_key;
+    const uint32_t local_node_id = stackNodeIdFromMac_(ESP.getEfuseMac());
+    {
+        const auto guard = _stack_lock.guard();
+        if (_stack_master_started)
+            return;
+        if (_stack_cfg)
+        {
+            transport = _stack_cfg->stackTransport();
+            api_key = _stack_cfg->stackApiKey();
+        }
+    }
     if (transport == ConfigsManagerIface::StackTransportKind::Rs485)
     {
         StackRs485Server::Config cfg;
         cfg.port = kStackPort;
-        cfg.api_key = _stack_cfg ? _stack_cfg->stackApiKey() : String();
-        cfg.local_node_id = stackNodeIdFromMac_(ESP.getEfuseMac());
+        cfg.api_key = api_key;
+        cfg.local_node_id = local_node_id;
         _stack_rs485_server.setConfig(cfg);
-        _stack_rs485_server.begin();
-        _stack_route.setRuntimeBindings(false, true, false);
+        if (_stack_rs485_server.begin())
+        {
+            _stack_route.setRuntimeBindings(false, true, false);
+            const auto guard = _stack_lock.guard();
+            _stack_master_started = true;
+        }
     }
     else
     {
         StackMasterServer::Config cfg;
         cfg.port = kStackPort;
-        cfg.api_key = _stack_cfg ? _stack_cfg->stackApiKey() : String();
-        cfg.local_node_id = stackNodeIdFromMac_(ESP.getEfuseMac());
+        cfg.api_key = api_key;
+        cfg.local_node_id = local_node_id;
         _stack_master_server.setConfig(cfg);
-        _stack_master_server.begin();
-        _stack_route.setRuntimeBindings(true, false, false);
+        if (_stack_master_server.begin())
+        {
+            _stack_route.setRuntimeBindings(true, false, false);
+            const auto guard = _stack_lock.guard();
+            _stack_master_started = true;
+        }
     }
-    _stack_master_started = true;
 }
 void Network::ensureStackSlaveStarted_()
 {
-    const auto guard = _stack_lock.guard();
-    const ConfigsManagerIface::StackTransportKind transport =
-        _stack_cfg ? _stack_cfg->stackTransport() : ConfigsManagerIface::StackTransportKind::WebSocket;
+    ConfigsManagerIface::StackTransportKind transport = ConfigsManagerIface::StackTransportKind::WebSocket;
     StackSlaveClient::Config cfg;
-    cfg.host = (_stack_target == StackTarget::Primary) ? _stack_primary_host : _stack_fallback_host;
-    cfg.port = kStackPort;
-    cfg.api_key = _stack_cfg ? _stack_cfg->stackApiKey() : String();
-    cfg.device_name = _stack_device_name;
+    {
+        const auto guard = _stack_lock.guard();
+        if (_stack_cfg)
+        {
+            transport = _stack_cfg->stackTransport();
+            cfg.api_key = _stack_cfg->stackApiKey();
+            cfg.caps = _stack_cfg->stackSlaveController() ? kStackCapController : 0u;
+        }
+        cfg.host = (_stack_target == StackTarget::Primary) ? _stack_primary_host : _stack_fallback_host;
+        cfg.port = kStackPort;
+        cfg.device_name = _stack_device_name;
+    }
     cfg.node_id = stackNodeIdFromMac_(ESP.getEfuseMac());
     _stack_route.setLocalNodeId(cfg.node_id);
-    cfg.caps = (_stack_cfg && _stack_cfg->stackSlaveController()) ? kStackCapController : 0u;
     if (transport == ConfigsManagerIface::StackTransportKind::Rs485)
         cfg.transport = StackSlaveClient::Config::TransportKind::Rs485Stub;
     _stack_slave_client.setConfig(cfg);
@@ -430,13 +470,16 @@ void Network::ensureStackSlaveStarted_()
 }
 void Network::switchStackTarget_(StackTarget target)
 {
-    const auto guard = _stack_lock.guard();
-    if (target == _stack_target)
-        return;
-    const String host = (target == StackTarget::Primary) ? _stack_primary_host : _stack_fallback_host;
-    if (!host.length())
-        return;
-    _stack_target = target;
+    String host;
+    {
+        const auto guard = _stack_lock.guard();
+        if (target == _stack_target)
+            return;
+        host = (target == StackTarget::Primary) ? _stack_primary_host : _stack_fallback_host;
+        if (!host.length())
+            return;
+        _stack_target = target;
+    }
     _stack_slave_client.disconnect();
     ensureStackSlaveStarted_();
     if (target == StackTarget::Primary)
@@ -633,9 +676,14 @@ bool Network::stackIndexState(uint32_t node_id, StackUnitSnapshot::State &out) c
     return _stack_unit_snapshot.state(node_id, out);
 }
 
-bool Network::stackIndexStateSnapshot(uint32_t node_id, StackUnitSnapshot::Snapshot &out) const
+bool Network::stackIndexCacheState(uint32_t node_id, StackUnitSnapshot::CacheState &out) const
 {
-    return _stack_unit_snapshot.snapshot(node_id, out);
+    return _stack_unit_snapshot.cacheState(node_id, out);
+}
+
+bool Network::stackIndexRequestState(uint32_t node_id, StackUnitSnapshot::RequestState &out) const
+{
+    return _stack_unit_snapshot.requestState(node_id, out);
 }
 
 bool Network::stackIndexSocketById(uint32_t node_id, uint8_t id, StackUnitSnapshot::SocketItem &out) const
@@ -648,6 +696,12 @@ bool Network::stackIndexSocketAt(uint32_t node_id, uint8_t index, StackUnitSnaps
     return _stack_unit_snapshot.socketAt(node_id, index, out);
 }
 
+bool Network::stackIndexSocketsPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::SocketItem *out, uint8_t capacity,
+                                    uint8_t &out_count) const
+{
+    return _stack_unit_snapshot.socketsPage(node_id, offset, out, capacity, out_count);
+}
+
 bool Network::stackIndexLightById(uint32_t node_id, uint8_t id, StackUnitSnapshot::SocketItem &out) const
 {
     return _stack_unit_snapshot.lightById(node_id, id, out);
@@ -656,6 +710,12 @@ bool Network::stackIndexLightById(uint32_t node_id, uint8_t id, StackUnitSnapsho
 bool Network::stackIndexLightAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::SocketItem &out) const
 {
     return _stack_unit_snapshot.lightAt(node_id, index, out);
+}
+
+bool Network::stackIndexLightsPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::SocketItem *out, uint8_t capacity,
+                                   uint8_t &out_count) const
+{
+    return _stack_unit_snapshot.lightsPage(node_id, offset, out, capacity, out_count);
 }
 
 bool Network::stackIndexMeteoById(uint32_t node_id, uint8_t id, StackUnitSnapshot::MeteoItem &out) const
@@ -668,6 +728,12 @@ bool Network::stackIndexMeteoAt(uint32_t node_id, uint8_t index, StackUnitSnapsh
     return _stack_unit_snapshot.meteoAt(node_id, index, out);
 }
 
+bool Network::stackIndexMeteoPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::MeteoItem *out, uint8_t capacity,
+                                  uint8_t &out_count) const
+{
+    return _stack_unit_snapshot.meteoPage(node_id, offset, out, capacity, out_count);
+}
+
 bool Network::stackIndexThermoById(uint32_t node_id, uint8_t id, StackUnitSnapshot::ThermoItem &out) const
 {
     return _stack_unit_snapshot.thermoById(node_id, id, out);
@@ -676,6 +742,12 @@ bool Network::stackIndexThermoById(uint32_t node_id, uint8_t id, StackUnitSnapsh
 bool Network::stackIndexThermoAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::ThermoItem &out) const
 {
     return _stack_unit_snapshot.thermoAt(node_id, index, out);
+}
+
+bool Network::stackIndexThermoPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::ThermoItem *out, uint8_t capacity,
+                                   uint8_t &out_count) const
+{
+    return _stack_unit_snapshot.thermoPage(node_id, offset, out, capacity, out_count);
 }
 
 bool Network::stackIndexTankById(uint32_t node_id, uint8_t id, StackUnitSnapshot::TankItem &out) const
@@ -688,79 +760,75 @@ bool Network::stackIndexTankAt(uint32_t node_id, uint8_t index, StackUnitSnapsho
     return _stack_unit_snapshot.tankAt(node_id, index, out);
 }
 
-bool Network::prepareStackSocketsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
+bool Network::stackIndexTanksPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::TankItem *out, uint8_t capacity,
+                                  uint8_t &out_count) const
 {
-    return _stack_unit_snapshot.prepareSocketsPageRequest(node_id, now_ms, offset, pending_ms);
+    return _stack_unit_snapshot.tanksPage(node_id, offset, out, capacity, out_count);
 }
 
-bool Network::prepareStackLightsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
+bool Network::prepareStackPageRequest(StackUnitSnapshot::PageKind kind, uint32_t node_id, uint32_t now_ms, uint16_t offset,
+                                      uint32_t pending_ms)
 {
-    return _stack_unit_snapshot.prepareLightsPageRequest(node_id, now_ms, offset, pending_ms);
+    switch (kind)
+    {
+        case StackUnitSnapshot::PageKind::Sockets:
+            return _stack_unit_snapshot.prepareSocketsPageRequest(node_id, now_ms, offset, pending_ms);
+        case StackUnitSnapshot::PageKind::Lights:
+            return _stack_unit_snapshot.prepareLightsPageRequest(node_id, now_ms, offset, pending_ms);
+        case StackUnitSnapshot::PageKind::Meteo:
+            return _stack_unit_snapshot.prepareMeteoPageRequest(node_id, now_ms, offset, pending_ms);
+        case StackUnitSnapshot::PageKind::Thermo:
+            return _stack_unit_snapshot.prepareThermoPageRequest(node_id, now_ms, offset, pending_ms);
+        case StackUnitSnapshot::PageKind::Tanks:
+        default:
+            return _stack_unit_snapshot.prepareTanksPageRequest(node_id, now_ms, offset, pending_ms);
+    }
 }
 
-bool Network::prepareStackMeteoPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
+void Network::completeStackPageRequest(StackUnitSnapshot::PageKind kind, uint32_t node_id, uint16_t offset)
 {
-    return _stack_unit_snapshot.prepareMeteoPageRequest(node_id, now_ms, offset, pending_ms);
+    switch (kind)
+    {
+        case StackUnitSnapshot::PageKind::Sockets:
+            _stack_unit_snapshot.completeSocketsPageRequest(node_id, offset);
+            return;
+        case StackUnitSnapshot::PageKind::Lights:
+            _stack_unit_snapshot.completeLightsPageRequest(node_id, offset);
+            return;
+        case StackUnitSnapshot::PageKind::Meteo:
+            _stack_unit_snapshot.completeMeteoPageRequest(node_id, offset);
+            return;
+        case StackUnitSnapshot::PageKind::Thermo:
+            _stack_unit_snapshot.completeThermoPageRequest(node_id, offset);
+            return;
+        case StackUnitSnapshot::PageKind::Tanks:
+        default:
+            _stack_unit_snapshot.completeTanksPageRequest(node_id, offset);
+            return;
+    }
 }
 
-bool Network::prepareStackThermoPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
+void Network::clearStackPageRequest(StackUnitSnapshot::PageKind kind, uint32_t node_id)
 {
-    return _stack_unit_snapshot.prepareThermoPageRequest(node_id, now_ms, offset, pending_ms);
-}
-
-bool Network::prepareStackTanksPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
-{
-    return _stack_unit_snapshot.prepareTanksPageRequest(node_id, now_ms, offset, pending_ms);
-}
-
-void Network::completeStackSocketsPageRequest(uint32_t node_id, uint16_t offset)
-{
-    _stack_unit_snapshot.completeSocketsPageRequest(node_id, offset);
-}
-
-void Network::completeStackLightsPageRequest(uint32_t node_id, uint16_t offset)
-{
-    _stack_unit_snapshot.completeLightsPageRequest(node_id, offset);
-}
-
-void Network::completeStackMeteoPageRequest(uint32_t node_id, uint16_t offset)
-{
-    _stack_unit_snapshot.completeMeteoPageRequest(node_id, offset);
-}
-
-void Network::completeStackThermoPageRequest(uint32_t node_id, uint16_t offset)
-{
-    _stack_unit_snapshot.completeThermoPageRequest(node_id, offset);
-}
-
-void Network::completeStackTanksPageRequest(uint32_t node_id, uint16_t offset)
-{
-    _stack_unit_snapshot.completeTanksPageRequest(node_id, offset);
-}
-
-void Network::clearStackSocketsPageRequest(uint32_t node_id)
-{
-    _stack_unit_snapshot.clearSocketsPageRequest(node_id);
-}
-
-void Network::clearStackLightsPageRequest(uint32_t node_id)
-{
-    _stack_unit_snapshot.clearLightsPageRequest(node_id);
-}
-
-void Network::clearStackMeteoPageRequest(uint32_t node_id)
-{
-    _stack_unit_snapshot.clearMeteoPageRequest(node_id);
-}
-
-void Network::clearStackThermoPageRequest(uint32_t node_id)
-{
-    _stack_unit_snapshot.clearThermoPageRequest(node_id);
-}
-
-void Network::clearStackTanksPageRequest(uint32_t node_id)
-{
-    _stack_unit_snapshot.clearTanksPageRequest(node_id);
+    switch (kind)
+    {
+        case StackUnitSnapshot::PageKind::Sockets:
+            _stack_unit_snapshot.clearSocketsPageRequest(node_id);
+            return;
+        case StackUnitSnapshot::PageKind::Lights:
+            _stack_unit_snapshot.clearLightsPageRequest(node_id);
+            return;
+        case StackUnitSnapshot::PageKind::Meteo:
+            _stack_unit_snapshot.clearMeteoPageRequest(node_id);
+            return;
+        case StackUnitSnapshot::PageKind::Thermo:
+            _stack_unit_snapshot.clearThermoPageRequest(node_id);
+            return;
+        case StackUnitSnapshot::PageKind::Tanks:
+        default:
+            _stack_unit_snapshot.clearTanksPageRequest(node_id);
+            return;
+    }
 }
 
 void Network::clearStackIndexStatePending(uint32_t node_id)
@@ -768,30 +836,49 @@ void Network::clearStackIndexStatePending(uint32_t node_id)
     _stack_unit_snapshot.clearPending(node_id);
 }
 
-void Network::updateStackIndexState(uint32_t node_id, const StackUnitSnapshot::Snapshot &state)
+void Network::applyStackIndexSystemState(uint32_t node_id, const StackUnitSnapshot::State &state)
 {
-    _stack_unit_snapshot.update(node_id, state);
+    _stack_unit_snapshot.applySystemState(node_id, state);
+}
+
+void Network::applyStackIndexControllerSummary(uint32_t node_id, const StackUnitSnapshot::State &state)
+{
+    _stack_unit_snapshot.applyControllerSummary(node_id, state);
+}
+
+void Network::updateStackIndexSocketsPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t on_total,
+                                          const StackUnitSnapshot::SocketItem *items, uint8_t item_count,
+                                          uint32_t updated_ms)
+{
+    _stack_unit_snapshot.applySocketsPage(node_id, offset, enabled_total, on_total, items, item_count, updated_ms);
+}
+
+void Network::updateStackIndexLightsPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t on_total,
+                                         const StackUnitSnapshot::SocketItem *items, uint8_t item_count,
+                                         uint32_t updated_ms)
+{
+    _stack_unit_snapshot.applyLightsPage(node_id, offset, enabled_total, on_total, items, item_count, updated_ms);
 }
 
 void Network::updateStackIndexMeteoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t ok_total,
                                         const StackUnitSnapshot::MeteoItem *items, uint8_t item_count,
                                         uint32_t updated_ms)
 {
-    _stack_unit_snapshot.updateMeteoPage(node_id, offset, enabled_total, ok_total, items, item_count, updated_ms);
+    _stack_unit_snapshot.applyMeteoPage(node_id, offset, enabled_total, ok_total, items, item_count, updated_ms);
 }
 
 void Network::updateStackIndexThermoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t active_total,
                                          const StackUnitSnapshot::ThermoItem *items, uint8_t item_count,
                                          uint32_t updated_ms)
 {
-    _stack_unit_snapshot.updateThermoPage(node_id, offset, enabled_total, active_total, items, item_count, updated_ms);
+    _stack_unit_snapshot.applyThermoPage(node_id, offset, enabled_total, active_total, items, item_count, updated_ms);
 }
 
 void Network::updateStackIndexTanksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
                                         const StackUnitSnapshot::TankItem *items, uint8_t item_count,
                                         uint32_t updated_ms)
 {
-    _stack_unit_snapshot.updateTanksPage(node_id, offset, enabled_total, alert_total, items, item_count, updated_ms);
+    _stack_unit_snapshot.applyTanksPage(node_id, offset, enabled_total, alert_total, items, item_count, updated_ms);
 }
 
 void Network::invalidateStackIndexState(uint32_t node_id)
@@ -802,7 +889,6 @@ void Network::invalidateStackIndexState(uint32_t node_id)
 bool Network::stackSlaveSendResponse(uint32_t target_node, const char *feature, const char *action, uint32_t reply_to,
                                      const JsonDocument *payload)
 {
-    const auto guard = _stack_lock.guard();
     const StackTransport::RouteMeta meta = StackRouteAdapter::makeResponseMeta(reply_to);
     return _stack_slave_client.sendRoute(target_node, feature, action, payload, &meta);
 }

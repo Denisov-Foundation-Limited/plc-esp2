@@ -309,8 +309,10 @@ void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *r
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            StackUnitSnapshot::Snapshot snapshot{};
-            if (!web.network()->stackIndexStateSnapshot(node_id, snapshot) || snapshot.light_count == 0)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache) ||
+                cache.light_count == 0)
             {
                 web.requestStackLights_(node_id);
                 web.requestStackPorts_(node_id);
@@ -319,9 +321,7 @@ void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *r
                 return;
             }
             bool changed_stack = false;
-            for (size_t i = 0; i < snapshot.light_count; ++i)
-            {
-                const auto &cfg = snapshot.lights[i];
+            web.network()->forEachStackLight(node_id, cache.light_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &cfg) {
                 const String idx = String((unsigned)cfg.id);
                 const String prefix = String("s") + idx + "_";
                 const String en_key = prefix + "en";
@@ -337,7 +337,7 @@ void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *r
                                      request->hasParam(group_key, true) ||
                                      request->hasParam(action_key, true);
                 if (!has_any)
-                    continue;
+                    return;
                 if (!web.webAclCanControlItem_(UsersRegistry::AclController::Lights, cfg.id, node_id))
                 {
                     web._lights_status = String("ACL deny item: ") + idx;
@@ -421,7 +421,7 @@ void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *r
                     }
                 }
                 if (!send)
-                    continue;
+                    return;
                 if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set_lights", &doc, StackRouteAdapter::Mode::Json))
                 {
                     web._lights_status = String("Send failed for light ") + idx;
@@ -431,7 +431,7 @@ void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *r
                 changed_stack = true;
                 (void)desired_state;
                 (void)set_state;
-            }
+            });
             if (changed_stack)
             {
                 web.requestStackLights_(node_id);

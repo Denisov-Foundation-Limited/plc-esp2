@@ -220,32 +220,44 @@ bool RulesHandler::remoteConditionControllerEnabled_(WebInterface &web, uint32_t
             return false;
         if (strcmp(controller, "sockets") == 0)
         {
-            StackUnitSnapshot::Snapshot snapshot{};
-            if (!web.network() || !web.network()->stackIndexStateSnapshot(node_id, snapshot) || snapshot.updated_ms == 0)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!web.network() || !web.network()->stackIndexState(node_id, snapshot) ||
+                !web.network()->stackIndexCacheState(node_id, cache) || snapshot.updated_ms == 0)
             {
                 web.requestStackSockets_(node_id);
                 return false;
             }
-            if (snapshot.sockets_enabled > snapshot.socket_count)
+            if (snapshot.sockets_enabled > cache.socket_count)
                 web.requestStackSockets_(node_id);
-            for (uint8_t i = 0; i < snapshot.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
-                if (snapshot.sockets[i].enabled)
-                    return true;
+            bool has_enabled = false;
+            web.network()->forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &item) {
+                if (item.enabled)
+                    has_enabled = true;
+            });
+            if (has_enabled)
+                return true;
             return false;
         }
         if (strcmp(controller, "lights") == 0)
         {
-            StackUnitSnapshot::Snapshot snapshot{};
-            if (!web.network() || !web.network()->stackIndexStateSnapshot(node_id, snapshot) || snapshot.updated_ms == 0)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!web.network() || !web.network()->stackIndexState(node_id, snapshot) ||
+                !web.network()->stackIndexCacheState(node_id, cache) || snapshot.updated_ms == 0)
             {
                 web.requestStackLights_(node_id);
                 return false;
             }
-            if (snapshot.lights_enabled > snapshot.light_count)
+            if (snapshot.lights_enabled > cache.light_count)
                 web.requestStackLights_(node_id);
-            for (uint8_t i = 0; i < snapshot.light_count && i < StackUnitSnapshot::kSocketCount; ++i)
-                if (snapshot.lights[i].enabled)
-                    return true;
+            bool has_enabled = false;
+            web.network()->forEachStackLight(node_id, cache.light_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &item) {
+                if (item.enabled)
+                    has_enabled = true;
+            });
+            if (has_enabled)
+                return true;
             return false;
         }
         return false;
@@ -684,17 +696,17 @@ void RulesHandler::appendConditionItemOptions_(WebInterface &web, String &out, u
         {
             if (controller.equalsIgnoreCase("sockets"))
             {
-                StackUnitSnapshot::Snapshot snapshot{};
-                if (web.network() && web.network()->stackIndexStateSnapshot(node_id, snapshot) && snapshot.updated_ms != 0)
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                    web.network()->stackIndexCacheState(node_id, cache) && snapshot.updated_ms != 0)
                 {
-                    for (uint8_t i = 0; i < snapshot.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
-                    {
-                        const auto &it = snapshot.sockets[i];
+                    web.network()->forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                         if (!it.enabled)
-                            continue;
+                            return;
                         appendItem(it.id, it.name[0] ? String(it.name) : String(), it.id == selected_id);
-                    }
-                    if (snapshot.sockets_enabled > snapshot.socket_count)
+                    });
+                    if (snapshot.sockets_enabled > cache.socket_count)
                         web.requestStackSockets_(node_id);
                 }
                 else
@@ -702,17 +714,17 @@ void RulesHandler::appendConditionItemOptions_(WebInterface &web, String &out, u
             }
             else if (controller.equalsIgnoreCase("lights"))
             {
-                StackUnitSnapshot::Snapshot snapshot{};
-                if (web.network() && web.network()->stackIndexStateSnapshot(node_id, snapshot) && snapshot.updated_ms != 0)
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                    web.network()->stackIndexCacheState(node_id, cache) && snapshot.updated_ms != 0)
                 {
-                    for (uint8_t i = 0; i < snapshot.light_count && i < StackUnitSnapshot::kSocketCount; ++i)
-                    {
-                        const auto &it = snapshot.lights[i];
+                    web.network()->forEachStackLight(node_id, cache.light_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                         if (!it.enabled)
-                            continue;
+                            return;
                         appendItem(it.id, it.name[0] ? String(it.name) : String(), it.id == selected_id);
-                    }
-                    if (snapshot.lights_enabled > snapshot.light_count)
+                    });
+                    if (snapshot.lights_enabled > cache.light_count)
                         web.requestStackLights_(node_id);
                 }
                 else
@@ -838,14 +850,14 @@ void RulesHandler::appendSocketValueOptions_(WebInterface &web, String &out, uin
         if (node_id != 0)
         {
             bool any_remote = false;
-            StackUnitSnapshot::Snapshot snapshot{};
-            if (web.network() && web.network()->stackIndexStateSnapshot(node_id, snapshot) && snapshot.updated_ms != 0)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                web.network()->stackIndexCacheState(node_id, cache) && snapshot.updated_ms != 0)
             {
-                for (uint8_t i = 0; i < snapshot.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
-                {
-                    const auto &it = snapshot.sockets[i];
+                web.network()->forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                     if (!it.enabled)
-                        continue;
+                        return;
                     any_remote = true;
                     out += "<option value=\"";
                     out += String((unsigned)it.id);
@@ -855,8 +867,8 @@ void RulesHandler::appendSocketValueOptions_(WebInterface &web, String &out, uin
                     else
                         out += String("Socket #") + String((unsigned)it.id);
                     out += "</option>";
-                }
-                if (snapshot.sockets_enabled > snapshot.socket_count)
+                });
+                if (snapshot.sockets_enabled > cache.socket_count)
                     web.requestStackSockets_(node_id);
             }
             else
@@ -896,14 +908,14 @@ void RulesHandler::appendLightValueOptions_(WebInterface &web, String &out, uint
         if (node_id != 0)
         {
             bool any_remote = false;
-            StackUnitSnapshot::Snapshot snapshot{};
-            if (web.network() && web.network()->stackIndexStateSnapshot(node_id, snapshot) && snapshot.updated_ms != 0)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                web.network()->stackIndexCacheState(node_id, cache) && snapshot.updated_ms != 0)
             {
-                for (uint8_t i = 0; i < snapshot.light_count && i < StackUnitSnapshot::kSocketCount; ++i)
-                {
-                    const auto &it = snapshot.lights[i];
+                web.network()->forEachStackLight(node_id, cache.light_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                     if (!it.enabled)
-                        continue;
+                        return;
                     any_remote = true;
                     out += "<option value=\"";
                     out += String((unsigned)it.id);
@@ -913,8 +925,8 @@ void RulesHandler::appendLightValueOptions_(WebInterface &web, String &out, uint
                     else
                         out += String("Light #") + String((unsigned)it.id);
                     out += "</option>";
-                }
-                if (snapshot.lights_enabled > snapshot.light_count)
+                });
+                if (snapshot.lights_enabled > cache.light_count)
                     web.requestStackLights_(node_id);
             }
             else

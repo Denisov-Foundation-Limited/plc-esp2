@@ -250,9 +250,11 @@ void MeteoHandler::handleMeteoState(WebInterface &web, AsyncWebServerRequest *re
         if (web.isStackMeteoView_(node_id))
         {
             StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
             const bool has_snapshot = web.network() && web.network()->stackIndexState(node_id, snapshot);
+            const bool has_cache = web.network() && web.network()->stackIndexCacheState(node_id, cache);
             const bool stale = !has_snapshot || snapshot.updated_ms == 0 || (uint32_t)(millis() - snapshot.updated_ms) > 1500u;
-            const bool partial = has_snapshot && snapshot.meteo_enabled > snapshot.meteo_count;
+            const bool partial = has_snapshot && has_cache && snapshot.meteo_enabled > cache.meteo_count;
             if (stale || partial)
             {
                 web.requestStackMeteo_(node_id);
@@ -261,13 +263,9 @@ void MeteoHandler::handleMeteoState(WebInterface &web, AsyncWebServerRequest *re
             else
             {
                 doc["pending"] = false;
-                for (uint8_t i = 0; i < snapshot.meteo_count && i < StackUnitSnapshot::kMeteoCount; ++i)
-                {
-                    StackUnitSnapshot::MeteoItem item{};
-                    if (!web.network()->stackIndexMeteoAt(node_id, i, item))
-                        continue;
+                web.network()->forEachStackMeteo(node_id, cache.meteo_count, [&](uint8_t, const StackUnitSnapshot::MeteoItem &item) {
                     if (!web.webAclCanViewItem_(UsersRegistry::AclController::Meteo, item.id, node_id))
-                        continue;
+                        return;
                     JsonObject o = items.add<JsonObject>();
                     o["id"] = item.id;
                     o["enabled"] = item.enabled;
@@ -278,7 +276,7 @@ void MeteoHandler::handleMeteoState(WebInterface &web, AsyncWebServerRequest *re
                     o["hum"] = item.humidity;
                     o["age_s"] = item.age_s;
                     o["has_read"] = item.has_read;
-                }
+                });
             }
         }
         else

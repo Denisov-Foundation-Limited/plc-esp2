@@ -177,12 +177,13 @@ void AppRuntime::taskFlush()
         const uint32_t node_id = _pending_display_stack_sockets_node_id;
         const uint16_t offset = _pending_display_stack_sockets_offset;
         _pending_display_stack_sockets_page = false;
-        if (node_id != 0 && net.network.prepareStackSocketsPageRequest(node_id, millis(), offset, 4000u))
+        if (node_id != 0 &&
+            net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id, millis(), offset, 4000u))
         {
             _pending_stack_sockets_page = true;
             _pending_stack_sockets_node_id = node_id;
             _pending_stack_sockets_offset = offset;
-            _pending_stack_sockets_limit = 8;
+            _pending_stack_sockets_limit = StackUnitSnapshot::kPageSize;
             _pending_stack_sockets_log = false;
         }
     }
@@ -191,12 +192,13 @@ void AppRuntime::taskFlush()
         const uint32_t node_id = _pending_display_stack_lights_node_id;
         const uint16_t offset = _pending_display_stack_lights_offset;
         _pending_display_stack_lights_page = false;
-        if (node_id != 0 && net.network.prepareStackLightsPageRequest(node_id, millis(), offset, 4000u))
+        if (node_id != 0 &&
+            net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id, millis(), offset, 4000u))
         {
             _pending_stack_lights_page = true;
             _pending_stack_lights_node_id = node_id;
             _pending_stack_lights_offset = offset;
-            _pending_stack_lights_limit = 8;
+            _pending_stack_lights_limit = StackUnitSnapshot::kPageSize;
             _pending_stack_lights_log = false;
         }
     }
@@ -205,12 +207,13 @@ void AppRuntime::taskFlush()
         const uint32_t node_id = _pending_display_stack_meteo_node_id;
         const uint16_t offset = _pending_display_stack_meteo_offset;
         _pending_display_stack_meteo_page = false;
-        if (node_id != 0 && net.network.prepareStackMeteoPageRequest(node_id, millis(), offset, 4000u))
+        if (node_id != 0 &&
+            net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id, millis(), offset, 4000u))
         {
             _pending_stack_meteo_page = true;
             _pending_stack_meteo_node_id = node_id;
             _pending_stack_meteo_offset = offset;
-            _pending_stack_meteo_limit = 8;
+            _pending_stack_meteo_limit = StackUnitSnapshot::kPageSize;
             _pending_stack_meteo_log = false;
         }
     }
@@ -219,12 +222,13 @@ void AppRuntime::taskFlush()
         const uint32_t node_id = _pending_display_stack_thermo_node_id;
         const uint16_t offset = _pending_display_stack_thermo_offset;
         _pending_display_stack_thermo_page = false;
-        if (node_id != 0 && net.network.prepareStackThermoPageRequest(node_id, millis(), offset, 4000u))
+        if (node_id != 0 &&
+            net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id, millis(), offset, 4000u))
         {
             _pending_stack_thermo_page = true;
             _pending_stack_thermo_node_id = node_id;
             _pending_stack_thermo_offset = offset;
-            _pending_stack_thermo_limit = 8;
+            _pending_stack_thermo_limit = StackUnitSnapshot::kPageSize;
             _pending_stack_thermo_log = false;
         }
     }
@@ -233,12 +237,13 @@ void AppRuntime::taskFlush()
         const uint32_t node_id = _pending_display_stack_tanks_node_id;
         const uint16_t offset = _pending_display_stack_tanks_offset;
         _pending_display_stack_tanks_page = false;
-        if (node_id != 0 && net.network.prepareStackTanksPageRequest(node_id, millis(), offset, 4000u))
+        if (node_id != 0 &&
+            net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id, millis(), offset, 4000u))
         {
             _pending_stack_tanks_page = true;
             _pending_stack_tanks_node_id = node_id;
             _pending_stack_tanks_offset = offset;
-            _pending_stack_tanks_limit = 8;
+            _pending_stack_tanks_limit = StackUnitSnapshot::kPageSize;
             _pending_stack_tanks_log = false;
         }
     }
@@ -294,7 +299,7 @@ bool AppRuntime::requestStackPollFeature_(uint32_t node_id, uint8_t feature){
     {
         DynamicJsonDocument req(64);
         req["offset"] = 0;
-        req["limit"] = 8;
+        req["limit"] = StackUnitSnapshot::kPageSize;
         return net.network.stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
                                                     StackRouteAdapter::Mode::Json, true);
     }
@@ -302,7 +307,7 @@ bool AppRuntime::requestStackPollFeature_(uint32_t node_id, uint8_t feature){
     {
         DynamicJsonDocument req(64);
         req["offset"] = 0;
-        req["limit"] = 8;
+        req["limit"] = StackUnitSnapshot::kPageSize;
         return net.network.stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
                                                     StackRouteAdapter::Mode::Json, true);
     }
@@ -310,7 +315,7 @@ bool AppRuntime::requestStackPollFeature_(uint32_t node_id, uint8_t feature){
     {
         DynamicJsonDocument req(64);
         req["offset"] = 0;
-        req["limit"] = 8;
+        req["limit"] = StackUnitSnapshot::kPageSize;
         return net.network.stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &req,
                                                     StackRouteAdapter::Mode::Json, true);
     }
@@ -318,7 +323,7 @@ bool AppRuntime::requestStackPollFeature_(uint32_t node_id, uint8_t feature){
     {
         DynamicJsonDocument req(64);
         req["offset"] = 0;
-        req["limit"] = 8;
+        req["limit"] = StackUnitSnapshot::kPageSize;
         return net.network.stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
                                                     StackRouteAdapter::Mode::Json, true);
     }
@@ -326,7 +331,7 @@ bool AppRuntime::requestStackPollFeature_(uint32_t node_id, uint8_t feature){
     {
         DynamicJsonDocument req(64);
         req["offset"] = 0;
-        req["limit"] = 8;
+        req["limit"] = StackUnitSnapshot::kPageSize;
         return net.network.stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
                                                     StackRouteAdapter::Mode::Json, true);
     }
@@ -338,13 +343,15 @@ bool AppRuntime::bootstrapSyncCompleted_(uint32_t node_id) const{
     if (node_id == 0)
         return true;
     StackUnitSnapshot::State snapshot{};
-    if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+    StackUnitSnapshot::CacheState cache{};
+    if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
+        snapshot.updated_ms == 0)
         return false;
-    const bool sockets_ready = snapshot.socket_count >= snapshot.sockets_enabled;
-    const bool lights_ready = snapshot.light_count >= snapshot.lights_enabled;
-    const bool meteo_ready = snapshot.meteo_count >= snapshot.meteo_enabled;
-    const bool thermo_ready = snapshot.thermo_count >= snapshot.thermo_enabled;
-    const bool tanks_ready = snapshot.tank_count >= snapshot.tanks_enabled;
+    const bool sockets_ready = cache.socket_count >= snapshot.sockets_enabled;
+    const bool lights_ready = cache.light_count >= snapshot.lights_enabled;
+    const bool meteo_ready = cache.meteo_count >= snapshot.meteo_enabled;
+    const bool thermo_ready = cache.thermo_count >= snapshot.thermo_enabled;
+    const bool tanks_ready = cache.tank_count >= snapshot.tanks_enabled;
     return sockets_ready && lights_ready && meteo_ready && thermo_ready && tanks_ready;
 }
 
@@ -675,45 +682,49 @@ void AppRuntime::logLocalInventory_(){
     }
 
     auto &meteo = control.controllers.meteo();
-    auto meteo_guard = meteo.lockGuard();
-    enabled = 0;
-    for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
     {
-        const auto *cfg = meteo.configByIndex(i);
-        if (!cfg || !cfg->enabled)
-            continue;
-        ++enabled;
-    }
-    core.logs.info(F("STACK"), F("Sync master unit: %s item: meteo enabled: %u"), node.c_str(), (unsigned)enabled);
-    for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
-    {
-        const auto *cfg = meteo.configByIndex(i);
-        if (!cfg || !cfg->enabled)
-            continue;
-        core.logs.info(F("STACK"), F("Sync master unit: %s item: meteo id: %u name: %s type: %s"),
-                       node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-",
-                       MeteoController::typeName(cfg->type));
+        auto meteo_guard = meteo.lockGuard();
+        enabled = 0;
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = meteo.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            ++enabled;
+        }
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: meteo enabled: %u"), node.c_str(), (unsigned)enabled);
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = meteo.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            core.logs.info(F("STACK"), F("Sync master unit: %s item: meteo id: %u name: %s type: %s"),
+                           node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-",
+                           MeteoController::typeName(cfg->type));
+        }
     }
 
     auto &thermo = control.controllers.thermo();
-    auto thermo_guard = thermo.lockGuard();
-    enabled = 0;
-    for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
     {
-        const auto *cfg = thermo.configByIndex(i);
-        if (!cfg || !cfg->enabled)
-            continue;
-        ++enabled;
-    }
-    core.logs.info(F("STACK"), F("Sync master unit: %s item: thermo enabled: %u"), node.c_str(), (unsigned)enabled);
-    for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
-    {
-        const auto *cfg = thermo.configByIndex(i);
-        if (!cfg || !cfg->enabled)
-            continue;
-        core.logs.info(F("STACK"), F("Sync master unit: %s item: thermo id: %u name: %s mode: %s"),
-                       node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-",
-                       ThermoController::modeName(cfg->mode));
+        auto thermo_guard = thermo.lockGuard();
+        enabled = 0;
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = thermo.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            ++enabled;
+        }
+        core.logs.info(F("STACK"), F("Sync master unit: %s item: thermo enabled: %u"), node.c_str(), (unsigned)enabled);
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = thermo.configByIndex(i);
+            if (!cfg || !cfg->enabled)
+                continue;
+            core.logs.info(F("STACK"), F("Sync master unit: %s item: thermo id: %u name: %s mode: %s"),
+                           node.c_str(), (unsigned)cfg->id, cfg->name.length() ? cfg->name.c_str() : "-",
+                           ThermoController::modeName(cfg->mode));
+        }
     }
 
     auto &tanks = control.controllers.tanks();

@@ -18,6 +18,16 @@ bool stackThermoState_(const WebInterface &web, uint32_t node_id, StackUnitSnaps
     return web.network() && node_id != 0 && web.network()->stackIndexState(node_id, out);
 }
 
+bool stackThermoCacheState_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::CacheState &out)
+{
+    return web.network() && node_id != 0 && web.network()->stackIndexCacheState(node_id, out);
+}
+
+bool stackThermoRequestState_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::RequestState &out)
+{
+    return web.network() && node_id != 0 && web.network()->stackIndexRequestState(node_id, out);
+}
+
 bool requestNextStackThermoPage_(WebInterface &web, uint32_t node_id, uint16_t offset, uint16_t limit)
 {
     if (!web.network() || node_id == 0 || limit == 0)
@@ -28,8 +38,74 @@ bool requestNextStackThermoPage_(WebInterface &web, uint32_t node_id, uint16_t o
     const bool sent = web.network()->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
                                                               StackRouteAdapter::Mode::Json, true);
     if (!sent)
-        web.network()->clearStackThermoPageRequest(node_id);
+        web.network()->clearStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id);
     return sent;
+}
+
+size_t stackThermoRenderCount_(const WebInterface &web, uint32_t node_id, uint8_t loaded_count, bool can_view_disabled)
+{
+    if (!can_view_disabled || !web.network())
+        return loaded_count;
+    size_t last_enabled_idx = SIZE_MAX;
+    web.network()->forEachStackThermo(node_id, loaded_count, [&](uint8_t index, const StackUnitSnapshot::ThermoItem &item) {
+        if (item.enabled)
+            last_enabled_idx = index;
+    });
+    if (last_enabled_idx == SIZE_MAX)
+        return loaded_count ? 1u : 0u;
+    const size_t rc = last_enabled_idx + 2u;
+    return rc > loaded_count ? loaded_count : rc;
+}
+
+void loadLocalThermoItems_(ThermoController &thermo, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto thermo_guard = thermo.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.thermo_valid[i] = false;
+        const auto *cfg_ptr = thermo.configByIndex(i);
+        const auto *st_ptr = thermo.stateByIndex(i);
+        if (!cfg_ptr || !st_ptr)
+            continue;
+        scratch.thermo_valid[i] = true;
+        scratch.thermo_cfg[i] = *cfg_ptr;
+        scratch.thermo_st[i] = *st_ptr;
+    }
+}
+
+void loadLocalThermoSensorItems_(MeteoController &meteo, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto meteo_guard = meteo.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.meteo_valid[i] = false;
+        const auto *cfg = meteo.configByIndex(i);
+        const auto *st = meteo.stateByIndex(i);
+        if (!cfg || !st)
+            continue;
+        scratch.meteo_valid[i] = true;
+        scratch.meteo_cfg[i] = *cfg;
+        scratch.meteo_st[i] = *st;
+    }
+}
+
+bool findLocalThermoSensorState_(const WebInterface::ScratchBuffer &scratch, size_t count, uint8_t sensor_id,
+                                 MeteoController::SensorState &out)
+{
+    if (sensor_id == 0)
+        return false;
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (!scratch.meteo_valid[i] || scratch.meteo_cfg[i].id != sensor_id)
+            continue;
+        out = scratch.meteo_st[i];
+        return true;
+    }
+    return false;
 }
 }
 
@@ -89,12 +165,14 @@ String WebInterfaceControllersThermoHelper::thermoDeviceSelectHtml_(const WebInt
 
 String WebInterfaceControllersThermoHelper::stackThermoStatusText_(const WebInterface &web, uint32_t node_id) {
             StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::RequestState request{};
             if (!stackThermoState_(web, node_id, snapshot))
                 return WebUiRu::kNoDataFromSlave;
-            if (snapshot.pending &&
-                (uint32_t)(millis() - snapshot.request_started_ms) > 15000u)
+            if (stackThermoRequestState_(web, node_id, request) &&
+                request.pending &&
+                (uint32_t)(millis() - request.started_ms) > 15000u)
                 return WebUiRu::Sockets::kText10;
-            if (snapshot.pending)
+            if (request.pending)
                 return "";
             if (snapshot.updated_ms == 0)
                 return WebUiRu::kNoDataFromSlave;
@@ -113,125 +191,88 @@ bool WebInterfaceControllersThermoHelper::requestStackThermo_(WebInterface &web,
             return false;
         const uint32_t now = millis();
         StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        StackUnitSnapshot::RequestState request{};
         const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+        const bool has_cache = web.network()->stackIndexCacheState(node_id, cache);
+        const bool has_request = web.network()->stackIndexRequestState(node_id, request);
         if (!has_snapshot || snapshot.updated_ms == 0 ||
             (uint32_t)(now - snapshot.updated_ms) > 5000u)
         {
             const bool refresh = web.requestStackIndexState_(node_id);
             DynamicJsonDocument req(64);
             req["offset"] = 0;
-            req["limit"] = 8;
+            req["limit"] = StackUnitSnapshot::kPageSize;
             const bool thermo_req = web.network()->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
                                                                             StackRouteAdapter::Mode::Json, true);
             return refresh || thermo_req;
         }
-        if (snapshot.pending && (uint32_t)(now - snapshot.request_started_ms) < 1500u)
+        if (has_request && request.pending && (uint32_t)(now - request.started_ms) < 1500u)
             return true;
-        if (snapshot.thermo_enabled > snapshot.thermo_count)
+        if (has_cache && snapshot.thermo_enabled > cache.thermo_count)
         {
-            if (!web.network()->prepareStackThermoPageRequest(node_id, now, snapshot.thermo_count, 4000u))
+            if (!web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id, now,
+                                                        cache.thermo_count, 4000u))
                 return true;
-            return requestNextStackThermoPage_(web, node_id, snapshot.thermo_count, 8);
+            return requestNextStackThermoPage_(web, node_id, cache.thermo_count, StackUnitSnapshot::kPageSize);
         }
         return true;
     }
 
 size_t WebInterfaceControllersThermoHelper::stackThermoVisibleCount_(const WebInterface &web, uint32_t node_id) {
             StackUnitSnapshot::State snapshot{};
-            if (!stackThermoState_(web, node_id, snapshot))
+            StackUnitSnapshot::CacheState cache{};
+            if (!stackThermoState_(web, node_id, snapshot) || !stackThermoCacheState_(web, node_id, cache))
                 return 0;
-            if (snapshot.thermo_count == 0)
+            if (cache.thermo_count == 0)
                 return 0;
             const bool can_view_disabled = web.webSessionIsAdmin_();
-            uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
-            uint32_t remote_used[ThermoController::kDeviceCount] = {};
-            size_t remote_used_count = 0;
-            size_t render_count = snapshot.thermo_count;
-            if (can_view_disabled)
-            {
-                size_t last_enabled_idx = SIZE_MAX;
-                for (uint8_t i = 0; i < snapshot.thermo_count && i < StackUnitSnapshot::kThermoCount; ++i)
-                {
-                    StackUnitSnapshot::ThermoItem item{};
-                    if (!web.network()->stackIndexThermoAt(node_id, i, item))
-                        continue;
-                    if (item.enabled)
-                        last_enabled_idx = i;
-                }
-                if (last_enabled_idx == SIZE_MAX)
-                    render_count = snapshot.thermo_count ? 1u : 0u;
-                else
-                {
-                    const size_t rc = last_enabled_idx + 2u;
-                    render_count = rc > snapshot.thermo_count ? snapshot.thermo_count : rc;
-                }
-            }
+            const size_t render_count = stackThermoRenderCount_(web, node_id, cache.thermo_count, can_view_disabled);
             size_t count = 0;
-            for (size_t i = 0; i < render_count; ++i)
-            {
-                StackUnitSnapshot::ThermoItem item{};
-                if (!web.network()->stackIndexThermoAt(node_id, (uint8_t)i, item))
-                    continue;
+            web.network()->forEachStackThermo(node_id, (uint8_t)render_count, [&](uint8_t, const StackUnitSnapshot::ThermoItem &item) {
                 if (!web.webAclCanViewItem_(UsersRegistry::AclController::Thermo, item.id, node_id))
-                    continue;
+                    return;
                 if (!can_view_disabled && !item.enabled)
-                    continue;
+                    return;
                 ++count;
-            }
+            });
             return count;
     }
 
 String WebInterfaceControllersThermoHelper::listStackThermoHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
         StackUnitSnapshot::State snapshot{};
-        if (!stackThermoState_(web, node_id, snapshot))
+        StackUnitSnapshot::CacheState cache{};
+        if (!stackThermoState_(web, node_id, snapshot) || !stackThermoCacheState_(web, node_id, cache))
             return "<div class=\"tile empty\"><strong>Thermo unavailable</strong></div>";
-        if (snapshot.thermo_count == 0)
+        if (cache.thermo_count == 0)
             return "<div class=\"tile empty\"><strong>Thermo empty</strong></div>";
+        auto scratch_guard = web.scratchLockGuard_();
+        WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+        if (!scratch)
+            return "<div class=\"tile empty\"><strong>Thermo unavailable</strong></div>";
+        memset(scratch->thermo_sensor_used, 0, sizeof(scratch->thermo_sensor_used));
+        memset(scratch->thermo_remote_used, 0, sizeof(scratch->thermo_remote_used));
         String items;
-        const size_t page_limit = (limit == 0) ? 1u : ((limit == SIZE_MAX) ? snapshot.thermo_count : limit);
+        const size_t page_limit = (limit == 0) ? 1u : ((limit == SIZE_MAX) ? cache.thermo_count : limit);
         size_t reserve = 2048u + page_limit * 900u;
         if (reserve < 8192u)
             reserve = 8192u;
         items.reserve(reserve);
         const bool can_view_disabled = web.webSessionIsAdmin_();
-        uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
-        uint32_t remote_used[ThermoController::kDeviceCount] = {};
-        size_t remote_used_count = 0;
-        size_t render_count = snapshot.thermo_count;
-        if (can_view_disabled)
-        {
-            size_t last_enabled_idx = SIZE_MAX;
-            for (uint8_t i = 0; i < snapshot.thermo_count && i < StackUnitSnapshot::kThermoCount; ++i)
-            {
-                StackUnitSnapshot::ThermoItem item{};
-                if (!web.network()->stackIndexThermoAt(node_id, i, item))
-                    continue;
-                if (item.enabled)
-                    last_enabled_idx = i;
-            }
-            if (last_enabled_idx == SIZE_MAX)
-                render_count = snapshot.thermo_count ? 1u : 0u;
-            else
-            {
-                const size_t rc = last_enabled_idx + 2u;
-                render_count = rc > snapshot.thermo_count ? snapshot.thermo_count : rc;
-            }
-        }
+        const size_t render_count = stackThermoRenderCount_(web, node_id, cache.thermo_count, can_view_disabled);
         size_t rendered = 0;
         size_t visible_idx = 0;
-        for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
-        {
-            StackUnitSnapshot::ThermoItem cfg{};
-            if (!web.network()->stackIndexThermoAt(node_id, (uint8_t)i, cfg))
-                continue;
+        web.network()->forEachStackThermo(node_id, (uint8_t)render_count, [&](uint8_t, const StackUnitSnapshot::ThermoItem &cfg) {
+            if (rendered >= page_limit)
+                return;
             if (!web.webAclCanViewItem_(UsersRegistry::AclController::Thermo, cfg.id, node_id))
-                continue;
+                return;
             if (!can_view_disabled && !cfg.enabled)
-                continue;
+                return;
             if (visible_idx < offset)
             {
                 ++visible_idx;
-                continue;
+                return;
             }
             ++visible_idx;
             const bool can_admin = web.webSessionIsAdmin_();
@@ -398,7 +439,8 @@ String WebInterfaceControllersThermoHelper::listStackThermoHtml_(WebInterface &w
             if (!can_edit)
                 items += " disabled";
             items += ">";
-            items += web.meteoSensorOptionsHtml_(cfg.sensor_id, cfg.sensor_node_id, sensor_used, remote_used, remote_used_count);
+            items += web.meteoSensorOptionsHtml_(cfg.sensor_id, cfg.sensor_node_id, scratch->thermo_sensor_used,
+                                                 scratch->thermo_remote_used, 0);
             items += WebUiRu::Thermo::kSelectClassFieldMiniNameT2;
             items += String((unsigned)cfg.id);
             items += "_mode\"";
@@ -460,7 +502,7 @@ String WebInterfaceControllersThermoHelper::listStackThermoHtml_(WebInterface &w
             items += "_power\" value=\"\">";
             items += "</div></div>";
             ++rendered;
-        }
+        });
         if (items.length() == 0)
             items = "<div class=\"tile empty\"><strong>Thermo empty</strong></div>";
         return items;
@@ -471,28 +513,31 @@ String WebInterfaceControllersThermoHelper::listThermoHtml_(WebInterface &web, s
             return "<div class=\"tile empty\"><strong>Thermo unavailable</strong></div>";
         String items;
         items.reserve(16384);
+        auto scratch_guard = web.scratchLockGuard_();
+        WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+        if (!scratch)
+            return "<div class=\"tile empty\"><strong>Thermo unavailable</strong></div>";
         ThermoController &thermo = web._controllers->thermo();
         MeteoController &meteo = web._controllers->meteo();
-        auto thermo_guard = thermo.lockGuard();
-        auto meteo_guard = meteo.lockGuard();
-        uint8_t sensor_used[MeteoController::kSensorCount + 1] = {};
-        uint32_t remote_used[ThermoController::kDeviceCount] = {};
+        loadLocalThermoItems_(thermo, *scratch, ThermoController::kDeviceCount);
+        loadLocalThermoSensorItems_(meteo, *scratch, MeteoController::kSensorCount);
+        memset(scratch->thermo_sensor_used, 0, sizeof(scratch->thermo_sensor_used));
         size_t remote_used_count = 0;
-    
+
         for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
         {
-            const auto *cfg = thermo.configByIndex(i);
-            if (!cfg || !cfg->enabled)
+            if (!scratch->thermo_valid[i] || !scratch->thermo_cfg[i].enabled)
                 continue;
-            if (cfg->sensor_id == 0 || cfg->sensor_id > MeteoController::kSensorCount)
+            const auto &cfg = scratch->thermo_cfg[i];
+            if (cfg.sensor_id == 0 || cfg.sensor_id > MeteoController::kSensorCount)
                 continue;
-            if (cfg->sensor_node_id == 0)
+            if (cfg.sensor_node_id == 0)
             {
-                sensor_used[cfg->sensor_id]++;
+                scratch->thermo_sensor_used[cfg.sensor_id]++;
             }
             else if (remote_used_count < ThermoController::kDeviceCount)
             {
-                remote_used[remote_used_count++] = (cfg->sensor_node_id << 8) | cfg->sensor_id;
+                scratch->thermo_remote_used[remote_used_count++] = (cfg.sensor_node_id << 8) | cfg.sensor_id;
             }
         }
     
@@ -500,22 +545,11 @@ String WebInterfaceControllersThermoHelper::listThermoHtml_(WebInterface &web, s
                               bool enabled) {
             const bool can_admin = web.webSessionIsAdmin_();
             const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, cfg.id);
-            const MeteoController::SensorState *sensor_st = nullptr;
-            if (cfg.sensor_id != ThermoController::kInvalidSensor)
-            {
-                if (cfg.sensor_node_id == 0)
-                {
-                    for (size_t s = 0; s < MeteoController::kSensorCount; ++s)
-                    {
-                        const auto *scfg = meteo.configByIndex(s);
-                        if (scfg && scfg->id == cfg.sensor_id)
-                        {
-                            sensor_st = meteo.stateByIndex(s);
-                            break;
-                        }
-                    }
-                }
-            }
+            MeteoController::SensorState sensor_st{};
+            const bool has_sensor_st =
+                cfg.sensor_id != ThermoController::kInvalidSensor &&
+                cfg.sensor_node_id == 0 &&
+                findLocalThermoSensorState_(*scratch, MeteoController::kSensorCount, cfg.sensor_id, sensor_st);
     
             const char *sensor_label = WebUiRu::Thermo::kText8;
             const char *sensor_suffix = "";
@@ -528,9 +562,9 @@ String WebInterfaceControllersThermoHelper::listThermoHtml_(WebInterface &web, s
                 }
                 else
                 {
-                    if (sensor_st && sensor_st->has_temp)
+                    if (has_sensor_st && sensor_st.has_temp)
                     {
-                        dtostrf(sensor_st->temp_c, 0, 1, sensor_buf);
+                        dtostrf(sensor_st.temp_c, 0, 1, sensor_buf);
                         sensor_label = sensor_buf;
                         sensor_suffix = "&deg;C";
                     }
@@ -680,7 +714,8 @@ String WebInterfaceControllersThermoHelper::listThermoHtml_(WebInterface &web, s
             if (!can_admin || !can_control)
                 items += " disabled";
             items += ">";
-            items += web.meteoSensorOptionsHtml_(cfg.sensor_id, cfg.sensor_node_id, sensor_used, remote_used, remote_used_count);
+            items += web.meteoSensorOptionsHtml_(cfg.sensor_id, cfg.sensor_node_id, scratch->thermo_sensor_used,
+                                                 scratch->thermo_remote_used, remote_used_count);
             items += WebUiRu::Thermo::kSelectClassFieldMiniNameT2;
             items += String((unsigned)cfg.id);
             items += "_mode\"";
@@ -752,13 +787,13 @@ String WebInterfaceControllersThermoHelper::listThermoHtml_(WebInterface &web, s
         {
             if (rendered >= page_limit)
                 break;
-            const auto *cfg = thermo.configByIndex(i);
-            const auto *st = thermo.stateByIndex(i);
-            if (!cfg || !st)
+            if (!scratch->thermo_valid[i])
                 continue;
-            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Thermo, cfg->id))
+            const auto &cfg = scratch->thermo_cfg[i];
+            const auto &st = scratch->thermo_st[i];
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Thermo, cfg.id))
                 continue;
-            if (!can_view_disabled && !cfg->enabled)
+            if (!can_view_disabled && !cfg.enabled)
                 continue;
             if (visible_idx < offset)
             {
@@ -766,7 +801,7 @@ String WebInterfaceControllersThermoHelper::listThermoHtml_(WebInterface &web, s
                 continue;
             }
             ++visible_idx;
-            appendTile(*cfg, *st, cfg->enabled);
+            appendTile(cfg, st, cfg.enabled);
             ++rendered;
         }
         if (items.length() == 0)
@@ -789,17 +824,20 @@ String WebInterfaceControllersThermoHelper::thermoUsedPortsJson_(const WebInterf
         bool first = true;
         if (web._controllers)
         {
+            auto scratch_guard = web.scratchLockGuard_();
+            WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+            if (!scratch)
+                return "[]";
             ThermoController &thermo = web._controllers->thermo();
-            auto guard = thermo.lockGuard();
+            loadLocalThermoItems_(thermo, *scratch, ThermoController::kDeviceCount);
             bool used[PortIO::PORT_COUNT] = {};
             for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
             {
-                const auto *cfg = thermo.configByIndex(i);
-                if (!cfg)
+                if (!scratch->thermo_valid[i])
                     continue;
-                const uint8_t heat = cfg->heat_port;
-                const uint8_t cool = cfg->cool_port;
-                const uint8_t button = cfg->button_port;
+                const uint8_t heat = scratch->thermo_cfg[i].heat_port;
+                const uint8_t cool = scratch->thermo_cfg[i].cool_port;
+                const uint8_t button = scratch->thermo_cfg[i].button_port;
                 if (heat != ThermoController::kInvalidPort && heat < PortIO::PORT_COUNT)
                     used[heat] = true;
                 if (cool != ThermoController::kInvalidPort && cool < PortIO::PORT_COUNT)

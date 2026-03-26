@@ -206,11 +206,13 @@ bool WebInterfaceStackOps::requestStackIndexState_(uint32_t node_id)
         return false;
     const uint32_t now = millis();
     StackUnitSnapshot::State snapshot{};
+    StackUnitSnapshot::RequestState request{};
     if (_web.network()->stackIndexState(node_id, snapshot))
     {
         const bool fresh_plc = snapshot.has_plc && (uint32_t)(now - snapshot.updated_ms) < 5000u;
         const bool fresh_rtc = snapshot.has_rtc && (uint32_t)(now - snapshot.updated_ms) < 5000u;
-        if ((fresh_plc && fresh_rtc) || (snapshot.pending && (uint32_t)(now - snapshot.request_started_ms) < 1500u))
+        const bool has_request = _web.network()->stackIndexRequestState(node_id, request);
+        if ((fresh_plc && fresh_rtc) || (has_request && request.pending && (uint32_t)(now - request.started_ms) < 1500u))
             return true;
     }
     if (!_web.network()->prepareStackIndexStateRequest(node_id, now, 5000u, 1500u))

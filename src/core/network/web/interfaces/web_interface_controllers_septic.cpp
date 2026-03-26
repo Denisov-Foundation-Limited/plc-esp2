@@ -11,6 +11,27 @@
 
 #include "core/network/web/web_interface.hpp"
 
+namespace
+{
+void loadLocalSepticItems_(SepticController &septic, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto guard = septic.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.septic_valid[i] = false;
+        const auto *cfg = septic.configByIndex(i);
+        const auto *st = septic.stateByIndex(i);
+        if (!cfg || !st)
+            continue;
+        scratch.septic_valid[i] = true;
+        scratch.septic_cfg[i] = *cfg;
+        scratch.septic_st[i] = *st;
+    }
+}
+}
+
 size_t WebInterfaceControllersSepticHelper::septicLocalRenderCount_(const WebInterface &web) {
         if (!web._controllers)
             return 0;
@@ -103,8 +124,12 @@ String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, s
             return WebUiRu::Septic::kText9;
         String items;
         items.reserve(2048);
+        auto scratch_guard = web.scratchLockGuard_();
+        WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+        if (!scratch)
+            return WebUiRu::Septic::kText9;
         SepticController &septic = web._controllers->septic();
-        auto guard = septic.lockGuard();
+        loadLocalSepticItems_(septic, *scratch, SepticController::kSepticCount);
         const size_t render_count = web.septicLocalRenderCount_();
         const size_t page_limit = (limit == 0) ? 1u : limit;
         const bool can_view_disabled = web.webSessionIsAdmin_();
@@ -114,13 +139,13 @@ String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, s
         {
             if (rendered >= page_limit)
                 break;
-            const auto *cfg = septic.configByIndex(i);
-            const auto *st = septic.stateByIndex(i);
-            if (!cfg || !st)
+            if (!scratch->septic_valid[i])
                 continue;
-            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Septic, cfg->id))
+            const auto &cfg = scratch->septic_cfg[i];
+            const auto &st = scratch->septic_st[i];
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Septic, cfg.id))
                 continue;
-            if (!can_view_disabled && !cfg->enabled)
+            if (!can_view_disabled && !cfg.enabled)
                 continue;
             if (visible_idx < offset)
             {
@@ -128,12 +153,12 @@ String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, s
                 continue;
             }
             ++visible_idx;
-            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Septic, cfg->id);
+            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Septic, cfg.id);
             const bool has_groups = web.hasGroups_();
-            const bool warn = st->warning;
-            const bool alarm = st->alarm;
-            const bool relay_warn = st->relay_warning;
-            const bool relay_alarm = st->relay_alarm;
+            const bool warn = st.warning;
+            const bool alarm = st.alarm;
+            const bool relay_warn = st.relay_warning;
+            const bool relay_alarm = st.relay_alarm;
             const char *water_class = "water-low";
             const char *water_level = "20%";
             const char *water_label = WebUiRu::Septic::kText20;
@@ -150,12 +175,12 @@ String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, s
                 water_label = WebUiRu::Septic::kText80;
             }
             items += "<div class=\"tile js-group-item";
-            if (!cfg->enabled)
+            if (!cfg.enabled)
                 items += " disabled";
                 items += "\" data-group-id=\"";
-                items += String((unsigned)cfg->group_id);
+                items += String((unsigned)cfg.group_id);
                 items += "\"";
-                items += web.groupVisibilityStyleAttr_(cfg->group_id);
+                items += web.groupVisibilityStyleAttr_(cfg.group_id);
                 items += "><div class=\"septic-visual\"><div class=\"liquid ";
             items += water_class;
             items += "\" style=\"height:";
@@ -163,16 +188,16 @@ String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, s
             items += ";\"></div><div class=\"level-label\">";
             items += water_label;
             items += WebUiRu::Septic::kNum;
-            items += String((unsigned)cfg->id);
+            items += String((unsigned)cfg.id);
             items += "</strong>";
-            if (!cfg->enabled)
+            if (!cfg.enabled)
                 items += WebUiRu::Septic::kText3;
             if (can_control)
             {
                 items += "</div><label class=\"switch\"><input type=\"checkbox\" name=\"sep";
-                items += String((unsigned)cfg->id);
+                items += String((unsigned)cfg.id);
                 items += "_en\"";
-                if (cfg->enabled)
+                if (cfg.enabled)
                     items += " checked";
                 items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
             }
@@ -180,38 +205,38 @@ String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, s
             if (can_control)
             {
                 items += String("<div class=\"form-row\"><label>") + WebUiRu::Septic::kLabelName + "</label><input class=\"field name\" type=\"text\" name=\"sep";
-                items += String((unsigned)cfg->id);
+                items += String((unsigned)cfg.id);
                 items += "_name\" value=\"";
-                web.appendHtmlEscaped_(items, cfg->name.c_str());
+                web.appendHtmlEscaped_(items, cfg.name.c_str());
                 items += "\"></div>";
                 items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"sep";
-                items += String((unsigned)cfg->id);
+                items += String((unsigned)cfg.id);
                 items += "_group\"";
                 if (!has_groups)
                     items += " disabled";
                 items += ">";
-                items += web.groupOptionsHtml_(cfg->group_id, true, true);
+                items += web.groupOptionsHtml_(cfg.group_id, true, true);
                 items += "</select></div>";
                 items += WebUiRu::Septic::kSelectClassFieldMiniSepticSelectData;
-                if (cfg->warning_port != SepticController::kInvalidPort)
-                    items += String((unsigned)cfg->warning_port);
+                if (cfg.warning_port != SepticController::kInvalidPort)
+                    items += String((unsigned)cfg.warning_port);
                 items += "\" name=\"sep";
-                items += String((unsigned)cfg->id);
+                items += String((unsigned)cfg.id);
                 items += WebUiRu::Septic::kWarnSelectClassFieldMiniSepticSelect;
-                if (cfg->alarm_port != SepticController::kInvalidPort)
-                    items += String((unsigned)cfg->alarm_port);
+                if (cfg.alarm_port != SepticController::kInvalidPort)
+                    items += String((unsigned)cfg.alarm_port);
                 items += "\" name=\"sep";
-                items += String((unsigned)cfg->id);
+                items += String((unsigned)cfg.id);
                 items += WebUiRu::Septic::kAlarmSelectClassFieldMiniSepticSelect;
-                if (cfg->relay_warning != SepticController::kInvalidPort)
-                    items += String((unsigned)cfg->relay_warning);
+                if (cfg.relay_warning != SepticController::kInvalidPort)
+                    items += String((unsigned)cfg.relay_warning);
                 items += "\" name=\"sep";
-                items += String((unsigned)cfg->id);
+                items += String((unsigned)cfg.id);
                 items += WebUiRu::Septic::kRelayWarnSelectClassFieldMiniSeptic;
-                if (cfg->relay_alarm != SepticController::kInvalidPort)
-                    items += String((unsigned)cfg->relay_alarm);
+                if (cfg.relay_alarm != SepticController::kInvalidPort)
+                    items += String((unsigned)cfg.relay_alarm);
                 items += "\" name=\"sep";
-                items += String((unsigned)cfg->id);
+                items += String((unsigned)cfg.id);
                 items += "_relay_alarm\"></select></div></div>";
             }
             items += "<div class=\"status-grid\"><div class=\"status-line\"><span class=\"status-dot ";
@@ -225,16 +250,16 @@ String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, s
             if (can_control)
             {
                 items += WebUiRu::Septic::kInputTypeCheckboxClassSepticMonitorData2;
-                items += String((unsigned)cfg->id);
+                items += String((unsigned)cfg.id);
                 items += "_mon\"";
-                if (cfg->monitoring_on)
+                if (cfg.monitoring_on)
                     items += " checked";
-                if (!cfg->enabled)
+                if (!cfg.enabled)
                     items += " disabled";
                 items += "><span class=\"track\"><span class=\"knob\"></span></span></label><input type=\"hidden\" name=\"sep";
-                items += String((unsigned)cfg->id);
+                items += String((unsigned)cfg.id);
                 items += "_mon\" value=\"";
-                items += cfg->monitoring_on ? "on" : "off";
+                items += cfg.monitoring_on ? "on" : "off";
                 items += "\"></div></div></div>";
             }
             else

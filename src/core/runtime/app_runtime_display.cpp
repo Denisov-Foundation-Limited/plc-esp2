@@ -173,7 +173,9 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         if (is_master)
         {
             StackUnitSnapshot::State snapshot{};
-            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+            StackUnitSnapshot::CacheState cache{};
+            if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
+                snapshot.updated_ms == 0)
             {
                 queueDisplayStackSnapshotPage_(node_id, "sockets", 0);
                 return false;
@@ -189,8 +191,8 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             StackUnitSnapshot::SocketItem item{};
             if (!net.network.stackIndexSocketById(node_id, slot.index, item))
             {
-                if (snapshot.sockets_enabled > snapshot.socket_count)
-                    queueDisplayStackSnapshotPage_(node_id, "sockets", snapshot.socket_count);
+                if (snapshot.sockets_enabled > cache.socket_count)
+                    queueDisplayStackSnapshotPage_(node_id, "sockets", cache.socket_count);
                 return false;
             }
             if (!item.enabled)
@@ -222,7 +224,9 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         if (is_master)
         {
             StackUnitSnapshot::State snapshot{};
-            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+            StackUnitSnapshot::CacheState cache{};
+            if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
+                snapshot.updated_ms == 0)
             {
                 queueDisplayStackSnapshotPage_(node_id, "lights", 0);
                 return false;
@@ -238,8 +242,8 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             StackUnitSnapshot::SocketItem item{};
             if (!net.network.stackIndexLightById(node_id, slot.index, item))
             {
-                if (snapshot.lights_enabled > snapshot.light_count)
-                    queueDisplayStackSnapshotPage_(node_id, "lights", snapshot.light_count);
+                if (snapshot.lights_enabled > cache.light_count)
+                    queueDisplayStackSnapshotPage_(node_id, "lights", cache.light_count);
                 return false;
             }
             if (!item.enabled)
@@ -291,7 +295,9 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         else if (is_master)
         {
             StackUnitSnapshot::State snapshot{};
-            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+            StackUnitSnapshot::CacheState cache{};
+            if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
+                snapshot.updated_ms == 0)
             {
                 queueDisplayStackSnapshotPage_(node_id, "meteo", 0);
                 return false;
@@ -307,8 +313,8 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             StackUnitSnapshot::MeteoItem item{};
             if (!net.network.stackIndexMeteoById(node_id, slot.index, item))
             {
-                if (snapshot.meteo_enabled > snapshot.meteo_count)
-                    queueDisplayStackSnapshotPage_(node_id, "meteo", snapshot.meteo_count);
+                if (snapshot.meteo_enabled > cache.meteo_count)
+                    queueDisplayStackSnapshotPage_(node_id, "meteo", cache.meteo_count);
                 return false;
             }
             if (!item.enabled || !item.ok)
@@ -383,7 +389,9 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         if (is_master)
         {
             StackUnitSnapshot::State snapshot{};
-            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+            StackUnitSnapshot::CacheState cache{};
+            if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
+                snapshot.updated_ms == 0)
             {
                 queueDisplayStackSnapshotPage_(node_id, "thermo", 0);
                 return false;
@@ -399,8 +407,8 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             StackUnitSnapshot::ThermoItem item{};
             if (!net.network.stackIndexThermoById(node_id, slot.index, item))
             {
-                if (snapshot.thermo_enabled > snapshot.thermo_count)
-                    queueDisplayStackSnapshotPage_(node_id, "thermo", snapshot.thermo_count);
+                if (snapshot.thermo_enabled > cache.thermo_count)
+                    queueDisplayStackSnapshotPage_(node_id, "thermo", cache.thermo_count);
                 return false;
             }
             if (!item.enabled)

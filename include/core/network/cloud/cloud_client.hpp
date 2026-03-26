@@ -23,6 +23,7 @@
 #include "core/network/cloud/cloud_ws_transport.hpp"
 #include "core/rules_controller.hpp"
 #include "utils/users_registry.hpp"
+#include "utils/rtos_lock.hpp"
 
 class Logger;
 class Controllers;
@@ -49,6 +50,7 @@ public:
     };
 
     CloudClient(Logger &log, Controllers &controllers, PlcControl &plc, WifiManager &wifi, RTC &rtc);
+    ~CloudClient();
 
     void setGsm(GsmModem *gsm);
     void setNetwork(Network *network);
@@ -79,6 +81,7 @@ public:
     void loop();
 
 private:
+    struct ScratchBuffer;
     static constexpr uint8_t kProtoVersion = 1;
     static constexpr uint8_t kMaxQueuedEvents = 64;
     static constexpr uint32_t kStackTimeoutMs = 1500;
@@ -144,6 +147,8 @@ private:
     QueuedEvent _event_queue[kMaxQueuedEvents] = {};
     uint8_t _event_head = 0;
     uint8_t _event_count = 0;
+    mutable ScratchBuffer *_scratch = nullptr;
+    mutable RtosRecursiveLock _scratch_lock;
 
     void handleMessage_(const uint8_t *payload, size_t len);
 
@@ -268,6 +273,9 @@ private:
                         JsonObjectConst args, uint32_t node_id) const;
 
     void clearPending_();
+    bool ensureScratch_() const;
+    ScratchBuffer *scratch_() const;
+    void releaseScratch_();
 
     static bool hasWhat_(JsonArrayConst what, const char *name);
     const char *transportName_() const;

@@ -13,9 +13,37 @@
 
 namespace
 {
+void loadLocalTankItems_(TankController &tanks, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto guard = tanks.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.tank_valid[i] = false;
+        const auto *cfg = tanks.configByIndex(i);
+        const auto *st = tanks.stateByIndex(i);
+        if (!cfg || !st)
+            continue;
+        scratch.tank_valid[i] = true;
+        scratch.tank_cfg[i] = *cfg;
+        scratch.tank_st[i] = *st;
+    }
+}
+
 bool stackTanksState_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::State &out)
 {
     return web.network() && node_id != 0 && web.network()->stackIndexState(node_id, out);
+}
+
+bool stackTanksCacheState_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::CacheState &out)
+{
+    return web.network() && node_id != 0 && web.network()->stackIndexCacheState(node_id, out);
+}
+
+bool stackTanksRequestState_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::RequestState &out)
+{
+    return web.network() && node_id != 0 && web.network()->stackIndexRequestState(node_id, out);
 }
 
 bool requestNextStackTanksPage_(WebInterface &web, uint32_t node_id, uint16_t offset, uint16_t limit)
@@ -28,8 +56,23 @@ bool requestNextStackTanksPage_(WebInterface &web, uint32_t node_id, uint16_t of
     const bool sent = web.network()->stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &req,
                                                               StackRouteAdapter::Mode::Json, true);
     if (!sent)
-        web.network()->clearStackTanksPageRequest(node_id);
+        web.network()->clearStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id);
     return sent;
+}
+
+size_t stackTanksRenderCount_(const WebInterface &web, uint32_t node_id, uint8_t loaded_count, bool can_view_disabled)
+{
+    if (!can_view_disabled || !web.network())
+        return loaded_count;
+    size_t last_enabled_idx = SIZE_MAX;
+    web.network()->forEachStackTank(node_id, loaded_count, [&](uint8_t index, const StackUnitSnapshot::TankItem &item) {
+        if (item.enabled)
+            last_enabled_idx = index;
+    });
+    if (last_enabled_idx == SIZE_MAX)
+        return loaded_count ? 1u : 0u;
+    const size_t rc = last_enabled_idx + 2u;
+    return rc > loaded_count ? loaded_count : rc;
 }
 }
 
@@ -89,11 +132,14 @@ String WebInterfaceControllersTanksHelper::tanksDeviceSelectHtml_(const WebInter
 
 String WebInterfaceControllersTanksHelper::stackTanksStatusText_(const WebInterface &web, uint32_t node_id) {
         StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::RequestState request{};
         if (!stackTanksState_(web, node_id, snapshot))
             return WebUiRu::kNoDataFromSlave;
-        if (snapshot.pending && (uint32_t)(millis() - snapshot.request_started_ms) > 15000u)
+        if (stackTanksRequestState_(web, node_id, request) &&
+            request.pending &&
+            (uint32_t)(millis() - request.started_ms) > 15000u)
             return WebUiRu::Sockets::kText10;
-        if (snapshot.pending)
+        if (request.pending)
             return "";
         if (snapshot.updated_ms == 0)
             return WebUiRu::kNoDataFromSlave;
@@ -112,104 +158,69 @@ bool WebInterfaceControllersTanksHelper::requestStackTanks_(WebInterface &web, u
             return false;
         const uint32_t now = millis();
         StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        StackUnitSnapshot::RequestState request{};
         const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+        const bool has_cache = web.network()->stackIndexCacheState(node_id, cache);
+        const bool has_request = web.network()->stackIndexRequestState(node_id, request);
         if (!has_snapshot || snapshot.updated_ms == 0 || (uint32_t)(now - snapshot.updated_ms) > 5000u)
         {
             const bool refresh = web.requestStackIndexState_(node_id);
             DynamicJsonDocument req(64);
             req["offset"] = 0;
-            req["limit"] = 8;
+            req["limit"] = StackUnitSnapshot::kPageSize;
             const bool tanks_req = web.network()->stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &req,
                                                                            StackRouteAdapter::Mode::Json, true);
             return refresh || tanks_req;
         }
-        if (snapshot.pending && (uint32_t)(now - snapshot.request_started_ms) < 1500u)
+        if (has_request && request.pending && (uint32_t)(now - request.started_ms) < 1500u)
             return true;
-        if (snapshot.tanks_enabled > snapshot.tank_count)
+        if (has_cache && snapshot.tanks_enabled > cache.tank_count)
         {
-            if (!web.network()->prepareStackTanksPageRequest(node_id, now, snapshot.tank_count, 4000u))
+            if (!web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id, now,
+                                                        cache.tank_count, 4000u))
                 return true;
-            return requestNextStackTanksPage_(web, node_id, snapshot.tank_count, 8);
+            return requestNextStackTanksPage_(web, node_id, cache.tank_count, StackUnitSnapshot::kPageSize);
         }
         return true;
     }
 
 size_t WebInterfaceControllersTanksHelper::stackTanksVisibleCount_(const WebInterface &web, uint32_t node_id) {
         StackUnitSnapshot::State snapshot{};
-        if (!stackTanksState_(web, node_id, snapshot))
+        StackUnitSnapshot::CacheState cache{};
+        if (!stackTanksState_(web, node_id, snapshot) || !stackTanksCacheState_(web, node_id, cache))
             return 0;
-        if (snapshot.tank_count == 0)
+        if (cache.tank_count == 0)
             return 0;
         const bool can_view_disabled = web.webSessionIsAdmin_();
-        size_t render_count = snapshot.tank_count;
-        if (can_view_disabled)
-        {
-            size_t last_enabled_idx = SIZE_MAX;
-            for (uint8_t i = 0; i < snapshot.tank_count && i < StackUnitSnapshot::kTankCount; ++i)
-            {
-                StackUnitSnapshot::TankItem item{};
-                if (!web.network()->stackIndexTankAt(node_id, i, item))
-                    continue;
-                if (item.enabled)
-                    last_enabled_idx = i;
-            }
-            if (last_enabled_idx == SIZE_MAX)
-                render_count = snapshot.tank_count ? 1u : 0u;
-            else
-            {
-                const size_t rc = last_enabled_idx + 2u;
-                render_count = rc > snapshot.tank_count ? snapshot.tank_count : rc;
-            }
-        }
+        const size_t render_count = stackTanksRenderCount_(web, node_id, cache.tank_count, can_view_disabled);
         size_t count = 0;
-        for (size_t i = 0; i < render_count; ++i)
-        {
-            StackUnitSnapshot::TankItem item{};
-            if (!web.network()->stackIndexTankAt(node_id, (uint8_t)i, item))
-                continue;
+        web.network()->forEachStackTank(node_id, (uint8_t)render_count, [&](uint8_t, const StackUnitSnapshot::TankItem &item) {
             if (!web.webAclCanViewItem_(UsersRegistry::AclController::Tanks, item.id, node_id))
-                continue;
+                return;
             if (!can_view_disabled && !item.enabled)
-                continue;
+                return;
             ++count;
-        }
+        });
         return count;
     }
 
 String WebInterfaceControllersTanksHelper::listStackTanksHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
         StackUnitSnapshot::State snapshot{};
-        if (!stackTanksState_(web, node_id, snapshot))
+        StackUnitSnapshot::CacheState cache{};
+        if (!stackTanksState_(web, node_id, snapshot) || !stackTanksCacheState_(web, node_id, cache))
             return "<div class=\"tile empty\"><strong>Tanks unavailable</strong></div>";
-        if (snapshot.tank_count == 0)
+        if (cache.tank_count == 0)
             return "<div class=\"tile empty\"><strong>Tanks empty</strong></div>";
         String items;
-        const size_t page_limit = (limit == 0) ? 1u : ((limit == SIZE_MAX) ? snapshot.tank_count : limit);
+        const size_t page_limit = (limit == 0) ? 1u : ((limit == SIZE_MAX) ? cache.tank_count : limit);
         size_t reserve = 2048u + page_limit * 900u;
         if (reserve < 8192u)
             reserve = 8192u;
         items.reserve(reserve);
         const bool can_view_disabled = web.webSessionIsAdmin_();
         const bool has_groups = web.hasGroups_(node_id);
-        size_t render_count = snapshot.tank_count;
-        if (can_view_disabled)
-        {
-            size_t last_enabled_idx = SIZE_MAX;
-            for (uint8_t i = 0; i < snapshot.tank_count && i < StackUnitSnapshot::kTankCount; ++i)
-            {
-                StackUnitSnapshot::TankItem item{};
-                if (!web.network()->stackIndexTankAt(node_id, i, item))
-                    continue;
-                if (item.enabled)
-                    last_enabled_idx = i;
-            }
-            if (last_enabled_idx == SIZE_MAX)
-                render_count = snapshot.tank_count ? 1u : 0u;
-            else
-            {
-                const size_t rc = last_enabled_idx + 2u;
-                render_count = rc > snapshot.tank_count ? snapshot.tank_count : rc;
-            }
-        }
+        const size_t render_count = stackTanksRenderCount_(web, node_id, cache.tank_count, can_view_disabled);
 
         auto appendRow = [&](const StackUnitSnapshot::TankItem &cfg) {
             const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Tanks, cfg.id, node_id);
@@ -369,24 +380,22 @@ String WebInterfaceControllersTanksHelper::listStackTanksHtml_(WebInterface &web
 
         size_t rendered = 0;
         size_t visible_idx = 0;
-        for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
-        {
-            StackUnitSnapshot::TankItem item{};
-            if (!web.network()->stackIndexTankAt(node_id, (uint8_t)i, item))
-                continue;
+        web.network()->forEachStackTank(node_id, (uint8_t)render_count, [&](uint8_t, const StackUnitSnapshot::TankItem &item) {
+            if (rendered >= page_limit)
+                return;
             if (!web.webAclCanViewItem_(UsersRegistry::AclController::Tanks, item.id, node_id))
-                continue;
+                return;
             if (!can_view_disabled && !item.enabled)
-                continue;
+                return;
             if (visible_idx < offset)
             {
                 ++visible_idx;
-                continue;
+                return;
             }
             ++visible_idx;
             appendRow(item);
             ++rendered;
-        }
+        });
         if (items.length() == 0)
             items = WebUiRu::Tanks::kText13;
         return items;
@@ -397,8 +406,12 @@ String WebInterfaceControllersTanksHelper::listTanksHtml_(WebInterface &web, siz
             return WebUiRu::Tanks::kText8;
         String items;
         items.reserve(16384);
+        auto scratch_guard = web.scratchLockGuard_();
+        WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+        if (!scratch)
+            return WebUiRu::Tanks::kText14;
         TankController &tanks = web._controllers->tanks();
-        auto guard = tanks.lockGuard();
+        loadLocalTankItems_(tanks, *scratch, TankController::kTankCount);
     
         auto appendRow = [&](const TankController::TankConfig &cfg, const TankController::TankState &st,
                              bool enabled) {
@@ -580,13 +593,11 @@ String WebInterfaceControllersTanksHelper::listTanksHtml_(WebInterface &web, siz
         {
             if (rendered >= page_limit)
                 break;
-            const auto *cfg = tanks.configByIndex(i);
-            const auto *st = tanks.stateByIndex(i);
-            if (!cfg || !st)
+            if (!scratch->tank_valid[i])
                 continue;
-            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Tanks, cfg->id))
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Tanks, scratch->tank_cfg[i].id))
                 continue;
-            if (!can_view_disabled && !cfg->enabled)
+            if (!can_view_disabled && !scratch->tank_cfg[i].enabled)
                 continue;
             if (visible_idx < offset)
             {
@@ -594,7 +605,7 @@ String WebInterfaceControllersTanksHelper::listTanksHtml_(WebInterface &web, siz
                 continue;
             }
             ++visible_idx;
-            appendRow(*cfg, *st, cfg->enabled);
+            appendRow(scratch->tank_cfg[i], scratch->tank_st[i], scratch->tank_cfg[i].enabled);
             ++rendered;
         }
         if (items.length() == 0)

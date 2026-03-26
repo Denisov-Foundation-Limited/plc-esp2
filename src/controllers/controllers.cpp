@@ -306,94 +306,109 @@ void Controllers::rebuildGpioUsageCache_(bool used[]) const{
     for (size_t i = 0; i < PortIO::PORT_COUNT; ++i)
         used[i] = false;
 
-    auto sockets_guard = _sockets.lockGuard();
-    for (size_t i = 0; i < SocketController::kSocketCount; ++i)
     {
-        const auto *cfg = _sockets.configByIndex(i);
-        if (!cfg)
-            continue;
-        if (!cfg->enabled)
-            continue;
-        markPortUsed_(used, cfg->button_port);
-        markPortUsed_(used, cfg->relay_port);
+        auto sockets_guard = _sockets.lockGuard();
+        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+        {
+            const auto *cfg = _sockets.configByIndex(i);
+            if (!cfg)
+                continue;
+            if (!cfg->enabled)
+                continue;
+            markPortUsed_(used, cfg->button_port);
+            markPortUsed_(used, cfg->relay_port);
+        }
+        for (size_t i = 0; i < SocketController::kLightCount; ++i)
+        {
+            const auto *cfg = _sockets.lightConfigByIndex(i);
+            if (!cfg)
+                continue;
+            if (!cfg->enabled)
+                continue;
+            markPortUsed_(used, cfg->button_port);
+            markPortUsed_(used, cfg->relay_port);
+        }
     }
-    for (size_t i = 0; i < SocketController::kLightCount; ++i)
     {
-        const auto *cfg = _sockets.lightConfigByIndex(i);
-        if (!cfg)
-            continue;
-        if (!cfg->enabled)
-            continue;
-        markPortUsed_(used, cfg->button_port);
-        markPortUsed_(used, cfg->relay_port);
+        auto meteo_guard = _meteo.lockGuard();
+        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        {
+            const auto *cfg = _meteo.configByIndex(i);
+            if (!cfg)
+                continue;
+            if (cfg->type != MeteoController::SensorType::Dht22)
+                continue;
+            markPortUsed_(used, cfg->dht_pin);
+        }
     }
-    auto meteo_guard = _meteo.lockGuard();
-    for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
     {
-        const auto *cfg = _meteo.configByIndex(i);
-        if (!cfg)
-            continue;
-        if (cfg->type != MeteoController::SensorType::Dht22)
-            continue;
-        markPortUsed_(used, cfg->dht_pin);
+        auto thermo_guard = _thermo.lockGuard();
+        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        {
+            const auto *cfg = _thermo.configByIndex(i);
+            if (!cfg)
+                continue;
+            markPortUsed_(used, cfg->heat_port);
+            markPortUsed_(used, cfg->cool_port);
+            markPortUsed_(used, cfg->button_port);
+        }
     }
-    auto thermo_guard = _thermo.lockGuard();
-    for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
     {
-        const auto *cfg = _thermo.configByIndex(i);
-        if (!cfg)
-            continue;
-        markPortUsed_(used, cfg->heat_port);
-        markPortUsed_(used, cfg->cool_port);
-        markPortUsed_(used, cfg->button_port);
+        auto tanks_guard = _tanks.lockGuard();
+        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        {
+            const auto *cfg = _tanks.configByIndex(i);
+            if (!cfg)
+                continue;
+            markPortUsed_(used, cfg->level_low);
+            markPortUsed_(used, cfg->level_mid);
+            markPortUsed_(used, cfg->level_full);
+            markPortUsed_(used, cfg->relay_valve);
+            markPortUsed_(used, cfg->relay_pump);
+            markPortUsed_(used, cfg->relay_alarm);
+        }
     }
-    auto tanks_guard = _tanks.lockGuard();
-    for (size_t i = 0; i < TankController::kTankCount; ++i)
     {
-        const auto *cfg = _tanks.configByIndex(i);
-        if (!cfg)
-            continue;
-        markPortUsed_(used, cfg->level_low);
-        markPortUsed_(used, cfg->level_mid);
-        markPortUsed_(used, cfg->level_full);
-        markPortUsed_(used, cfg->relay_valve);
-        markPortUsed_(used, cfg->relay_pump);
-        markPortUsed_(used, cfg->relay_alarm);
+        auto septic_guard = _septic.lockGuard();
+        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        {
+            const auto *cfg = _septic.configByIndex(i);
+            if (!cfg)
+                continue;
+            markPortUsed_(used, cfg->warning_port);
+            markPortUsed_(used, cfg->alarm_port);
+            markPortUsed_(used, cfg->relay_warning);
+            markPortUsed_(used, cfg->relay_alarm);
+        }
     }
-    auto septic_guard = _septic.lockGuard();
-    for (size_t i = 0; i < SepticController::kSepticCount; ++i)
     {
-        const auto *cfg = _septic.configByIndex(i);
-        if (!cfg)
-            continue;
-        markPortUsed_(used, cfg->warning_port);
-        markPortUsed_(used, cfg->alarm_port);
-        markPortUsed_(used, cfg->relay_warning);
-        markPortUsed_(used, cfg->relay_alarm);
+        auto security_guard = _security.lockGuard();
+        if (_security.sirenPort() != SecurityController::kInvalidPort)
+            markPortUsed_(used, _security.sirenPort());
+        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        {
+            const auto *cfg = _security.configByIndex(i);
+            if (!cfg)
+                continue;
+            markPortUsed_(used, cfg->port);
+        }
     }
-    auto security_guard = _security.lockGuard();
-    if (_security.sirenPort() != SecurityController::kInvalidPort)
-        markPortUsed_(used, _security.sirenPort());
-    for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
     {
-        const auto *cfg = _security.configByIndex(i);
-        if (!cfg)
-            continue;
-        markPortUsed_(used, cfg->port);
+        auto ring_guard = _ring.lockGuard();
+        const auto &rcfg = _ring.config();
+        markPortUsed_(used, rcfg.button_port);
+        markPortUsed_(used, rcfg.relay_port);
     }
-    auto ring_guard = _ring.lockGuard();
-    const auto &rcfg = _ring.config();
-    markPortUsed_(used, rcfg.button_port);
-    markPortUsed_(used, rcfg.relay_port);
-
-    auto avr_guard = _avr.lockGuard();
-    const auto &acfg = _avr.config();
-    markPortUsed_(used, acfg.main_ok_port);
-    markPortUsed_(used, acfg.reserve_ok_port);
-    markPortUsed_(used, acfg.feedback_main_port);
-    markPortUsed_(used, acfg.feedback_reserve_port);
-    markPortUsed_(used, acfg.relay_main_port);
-    markPortUsed_(used, acfg.relay_reserve_port);
+    {
+        auto avr_guard = _avr.lockGuard();
+        const auto &acfg = _avr.config();
+        markPortUsed_(used, acfg.main_ok_port);
+        markPortUsed_(used, acfg.reserve_ok_port);
+        markPortUsed_(used, acfg.feedback_main_port);
+        markPortUsed_(used, acfg.feedback_reserve_port);
+        markPortUsed_(used, acfg.relay_main_port);
+        markPortUsed_(used, acfg.relay_reserve_port);
+    }
 
     auto leak_guard = _leak.lockGuard();
     for (size_t i = 0; i < LeakController::kZoneCount; ++i)

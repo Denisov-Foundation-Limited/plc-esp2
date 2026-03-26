@@ -18,6 +18,8 @@
 #include "core/network/web/web_interface_system_routes.hpp"
 #include "core/network/web/interfaces/web_interface_controllers_ring.hpp"
 #include "core/network/network.hpp"
+#include "esp32-hal-psram.h"
+#include "esp_heap_caps.h"
 
 void WebInterface::registerRoutes()
 {
@@ -29,6 +31,11 @@ void WebInterface::registerRoutes()
     WebInterfaceApiRoutes::registerRoutes(*this, _server);
     WebInterfaceSystemRoutes::registerDisplay(*this, _server);
     WebInterfaceApiRoutes::registerNotFound(*this, _server);
+}
+
+WebInterface::~WebInterface()
+{
+    releaseScratch_();
 }
 
     WebInterface::WebInterface(AsyncWebServer &server, CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
@@ -56,6 +63,7 @@ void WebInterface::registerRoutes()
 
     bool WebInterface::begin(bool format_on_fail )
 {
+        ensureScratch_();
         return LittleFS.begin(format_on_fail, FsConfig::kBasePath, FsConfig::kMaxOpenFiles,
                               FsConfig::kPartitionLabel);
     }
@@ -112,6 +120,48 @@ void WebInterface::registerRoutes()
 
     Network *WebInterface::network() const
 { return _network; }
+
+WebInterface::ScratchBuffer *WebInterface::scratchBuffer_() const
+{
+    return ensureScratch_() ? _scratch : nullptr;
+}
+
+RtosRecursiveLock::Guard WebInterface::scratchLockGuard_(uint32_t timeout_ms) const
+{
+    return _scratch_lock.guard(timeout_ms);
+}
+
+bool WebInterface::ensureScratch_() const
+{
+    if (_scratch)
+        return true;
+    const auto guard = _scratch_lock.guard();
+    if (_scratch)
+        return true;
+    const size_t bytes = sizeof(ScratchBuffer);
+    void *mem = nullptr;
+#if defined(ESP32)
+    if (psramFound())
+        mem = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+    if (!mem)
+        mem = calloc(1, bytes);
+    if (!mem)
+        return false;
+    memset(mem, 0, bytes);
+    _scratch = static_cast<ScratchBuffer *>(mem);
+    return true;
+}
+
+void WebInterface::releaseScratch_()
+{
+    const auto guard = _scratch_lock.guard();
+    if (_scratch)
+    {
+        free(_scratch);
+        _scratch = nullptr;
+    }
+}
  
 
     void WebInterface::handleAdminSave_(AsyncWebServerRequest *request)

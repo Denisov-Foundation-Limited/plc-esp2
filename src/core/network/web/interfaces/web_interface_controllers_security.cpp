@@ -11,6 +11,27 @@
 
 #include "core/network/web/web_interface.hpp"
 
+namespace
+{
+void loadLocalSecurityItems_(SecurityController &sec, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto guard = sec.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.security_valid[i] = false;
+        const auto *cfg = sec.configByIndex(i);
+        const auto *st = sec.stateByIndex(i);
+        if (!cfg || !st)
+            continue;
+        scratch.security_valid[i] = true;
+        scratch.security_cfg[i] = *cfg;
+        scratch.security_st[i] = *st;
+    }
+}
+}
+
 size_t WebInterfaceControllersSecurityHelper::securityLocalRenderCount_(const WebInterface &web) {
         if (!web._controllers)
             return 0;
@@ -108,8 +129,12 @@ String WebInterfaceControllersSecurityHelper::listSecuritySensorsHtml_(WebInterf
             return WebUiRu::Security::kText2;
         String items;
         items.reserve(16384);
+        auto scratch_guard = web.scratchLockGuard_();
+        WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+        if (!scratch)
+            return WebUiRu::Security::kText2;
         SecurityController &sec = web._controllers->security();
-        auto guard = sec.lockGuard();
+        loadLocalSecurityItems_(sec, *scratch, SecurityController::kSensorCount);
     
         auto appendTypeOption = [&](const char *value, const char *label, bool selected) {
             items += "<option value=\"";
@@ -160,20 +185,20 @@ String WebInterfaceControllersSecurityHelper::listSecuritySensorsHtml_(WebInterf
         const bool can_view_disabled = web.webSessionIsAdmin_();
         for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
         {
-            const auto *cfg = sec.configByIndex(i);
-            const auto *st = sec.stateByIndex(i);
-            if (!cfg || !st)
+            if (!scratch->security_valid[i])
                 continue;
-            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Security, cfg->id))
+            const auto &cfg = scratch->security_cfg[i];
+            const auto &st = scratch->security_st[i];
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Security, cfg.id))
                 continue;
-            if (cfg->enabled)
+            if (cfg.enabled)
             {
-                appendRow(*cfg, *st, true);
+                appendRow(cfg, st, true);
             }
             else if (can_view_disabled && !first_disabled)
             {
-                first_disabled = cfg;
-                first_disabled_state = st;
+                first_disabled = &scratch->security_cfg[i];
+                first_disabled_state = &scratch->security_st[i];
             }
         }
         if (first_disabled && first_disabled_state)
@@ -191,8 +216,12 @@ String WebInterfaceControllersSecurityHelper::listSecuritySensorsTiles_(WebInter
     
         String items;
         items.reserve(16384);
+        auto scratch_guard = web.scratchLockGuard_();
+        WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+        if (!scratch)
+            return WebUiRu::Security::kText4;
         SecurityController &sec = web._controllers->security();
-        auto guard = sec.lockGuard();
+        loadLocalSecurityItems_(sec, *scratch, SecurityController::kSensorCount);
     
         auto appendTypeOption = [&](String &out, const char *value, const char *label, bool selected) {
             out += "<option value=\"";
@@ -315,15 +344,15 @@ String WebInterfaceControllersSecurityHelper::listSecuritySensorsTiles_(WebInter
             end_idx = (uint8_t)max_idx;
         for (uint8_t idx = start_idx; idx <= end_idx && idx < SecurityController::kSensorCount; ++idx)
         {
-            const auto *cfg = sec.configByIndex(idx);
-            const auto *st = sec.stateByIndex(idx);
-            if (!cfg || !st)
+            if (!scratch->security_valid[idx])
                 continue;
-            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Security, cfg->id))
+            const auto &cfg = scratch->security_cfg[idx];
+            const auto &st = scratch->security_st[idx];
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Security, cfg.id))
                 continue;
-            if (!web.webSessionIsAdmin_() && !cfg->enabled)
+            if (!web.webSessionIsAdmin_() && !cfg.enabled)
                 continue;
-            appendTile(*cfg, *st);
+            appendTile(cfg, st);
         }
         if (items.length() == 0)
             items = WebUiRu::Security::kText8;
@@ -356,15 +385,18 @@ String WebInterfaceControllersSecurityHelper::securityUsedPinsJson_(const WebInt
         bool first = true;
         if (web._controllers)
         {
+            auto scratch_guard = web.scratchLockGuard_();
+            WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+            if (!scratch)
+                return "[]";
             SecurityController &sec = web._controllers->security();
-            auto guard = sec.lockGuard();
+            loadLocalSecurityItems_(sec, *scratch, SecurityController::kSensorCount);
             bool used[PortIO::PORT_COUNT] = {};
             for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
             {
-                const auto *cfg = sec.configByIndex(i);
-                if (!cfg || !cfg->enabled)
+                if (!scratch->security_valid[i] || !scratch->security_cfg[i].enabled)
                     continue;
-                const uint8_t pin = cfg->port;
+                const uint8_t pin = scratch->security_cfg[i].port;
                 if (pin != SecurityController::kInvalidPort && pin < PortIO::PORT_COUNT)
                     used[pin] = true;
             }

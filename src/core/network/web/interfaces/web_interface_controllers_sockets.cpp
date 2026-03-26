@@ -13,21 +13,38 @@
 
 namespace
 {
-bool stackSocketsSnapshot_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::Snapshot &out)
+void loadLocalSocketItems_(SocketController &sockets, WebInterface::ScratchBuffer &scratch, size_t count)
 {
-    return web.network() && node_id != 0 && web.network()->stackIndexStateSnapshot(node_id, out);
+    if (count == 0)
+        return;
+    auto guard = sockets.lockGuard();
+    bool tmp_state = false;
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.socket_valid[i] = false;
+        scratch.socket_relay_on[i] = false;
+        const auto *cfg = sockets.configByIndex(i);
+        if (!cfg)
+            continue;
+        scratch.socket_valid[i] = true;
+        scratch.socket_cfg[i] = *cfg;
+        scratch.socket_relay_on[i] = cfg->enabled && sockets.relayState(cfg->id, tmp_state) ? tmp_state : false;
+    }
 }
 
-const StackUnitSnapshot::SocketItem *findStackSocketItem_(const StackUnitSnapshot::Snapshot &snapshot, uint8_t id)
+bool stackSocketsState_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::State &out)
 {
-    if (id == 0)
-        return nullptr;
-    for (uint8_t i = 0; i < snapshot.socket_count && i < StackUnitSnapshot::kSocketCount; ++i)
-    {
-        if (snapshot.sockets[i].id == id)
-            return &snapshot.sockets[i];
-    }
-    return nullptr;
+    return web.network() && node_id != 0 && web.network()->stackIndexState(node_id, out);
+}
+
+bool stackSocketsCacheState_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::CacheState &out)
+{
+    return web.network() && node_id != 0 && web.network()->stackIndexCacheState(node_id, out);
+}
+
+bool stackSocketsRequestState_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::RequestState &out)
+{
+    return web.network() && node_id != 0 && web.network()->stackIndexRequestState(node_id, out);
 }
 
 bool requestNextStackSocketsPage_(WebInterface &web, uint32_t node_id, uint16_t offset, uint16_t limit)
@@ -40,8 +57,23 @@ bool requestNextStackSocketsPage_(WebInterface &web, uint32_t node_id, uint16_t 
     const bool sent = web.network()->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
                                                               StackRouteAdapter::Mode::Json, true);
     if (!sent)
-        web.network()->clearStackSocketsPageRequest(node_id);
+        web.network()->clearStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id);
     return sent;
+}
+
+size_t stackSocketsRenderCount_(const WebInterface &web, uint32_t node_id, uint8_t loaded_count, bool can_view_disabled)
+{
+    if (!can_view_disabled || !web.network())
+        return loaded_count;
+    size_t last_enabled_idx = SIZE_MAX;
+    web.network()->forEachStackSocket(node_id, loaded_count, [&](uint8_t index, const StackUnitSnapshot::SocketItem &item) {
+        if (item.enabled)
+            last_enabled_idx = index;
+    });
+    if (last_enabled_idx == SIZE_MAX)
+        return loaded_count ? 1u : 0u;
+    const size_t rc = last_enabled_idx + 2u;
+    return rc > loaded_count ? loaded_count : rc;
 }
 }
 
@@ -75,27 +107,17 @@ String WebInterfaceControllersSocketsHelper::listSocketsHtml_(WebInterface &web,
         if (reserve < 16384u)
             reserve = 16384u;
         items.reserve(reserve);
+        auto scratch_guard = web.scratchLockGuard_();
+        WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+        if (!scratch)
+            return WebUiRu::Sockets::kText;
         SocketController &sockets = web._controllers->sockets();
-        SocketController::SocketConfig cfgs[SocketController::kSocketCount];
-        bool cfg_valid[SocketController::kSocketCount] = {};
-        bool relay_on[SocketController::kSocketCount] = {};
         size_t last_enabled_idx = SIZE_MAX;
+        loadLocalSocketItems_(sockets, *scratch, SocketController::kSocketCount);
+        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
         {
-            auto guard = sockets.lockGuard();
-            bool tmp_state = false;
-            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
-            {
-                const auto *cfg = sockets.configByIndex(i);
-                if (!cfg)
-                    continue;
-                cfgs[i] = *cfg;
-                cfg_valid[i] = true;
-                if (cfg->enabled)
-                {
-                    last_enabled_idx = i;
-                    relay_on[i] = sockets.relayState(cfg->id, tmp_state) ? tmp_state : false;
-                }
-            }
+            if (scratch->socket_valid[i] && scratch->socket_cfg[i].enabled)
+                last_enabled_idx = i;
         }
         auto appendRow = [&](const SocketController::SocketConfig &cfg, bool enabled, bool on) {
             const bool can_edit = web.webSessionIsAdmin_();
@@ -207,16 +229,16 @@ String WebInterfaceControllersSocketsHelper::listSocketsHtml_(WebInterface &web,
         const bool can_view_disabled = web.webSessionIsAdmin_();
         for (size_t i = 0; i < render_count; ++i)
         {
-            if (!cfg_valid[i])
+            if (!scratch->socket_valid[i])
                 continue;
-            const auto &cfg = cfgs[i];
+            const auto &cfg = scratch->socket_cfg[i];
             if (!web.webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id))
                 continue;
             if (cfg.id < start_id || cfg.id > end_id)
                 continue;
             if (!can_view_disabled && !cfg.enabled)
                 continue;
-            appendRow(cfg, cfg.enabled, relay_on[i]);
+            appendRow(cfg, cfg.enabled, scratch->socket_relay_on[i]);
         }
         if (items.length() == 0)
             items = WebUiRu::Sockets::kText8;
@@ -224,48 +246,32 @@ String WebInterfaceControllersSocketsHelper::listSocketsHtml_(WebInterface &web,
     }
 
 size_t WebInterfaceControllersSocketsHelper::stackSocketsVisibleCount_(const WebInterface &web, uint32_t node_id) {
-            StackUnitSnapshot::Snapshot snapshot{};
-            if (!stackSocketsSnapshot_(web, node_id, snapshot))
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!stackSocketsState_(web, node_id, snapshot) || !stackSocketsCacheState_(web, node_id, cache))
                 return 0;
-            if (snapshot.socket_count == 0)
+            if (cache.socket_count == 0)
                 return 0;
             const bool can_view_disabled = web.webSessionIsAdmin_();
-            size_t render_count = snapshot.socket_count;
-            if (can_view_disabled)
-            {
-                size_t last_enabled_idx = SIZE_MAX;
-                for (size_t i = 0; i < snapshot.socket_count; ++i)
-                {
-                    if (snapshot.sockets[i].enabled)
-                        last_enabled_idx = i;
-                }
-                if (last_enabled_idx == SIZE_MAX)
-                    render_count = snapshot.socket_count ? 1u : 0u;
-                else
-                {
-                    const size_t rc = last_enabled_idx + 2u;
-                    render_count = rc > snapshot.socket_count ? snapshot.socket_count : rc;
-                }
-            }
+            const size_t render_count = stackSocketsRenderCount_(web, node_id, cache.socket_count, can_view_disabled);
             size_t count = 0;
-            for (size_t i = 0; i < render_count; ++i)
-            {
-                const auto &cfg = snapshot.sockets[i];
+            web.network()->forEachStackSocket(node_id, (uint8_t)render_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &cfg) {
                 if (!web.webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id, snapshot.node_id))
-                    continue;
+                    return;
                 if (!can_view_disabled && !cfg.enabled)
-                    continue;
+                    return;
                 ++count;
-            }
+            });
             return count;
         
     }
 
 String WebInterfaceControllersSocketsHelper::listStackSocketsHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
-            StackUnitSnapshot::Snapshot snapshot{};
-            if (!stackSocketsSnapshot_(web, node_id, snapshot))
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!stackSocketsState_(web, node_id, snapshot) || !stackSocketsCacheState_(web, node_id, cache))
                 return WebUiRu::Sockets::kText9;
-            if (snapshot.socket_count == 0)
+            if (cache.socket_count == 0)
                 return WebUiRu::Sockets::kText8;
             String items;
             const size_t page_limit = (limit == 0) ? 1u : limit;
@@ -274,36 +280,20 @@ String WebInterfaceControllersSocketsHelper::listStackSocketsHtml_(WebInterface 
                 reserve = 8192u;
             items.reserve(reserve);
             const bool can_view_disabled = web.webSessionIsAdmin_();
-            size_t render_count = snapshot.socket_count;
-            if (can_view_disabled)
-            {
-                size_t last_enabled_idx = SIZE_MAX;
-                for (size_t i = 0; i < snapshot.socket_count; ++i)
-                {
-                    if (snapshot.sockets[i].enabled)
-                        last_enabled_idx = i;
-                }
-                if (last_enabled_idx == SIZE_MAX)
-                    render_count = snapshot.socket_count ? 1u : 0u;
-                else
-                {
-                    const size_t rc = last_enabled_idx + 2u;
-                    render_count = rc > snapshot.socket_count ? snapshot.socket_count : rc;
-                }
-            }
+            const size_t render_count = stackSocketsRenderCount_(web, node_id, cache.socket_count, can_view_disabled);
             size_t rendered = 0;
             size_t visible_idx = 0;
-            for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
-            {
-                const auto &cfg = snapshot.sockets[i];
+            web.network()->forEachStackSocket(node_id, (uint8_t)render_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &cfg) {
+                if (rendered >= page_limit)
+                    return;
                 if (!web.webAclCanViewItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id))
-                    continue;
+                    return;
                 if (!can_view_disabled && !cfg.enabled)
-                    continue;
+                    return;
                 if (visible_idx < offset)
                 {
                     ++visible_idx;
-                    continue;
+                    return;
                 }
                 ++visible_idx;
                 const bool can_edit = web.webSessionIsAdmin_();
@@ -406,7 +396,7 @@ String WebInterfaceControllersSocketsHelper::listStackSocketsHtml_(WebInterface 
                 items += "_action\" value=\"\">";
                 items += "</div></div>";
                 ++rendered;
-            }
+            });
             if (items.length() == 0)
                 items = WebUiRu::Sockets::kText8;
             return items;
@@ -450,13 +440,15 @@ String WebInterfaceControllersSocketsHelper::socketsDeviceSelectHtml_(const WebI
     }
 
 String WebInterfaceControllersSocketsHelper::stackSocketsStatusText_(const WebInterface &web, uint32_t node_id) {
-            StackUnitSnapshot::Snapshot snapshot{};
-            if (!stackSocketsSnapshot_(web, node_id, snapshot))
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::RequestState request{};
+            if (!stackSocketsState_(web, node_id, snapshot))
                 return WebUiRu::kNoDataFromSlave;
-            if (snapshot.pending &&
-                (uint32_t)(millis() - snapshot.request_started_ms) > 15000u)
+            if (stackSocketsRequestState_(web, node_id, request) &&
+                request.pending &&
+                (uint32_t)(millis() - request.started_ms) > 15000u)
                 return WebUiRu::Sockets::kText10;
-            if (snapshot.pending)
+            if (request.pending)
                 return "";
             if (snapshot.updated_ms == 0)
                 return WebUiRu::kNoDataFromSlave;
@@ -492,32 +484,37 @@ void WebInterfaceControllersSocketsHelper::handleStackSocketsToggle_(WebInterfac
         String action = web.paramValueAny_(request, "action");
         action.trim();
         action.toLowerCase();
-        StackUnitSnapshot::Snapshot snapshot{};
-        const bool has_snapshot = stackSocketsSnapshot_(web, node_id, snapshot);
-        const StackUnitSnapshot::SocketItem *item = has_snapshot ? findStackSocketItem_(snapshot, id) : nullptr;
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        StackUnitSnapshot::RequestState request_state{};
+        const bool has_snapshot = stackSocketsState_(web, node_id, snapshot);
+        const bool has_cache = stackSocketsCacheState_(web, node_id, cache);
+        const bool has_request = stackSocketsRequestState_(web, node_id, request_state);
+        StackUnitSnapshot::SocketItem item{};
+        const bool has_item = has_snapshot && web.network()->stackIndexSocketById(node_id, id, item);
     
         if (action == "state")
         {
             const bool stale = !has_snapshot || snapshot.updated_ms == 0 ||
                 (uint32_t)(millis() - snapshot.updated_ms) > 1500u;
-            const bool partial = has_snapshot && snapshot.sockets_enabled > snapshot.socket_count;
+            const bool partial = has_snapshot && has_cache && snapshot.sockets_enabled > cache.socket_count;
             if (stale || partial)
             {
                 web.requestStackSockets_(node_id);
                 web.sendText_(request, 200, "text/plain", "pending", set_cookie);
                 return;
             }
-            if (has_snapshot && snapshot.pending)
+            if (has_request && request_state.pending)
             {
                 web.sendText_(request, 200, "text/plain", "pending", set_cookie);
                 return;
             }
-            if (!item)
+            if (!has_item)
             {
                 web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
                 return;
             }
-            web.sendText_(request, 200, "text/plain", (item->enabled && item->state) ? "on" : "off", set_cookie);
+            web.sendText_(request, 200, "text/plain", (item.enabled && item.state) ? "on" : "off", set_cookie);
             return;
         }
     
@@ -540,9 +537,9 @@ void WebInterfaceControllersSocketsHelper::handleStackSocketsToggle_(WebInterfac
         else
         {
             o["toggle"] = true;
-            if (item)
+            if (has_item)
             {
-                desired = !item->state;
+                desired = !item.state;
                 desired_known = true;
             }
         }
@@ -614,26 +611,31 @@ bool WebInterfaceControllersSocketsHelper::requestStackSockets_(WebInterface &we
         if (!web.network() || node_id == 0)
             return false;
         const uint32_t now = millis();
-        StackUnitSnapshot::Snapshot snapshot{};
-        const bool has_snapshot = web.network()->stackIndexStateSnapshot(node_id, snapshot);
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        StackUnitSnapshot::RequestState request{};
+        const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+        const bool has_cache = web.network()->stackIndexCacheState(node_id, cache);
+        const bool has_request = web.network()->stackIndexRequestState(node_id, request);
         if (!has_snapshot || snapshot.updated_ms == 0 ||
             (uint32_t)(now - snapshot.updated_ms) > 5000u)
         {
             const bool refresh = web.requestStackIndexState_(node_id);
             DynamicJsonDocument req(64);
             req["offset"] = 0;
-            req["limit"] = 8;
+            req["limit"] = StackUnitSnapshot::kPageSize;
             const bool sockets_req = web.network()->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
                                                                              StackRouteAdapter::Mode::Json, true);
             return refresh || sockets_req;
         }
-        if (snapshot.pending && (uint32_t)(now - snapshot.request_started_ms) < 1500u)
+        if (has_request && request.pending && (uint32_t)(now - request.started_ms) < 1500u)
             return true;
-        if (snapshot.sockets_enabled > snapshot.socket_count)
+        if (has_cache && snapshot.sockets_enabled > cache.socket_count)
         {
-            if (!web.network()->prepareStackSocketsPageRequest(node_id, now, snapshot.socket_count, 4000u))
+            if (!web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id, now,
+                                                        cache.socket_count, 4000u))
                 return true;
-            return requestNextStackSocketsPage_(web, node_id, snapshot.socket_count, 8);
+            return requestNextStackSocketsPage_(web, node_id, cache.socket_count, StackUnitSnapshot::kPageSize);
         }
         return true;
     }

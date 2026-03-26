@@ -276,8 +276,10 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            StackUnitSnapshot::Snapshot snapshot{};
-            if (!web.network()->stackIndexStateSnapshot(node_id, snapshot) || snapshot.socket_count == 0)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache) ||
+                cache.socket_count == 0)
             {
                 web.requestStackSockets_(node_id);
                 web._sockets_status = "No data";
@@ -285,9 +287,7 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
                 return;
             }
             bool changed_stack = false;
-            for (size_t i = 0; i < snapshot.socket_count; ++i)
-            {
-                const auto &cfg = snapshot.sockets[i];
+            web.network()->forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &cfg) {
                 const String idx = String((unsigned)cfg.id);
                 const String prefix = String("s") + idx + "_";
                 const String en_key = prefix + "en";
@@ -303,7 +303,7 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
                                      request->hasParam(group_key, true) ||
                                      request->hasParam(action_key, true);
                 if (!has_any)
-                    continue;
+                    return;
                 if (!web.webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id))
                 {
                     web._sockets_status = String("ACL deny item: ") + idx;
@@ -387,7 +387,7 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
                     }
                 }
                 if (!send)
-                    continue;
+                    return;
                 if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set", &doc, StackRouteAdapter::Mode::Json))
                 {
                     web._sockets_status = String("Send failed for socket ") + idx;
@@ -397,7 +397,7 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
                 changed_stack = true;
                 (void)desired_state;
                 (void)set_state;
-            }
+            });
             if (changed_stack)
             {
                 web.requestStackSockets_(node_id);
