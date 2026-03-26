@@ -161,7 +161,13 @@ void StackMasterRouter::handleTransportEvent_(const StackTransport::Event &event
 
 void StackMasterRouter::handleConnected_(const StackTransport::Event &event)
 {
-    (void)event;
+    if (event.ip == IPAddress((uint32_t)0))
+    {
+        _log.info(F("STACK"), F("WS client connected: id %u ip -"), (unsigned)event.client_id);
+        return;
+    }
+    _log.info(F("STACK"), F("WS client connected: id %u ip %s"),
+              (unsigned)event.client_id, event.ip.toString().c_str());
 }
 
 void StackMasterRouter::handleDisconnected_(const StackTransport::Event &event)
@@ -429,7 +435,7 @@ bool StackMasterRouter::authorizeClient_(uint8_t client_id, IPAddress ip, const 
     StackJsonProtocol::AuthMessage auth_msg;
     if (!StackJsonProtocol::parseAuth(data, size, auth_msg))
     {
-        _log.warn(F("STACK"), F("Auth parse failed: id %u"), (unsigned)client_id);
+        _log.warn(F("STACK"), F("Auth parse failed: id %u ip %s"), (unsigned)client_id, ip.toString().c_str());
         return false;
     }
 
@@ -450,6 +456,10 @@ bool StackMasterRouter::authorizeClient_(uint8_t client_id, IPAddress ip, const 
     auth.fw_version = auth_msg.fw_version;
     auth.name = auth_msg.name;
     auth.ip = auth_msg.ip;
+
+    _log.info(F("STACK"), F("Auth accept: id %u ip %s node 0x%08lX name %s caps 0x%08lX fw %u"),
+              (unsigned)client_id, ip.toString().c_str(), (unsigned long)auth.node_id,
+              auth.name ? auth.name : "-", (unsigned long)auth.caps, (unsigned)auth.fw_version);
 
     StackDeviceRegistry::DeviceInfo device;
     if (!_registry.upsert(client_id, auth, ip.toString().c_str(), &device))

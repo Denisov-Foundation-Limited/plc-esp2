@@ -12,6 +12,7 @@
 #include "core/runtime/app_runtime.hpp"
 
 #include "app.hpp"
+
 void AppRuntime::updateTankAlarms_(){
     TankController &tanks = control.controllers.tanks();
     auto tanks_guard = tanks.lockGuard();
@@ -182,6 +183,31 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
     String json;
     serializeJson(doc, json);
     self->publishCloudStackEvent_(node_id, "stack.node", online ? "online" : "offline", json);
+}
+
+void AppRuntime::logStackSendFailDiag_(uint32_t node_id, const char *feature, uint16_t offset, uint16_t range_end){
+    StackDeviceRegistry::DeviceInfo device{};
+    if (net.network.stackDeviceSnapshotByNodeId(node_id, device))
+    {
+        core.logs.warn(F("STACK"),
+                       F("Sync slave %s request failed: node 0x%08lX range: %u-%u client: %u online: %u last_seen_ms: %lu name: %s ip: %s"),
+                       feature ? feature : "unknown",
+                       (unsigned long)node_id,
+                       (unsigned)offset,
+                       (unsigned)range_end,
+                       (unsigned)device.client_id,
+                       (unsigned)(device.online ? 1u : 0u),
+                       (unsigned long)device.last_seen_ms,
+                       device.name[0] ? device.name : "-",
+                       device.ip[0] ? device.ip : "-");
+        return;
+    }
+    core.logs.warn(F("STACK"),
+                   F("Sync slave %s request failed: node 0x%08lX range: %u-%u registry: miss"),
+                   feature ? feature : "unknown",
+                   (unsigned long)node_id,
+                   (unsigned)offset,
+                   (unsigned)range_end);
 }
 
 void AppRuntime::onSepticDetect_(void *ctx, uint8_t septic_id, const String &name, bool is_alarm){
@@ -2502,9 +2528,7 @@ void AppRuntime::flushPendingStackSocketsPage_(){
     }
     else
     {
-        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id);
-        core.logs.warn(F("STACK"), F("Sync slave sockets request failed: node 0x%08lX range: %u-%u"),
-                       (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
+        logStackSendFailDiag_(node_id, "sockets", offset, range_end);
     }
 }
 
@@ -2576,9 +2600,7 @@ void AppRuntime::flushPendingStackLightsPage_(){
     }
     else
     {
-        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id);
-        core.logs.warn(F("STACK"), F("Sync slave lights request failed: node 0x%08lX range: %u-%u"),
-                       (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
+        logStackSendFailDiag_(node_id, "lights", offset, range_end);
     }
 }
 
@@ -2619,9 +2641,7 @@ void AppRuntime::flushPendingStackMeteoPage_(){
     }
     else
     {
-        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id);
-        core.logs.warn(F("STACK"), F("Sync slave meteo request failed: node 0x%08lX range: %u-%u"),
-                       (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
+        logStackSendFailDiag_(node_id, "meteo", offset, range_end);
     }
 }
 
@@ -2662,9 +2682,7 @@ void AppRuntime::flushPendingStackThermoPage_(){
     }
     else
     {
-        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id);
-        core.logs.warn(F("STACK"), F("Sync slave thermo request failed: node 0x%08lX range: %u-%u"),
-                       (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
+        logStackSendFailDiag_(node_id, "thermo", offset, range_end);
     }
 }
 
@@ -2705,9 +2723,7 @@ void AppRuntime::flushPendingStackTanksPage_(){
     }
     else
     {
-        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id);
-        core.logs.warn(F("STACK"), F("Sync slave tanks request failed: node 0x%08lX range: %u-%u"),
-                       (unsigned long)node_id, (unsigned)offset, (unsigned)range_end);
+        logStackSendFailDiag_(node_id, "tanks", offset, range_end);
     }
 }
 

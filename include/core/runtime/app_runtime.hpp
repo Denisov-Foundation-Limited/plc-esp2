@@ -185,6 +185,7 @@ private:
     void updateTanksNotifyMode_();
 
     void updateDisplayLayout_();
+    void logStackSendFailDiag_(uint32_t node_id, const char *feature, uint16_t offset, uint16_t range_end);
 
     void flushPendingSecurityDetect_();
 
@@ -397,6 +398,7 @@ private:
     uint8_t _stack_bootstrap_queue_count = 0;
     StackInventoryLogState _stack_inventory_log[StackDeviceRegistry::kMaxDevices]{};
     DisplaySlotConfig _display_slots[Display::kSlotCount]{};
+    bool _display_remote_slot_online[Display::kSlotCount]{};
     bool _display_rtc_cache_valid = false;
     Ds3231Mz::DateTime _display_rtc_cache{};
     uint32_t _display_rtc_cache_ms = 0;

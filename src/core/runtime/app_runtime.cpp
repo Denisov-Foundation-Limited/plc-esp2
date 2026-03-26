@@ -371,6 +371,12 @@ bool AppRuntime::shouldLogStackBootstrapSync_(uint32_t node_id) const{
 bool AppRuntime::queueDisplayStackSnapshotPage_(uint32_t node_id, const char *feature, uint16_t offset){
     if (node_id == 0 || !feature || !stackMasterActive_())
         return false;
+    StackDeviceRegistry::DeviceInfo device{};
+    if (!net.network.stackDeviceSnapshotByNodeId(node_id, device) || !device.online ||
+        (uint32_t)(millis() - device.last_seen_ms) > kStackNodeStaleMs)
+    {
+        return false;
+    }
     if (strcmp(feature, "sockets") == 0)
     {
         if (_pending_stack_sockets_page || _pending_display_stack_sockets_page)

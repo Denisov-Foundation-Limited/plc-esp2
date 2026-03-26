@@ -2429,8 +2429,7 @@ bool CloudClient::fillStackCachedSystem_(JsonObject out, uint32_t node_id)
     {
         const bool sent = _network->stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
                                                              StackRouteAdapter::Mode::Json, true);
-        if (!sent)
-            _network->clearStackIndexStatePending(node_id);
+        (void)sent;
     }
     return has_any;
 }
@@ -2637,9 +2636,8 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             DynamicJsonDocument req(64);
             req["offset"] = cache.socket_count;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            if (!_network->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
-                                                    StackRouteAdapter::Mode::Json, true))
-                _network->clearStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id);
+            _network->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
+                                               StackRouteAdapter::Mode::Json, true);
         }
     }
     if (snapshot.lights_enabled > 0 && cache.light_count < snapshot.lights_enabled)
@@ -2650,9 +2648,8 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             DynamicJsonDocument req(64);
             req["offset"] = cache.light_count;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            if (!_network->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
-                                                    StackRouteAdapter::Mode::Json, true))
-                _network->clearStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id);
+            _network->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
+                                               StackRouteAdapter::Mode::Json, true);
         }
     }
     if (snapshot.meteo_enabled > 0 && cache.meteo_count < snapshot.meteo_enabled)
@@ -2663,9 +2660,8 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             DynamicJsonDocument req(64);
             req["offset"] = cache.meteo_count;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            if (!_network->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
-                                                    StackRouteAdapter::Mode::Json, true))
-                _network->clearStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id);
+            _network->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
+                                               StackRouteAdapter::Mode::Json, true);
         }
     }
     if (snapshot.thermo_enabled > 0 && cache.thermo_count < snapshot.thermo_enabled)
@@ -2676,9 +2672,8 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             DynamicJsonDocument req(64);
             req["offset"] = cache.thermo_count;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            if (!_network->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
-                                                    StackRouteAdapter::Mode::Json, true))
-                _network->clearStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id);
+            _network->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
+                                               StackRouteAdapter::Mode::Json, true);
         }
     }
     return has_any;

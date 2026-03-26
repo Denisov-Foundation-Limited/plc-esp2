@@ -91,6 +91,7 @@ void AppRuntime::updateDisplayLayout_(){
         if (!displaySlotEqual_(_display_slots[i], slot))
         {
             _display_slots[i] = slot;
+            _display_remote_slot_online[i] = false;
             hw.display.setSlot(i, slot);
         }
     }
@@ -103,6 +104,38 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
     const bool local = (node_id == 0);
     const bool is_master = stackMasterActive_();
     const bool is_slave = stackSlaveActive_();
+    int slot_idx = -1;
+    for (size_t i = 0; i < Display::kSlotCount; ++i)
+    {
+        if (displaySlotEqual_(_display_slots[i], slot))
+        {
+            slot_idx = (int)i;
+            break;
+        }
+    }
+    const auto remote_node_available = [this](uint32_t remote_node_id) -> bool {
+        if (remote_node_id == 0 || !stackMasterActive_())
+            return false;
+        StackDeviceRegistry::DeviceInfo device{};
+        return net.network.stackDeviceSnapshotByNodeId(remote_node_id, device) &&
+               device.online &&
+               (uint32_t)(millis() - device.last_seen_ms) <= kStackNodeStaleMs;
+    };
+    const auto update_remote_display_state = [&](bool available) {
+        if (slot_idx < 0)
+            return;
+        const bool was_online = _display_remote_slot_online[slot_idx];
+        if (available && !was_online)
+        {
+            core.logs.info(F("STACK"), F("Display remote slot resume: slot %u node 0x%08lX kind %u field %u index %u"),
+                           (unsigned)(slot_idx + 1),
+                           (unsigned long)node_id,
+                           (unsigned)slot.kind,
+                           (unsigned)slot.field,
+                           (unsigned)slot.index);
+        }
+        _display_remote_slot_online[slot_idx] = available;
+    };
     for (size_t i = 0; i < 4; ++i)
         out[i] = ' ';
     out[4] = '\0';
@@ -172,6 +205,13 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
+            const bool remote_available = remote_node_available(node_id);
+            update_remote_display_state(remote_available);
+            if (!remote_available)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
             StackUnitSnapshot::State snapshot{};
             StackUnitSnapshot::CacheState cache{};
             if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
@@ -223,6 +263,13 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
+            const bool remote_available = remote_node_available(node_id);
+            update_remote_display_state(remote_available);
+            if (!remote_available)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
             StackUnitSnapshot::State snapshot{};
             StackUnitSnapshot::CacheState cache{};
             if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
@@ -294,6 +341,13 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         else if (is_master)
         {
+            const bool remote_available = remote_node_available(node_id);
+            update_remote_display_state(remote_available);
+            if (!remote_available)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
             StackUnitSnapshot::State snapshot{};
             StackUnitSnapshot::CacheState cache{};
             if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
@@ -388,6 +442,13 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
+            const bool remote_available = remote_node_available(node_id);
+            update_remote_display_state(remote_available);
+            if (!remote_available)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
             StackUnitSnapshot::State snapshot{};
             StackUnitSnapshot::CacheState cache{};
             if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
