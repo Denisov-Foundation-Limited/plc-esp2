@@ -145,7 +145,7 @@ void SepticHandler::handleSeptic(WebInterface &web, AsyncWebServerRequest *reque
                      web.webSessionIsAdmin_() ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>") : String(""));
         if (!web._controllers)
         {
-            page.replace("%SEPTIC_ITEMS%", "<div class=\"tile empty\">Loading...</div>");
+            page.replace("%SEPTIC_ITEMS%", WebUiRu::Septic::kText9);
             page.replace("%SEPTIC_DINPUT_JSON%", "[]");
             page.replace("%SEPTIC_RELAY_JSON%", "[]");
             page.replace("%SEPTIC_DINPUT_USED_JSON%", "[]");
@@ -164,7 +164,12 @@ void SepticHandler::handleSeptic(WebInterface &web, AsyncWebServerRequest *reque
             web.sendHtml_(request, page, set_cookie);
             return;
         }
-        page.replace("%SEPTIC_ITEMS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackSepticHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                   groups_available ? SIZE_MAX : page_size)
+                                        : web.listSepticHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                                              groups_available ? SIZE_MAX : page_size);
+        page.replace("%SEPTIC_ITEMS%", initial_html);
         page.replace("%SEPTIC_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
                                                         : web.septicPortOptionsJson_(PortIO::PinType::DInput));
         page.replace("%SEPTIC_RELAY_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay)

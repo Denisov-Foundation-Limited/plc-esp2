@@ -297,6 +297,7 @@ void CliConsole::cmdShowCloud_()
     printKeyValue_(F("event_ms"), String((unsigned)_configs_manager->cloudEventIntervalMs()), key_w);
     printKeyValue_(F("api_key"), _configs_manager->cloudApiKey(), key_w);
     printKeyValue_(F("fw_version"), _configs_manager->cloudFirmwareVersion(), key_w);
+    printKeyValue_(F("device_id"), String((uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFFu)), key_w);
 }
 void CliConsole::cmdCopy_(const String &line)
 {

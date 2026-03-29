@@ -12,6 +12,7 @@
 #include "core/network/stack/stack_slave_client.hpp"
 
 #include <ArduinoJson.h>
+#include <WiFi.h>
 #include <memory>
 
 #include "core/network/stack/stack_binary_protocol.hpp"
@@ -27,6 +28,53 @@ constexpr uint32_t kWsRestartCooldownMs = 2000u;
 constexpr uint32_t kWsHeartbeatPingMs = 15000u;
 constexpr uint32_t kWsHeartbeatPongTimeoutMs = 3000u;
 constexpr uint8_t kWsHeartbeatDisconnectCount = 2u;
+
+const char *wifiStatusLabel_(wl_status_t st)
+{
+    switch (st)
+    {
+    case WL_IDLE_STATUS:
+        return "Idle";
+    case WL_NO_SSID_AVAIL:
+        return "No SSID";
+    case WL_SCAN_COMPLETED:
+        return "Scan done";
+    case WL_CONNECTED:
+        return "Connected";
+    case WL_CONNECT_FAILED:
+        return "Connect failed";
+    case WL_CONNECTION_LOST:
+        return "Connection lost";
+    case WL_DISCONNECTED:
+        return "Disconnected";
+    default:
+        return "Unknown";
+    }
+}
+
+void fillWifiDiag_(char *status_out, size_t status_cap, char *ip_out, size_t ip_cap, long &rssi_out)
+{
+    if (!status_out || status_cap == 0 || !ip_out || ip_cap == 0)
+        return;
+    status_out[0] = '\0';
+    ip_out[0] = '\0';
+    const wl_status_t st = WiFi.status();
+    strncpy(status_out, wifiStatusLabel_(st), status_cap - 1);
+    status_out[status_cap - 1] = '\0';
+    if (st == WL_CONNECTED)
+    {
+        const String ip = WiFi.localIP().toString();
+        strncpy(ip_out, ip.c_str(), ip_cap - 1);
+        ip_out[ip_cap - 1] = '\0';
+        rssi_out = WiFi.RSSI();
+    }
+    else
+    {
+        strncpy(ip_out, "-", ip_cap - 1);
+        ip_out[ip_cap - 1] = '\0';
+        rssi_out = 0;
+    }
+}
 }
 
 StackSlaveClient::StackSlaveClient(Logger &log) : _log(log), _rs485(log)
@@ -100,9 +148,13 @@ void StackSlaveClient::begin()
     _ws_started_ms = millis();
     _ws_connected_ms = 0;
     _ws_last_rx_ms = 0;
-    _log.info(F("STACK"), F("WS slave start: name %s node 0x%08lX host %s port %u"),
+    char wifi_status[24]{};
+    char wifi_ip[20]{};
+    long wifi_rssi = 0;
+    fillWifiDiag_(wifi_status, sizeof(wifi_status), wifi_ip, sizeof(wifi_ip), wifi_rssi);
+    _log.info(F("STACK"), F("WS slave start: name %s node 0x%08lX host %s port %u wifi: %s ip: %s rssi: %ld"),
               _cfg.device_name.length() ? _cfg.device_name.c_str() : "-", (unsigned long)_cfg.node_id,
-              _cfg.host.c_str(), (unsigned)_cfg.port);
+              _cfg.host.c_str(), (unsigned)_cfg.port, wifi_status, wifi_ip, wifi_rssi);
 }
 
 void StackSlaveClient::loop()
@@ -285,12 +337,20 @@ void StackSlaveClient::restartWebSocket_(const char *reason)
 {
     Config cfg;
     const char *why = (reason && reason[0]) ? reason : "restart";
+    bool ws_connected = false;
+    bool authorized = false;
+    uint32_t connected_ms = 0;
+    uint32_t last_rx_ms = 0;
     {
         const auto guard = _lock.guard();
         if (_cfg.transport != Config::TransportKind::WebSocket)
             return;
         _ws_last_restart_ms = millis();
         cfg = _cfg;
+        ws_connected = _ws_connected;
+        authorized = _authorized;
+        connected_ms = _ws_connected_ms;
+        last_rx_ms = _ws_last_rx_ms;
         _authorized = false;
         _ws_connected = false;
         _ws_started_ms = _ws_last_restart_ms;
@@ -299,8 +359,18 @@ void StackSlaveClient::restartWebSocket_(const char *reason)
         _disconnect_reason[0] = '\0';
     }
 
-    _log.warn(F("STACK"), F("WS slave reconnect watchdog: reason %s host %s port %u"), why, cfg.host.c_str(),
-              (unsigned)cfg.port);
+    char wifi_status[24]{};
+    char wifi_ip[20]{};
+    long wifi_rssi = 0;
+    fillWifiDiag_(wifi_status, sizeof(wifi_status), wifi_ip, sizeof(wifi_ip), wifi_rssi);
+    const uint32_t now = millis();
+    const uint32_t connected_age_ms = connected_ms ? (uint32_t)(now - connected_ms) : 0;
+    const uint32_t idle_ms = last_rx_ms ? (uint32_t)(now - last_rx_ms) : 0;
+    _log.warn(F("STACK"),
+              F("WS slave reconnect watchdog: reason %s host %s port %u ws_connected: %u auth: %u connected_age_ms: %lu idle_ms: %lu wifi: %s ip: %s rssi: %ld"),
+              why, cfg.host.c_str(), (unsigned)cfg.port, (unsigned)(ws_connected ? 1u : 0u),
+              (unsigned)(authorized ? 1u : 0u), (unsigned long)connected_age_ms, (unsigned long)idle_ms,
+              wifi_status, wifi_ip, wifi_rssi);
     _ws.disconnect();
     _ws.setReconnectInterval(cfg.reconnect_ms);
     _ws.enableHeartbeat(kWsHeartbeatPingMs, kWsHeartbeatPongTimeoutMs, kWsHeartbeatDisconnectCount);
@@ -341,17 +411,28 @@ void StackSlaveClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
             _ws_last_rx_ms = _ws_connected_ms;
             _disconnect_reason[0] = '\0';
         }
-        _log.info(F("STACK"), F("WS slave connected: name %s host %s"),
-                  _cfg.device_name.length() ? _cfg.device_name.c_str() : "-", _cfg.host.c_str());
+        {
+            char wifi_status[24]{};
+            char wifi_ip[20]{};
+            long wifi_rssi = 0;
+            fillWifiDiag_(wifi_status, sizeof(wifi_status), wifi_ip, sizeof(wifi_ip), wifi_rssi);
+            _log.info(F("STACK"), F("WS slave connected: name %s host %s wifi: %s ip: %s rssi: %ld"),
+                      _cfg.device_name.length() ? _cfg.device_name.c_str() : "-", _cfg.host.c_str(),
+                      wifi_status, wifi_ip, wifi_rssi);
+        }
         sendAuth_();
         break;
     case WStype_DISCONNECTED:
     {
         bool was_authorized = false;
+        uint32_t connected_ms = 0;
+        uint32_t last_rx_ms = 0;
         char reason[40]{};
         {
             const auto guard = _lock.guard();
             was_authorized = _authorized;
+            connected_ms = _ws_connected_ms;
+            last_rx_ms = _ws_last_rx_ms;
             _authorized = false;
             _ws_connected = false;
             _ws_started_ms = millis();
@@ -359,14 +440,25 @@ void StackSlaveClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
             _ws_last_rx_ms = 0;
         }
         takeDisconnectReason_(reason, sizeof(reason));
+        char wifi_status[24]{};
+        char wifi_ip[20]{};
+        long wifi_rssi = 0;
+        fillWifiDiag_(wifi_status, sizeof(wifi_status), wifi_ip, sizeof(wifi_ip), wifi_rssi);
+        const uint32_t now = millis();
+        const uint32_t connected_age_ms = connected_ms ? (uint32_t)(now - connected_ms) : 0;
+        const uint32_t idle_ms = last_rx_ms ? (uint32_t)(now - last_rx_ms) : 0;
         if (was_authorized)
-            _log.warn(F("STACK"), F("WS slave disconnected: name %s host %s reason: %s"),
+            _log.warn(F("STACK"),
+                      F("WS slave disconnected: name %s host %s reason: %s connected_age_ms: %lu idle_ms: %lu wifi: %s ip: %s rssi: %ld"),
                       _cfg.device_name.length() ? _cfg.device_name.c_str() : "-", _cfg.host.c_str(),
-                      reason[0] ? reason : "transport_disconnect");
+                      reason[0] ? reason : "transport_disconnect", (unsigned long)connected_age_ms,
+                      (unsigned long)idle_ms, wifi_status, wifi_ip, wifi_rssi);
         else
-            _log.warn(F("STACK"), F("WS slave disconnected before auth: name %s host %s reason: %s"),
+            _log.warn(F("STACK"),
+                      F("WS slave disconnected before auth: name %s host %s reason: %s connected_age_ms: %lu idle_ms: %lu wifi: %s ip: %s rssi: %ld"),
                       _cfg.device_name.length() ? _cfg.device_name.c_str() : "-", _cfg.host.c_str(),
-                      reason[0] ? reason : "transport_disconnect");
+                      reason[0] ? reason : "transport_disconnect", (unsigned long)connected_age_ms,
+                      (unsigned long)idle_ms, wifi_status, wifi_ip, wifi_rssi);
         break;
     }
     case WStype_TEXT:
@@ -410,11 +502,21 @@ void StackSlaveClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
             return;
         if ((doc["ok"] | false) && strcmp(doc["message"] | "", "authorized") == 0)
         {
-            const auto guard = _lock.guard();
-            _authorized = true;
-            _ws_last_rx_ms = millis();
-            _log.info(F("STACK"), F("WS slave authorized: name %s node 0x%08lX"),
-                      _cfg.device_name.length() ? _cfg.device_name.c_str() : "-", (unsigned long)_cfg.node_id);
+            uint32_t connected_ms = 0;
+            {
+                const auto guard = _lock.guard();
+                _authorized = true;
+                _ws_last_rx_ms = millis();
+                connected_ms = _ws_connected_ms;
+            }
+            const uint32_t auth_ms = connected_ms ? (uint32_t)(millis() - connected_ms) : 0;
+            char wifi_status[24]{};
+            char wifi_ip[20]{};
+            long wifi_rssi = 0;
+            fillWifiDiag_(wifi_status, sizeof(wifi_status), wifi_ip, sizeof(wifi_ip), wifi_rssi);
+            _log.info(F("STACK"), F("WS slave authorized: name %s node 0x%08lX auth_ms: %lu wifi: %s ip: %s rssi: %ld"),
+                      _cfg.device_name.length() ? _cfg.device_name.c_str() : "-", (unsigned long)_cfg.node_id,
+                      (unsigned long)auth_ms, wifi_status, wifi_ip, wifi_rssi);
             return;
         }
         if (!(doc["ok"] | true))

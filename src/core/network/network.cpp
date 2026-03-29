@@ -199,12 +199,16 @@ void Network::maintainStackWsReadiness_()
     ConfigsManagerIface::StackRole role = ConfigsManagerIface::StackRole::Master;
     bool deferred = false;
     bool master_started = false;
+    uint32_t ready_since_ms = 0;
+    bool ready_wait_logged = false;
     {
         const auto guard = _stack_lock.guard();
         transport = _stack_cfg ? _stack_cfg->stackTransport() : ConfigsManagerIface::StackTransportKind::WebSocket;
         role = _stack_role;
         deferred = _stack_ws_start_deferred;
         master_started = _stack_master_started;
+        ready_since_ms = _stack_ws_ready_since_ms;
+        ready_wait_logged = _stack_ws_ready_wait_logged;
     }
     if (transport != ConfigsManagerIface::StackTransportKind::WebSocket)
         return;
@@ -217,18 +221,52 @@ void Network::maintainStackWsReadiness_()
             {
                 const auto guard = _stack_lock.guard();
                 _stack_ws_start_deferred = true;
+                _stack_ws_ready_since_ms = 0;
+                _stack_ws_ready_wait_logged = false;
             }
             _logs.warn(F("STACK"), F("WS paused: network not ready"));
             requestStackCommand_(StackCommand::Stop);
+        }
+        else if (deferred && (ready_since_ms != 0 || ready_wait_logged))
+        {
+            const auto guard = _stack_lock.guard();
+            _stack_ws_ready_since_ms = 0;
+            _stack_ws_ready_wait_logged = false;
         }
         return;
     }
 
     if (deferred)
     {
+        if (role == ConfigsManagerIface::StackRole::Slave)
+        {
+            const uint32_t now = millis();
+            if (ready_since_ms == 0)
+            {
+                const auto guard = _stack_lock.guard();
+                _stack_ws_ready_since_ms = now;
+                _stack_ws_ready_wait_logged = false;
+                return;
+            }
+            if ((uint32_t)(now - ready_since_ms) < kStackWsSlaveReadyDebounceMs)
+            {
+                if (!ready_wait_logged)
+                {
+                    {
+                        const auto guard = _stack_lock.guard();
+                        _stack_ws_ready_wait_logged = true;
+                    }
+                    _logs.info(F("STACK"), F("WS ready debounce: wait %lu ms before slave restart"),
+                               (unsigned long)kStackWsSlaveReadyDebounceMs);
+                }
+                return;
+            }
+        }
         {
             const auto guard = _stack_lock.guard();
             _stack_ws_start_deferred = false;
+            _stack_ws_ready_since_ms = 0;
+            _stack_ws_ready_wait_logged = false;
         }
         _logs.info(F("STACK"), F("WS network ready: restart stack"));
         requestStackCommand_(StackCommand::Reconfigure);
@@ -299,6 +337,8 @@ void Network::beginStack_()
         _stack_last_primary_try_ms = 0;
         _stack_target = StackTarget::Primary;
         _stack_ws_start_deferred = false;
+        _stack_ws_ready_since_ms = 0;
+        _stack_ws_ready_wait_logged = false;
         device_name = _stack_device_name;
         if (transport == ConfigsManagerIface::StackTransportKind::WebSocket && !stackWsNetworkReady_())
         {
@@ -394,6 +434,8 @@ void Network::stopStack_()
         _stack_master_started = false;
         _stack_fallback_active = false;
         _stack_disconnect_ms = 0;
+        _stack_ws_ready_since_ms = 0;
+        _stack_ws_ready_wait_logged = false;
     }
     setStackRuntimeState_(StackRuntimeState::Stopped);
 }

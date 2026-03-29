@@ -130,7 +130,12 @@ void ThermoHandler::handleThermo(WebInterface &web, AsyncWebServerRequest *reque
             pagination += "</div>";
         }
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%THERMO_ROWS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackThermoHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                   groups_available ? SIZE_MAX : page_size)
+                                        : web.listThermoHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                                              groups_available ? SIZE_MAX : page_size);
+        page.replace("%THERMO_ROWS%", initial_html);
         page.replace("%THERMO_PAGINATION%", pagination);
         page.replace("%THERMO_STATUS%", stack_view ? web.stackThermoStatusText_(node_id) : web._thermo_status);
         page.replace("%THERMO_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)

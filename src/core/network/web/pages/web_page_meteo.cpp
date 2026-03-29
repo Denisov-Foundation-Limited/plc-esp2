@@ -645,7 +645,9 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     setTimeout(pollMeteoStates, 500);
     setInterval(pollMeteoStates, 2000);
     refreshMeteoPins();
-    loadMeteoList();
+    if (meteoIsStackView) {
+      loadMeteoList();
+    }
     bindMeteoHandlers();
     const scrollKey = 'meteo_scroll_y';
     const savedScroll = sessionStorage.getItem(scrollKey);

@@ -859,10 +859,11 @@ void CloudClient::handleCmdLocal_(const String &req_id, const String &ctrl, cons
                                   JsonObjectConst args, const ActorInfo &actor)
 {
     bool ok = false;
+    String error = "failed";
     if (ctrl == "sockets")
-        ok = handleCmdSockets_(_controllers.sockets(), action, args, false, actor);
+        ok = handleCmdSockets_(_controllers.sockets(), action, args, false, actor, &error);
     else if (ctrl == "lights")
-        ok = handleCmdSockets_(_controllers.sockets(), action, args, true, actor);
+        ok = handleCmdSockets_(_controllers.sockets(), action, args, true, actor, &error);
     else if (ctrl == "thermo")
         ok = handleCmdThermo_(action, args);
     else if (ctrl == "tanks")
@@ -880,7 +881,7 @@ void CloudClient::handleCmdLocal_(const String &req_id, const String &ctrl, cons
     else if (ctrl == "leak")
         ok = handleCmdLeak_(action, args);
 
-    sendAck_(req_id, ok, ok ? "" : "failed");
+    sendAck_(req_id, ok, ok ? "" : error.c_str());
 }
 void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
                      const String &ctrl, const String &action, JsonObjectConst args, const ActorInfo &actor)
@@ -1154,20 +1155,62 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
     sendError_(req_id, "stack controller not migrated");
 }
 bool CloudClient::handleCmdSockets_(SocketController &s, const String &action, JsonObjectConst args, bool lights,
-                                    const ActorInfo &actor)
+                                    const ActorInfo &actor, String *error_out)
 {
+    _controllers.ensureSocketConfigsLoaded();
     const uint8_t id = (uint8_t)(args["id"] | 0);
     if (id == 0)
+    {
+        if (error_out)
+            *error_out = "bad id";
         return false;
+    }
     const char *ctrl_name = lights ? "lights" : "sockets";
     const char *user_name = actor.username.length()
         ? actor.username.c_str()
         : (actor.plc_username.length() ? actor.plc_username.c_str() : "-");
+    const bool controller_enabled = lights ? s.lightsEnabled() : s.controllerEnabled();
+    if (!controller_enabled)
+    {
+        if (error_out)
+            *error_out = "controller disabled";
+        _log.warn(F("CLOUD"), F("Cmd rejected: %s id: %u reason: controller disabled user: %s"),
+                  ctrl_name, (unsigned)id, user_name);
+        return false;
+    }
+    const auto *cfg = lights ? s.lightConfig(id) : s.config(id);
+    if (!cfg)
+    {
+        if (error_out)
+            *error_out = "item not found";
+        _log.warn(F("CLOUD"), F("Cmd rejected: %s id: %u reason: item missing user: %s"),
+                  ctrl_name, (unsigned)id, user_name);
+        return false;
+    }
+    if (!cfg->enabled)
+    {
+        if (error_out)
+            *error_out = "item disabled";
+        _log.warn(F("CLOUD"), F("Cmd rejected: %s id: %u reason: item disabled user: %s"),
+                  ctrl_name, (unsigned)id, user_name);
+        return false;
+    }
+    if (cfg->relay_port == SocketController::kInvalidPort)
+    {
+        if (error_out)
+            *error_out = "relay port missing";
+        _log.warn(F("CLOUD"), F("Cmd rejected: %s id: %u reason: relay missing user: %s"),
+                  ctrl_name, (unsigned)id, user_name);
+        return false;
+    }
     if (action == "toggle")
     {
         _log.info(F("CLOUD"), F("Cmd: %s id: %u action: toggle user: %s"),
                   ctrl_name, (unsigned)id, user_name);
-        return lights ? s.toggleLightRelayById(id) : s.toggleRelayById(id);
+        const bool ok = lights ? s.toggleLightRelayById(id) : s.toggleRelayById(id);
+        if (!ok && error_out && !error_out->length())
+            *error_out = "toggle failed";
+        return ok;
     }
     if (action == "set")
     {
@@ -1175,8 +1218,13 @@ bool CloudClient::handleCmdSockets_(SocketController &s, const String &action, J
         const bool on = (st == "on");
         _log.info(F("CLOUD"), F("Cmd: %s id: %u action: set state: %s user: %s"),
                   ctrl_name, (unsigned)id, on ? "on" : "off", user_name);
-        return lights ? s.setLightRelayById(id, on) : s.setRelayById(id, on);
+        const bool ok = lights ? s.setLightRelayById(id, on) : s.setRelayById(id, on);
+        if (!ok && error_out && !error_out->length())
+            *error_out = "set failed";
+        return ok;
     }
+    if (error_out)
+        *error_out = "unsupported action";
     return false;
 }
 bool CloudClient::handleCmdThermo_(const String &action, JsonObjectConst args)
@@ -1760,6 +1808,7 @@ void CloudClient::fillAuthzInfo_(JsonObject out)
 }
 void CloudClient::fillControllersInfo_(JsonObject out)
 {
+    _controllers.ensureSocketConfigsLoaded();
     fillGroups_(out.createNestedArray("groups"));
     fillSockets_(out.createNestedArray("sockets"), false);
     fillSockets_(out.createNestedArray("lights"), true);
@@ -1794,6 +1843,7 @@ void CloudClient::fillSockets_(JsonArray out, bool lights)
     if (!scratch)
         return;
     const size_t count = lights ? SocketController::kLightCount : SocketController::kSocketCount;
+    bool controller_enabled = false;
     {
         const auto scratch_guard = _scratch_lock.guard();
         auto guard = _controllers.sockets().lockGuard(kSnapshotLockTimeoutMs);
@@ -1802,6 +1852,8 @@ void CloudClient::fillSockets_(JsonArray out, bool lights)
             _log.warn(F("CLOUD"), F("Snapshot lock timeout: sockets lights: %u"), lights ? 1u : 0u);
             return;
         }
+        controller_enabled = lights ? _controllers.sockets().lightsEnabled()
+                                    : _controllers.sockets().controllerEnabled();
         for (size_t i = 0; i < count; ++i)
         {
             const auto *cfg = lights ? _controllers.sockets().lightConfigByIndex(i)
@@ -1825,7 +1877,8 @@ void CloudClient::fillSockets_(JsonArray out, bool lights)
         JsonObject o = out.add<JsonObject>();
         o["id"] = (unsigned)cfg.id;
         o["group_id"] = (unsigned)cfg.group_id;
-        o["enabled"] = cfg.enabled;
+        o["enabled"] = controller_enabled && cfg.enabled &&
+                       cfg.relay_port != SocketController::kInvalidPort;
         if (cfg.name.length())
             o["name"] = cfg.name;
         if (cfg.button_port != SocketController::kInvalidPort)
@@ -2391,7 +2444,7 @@ void CloudClient::fillStackInfo_(JsonObject out)
             continue;
         JsonObject n = nodes.add<JsonObject>();
         n["node_id"] = device.node_id;
-        n["name"] = device.name;
+        n["name"] = sanitizeUtf8_(String(device.name));
         n["online"] = true;
         n["last_seen_ms"] = device.last_seen_ms;
     }
@@ -2400,7 +2453,7 @@ bool CloudClient::fillStackCachedSystem_(JsonObject out, uint32_t node_id)
 {
     const uint32_t now = millis();
     const uint32_t stale_ms = 15000;
-    out["device_name"] = stackNodeName_(node_id);
+    out["device_name"] = sanitizeUtf8_(stackNodeName_(node_id));
     if (!_network)
         return false;
     bool has_any = false;
@@ -2455,7 +2508,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                     o["enabled"] = it.enabled;
                     o["state"] = it.state;
                     if (it.name[0])
-                        o["name"] = it.name;
+                        o["name"] = sanitizeUtf8_(String(it.name));
                 });
                 has_any = true;
             }
@@ -2478,7 +2531,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                     o["group_id"] = it.group_id;
                     o["enabled"] = it.enabled;
                     if (it.name[0])
-                        o["name"] = it.name;
+                        o["name"] = sanitizeUtf8_(String(it.name));
                     if (it.button_port != SocketController::kInvalidPort)
                         o["button"] = it.button_port;
                     if (it.relay_port != SocketController::kInvalidPort)
@@ -2508,7 +2561,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                     o["type"] = MeteoController::typeName((MeteoController::SensorType)it.type);
                     o["type_id"] = it.type;
                     if (it.name[0])
-                        o["name"] = it.name;
+                        o["name"] = sanitizeUtf8_(String(it.name));
                     if (it.dht_pin != MeteoController::kInvalidPin)
                         o["pin"] = it.dht_pin;
                     if (it.ds18_addr_set)
@@ -2568,7 +2621,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                     o["heat_on"] = it.heat_on;
                     o["cool_on"] = it.cool_on;
                     if (it.name[0])
-                        o["name"] = it.name;
+                        o["name"] = sanitizeUtf8_(String(it.name));
                 });
                 has_any = true;
             }
@@ -2756,13 +2809,13 @@ String CloudClient::stackNodeName_(uint32_t node_id) const
     {
         String out;
         if (_stack_node_name_cb(_stack_node_name_ctx, node_id, out) && out.length())
-            return out;
+            return sanitizeUtf8_(out);
     }
     if (_network)
     {
         StackDeviceRegistry::DeviceInfo device{};
         if (_network->stackDeviceSnapshotByNodeId(node_id, device) && device.name[0])
-            return String(device.name);
+            return sanitizeUtf8_(String(device.name));
     }
     return String();
 }
@@ -2807,6 +2860,100 @@ void CloudClient::sendJson_(JsonDocument &doc)
         _log.warn(F("CLOUD"), F("WS tx skipped: empty json"));
     }
 }
+String CloudClient::sanitizeUtf8_(const String &in)
+{
+    if (isValidUtf8_(in))
+        return in;
+    return cp1251ToUtf8_(in);
+}
+bool CloudClient::isValidUtf8_(const String &in)
+{
+    size_t i = 0;
+    while (i < (size_t)in.length())
+    {
+        const uint8_t c = (uint8_t)in[i];
+        if (c < 0x80)
+        {
+            ++i;
+            continue;
+        }
+        size_t need = 0;
+        if ((c & 0xE0) == 0xC0)
+        {
+            if (c < 0xC2)
+                return false;
+            need = 1;
+        }
+        else if ((c & 0xF0) == 0xE0)
+        {
+            need = 2;
+        }
+        else if ((c & 0xF8) == 0xF0)
+        {
+            if (c > 0xF4)
+                return false;
+            need = 3;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (i + need >= (size_t)in.length())
+            return false;
+
+        for (size_t j = 1; j <= need; ++j)
+        {
+            const uint8_t cc = (uint8_t)in[i + j];
+            if ((cc & 0xC0) != 0x80)
+                return false;
+        }
+        i += need + 1;
+    }
+    return true;
+}
+void CloudClient::appendUtf8_(String &out, uint16_t code)
+{
+    if (code < 0x80)
+    {
+        out += (char)code;
+        return;
+    }
+    if (code < 0x800)
+    {
+        out += (char)(0xC0 | (code >> 6));
+        out += (char)(0x80 | (code & 0x3F));
+        return;
+    }
+    out += (char)(0xE0 | (code >> 12));
+    out += (char)(0x80 | ((code >> 6) & 0x3F));
+    out += (char)(0x80 | (code & 0x3F));
+}
+String CloudClient::cp1251ToUtf8_(const String &in)
+{
+    String out;
+    out.reserve(in.length() * 2);
+    for (size_t i = 0; i < (size_t)in.length(); ++i)
+    {
+        const uint8_t c = (uint8_t)in[i];
+        if (c < 0x80)
+        {
+            out += (char)c;
+            continue;
+        }
+        uint16_t code = '?';
+        if (c == 0xA8)
+            code = 0x0401;
+        else if (c == 0xB8)
+            code = 0x0451;
+        else if (c >= 0xC0 && c <= 0xFF)
+            code = (uint16_t)(0x0410 + (c - 0xC0));
+        else
+            code = '?';
+        appendUtf8_(out, code);
+    }
+    return out;
+}
 bool CloudClient::parseActor_(JsonObjectConst payload, CloudClient::ActorInfo &out) const
 {
     JsonObjectConst actor = payload["actor"].as<JsonObjectConst>();
@@ -2818,13 +2965,15 @@ bool CloudClient::parseActor_(JsonObjectConst payload, CloudClient::ActorInfo &o
     out.source = actor["source"] | "";
     out.session_id = actor["session_id"] | "";
     out.resolved_user = "";
-    return out.plc_username.length() != 0;
+    return out.plc_username.length() != 0 || out.username.length() != 0;
 }
 bool CloudClient::resolveActor_(CloudClient::ActorInfo &actor) const
 {
     if (!_users)
         return false;
     String key = actor.plc_username;
+    if (key.length() == 0)
+        key = actor.username;
     key = UsersRegistry::normalizeUsername(key);
     if (key.length() == 0)
         return false;

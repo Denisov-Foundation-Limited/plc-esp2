@@ -370,6 +370,7 @@ bool ConfigsManager::loadConfigs(){
 
 bool ConfigsManager::save(){
     _doc.clear();
+    _controllers.ensureSocketConfigsLoaded();
     JsonObject w = _doc["wifi"].to<JsonObject>();
     w["mode"] = _wifi.modeName();
     w["ssid"] = _wifi.ssid();

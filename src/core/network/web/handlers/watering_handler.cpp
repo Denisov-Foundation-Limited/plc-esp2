@@ -158,7 +158,10 @@ void WateringHandler::handleWatering(WebInterface &web, AsyncWebServerRequest *r
         }
         page.replace("%NAV%", web.navHtml_());
         page.replace("%WATERING_PAGE_TITLE%", WebUiRu::Watering::kPageTitle);
-        page.replace("%WATERING_ROWS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackWateringHtml_(node_id, (size_t)page_idx * page_size, page_size)
+                                        : web.listWateringHtml_((size_t)page_idx * page_size, page_size);
+        page.replace("%WATERING_ROWS%", initial_html);
         page.replace("%WATERING_PAGINATION%", pagination);
         page.replace("%WATERING_FORM_ACTION%", form_action);
         page.replace("%WATERING_STATUS%", stack_view ? web.stackWateringStatusText_(node_id) : web._watering_status);

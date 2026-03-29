@@ -98,6 +98,8 @@ public:
     bool lightsEnabled() const;
     void setControllerEnabled(bool enabled);
     void setLightsEnabled(bool enabled);
+    void reinitializeConfiguredSockets();
+    void reinitializeConfiguredLights();
     bool takeLightsDirty();
     uint32_t lightChangeSeq(uint32_t timeout_ms = 0xFFFFFFFFu) const;
     void setEventHandler(EventHandler cb, void *ctx);

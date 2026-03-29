@@ -133,7 +133,12 @@ void TankHandler::handleTanks(WebInterface &web, AsyncWebServerRequest *request)
         page.replace("%NAV%", web.navHtml_());
         page.replace("%TANK_PAGE_TITLE%", WebUiRu::Tanks::kPageTitle);
         page.replace("%TANK_STATUS%", stack_view ? web.stackTanksStatusText_(node_id) : web._tanks_status);
-        page.replace("%TANK_ITEMS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackTanksHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                  groups_available ? SIZE_MAX : page_size)
+                                        : web.listTanksHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                                             groups_available ? SIZE_MAX : page_size);
+        page.replace("%TANK_ITEMS%", initial_html);
         page.replace("%TANK_PAGINATION%", pagination);
         page.replace("%TANK_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
                                                       : web.tankPortOptionsJson_(PortIO::PinType::DInput));

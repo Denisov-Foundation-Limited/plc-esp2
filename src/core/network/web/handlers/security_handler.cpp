@@ -141,7 +141,7 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
             page.replace("%SECURITY_ALARM_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%SECURITY_GSM_LABEL%", web.gsmStatusLabel_());
             page.replace("%SECURITY_SIREN%", "");
-            page.replace("%SECURITY_SENSORS%", "<div class=\"tile empty\">Loading...</div>");
+            page.replace("%SECURITY_SENSORS%", WebUiRu::Security::kText9);
             page.replace("%SECURITY_SENSORS_PAGE%", "1");
             page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)(max_pages ? max_pages : 1)));
             page.replace("%SECURITY_SENSOR_JSON%", "[]");
@@ -174,7 +174,11 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
             page.replace("%SECURITY_SIREN%", String((unsigned)sec_siren));
         else
             page.replace("%SECURITY_SIREN%", "");
-        page.replace("%SECURITY_SENSORS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackSecuritySensorsTiles_(node_id, (size_t)page_idx * page_size, page_size)
+                                        : web.listSecuritySensorsTiles_(groups_available ? 0 : start,
+                                                                        groups_available ? SecurityController::kSensorCount : end);
+        page.replace("%SECURITY_SENSORS%", initial_html);
         page.replace("%SECURITY_SENSORS_PAGE%", String((unsigned)(page_idx + 1)));
         page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)max_pages));
         page.replace("%SECURITY_SENSOR_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)

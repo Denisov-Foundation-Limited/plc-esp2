@@ -43,6 +43,7 @@ void CloudHandler::handleCloud(WebInterface &web, AsyncWebServerRequest *request
         page.replace("%CLOUD_EVENT_LABEL%", WebUiRu::CloudPage::kEventMs);
         page.replace("%CLOUD_EVENT_HINT%", WebUiRu::CloudPage::kEventHint);
         page.replace("%CLOUD_API_KEY_LABEL%", WebUiRu::CloudPage::kApiKey);
+        page.replace("%CLOUD_DEVICE_ID_HINT%", F("Этот device_id указывать при регистрации устройства в plc-cloud."));
         const bool connected = web.cloudConnected_();
         page.replace("%CLOUD_CONNECTED_CLASS%", connected ? "ok" : "bad");
         page.replace("%CLOUD_CONNECTED_TEXT%", connected ? WebUiRu::CloudPage::kConnected : WebUiRu::CloudPage::kDisconnected);

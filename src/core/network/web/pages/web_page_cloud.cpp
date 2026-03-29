@@ -153,6 +153,11 @@ const char kWebInterfaceCloudHtml[] PROGMEM = R"HTML(
             <div class="hint">%CLOUD_EVENT_HINT%</div>
           </div>
           <div class="form-row full">
+            <label>%CLOUD_DEVICE_ID_LABEL%</label>
+            <input class="field" type="text" value="%CLOUD_DEVICE_ID%" readonly spellcheck="false" autocapitalize="off" autocomplete="off">
+            <div class="hint">%CLOUD_DEVICE_ID_HINT%</div>
+          </div>
+          <div class="form-row full">
             <label>%CLOUD_API_KEY_LABEL%</label>
             <input class="field" type="password" name="api_key" value="%CLOUD_API_KEY%" placeholder="api_key">
           </div>

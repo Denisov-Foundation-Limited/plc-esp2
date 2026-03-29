@@ -1125,7 +1125,14 @@ void SocketController::setControllerEnabled(bool enabled){
     _controller_enabled = enabled;
     if (!_controller_enabled)
     {
-        resetSockets_();
+        for (size_t i = 0; i < kSocketCount; ++i)
+        {
+            SocketConfig &cfg = _cfg[i];
+            SocketState &st = _state[i];
+            if (cfg.enabled && cfg.relay_port != kInvalidPort)
+                writeRelay_(cfg, false);
+            st = SocketState{};
+        }
         _dirty_sockets = true;
         return;
     }
@@ -1148,7 +1155,14 @@ void SocketController::setLightsEnabled(bool enabled){
     _lights_enabled = enabled;
     if (!_lights_enabled)
     {
-        resetLights_();
+        for (size_t i = 0; i < kLightCount; ++i)
+        {
+            LightConfig &cfg = _light_cfg[i];
+            LightState &st = _light_state[i];
+            if (cfg.enabled && cfg.relay_port != kInvalidPort)
+                writeRelay_(cfg, false);
+            st = LightState{};
+        }
         _dirty_lights = true;
         return;
     }
@@ -1159,6 +1173,38 @@ void SocketController::setLightsEnabled(bool enabled){
         if (!cfg.enabled)
             continue;
         st = LightState{};
+        st.has_button = setupButton_(cfg, st);
+        setupRelay_(cfg, st);
+    }
+}
+
+void SocketController::reinitializeConfiguredSockets(){
+    auto guard = _lock.guard();
+    if (!_controller_enabled)
+        return;
+    for (size_t i = 0; i < kSocketCount; ++i)
+    {
+        SocketConfig &cfg = _cfg[i];
+        SocketState &st = _state[i];
+        st = SocketState{};
+        if (!cfg.enabled)
+            continue;
+        st.has_button = setupButton_(cfg, st);
+        setupRelay_(cfg, st);
+    }
+}
+
+void SocketController::reinitializeConfiguredLights(){
+    auto guard = _lock.guard();
+    if (!_lights_enabled)
+        return;
+    for (size_t i = 0; i < kLightCount; ++i)
+    {
+        LightConfig &cfg = _light_cfg[i];
+        LightState &st = _light_state[i];
+        st = LightState{};
+        if (!cfg.enabled)
+            continue;
         st.has_button = setupButton_(cfg, st);
         setupRelay_(cfg, st);
     }

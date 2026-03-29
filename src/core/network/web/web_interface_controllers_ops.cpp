@@ -1363,6 +1363,7 @@ String WebInterfaceControllersOps::navHtml_() const
             appendNavLink(nav, F("/rules"), F("Правила"));
             appendNavLink(nav, F("/groups"), F("Группы"));
             appendNavLink(nav, F("/cloud"), F("Облако"));
+            appendNavLink(nav, F("/stack"), F("Стек"));
             appendNavLink(nav, F("/admin"), F("Система"));
             appendNavLink(nav, F("/logs"), F("Logs"));
         }

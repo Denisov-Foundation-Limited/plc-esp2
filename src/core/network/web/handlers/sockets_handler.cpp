@@ -56,6 +56,37 @@ void invalidateLocalSocketsPortsCache_()
     g_sockets_local_ports_cache_built_ms = 0;
     g_sockets_local_ports_cache_body = "";
 }
+
+uint32_t requestedStackNodeId_(WebInterface &web, AsyncWebServerRequest *request)
+{
+    if (!web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+        return 0;
+    if (!request)
+        return 0;
+    String node;
+    if (request->hasParam("node_id", true))
+        node = request->getParam("node_id", true)->value();
+    else if (request->hasParam("node_id", false))
+        node = request->getParam("node_id", false)->value();
+    else if (request->hasParam("node_id"))
+        node = request->getParam("node_id")->value();
+    if (node.length() == 0)
+    {
+        if (request->hasParam("node", true))
+            node = request->getParam("node", true)->value();
+        else if (request->hasParam("node", false))
+            node = request->getParam("node", false)->value();
+        else if (request->hasParam("node"))
+            node = request->getParam("node")->value();
+    }
+    if (node.length() == 0)
+        return 0;
+    char *end = nullptr;
+    const unsigned long value = strtoul(node.c_str(), &end, 0);
+    if (!end || end == node.c_str())
+        return 0;
+    return (uint32_t)value;
+}
 }
 
 void SocketsHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
@@ -149,7 +180,11 @@ void SocketsHandler::handleSockets(WebInterface &web, AsyncWebServerRequest *req
         }
         const size_t extra = 4096u + (size_t)page_size * 900u;
         page.reserve(page.length() + extra);
-        page.replace("%SOCKETS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackSocketsHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                    groups_available ? SIZE_MAX : page_size)
+                                        : web.listSocketsHtml_(start, end);
+        page.replace("%SOCKETS%", initial_html);
         page.replace("%SOCKETS_PAGE_TITLE%", WebUiRu::Sockets::kPageTitle);
         page.replace("%SOCKETS_PAGE_PREV%", WebUiRu::Sockets::kPagePrev);
         page.replace("%SOCKETS_PAGE_LABEL%", WebUiRu::Sockets::kPagePage);
@@ -524,9 +559,15 @@ void SocketsHandler::handleSocketsToggle(WebInterface &web, AsyncWebServerReques
             return;
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Sockets))
             return;
-        const uint32_t node_id = web.parseStackNodeIdParam_(request);
-        if (web.isStackSocketsView_(node_id))
+        const uint32_t requested_node_id = requestedStackNodeId_(web, request);
+        const uint32_t node_id = requested_node_id ? requested_node_id : web.parseStackNodeIdParam_(request);
+        if (requested_node_id != 0)
         {
+            if (!web.isStackSocketsView_(node_id))
+            {
+                web.sendText_(request, 409, "text/plain", "Stack offline", set_cookie);
+                return;
+            }
             web.handleStackSocketsToggle_(request, node_id, set_cookie);
             return;
         }
@@ -694,9 +735,15 @@ void SocketsHandler::handleSocketsEnable(WebInterface &web, AsyncWebServerReques
             return;
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Sockets))
             return;
-        const uint32_t node_id = web.parseStackNodeIdParam_(request);
-        if (web.isStackSocketsView_(node_id))
+        const uint32_t requested_node_id = requestedStackNodeId_(web, request);
+        const uint32_t node_id = requested_node_id ? requested_node_id : web.parseStackNodeIdParam_(request);
+        if (requested_node_id != 0)
         {
+            if (!web.isStackSocketsView_(node_id))
+            {
+                web.sendText_(request, 409, "text/plain", "Stack offline", set_cookie);
+                return;
+            }
             web.handleStackSocketsEnable_(request, node_id, set_cookie);
             return;
         }

@@ -561,7 +561,9 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       setTimeout(tick, 220);
     }
     refreshTankSelects();
-    loadTanksList();
+    if (tanksIsStackView) {
+      loadTanksList();
+    }
     bindTankHandlers();
     async function pollTankTilesState() {
       const controls = Array.from(document.querySelectorAll('input.tank-power'));

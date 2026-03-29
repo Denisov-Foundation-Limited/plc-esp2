@@ -13,6 +13,105 @@
 
 #include "app.hpp"
 
+namespace
+{
+bool isValidUtf8_(const String &in)
+{
+    size_t i = 0;
+    while (i < (size_t)in.length())
+    {
+        const uint8_t c = (uint8_t)in[i];
+        if (c < 0x80)
+        {
+            ++i;
+            continue;
+        }
+        size_t need = 0;
+        if ((c & 0xE0) == 0xC0)
+        {
+            if (c < 0xC2)
+                return false;
+            need = 1;
+        }
+        else if ((c & 0xF0) == 0xE0)
+        {
+            need = 2;
+        }
+        else if ((c & 0xF8) == 0xF0)
+        {
+            if (c > 0xF4)
+                return false;
+            need = 3;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (i + need >= (size_t)in.length())
+            return false;
+
+        for (size_t j = 1; j <= need; ++j)
+        {
+            const uint8_t cc = (uint8_t)in[i + j];
+            if ((cc & 0xC0) != 0x80)
+                return false;
+        }
+        i += need + 1;
+    }
+    return true;
+}
+
+void appendUtf8_(String &out, uint16_t code)
+{
+    if (code < 0x80)
+    {
+        out += (char)code;
+        return;
+    }
+    if (code < 0x800)
+    {
+        out += (char)(0xC0 | (code >> 6));
+        out += (char)(0x80 | (code & 0x3F));
+        return;
+    }
+    out += (char)(0xE0 | (code >> 12));
+    out += (char)(0x80 | ((code >> 6) & 0x3F));
+    out += (char)(0x80 | (code & 0x3F));
+}
+
+String cp1251ToUtf8_(const String &in)
+{
+    String out;
+    out.reserve(in.length() * 2);
+    for (size_t i = 0; i < (size_t)in.length(); ++i)
+    {
+        const uint8_t c = (uint8_t)in[i];
+        if (c < 0x80)
+        {
+            out += (char)c;
+            continue;
+        }
+        uint16_t code = '?';
+        if (c == 0xA8)
+            code = 0x0401;
+        else if (c == 0xB8)
+            code = 0x0451;
+        else if (c >= 0xC0 && c <= 0xFF)
+            code = (uint16_t)(0x0410 + (c - 0xC0));
+        appendUtf8_(out, code);
+    }
+    return out;
+}
+
+String sanitizeUtf8_(const String &in)
+{
+    if (isValidUtf8_(in))
+        return in;
+    return cp1251ToUtf8_(in);
+}
+} // namespace
+
 void AppRuntime::updateTankAlarms_(){
     TankController &tanks = control.controllers.tanks();
     auto tanks_guard = tanks.lockGuard();
@@ -202,8 +301,8 @@ void AppRuntime::logStackSendFailDiag_(uint32_t node_id, const char *feature, ui
                        device.ip[0] ? device.ip : "-");
         return;
     }
-    core.logs.warn(F("STACK"),
-                   F("Sync slave %s request failed: node 0x%08lX range: %u-%u registry: miss"),
+    core.logs.info(F("STACK"),
+                   F("Skip slave %s sync: node 0x%08lX range: %u-%u offline"),
                    feature ? feature : "unknown",
                    (unsigned long)node_id,
                    (unsigned)offset,
@@ -1790,7 +1889,7 @@ void AppRuntime::appendSystemSnapshot_(JsonObject root) const{
                  (unsigned)dt.second);
     }
 
-    root["device_name"] = hw.plc.deviceName();
+    root["device_name"] = sanitizeUtf8_(hw.plc.deviceName());
     root["rtc_date"] = rtc_time_ok ? String(date_buf) : String("n/a");
     root["rtc_time"] = rtc_time_ok ? String(time_buf) : String("n/a");
     root["rtc_temp"] = rtc_temp_ok ? rtc_temp_c : 0.0f;
@@ -1822,7 +1921,7 @@ void AppRuntime::appendSocketSnapshotItems_(JsonObject root) const{
         o["relay"] = cfg->relay_port;
         o["group_id"] = cfg->group_id;
         if (cfg->name.length())
-            o["name"] = cfg->name;
+            o["name"] = sanitizeUtf8_(cfg->name);
     }
 }
 
@@ -1846,7 +1945,7 @@ void AppRuntime::appendLightSnapshotItems_(JsonObject root) const{
         o["relay"] = cfg->relay_port;
         o["group_id"] = cfg->group_id;
         if (cfg->name.length())
-            o["name"] = cfg->name;
+            o["name"] = sanitizeUtf8_(cfg->name);
     }
 }
 
@@ -1889,7 +1988,7 @@ void AppRuntime::appendSocketSnapshotPage_(JsonObject root, uint16_t offset, uin
         o["relay"] = cfg->relay_port;
         o["group_id"] = cfg->group_id;
         if (cfg->name.length())
-            o["name"] = cfg->name;
+            o["name"] = sanitizeUtf8_(cfg->name);
         ++current_index;
     }
 
@@ -1939,7 +2038,7 @@ void AppRuntime::appendLightSnapshotPage_(JsonObject root, uint16_t offset, uint
         o["relay"] = cfg->relay_port;
         o["group_id"] = cfg->group_id;
         if (cfg->name.length())
-            o["name"] = cfg->name;
+            o["name"] = sanitizeUtf8_(cfg->name);
         ++current_index;
     }
 
@@ -2008,7 +2107,7 @@ void AppRuntime::appendMeteoSnapshotPage_(JsonObject root, uint16_t offset, uint
         const uint32_t age_s = st->last_read_ms ? (uint32_t)((millis() - st->last_read_ms) / 1000u) : 0u;
         o["age_s"] = age_s;
         if (cfg->name.length())
-            o["name"] = cfg->name;
+            o["name"] = sanitizeUtf8_(cfg->name);
         ++current_index;
     }
 
@@ -2067,7 +2166,7 @@ void AppRuntime::appendThermoSnapshotPage_(JsonObject root, uint16_t offset, uin
         o["heat_on"] = st->heat_on;
         o["cool_on"] = st->cool_on;
         if (cfg->name.length())
-            o["name"] = cfg->name;
+            o["name"] = sanitizeUtf8_(cfg->name);
         ++current_index;
     }
 
@@ -2128,7 +2227,7 @@ void AppRuntime::appendTankSnapshotPage_(JsonObject root, uint16_t offset, uint1
         o["pump_on"] = st->pump_on;
         o["alarm_on"] = st->alarm_on;
         if (cfg->name.length())
-            o["name"] = cfg->name;
+            o["name"] = sanitizeUtf8_(cfg->name);
         ++current_index;
     }
 

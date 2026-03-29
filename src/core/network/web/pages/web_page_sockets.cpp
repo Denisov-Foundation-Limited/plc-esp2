@@ -437,7 +437,9 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       }
     }
     refreshSocketSelects();
-    loadSocketList();
+    if (socketsUnit === 'stack') {
+      loadSocketList();
+    }
     setTimeout(pollSocketPortOptions, 50);
     if (socketsUnit === 'stack') {
       setInterval(pollSocketPortOptions, 2000);
@@ -557,6 +559,7 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
           const action = el.checked ? 'on' : 'off';
           let body = 'id=' + encodeURIComponent(id) + '&action=' + action;
           if (socketsUnit === 'stack' && socketsNodeId) {
+            body += '&unit=stack';
             body += '&node_id=' + encodeURIComponent(String(socketsNodeId));
           }
           const state = await postForm('/sockets/toggle', body);
@@ -586,6 +589,7 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         try {
           let body = 'id=' + encodeURIComponent(id) + '&enabled=' + enabled;
           if (socketsUnit === 'stack' && socketsNodeId) {
+            body += '&unit=stack';
             body += '&node_id=' + encodeURIComponent(String(socketsNodeId));
           }
           const state = await postForm('/sockets/enable', body);
@@ -608,6 +612,7 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       async function fetchState(id) {
         let url = '/sockets/toggle?id=' + encodeURIComponent(id) + '&action=state';
         if (socketsUnit === 'stack' && socketsNodeId) {
+          url += '&unit=stack';
           url += '&node_id=' + encodeURIComponent(String(socketsNodeId));
         }
         const res = await fetch(url, {

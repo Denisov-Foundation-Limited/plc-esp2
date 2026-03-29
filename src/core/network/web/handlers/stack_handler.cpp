@@ -188,7 +188,7 @@ void StackHandler::handleStack(WebInterface &web, AsyncWebServerRequest *request
         page.replace("%STACK_FALLBACK_ENABLED_CHECKED%", web.stackFallbackEnabled_() ? "checked" : "");
         page.replace("%STACK_FALLBACK_HOST%", web.stackFallbackHost_());
         page.replace("%STACK_SLAVE_CONTROLLER_CHECKED%", web.stackSlaveController_() ? "checked" : "");
-        page.replace("%STACK_API_KEY%", WebInterface::maskSecretValue_(web.stackApiKey_()));
+        page.replace("%STACK_API_KEY%", web.stackApiKey_());
         page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         page.replace("%STACK_STATUS%", web._stack_status);
         page.replace("%STACK_DIAG_BLOCK%", stackDiagnosticsHtml_(web));

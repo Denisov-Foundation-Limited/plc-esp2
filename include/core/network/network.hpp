@@ -134,6 +134,7 @@ private:
     static constexpr uint16_t kStackPort = 9010;
     static constexpr uint32_t kStackFallbackDelayMs = 10000;
     static constexpr uint32_t kStackFallbackRetryPrimaryMs = 30000;
+    static constexpr uint32_t kStackWsSlaveReadyDebounceMs = 3000;
     StackMasterServer _stack_master_server;
     StackRs485Server _stack_rs485_server;
     StackSlaveClient _stack_slave_client;
@@ -343,6 +344,8 @@ private:
     std::atomic<uint8_t> _stack_cmd_pending{(uint8_t)StackCommand::None};
     std::atomic<uint8_t> _stack_runtime_state_raw{(uint8_t)StackRuntimeState::Stopped};
     bool _stack_ws_start_deferred = false;
+    uint32_t _stack_ws_ready_since_ms = 0;
+    bool _stack_ws_ready_wait_logged = false;
     StackNodeEventHandler _stack_node_event_cb = nullptr;
     void *_stack_node_event_ctx = nullptr;
 };

@@ -149,7 +149,12 @@ void MeteoHandler::handleMeteo(WebInterface &web, AsyncWebServerRequest *request
         }
         page.replace("%METEO_PAGE_TITLE%", WebUiRu::Meteo::kPageTitle);
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%METEO_TILES%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackMeteoHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                  groups_available ? SIZE_MAX : page_size)
+                                        : web.listMeteoHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                                             groups_available ? SIZE_MAX : page_size);
+        page.replace("%METEO_TILES%", initial_html);
         page.replace("%METEO_PAGINATION%", pagination);
         page.replace("%METEO_STATUS%", stack_view ? web.stackMeteoStatusText_(node_id) : web._meteo_status);
         page.replace("%SENSOR_JSON%", stack_view ? web.stackMeteoPortOptionsJson_(node_id)

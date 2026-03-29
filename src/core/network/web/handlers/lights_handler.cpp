@@ -38,6 +38,37 @@ bool requestTooFrequentLights_(std::atomic<uint32_t> &stamp, uint32_t now_ms, ui
     stamp.store(now_ms, std::memory_order_relaxed);
     return false;
 }
+
+uint32_t requestedStackNodeId_(WebInterface &web, AsyncWebServerRequest *request)
+{
+    if (!web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+        return 0;
+    if (!request)
+        return 0;
+    String node;
+    if (request->hasParam("node_id", true))
+        node = request->getParam("node_id", true)->value();
+    else if (request->hasParam("node_id", false))
+        node = request->getParam("node_id", false)->value();
+    else if (request->hasParam("node_id"))
+        node = request->getParam("node_id")->value();
+    if (node.length() == 0)
+    {
+        if (request->hasParam("node", true))
+            node = request->getParam("node", true)->value();
+        else if (request->hasParam("node", false))
+            node = request->getParam("node", false)->value();
+        else if (request->hasParam("node"))
+            node = request->getParam("node")->value();
+    }
+    if (node.length() == 0)
+        return 0;
+    char *end = nullptr;
+    const unsigned long value = strtoul(node.c_str(), &end, 0);
+    if (!end || end == node.c_str())
+        return 0;
+    return (uint32_t)value;
+}
 }
 
 void LightsHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
@@ -125,7 +156,11 @@ void LightsHandler::handleLights(WebInterface &web, AsyncWebServerRequest *reque
         const size_t extra = 4096u + (size_t)page_size * 900u;
         page.reserve(page.length() + extra);
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%LIGHTS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackLightsHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                   groups_available ? SIZE_MAX : page_size)
+                                        : web.listLightsHtml_(start, end);
+        page.replace("%LIGHTS%", initial_html);
         page.replace("%LIGHTS_PAGE_TITLE%", WebUiRu::Lights::kPageTitle);
         page.replace("%LIGHTS_PAGE_PREV%", WebUiRu::Lights::kPagePrev);
         page.replace("%LIGHTS_PAGE_LABEL%", WebUiRu::Lights::kPagePage);
@@ -552,9 +587,15 @@ void LightsHandler::handleLightsToggle(WebInterface &web, AsyncWebServerRequest 
             return;
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Lights))
             return;
-        const uint32_t node_id = web.parseStackNodeIdParam_(request);
-        if (web.isStackLightsView_(node_id))
+        const uint32_t requested_node_id = requestedStackNodeId_(web, request);
+        const uint32_t node_id = requested_node_id ? requested_node_id : web.parseStackNodeIdParam_(request);
+        if (requested_node_id != 0)
         {
+            if (!web.isStackLightsView_(node_id))
+            {
+                web.sendText_(request, 409, "text/plain", "Stack offline", set_cookie);
+                return;
+            }
             web.handleStackLightsToggle_(request, node_id, set_cookie);
             return;
         }
@@ -641,9 +682,15 @@ void LightsHandler::handleLightsEnable(WebInterface &web, AsyncWebServerRequest 
             return;
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Lights))
             return;
-        const uint32_t node_id = web.parseStackNodeIdParam_(request);
-        if (web.isStackLightsView_(node_id))
+        const uint32_t requested_node_id = requestedStackNodeId_(web, request);
+        const uint32_t node_id = requested_node_id ? requested_node_id : web.parseStackNodeIdParam_(request);
+        if (requested_node_id != 0)
         {
+            if (!web.isStackLightsView_(node_id))
+            {
+                web.sendText_(request, 409, "text/plain", "Stack offline", set_cookie);
+                return;
+            }
             web.handleStackLightsEnable_(request, node_id, set_cookie);
             return;
         }

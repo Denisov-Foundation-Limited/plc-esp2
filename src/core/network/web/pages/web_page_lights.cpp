@@ -388,7 +388,9 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
       });
     }
     refreshLightSelects();
-    loadLightsList();
+    if (lightsUnit === 'stack') {
+      loadLightsList();
+    }
     setTimeout(pollLightPortOptions, 50);
     setInterval(pollLightPortOptions, 2000);
     const prevBtn = document.getElementById('lights-prev');
@@ -504,7 +506,12 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
         el.disabled = true;
         try {
           const action = el.checked ? 'on' : 'off';
-          const state = await postForm('/lights/toggle', 'id=' + encodeURIComponent(id) + '&action=' + action);
+          let body = 'id=' + encodeURIComponent(id) + '&action=' + action;
+          if (lightsUnit === 'stack' && lightsNodeId) {
+            body += '&unit=stack';
+            body += '&node_id=' + encodeURIComponent(String(lightsNodeId));
+          }
+          const state = await postForm('/lights/toggle', body);
           if (state === 'pending' || state === 'OK') {
             updateSocketVisual(tile, desired);
             return;
@@ -529,7 +536,12 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
           const tile = el.closest('.tile');
           const enabled = el.checked ? '1' : '0';
         try {
-          const state = await postForm('/lights/enable', 'id=' + encodeURIComponent(id) + '&enabled=' + enabled);
+          let body = 'id=' + encodeURIComponent(id) + '&enabled=' + enabled;
+          if (lightsUnit === 'stack' && lightsNodeId) {
+            body += '&unit=stack';
+            body += '&node_id=' + encodeURIComponent(String(lightsNodeId));
+          }
+          const state = await postForm('/lights/enable', body);
           let isEnabled = false;
           try {
             const data = JSON.parse(state);
@@ -549,6 +561,7 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
       async function fetchState(id) {
         let url = '/lights/toggle?id=' + encodeURIComponent(id) + '&action=state';
         if (lightsUnit === 'stack' && lightsNodeId) {
+          url += '&unit=stack';
           url += '&node_id=' + encodeURIComponent(String(lightsNodeId));
         }
         const res = await fetch(url, {

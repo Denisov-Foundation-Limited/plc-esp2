@@ -168,6 +168,10 @@ private:
                                  const String &unit, uint32_t node_id);
     static bool isCoalescibleStateEvent_(const String &kind);
     static uint32_t eventItemId_(const String &data_json);
+    static String sanitizeUtf8_(const String &in);
+    static bool isValidUtf8_(const String &in);
+    static void appendUtf8_(String &out, uint16_t code);
+    static String cp1251ToUtf8_(const String &in);
     void logEvent_(const __FlashStringHelper *stage, const String &kind, const String &reason,
                    const String &unit = String(), uint32_t node_id = 0);
 
@@ -188,7 +192,7 @@ private:
                          const String &ctrl, const String &action, JsonObjectConst args, const ActorInfo &actor);
 
     bool handleCmdSockets_(SocketController &s, const String &action, JsonObjectConst args, bool lights,
-                           const ActorInfo &actor);
+                           const ActorInfo &actor, String *error_out = nullptr);
 
     bool handleCmdThermo_(const String &action, JsonObjectConst args);
 

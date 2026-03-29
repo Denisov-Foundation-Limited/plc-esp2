@@ -80,6 +80,7 @@ size_t stackSocketsRenderCount_(const WebInterface &web, uint32_t node_id, uint8
 size_t WebInterfaceControllersSocketsHelper::socketsLocalRenderCount_(const WebInterface &web) {
         if (!web._controllers)
             return 0;
+        web._controllers->ensureSocketConfigsLoaded();
         SocketController &sockets = web._controllers->sockets();
         auto guard = sockets.lockGuard();
         size_t last_enabled_idx = SIZE_MAX;
@@ -98,6 +99,7 @@ size_t WebInterfaceControllersSocketsHelper::socketsLocalRenderCount_(const WebI
 String WebInterfaceControllersSocketsHelper::listSocketsHtml_(WebInterface &web, uint8_t start_id, uint8_t end_id) {
         if (!web._controllers)
             return WebUiRu::Sockets::kText;
+        web._controllers->ensureSocketConfigsLoaded();
         String items;
         if (start_id == 0)
             start_id = 1;
