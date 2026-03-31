@@ -13,7 +13,6 @@
 
 #include <Arduino.h>
 
-struct StackFrame;
 class AsyncWebServerRequest;
 class WebInterface;
 
@@ -30,7 +29,6 @@ public:
     bool isStackBusesView_(uint32_t node_id) const;
     bool isStackPortsView_(uint32_t node_id) const;
     uint32_t parseStackNodeIdParam_(AsyncWebServerRequest *request) const;
-    void handleStackFrame_(uint32_t node_id, const StackFrame &frame);
     bool requestStackPorts_(uint32_t node_id);
     bool refreshStackPorts_(uint32_t node_id);
     bool requestStackExtenders_(uint32_t node_id);
@@ -38,6 +36,7 @@ public:
     bool requestStackOw_(uint32_t node_id, bool run);
     bool requestStackTempSensors_(uint32_t node_id);
     bool refreshStackTempSensors_(uint32_t node_id);
+    bool requestStackIndexState_(uint32_t node_id);
     bool requestStackPlcStatus_(uint32_t node_id);
     bool requestStackRtcStatus_(uint32_t node_id);
     uint16_t nextStackCmdId_();

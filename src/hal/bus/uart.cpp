@@ -14,7 +14,6 @@
 
 HardwareSerial *UartManager::serialByUartNum(uint8_t uart_num)
 {
-#if defined(ESP32)
     switch (uart_num)
     {
     case 1:
@@ -24,10 +23,6 @@ HardwareSerial *UartManager::serialByUartNum(uint8_t uart_num)
     default:
         return nullptr;
     }
-#else
-    (void)uart_num;
-    return nullptr;
-#endif
 }
 
 bool UartManager::beginByIndex(uint8_t idx, HardwareSerial &ser, uint32_t config)
@@ -35,18 +30,12 @@ bool UartManager::beginByIndex(uint8_t idx, HardwareSerial &ser, uint32_t config
     if (idx >= ActiveBoardProfile::UART_COUNT)
         return false;
     const auto u = ActiveBoardProfile::UARTS[idx];
-#if defined(ESP32)
     uint8_t tx_gpio = 0;
     uint8_t rx_gpio = 0;
     if (!uartPinsFromPorts_(u.tx, u.rx, tx_gpio, rx_gpio))
         return false;
     ser.begin(u.baud, config, rx_gpio, tx_gpio);
     return true;
-#else
-    (void)ser;
-    (void)config;
-    return false;
-#endif
 }
 
 HardwareSerial *UartManager::beginSerialForIndex(uint8_t idx, uint32_t config)
@@ -57,17 +46,12 @@ HardwareSerial *UartManager::beginSerialForIndex(uint8_t idx, uint32_t config)
     HardwareSerial *ser = serialByUartNum(u.uart_num);
     if (!ser)
         return nullptr;
-#if defined(ESP32)
     uint8_t tx_gpio = 0;
     uint8_t rx_gpio = 0;
     if (!uartPinsFromPorts_(u.tx, u.rx, tx_gpio, rx_gpio))
         return nullptr;
     ser->begin(u.baud, config, rx_gpio, tx_gpio);
     return ser;
-#else
-    (void)config;
-    return nullptr;
-#endif
 }
 
 bool UartManager::uartPinsFromPorts_(uint8_t tx_port, uint8_t rx_port,

@@ -13,9 +13,7 @@
 
 #include <string.h>
 #include "mbedtls/sha256.h"
-#if defined(ESP32)
 #include <esp_system.h>
-#endif
 
 using UsersAclController = UsersRegistry::AclController;
 using UsersUser = UsersRegistry::User;
@@ -331,13 +329,7 @@ String UsersRegistry::bytesToHex_(const uint8_t *data, size_t len){
 }
 
 uint32_t UsersRegistry::rand32_(){
-#if defined(ESP32)
     return esp_random();
-#else
-    uint32_t r = (uint32_t)random(0x7FFFFFFF);
-    r = (r << 1) ^ (uint32_t)micros();
-    return r;
-#endif
 }
 
 String UsersRegistry::generateSaltHex_(size_t bytes){

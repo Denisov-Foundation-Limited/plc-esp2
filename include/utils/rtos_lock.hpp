@@ -6,12 +6,10 @@
 #define RTOS_LOCK_DIAG 0
 #endif
 
-#if defined(ESP32)
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #if RTOS_LOCK_DIAG
 #include <freertos/task.h>
-#endif
 #endif
 
 class RtosRecursiveLock
@@ -49,7 +47,6 @@ public:
 
     bool lock(uint32_t timeout_ms = 0xFFFFFFFFu) const
     {
-#if defined(ESP32)
         ensureCreated_();
         if (_mtx == nullptr)
             return false;
@@ -70,15 +67,10 @@ public:
         }
 #endif
         return true;
-#else
-        (void)timeout_ms;
-        return true;
-#endif
     }
 
     void unlock() const
     {
-#if defined(ESP32)
         if (_mtx != nullptr)
         {
 #if RTOS_LOCK_DIAG
@@ -97,7 +89,6 @@ public:
 #endif
             xSemaphoreGiveRecursive(_mtx);
         }
-#endif
     }
 
     Guard guard(uint32_t timeout_ms = 0xFFFFFFFFu) const
@@ -107,7 +98,7 @@ public:
 
     const char *ownerName() const
     {
-#if defined(ESP32) && RTOS_LOCK_DIAG
+#if RTOS_LOCK_DIAG
         return _owner ? pcTaskGetName(_owner) : nullptr;
 #else
         return nullptr;
@@ -116,7 +107,7 @@ public:
 
     uint32_t heldMs() const
     {
-#if defined(ESP32) && RTOS_LOCK_DIAG
+#if RTOS_LOCK_DIAG
         if (_owner == nullptr || _lock_tick == 0)
             return 0;
         const TickType_t now = xTaskGetTickCount();
@@ -129,23 +120,19 @@ public:
 private:
     void ensureCreated_() const
     {
-#if defined(ESP32)
         if (_mtx != nullptr)
             return;
         portENTER_CRITICAL(&_init_mux);
         if (_mtx == nullptr)
             _mtx = xSemaphoreCreateRecursiveMutex();
         portEXIT_CRITICAL(&_init_mux);
-#endif
     }
 
-#if defined(ESP32)
     mutable SemaphoreHandle_t _mtx = nullptr;
     mutable portMUX_TYPE _init_mux = portMUX_INITIALIZER_UNLOCKED;
 #if RTOS_LOCK_DIAG
     mutable TaskHandle_t _owner = nullptr;
     mutable UBaseType_t _depth = 0;
     mutable TickType_t _lock_tick = 0;
-#endif
 #endif
 };

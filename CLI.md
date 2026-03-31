@@ -122,6 +122,9 @@
 
 - `stack role <master|slave>`
 - `stack master <host>`
+- `stack policy <auto|direct|poll>`
+- `stack transport <websocket|rs485>`
+- `stack payload <auto|json|binary>`
 - `stack fallback <on|off>`
 - `stack fallback_host <host>`
 - `stack slave_controller <on|off>`

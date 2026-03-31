@@ -560,7 +560,9 @@ const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       setTimeout(tick, 220);
     }
     refreshSepticSelects();
-    loadSepticList();
+    if (septicIsStackView) {
+      loadSepticList();
+    }
     bindSepticHandlers();
     function septicTileId(tile) {
       if (!tile) return 0;

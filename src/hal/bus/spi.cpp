@@ -32,7 +32,6 @@ bool SPIManager::beginAll()
             return false;
         }
 
-#if defined(ESP32)
         int sck_gpio = -1;
         int miso_gpio = -1;
         int mosi_gpio = -1;
@@ -46,10 +45,6 @@ bool SPIManager::beginAll()
             return false;
         }
         s->begin(sck_gpio, miso_gpio, mosi_gpio, cs_gpio);
-#else
-        (void)c;
-        s->begin();
-#endif
     }
     return true;
 }
@@ -99,13 +94,11 @@ SPIClass *SPIManager::spiPtr_(uint8_t bus_num)
     {
     case 0:
         return &SPI;
-#if defined(ESP32)
     case 1:
     {
         static SPIClass hspi(HSPI);
         return &hspi;
     }
-#endif
     default:
         return nullptr;
     }

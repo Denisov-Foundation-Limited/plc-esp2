@@ -287,6 +287,7 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       %TANK_DEVICE_SELECT%
       %TANK_PAGINATION%
       <form method="POST" action="/tanks" id="tanks-form">
+        %TANK_FORM_HIDDEN%
         <div class="grid" id="tanks-grid">
           %TANK_ITEMS%
         </div>
@@ -560,7 +561,9 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       setTimeout(tick, 220);
     }
     refreshTankSelects();
-    loadTanksList();
+    if (tanksIsStackView) {
+      loadTanksList();
+    }
     bindTankHandlers();
     async function pollTankTilesState() {
       const controls = Array.from(document.querySelectorAll('input.tank-power'));

@@ -11,6 +11,7 @@
 
 #include "core/network/web/handlers/rules_handler.hpp"
 
+#include "core/network/stack/stack_device_registry.hpp"
 #include "core/network/web/web_interface.hpp"
 
 void RulesHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
@@ -215,86 +216,48 @@ bool RulesHandler::controllerEnabled_(WebInterface &web, const char *controller)
     }
 
 bool RulesHandler::remoteConditionControllerEnabled_(WebInterface &web, uint32_t node_id, const char *controller) {
-        if (!web._stack_cache || node_id == 0 || !controller)
+        if (node_id == 0 || !controller)
             return false;
         if (strcmp(controller, "sockets") == 0)
         {
-            const auto *cache = web._stack_cache->socketsCache(node_id);
-            if (!cache || !cache->has_data)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!web.network() || !web.network()->stackIndexState(node_id, snapshot) ||
+                !web.network()->stackIndexCacheState(node_id, cache) || snapshot.updated_ms == 0)
             {
-                web._stack_cache->requestSockets(node_id);
+                web.requestStackSockets_(node_id);
                 return false;
             }
-            for (size_t i = 0; i < cache->item_count; ++i)
-                if (cache->items[i].enabled)
-                    return true;
+            if (snapshot.sockets_enabled > cache.socket_count)
+                web.requestStackSockets_(node_id);
+            bool has_enabled = false;
+            web.network()->forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &item) {
+                if (item.enabled)
+                    has_enabled = true;
+            });
+            if (has_enabled)
+                return true;
             return false;
         }
         if (strcmp(controller, "lights") == 0)
         {
-            const auto *cache = web._stack_cache->lightsCache(node_id);
-            if (!cache || !cache->has_data)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!web.network() || !web.network()->stackIndexState(node_id, snapshot) ||
+                !web.network()->stackIndexCacheState(node_id, cache) || snapshot.updated_ms == 0)
             {
-                web._stack_cache->requestLights(node_id);
+                web.requestStackLights_(node_id);
                 return false;
             }
-            for (size_t i = 0; i < cache->item_count; ++i)
-                if (cache->items[i].enabled)
-                    return true;
-            return false;
-        }
-        if (strcmp(controller, "meteo") == 0)
-        {
-            const auto *cache = web._stack_cache->meteoCache(node_id);
-            if (!cache || !cache->has_data)
-            {
-                web._stack_cache->requestMeteo(node_id);
-                return false;
-            }
-            for (size_t i = 0; i < cache->item_count; ++i)
-                if (cache->items[i].enabled)
-                    return true;
-            return false;
-        }
-        if (strcmp(controller, "tanks") == 0)
-        {
-            const auto *cache = web._stack_cache->tanksCache(node_id);
-            if (!cache || !cache->has_data)
-            {
-                web._stack_cache->requestTanks(node_id);
-                return false;
-            }
-            for (size_t i = 0; i < cache->item_count; ++i)
-                if (cache->items[i].enabled)
-                    return true;
-            return false;
-        }
-        if (strcmp(controller, "septic") == 0)
-        {
-            const auto *cache = web._stack_cache->septicCache(node_id);
-            if (!cache || !cache->has_data)
-            {
-                web._stack_cache->requestSeptic(node_id);
-                return false;
-            }
-            for (size_t i = 0; i < cache->item_count; ++i)
-                if (cache->items[i].enabled)
-                    return true;
-            return false;
-        }
-        if (strcmp(controller, "security") == 0)
-        {
-            const auto *cache = web._stack_cache->securityCache(node_id);
-            if (!cache || !cache->has_data)
-            {
-                web._stack_cache->requestSecurity(node_id);
-                return false;
-            }
-            if (cache->enabled)
+            if (snapshot.lights_enabled > cache.light_count)
+                web.requestStackLights_(node_id);
+            bool has_enabled = false;
+            web.network()->forEachStackLight(node_id, cache.light_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &item) {
+                if (item.enabled)
+                    has_enabled = true;
+            });
+            if (has_enabled)
                 return true;
-            for (size_t i = 0; i < cache->item_count; ++i)
-                if (cache->items[i].enabled)
-                    return true;
             return false;
         }
         return false;
@@ -320,18 +283,15 @@ bool RulesHandler::controllerEnabledForNode_(WebInterface &web, uint32_t node_id
 String RulesHandler::nodeLabel_(WebInterface &web, uint32_t node_id) {
         if (!node_id)
             return "local";
-        if (web._stack_master)
+        if (web.network())
         {
-            const size_t n = web._stack_master->nodeCount();
-            for (size_t i = 0; i < n; ++i)
+            StackDeviceRegistry::DeviceInfo device{};
+            if (web.network()->stackDeviceSnapshotByNodeId(node_id, device))
             {
-                if (web._stack_master->nodeIdAt(i) != node_id)
-                    continue;
-                String name = web._stack_master->nodeNameAt(i);
+                String name = device.name;
                 name.trim();
                 if (name.length())
                     return name;
-                break;
             }
         }
         String fallback = "node ";
@@ -346,14 +306,17 @@ void RulesHandler::appendNodeSelectOptions_(WebInterface &web, String &out, uint
         out += ">local</option>";
 
         bool selected_added = (selected == 0);
-        if (web._stack_master)
+        if (web.network())
         {
-            const size_t n = web._stack_master->nodeCount();
+            const size_t n = web.network()->stackOnlineDeviceCount();
             for (size_t i = 0; i < n; ++i)
             {
-                if (!web._stack_master->nodeIsControllerAt(i))
+                StackDeviceRegistry::DeviceInfo device{};
+                if (!web.network()->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
                     continue;
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
+                if ((device.caps & kStackCapController) == 0)
+                    continue;
+                const uint32_t node_id = device.node_id;
                 if (!node_id)
                     continue;
                 out += "<option value=\"";
@@ -729,103 +692,55 @@ void RulesHandler::appendConditionItemOptions_(WebInterface &web, String &out, u
             out += "</option>";
         };
 
-        if (node_id != 0 && web._stack_cache)
+        if (node_id != 0)
         {
             if (controller.equalsIgnoreCase("sockets"))
             {
-                const auto *cache = web._stack_cache->socketsCache(node_id);
-                if (cache && cache->has_data)
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                    web.network()->stackIndexCacheState(node_id, cache) && snapshot.updated_ms != 0)
                 {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
+                    web.network()->forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                         if (!it.enabled)
-                            continue;
-                        appendItem(it.id, String(it.name), it.id == selected_id);
-                    }
+                            return;
+                        appendItem(it.id, it.name[0] ? String(it.name) : String(), it.id == selected_id);
+                    });
+                    if (snapshot.sockets_enabled > cache.socket_count)
+                        web.requestStackSockets_(node_id);
                 }
                 else
-                    web._stack_cache->requestSockets(node_id);
+                    web.requestStackSockets_(node_id);
             }
             else if (controller.equalsIgnoreCase("lights"))
             {
-                const auto *cache = web._stack_cache->lightsCache(node_id);
-                if (cache && cache->has_data)
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                    web.network()->stackIndexCacheState(node_id, cache) && snapshot.updated_ms != 0)
                 {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
+                    web.network()->forEachStackLight(node_id, cache.light_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                         if (!it.enabled)
-                            continue;
-                        appendItem(it.id, String(it.name), it.id == selected_id);
-                    }
+                            return;
+                        appendItem(it.id, it.name[0] ? String(it.name) : String(), it.id == selected_id);
+                    });
+                    if (snapshot.lights_enabled > cache.light_count)
+                        web.requestStackLights_(node_id);
                 }
                 else
-                    web._stack_cache->requestLights(node_id);
+                    web.requestStackLights_(node_id);
             }
             else if (controller.equalsIgnoreCase("meteo"))
             {
-                const auto *cache = web._stack_cache->meteoCache(node_id);
-                if (cache && cache->has_data)
-                {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        appendItem(it.id, String(it.name), it.id == selected_id);
-                    }
-                }
-                else
-                    web._stack_cache->requestMeteo(node_id);
             }
             else if (controller.equalsIgnoreCase("security"))
             {
-                const auto *cache = web._stack_cache->securityCache(node_id);
-                if (cache && cache->has_data)
-                {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        appendItem(it.id, String(it.name), it.id == selected_id);
-                    }
-                }
-                else
-                    web._stack_cache->requestSecurity(node_id);
             }
             else if (controller.equalsIgnoreCase("tanks"))
             {
-                const auto *cache = web._stack_cache->tanksCache(node_id);
-                if (cache && cache->has_data)
-                {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        appendItem(it.id, String(it.name), it.id == selected_id);
-                    }
-                }
-                else
-                    web._stack_cache->requestTanks(node_id);
             }
             else if (controller.equalsIgnoreCase("septic"))
             {
-                const auto *cache = web._stack_cache->septicCache(node_id);
-                if (cache && cache->has_data)
-                {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        appendItem(it.id, String("Septic #") + String((unsigned)it.id), it.id == selected_id);
-                    }
-                }
-                else
-                    web._stack_cache->requestSeptic(node_id);
             }
         }
         else if (controller.equalsIgnoreCase("sockets"))
@@ -935,30 +850,29 @@ void RulesHandler::appendSocketValueOptions_(WebInterface &web, String &out, uin
         if (node_id != 0)
         {
             bool any_remote = false;
-            if (web._stack_cache)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                web.network()->stackIndexCacheState(node_id, cache) && snapshot.updated_ms != 0)
             {
-                const auto *cache = web._stack_cache->socketsCache(node_id);
-                if (cache && cache->has_data)
-                {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        any_remote = true;
-                        out += "<option value=\"";
-                        out += String((unsigned)it.id);
-                        out += "\">";
-                        if (it.name[0])
-                            WebInterface::appendHtmlEscaped_(out, it.name);
-                        else
-                            out += String("Socket #") + String((unsigned)it.id);
-                        out += "</option>";
-                    }
-                }
-                else
-                    web._stack_cache->requestSockets(node_id);
+                web.network()->forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
+                    if (!it.enabled)
+                        return;
+                    any_remote = true;
+                    out += "<option value=\"";
+                    out += String((unsigned)it.id);
+                    out += "\">";
+                    if (it.name[0])
+                        WebInterface::appendHtmlEscaped_(out, it.name);
+                    else
+                        out += String("Socket #") + String((unsigned)it.id);
+                    out += "</option>";
+                });
+                if (snapshot.sockets_enabled > cache.socket_count)
+                    web.requestStackSockets_(node_id);
             }
+            else
+                web.requestStackSockets_(node_id);
             if (!any_remote)
                 out += "<option value=\"\">-</option>";
             return;
@@ -994,30 +908,29 @@ void RulesHandler::appendLightValueOptions_(WebInterface &web, String &out, uint
         if (node_id != 0)
         {
             bool any_remote = false;
-            if (web._stack_cache)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                web.network()->stackIndexCacheState(node_id, cache) && snapshot.updated_ms != 0)
             {
-                const auto *cache = web._stack_cache->lightsCache(node_id);
-                if (cache && cache->has_data)
-                {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!it.enabled)
-                            continue;
-                        any_remote = true;
-                        out += "<option value=\"";
-                        out += String((unsigned)it.id);
-                        out += "\">";
-                        if (it.name[0])
-                            WebInterface::appendHtmlEscaped_(out, it.name);
-                        else
-                            out += String("Light #") + String((unsigned)it.id);
-                        out += "</option>";
-                    }
-                }
-                else
-                    web._stack_cache->requestLights(node_id);
+                web.network()->forEachStackLight(node_id, cache.light_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
+                    if (!it.enabled)
+                        return;
+                    any_remote = true;
+                    out += "<option value=\"";
+                    out += String((unsigned)it.id);
+                    out += "\">";
+                    if (it.name[0])
+                        WebInterface::appendHtmlEscaped_(out, it.name);
+                    else
+                        out += String("Light #") + String((unsigned)it.id);
+                    out += "</option>";
+                });
+                if (snapshot.lights_enabled > cache.light_count)
+                    web.requestStackLights_(node_id);
             }
+            else
+                web.requestStackLights_(node_id);
             if (!any_remote)
                 out += "<option value=\"\">-</option>";
             return;

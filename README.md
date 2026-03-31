@@ -57,7 +57,7 @@ flowchart TD
   LOOP --> PRE[runStackPre stack]
   PRE --> LOOP
 
-  RTOSNET[RTOS\nnetwork_loop / console_loop / wifi / telegram / gsm / cloud / meteo_history] --> SIG[notifyStackPostNetwork]
+  RTOSNET[RTOS\nstack_loop / console_loop / wifi / telegram / gsm / cloud / meteo_history] --> SIG[notifyStackPostNetwork]
   SIG --> STACKEVT[RTOS\nstack_evt post/flush]
   STACKEVT --> LOOP
   RTOSCTRL[RTOS\ncontrol_loop] --> LOOP
@@ -68,7 +68,7 @@ flowchart TD
 
 - `App::loop()` теперь в основном оркестрирует фазы, а не выполняет весь тяжёлый runtime сам.
 - В отдельные FreeRTOS-задачи вынесены:
-  - `network_loop`
+  - `stack_loop`
   - `console_loop`
   - `wifi`
   - `telegram`
@@ -84,7 +84,7 @@ flowchart TD
   - `plc_scan`
 - `TaskManager` полностью удалён из runtime.
 - Основной `App::loop()` сейчас выполняет только `runStackPre(stack)` (плюс опциональные GPIO-метрики по compile-time флагу).
-- `notifyStackPostNetwork()` теперь вызывается из RTOS-задачи `network_loop`; защита pending в `stack_evt` реализована через `std::atomic`.
+- `notifyStackPostNetwork()` теперь вызывается из RTOS-задачи `stack_loop`; защита pending в `stack_evt` реализована через `std::atomic`.
 
 ### 📝 Логирование в многозадачном runtime
 
@@ -193,6 +193,13 @@ flowchart TD
   - `password <pass>` / `admin password <pass>`
   - `stack role <master|slave>`
   - `stack master <host>`
+  - `stack policy <auto|direct|poll>`
+  - `stack transport <websocket|rs485>`
+  - `stack payload <auto|json|binary>`
+  - `stack fallback <on|off>`
+  - `stack fallback_host <host>`
+  - `stack slave_controller <on|off>`
+  - `stack api_key <value|clear|gen>`
 - Контексты 🧱:
   - `wifi`, `tgbot`, `cloud`, `time`
   - `socket`, `meteo`, `thermo`, `tank`, `watering`, `septic`, `security`

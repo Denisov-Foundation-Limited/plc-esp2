@@ -31,6 +31,7 @@
 #include "core/network/web/pages/web_page_admin.hpp"
 #include "core/network/web/pages/web_page_logs.hpp"
 #include "core/network/web/pages/web_page_cloud.hpp"
+#include "core/network/web/pages/web_page_cameras.hpp"
 #include "core/network/web/pages/web_page_status.hpp"
 #include "core/network/web/pages/web_page_sockets.hpp"
 #include "core/network/web/pages/web_page_lights.hpp"

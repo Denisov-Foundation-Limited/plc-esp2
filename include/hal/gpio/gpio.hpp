@@ -18,11 +18,13 @@
 #include "hal/gpio/gpio_caps.hpp"
 #include "hal/io_stack.hpp"
 
+class Logger;
+
 class Gpio {
 public:
   enum Port : uint8_t { LED = 0, BTN = 1, POT = 2, RELAY = 3 };
 
-  explicit Gpio(IoStack& io);
+  explicit Gpio(IoStack& io, Logger *log = nullptr);
 
   bool begin();
   void loop();
@@ -39,7 +41,9 @@ public:
   inline bool read() const {
     static_assert(P < PortIO::PORT_COUNT, "Port out of range");
     static_assert(has(ActiveBoardProfile::template capsOf<P>(), Cap::Input), "read() requires Cap::Input");
-    return _io.read(P);
+    bool out = false;
+    readFiltered_(P, out);
+    return out;
   }
 
   template<uint8_t P>
@@ -80,7 +84,20 @@ public:
   bool readDyn(uint8_t port, bool& out, uint32_t timeout_ms = 0xFFFFFFFFu) const;
   bool pinModeDyn(uint8_t port, PortIO::PortMode mode);
   bool lastStateDyn(uint8_t port, bool& out) const;
+  bool setInputDebounceMsDyn(uint8_t port, uint32_t debounce_ms);
 
 private:
+  static constexpr uint32_t kInputDebounceMs = 100u;
+
   IoStack& _io;
+  Logger *_log = nullptr;
+  uint32_t _debounce_override_ms[PortIO::PORT_COUNT] = {};
+  mutable bool _debounce_inited[PortIO::PORT_COUNT] = {};
+  mutable bool _debounce_raw[PortIO::PORT_COUNT] = {};
+  mutable bool _debounce_stable[PortIO::PORT_COUNT] = {};
+  mutable uint32_t _debounce_changed_ms[PortIO::PORT_COUNT] = {};
+
+  bool shouldDebounce_(uint8_t port) const;
+  uint32_t debounceMsForPort_(uint8_t port) const;
+  bool readFiltered_(uint8_t port, bool& out, uint32_t timeout_ms = 0xFFFFFFFFu) const;
 };

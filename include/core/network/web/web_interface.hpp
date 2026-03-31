@@ -17,16 +17,12 @@
 #include <WiFi.h>
 #include <string.h>
 
-#if defined(ESP32)
 #include <ESPAsyncWebServer.h>
 #include <Update.h>
-#endif
 
 #include "boards/board_profile.hpp"
 #include "core/cli/cli_console.hpp"
 #include "core/network/wifi_manager.hpp"
-#include "core/network/stack/stack_cache.hpp"
-#include "core/network/stack/stack_slave_handler.hpp"
 #include "core/network/web/interfaces/web_interface_pages.hpp"
 #include "core/network/web/interfaces/web_interface_handler_fwd.hpp"
 #include "core/network/web/interfaces/web_interface_texts_ru.hpp"
@@ -39,12 +35,10 @@
 #include "utils/users_registry.hpp"
 #include "utils/fs_config.hpp"
 #include "utils/configs_manager_iface.hpp"
-#include "core/network/stack/stack_master.hpp"
-#include "core/network/stack/stack_features.hpp"
-#include "core/network/stack/stack_protocol.hpp"
 #include "core/network/gsm_modem.hpp"
 #include "core/network/cloud/cloud_client.hpp"
 #include "core/display_slots.hpp"
+#include "hal/camera.hpp"
 #include "hal/gpio/extender.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
@@ -65,10 +59,45 @@
 class WebInterface
 {
 public:
-    ~WebInterface() = default;
+    struct ScratchBuffer
+    {
+        bool socket_valid[SocketController::kSocketCount] = {};
+        SocketController::SocketConfig socket_cfg[SocketController::kSocketCount]{};
+        bool socket_relay_on[SocketController::kSocketCount] = {};
+        bool light_valid[SocketController::kLightCount] = {};
+        SocketController::LightConfig light_cfg[SocketController::kLightCount]{};
+        bool light_relay_on[SocketController::kLightCount] = {};
+        bool meteo_valid[MeteoController::kSensorCount] = {};
+        MeteoController::SensorConfig meteo_cfg[MeteoController::kSensorCount]{};
+        MeteoController::SensorState meteo_st[MeteoController::kSensorCount]{};
+        char meteo_ds18_list[32][17] = {};
+        size_t meteo_ds18_count = 0;
+        char meteo_ds18_used[MeteoController::kSensorCount][17] = {};
+        bool thermo_valid[ThermoController::kDeviceCount] = {};
+        ThermoController::DeviceConfig thermo_cfg[ThermoController::kDeviceCount]{};
+        ThermoController::DeviceState thermo_st[ThermoController::kDeviceCount]{};
+        uint8_t thermo_sensor_used[MeteoController::kSensorCount + 1] = {};
+        uint32_t thermo_remote_used[ThermoController::kDeviceCount] = {};
+        bool tank_valid[TankController::kTankCount] = {};
+        TankController::TankConfig tank_cfg[TankController::kTankCount]{};
+        TankController::TankState tank_st[TankController::kTankCount]{};
+        bool septic_valid[SepticController::kSepticCount] = {};
+        SepticController::SepticConfig septic_cfg[SepticController::kSepticCount]{};
+        SepticController::SepticState septic_st[SepticController::kSepticCount]{};
+        bool security_valid[SecurityController::kSensorCount] = {};
+        SecurityController::SensorConfig security_cfg[SecurityController::kSensorCount]{};
+        SecurityController::SensorState security_st[SecurityController::kSensorCount]{};
+        bool watering_valid[WateringController::kRuleCount] = {};
+        WateringController::RuleConfig watering_cfg[WateringController::kRuleCount]{};
+        WateringController::RuleState watering_st[WateringController::kRuleCount]{};
+        bool leak_valid[LeakController::kZoneCount] = {};
+        LeakController::ZoneConfig leak_cfg[LeakController::kZoneCount]{};
+    };
+
+    ~WebInterface();
 
     WebInterface(AsyncWebServer &server, CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
-                 RTC &rtc, Logger &logs,
+                 RTC &rtc, Logger &logs, Camera &camera,
                  Extender &ext,
                  I2CManager &i2c, OneWireManager &ow, Controllers &controllers, RulesController &rules);
 
@@ -87,27 +116,18 @@ public:
 
     void setGsmModem(GsmModem &modem);
 
-    void setStackCache(StackCache &cache);
-
     void setConfigsManager(ConfigsManagerIface &mgr);
 
     void setUsersRegistry(UsersRegistry &users);
 
-    void setStackMaster(StackMaster &master);
-
-    void setStackSlave(StackSlaveHandler *slave);
-
     void setCloudClient(CloudClient &client);
+    void setNetwork(class Network &network);
 
     void setRules(RulesController &rules);
 
-
-    StackCache &stackCache();
-
-    const StackCache &stackCache() const;
-
-    void logStackCacheAllocations();
-
+    class Network *network() const;
+    ScratchBuffer *scratchBuffer_() const;
+    RtosRecursiveLock::Guard scratchLockGuard_(uint32_t timeout_ms = 0xFFFFFFFFu) const;
 
     void registerRoutes();
 
@@ -154,6 +174,7 @@ private:
     friend class AvrHandler;
     friend class LeakHandler;
     friend class RulesHandler;
+    friend class CamerasHandler;
     void handleAdminSave_(AsyncWebServerRequest *request);
 
 
@@ -203,7 +224,6 @@ private:
     bool isStackBusesView_(uint32_t node_id) const;
     bool isStackPortsView_(uint32_t node_id) const;
     uint32_t parseStackNodeIdParam_(AsyncWebServerRequest *request) const;
-    void handleStackFrame_(uint32_t node_id, const StackFrame &frame);
     bool requestStackPorts_(uint32_t node_id);
     bool refreshStackPorts_(uint32_t node_id);
     bool requestStackExtenders_(uint32_t node_id);
@@ -211,6 +231,7 @@ private:
     bool requestStackOw_(uint32_t node_id, bool run);
     bool requestStackTempSensors_(uint32_t node_id);
     bool refreshStackTempSensors_(uint32_t node_id);
+    bool requestStackIndexState_(uint32_t node_id);
     bool requestStackPlcStatus_(uint32_t node_id);
     bool requestStackRtcStatus_(uint32_t node_id);
     uint16_t nextStackCmdId_();
@@ -220,7 +241,6 @@ private:
     String listStackNodesStatusHtml_() const;
     String listStackNodesHtml_() const;
     String globalUsedPortsJson_(PortIO::PinType type) const;
-    bool stackPortTypeMatch_(const StackCache::StackPortItem &it, PortIO::PinType type) const;
     String stackPortOptionsJson_(uint32_t node_id, PortIO::PinType type) const;
     String stackUsedPortsJson_(uint32_t node_id, PortIO::PinType type) const;
     String stackMeteoDs18OptionsJson_(uint32_t node_id) const;
@@ -264,6 +284,9 @@ private:
     String deviceName_() const;
     ConfigsManagerIface::StackRole stackRole_() const;
     String stackMasterHost_() const;
+    ConfigsManagerIface::StackExchangePolicy stackExchangePolicy_() const;
+    ConfigsManagerIface::StackTransportKind stackTransport_() const;
+    ConfigsManagerIface::StackPayloadMode stackPayloadMode_() const;
     bool stackFallbackEnabled_() const;
     String stackFallbackHost_() const;
     bool stackSlaveController_() const;
@@ -326,6 +349,7 @@ private:
     String stackLightsStatusText_(uint32_t node_id) const;
     bool isStackLightsView_(uint32_t node_id) const;
     void handleStackLightsToggle_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie);
+    void handleStackLightsEnable_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie);
     bool requestStackLights_(uint32_t node_id);
     String listLightsHtml_(uint8_t start_id, uint8_t end_id);
     size_t stackLightsVisibleCount_(uint32_t node_id) const;
@@ -355,6 +379,8 @@ private:
     String listMeteoHtml_(size_t offset, size_t limit);
     String meteoPortOptionsJson_() const;
     String meteoUsedPinsJson_() const;
+    String stackMeteoPortOptionsJson_(uint32_t node_id) const;
+    String stackMeteoUsedPinsJson_(uint32_t node_id) const;
     String meteoSensorOptionsHtml_(uint8_t selected_id, uint32_t selected_node_id,
                                    const uint8_t used_local[MeteoController::kSensorCount + 1],
                                    const uint32_t *used_remote, size_t used_remote_count) const;
@@ -430,7 +456,6 @@ private:
     bool isStackRingView_(uint32_t node_id) const;
     bool sendStackRingCmd_(uint32_t node_id, bool set_state, bool state);
     bool sendStackRingCmdAll_(bool set_state, bool state);
-    static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame);
 
     static String paramValue_(AsyncWebServerRequest *request, const String &name);
 
@@ -600,6 +625,8 @@ private:
 
 
     bool sessionPrincipalValid_() const;
+    bool ensureScratch_() const;
+    void releaseScratch_();
 
 
     String gsmStatusLabel_() const;
@@ -612,6 +639,7 @@ private:
     PlcControl *_plc = nullptr;
     RTC *_rtc = nullptr;
     Controllers *_controllers = nullptr;
+    Camera *_camera = nullptr;
     RulesController *_rules = nullptr;
     GsmModem *_gsm = nullptr;
     I2CManager *_i2c = nullptr;
@@ -665,10 +693,8 @@ private:
     CliConsole *_cli_auth = nullptr;
     Extender *_ext = nullptr;
     Logger *_log = nullptr;
-    StackMaster *_stack_master = nullptr;
-    StackSlaveHandler *_stack_slave = nullptr;
-    StackCache *_stack_cache = nullptr;
     CloudClient *_cloud = nullptr;
+    class Network *_network = nullptr;
     UsersRegistry *_users = nullptr;
     String _session_token;
     uint32_t _session_expire_ms = 0;
@@ -677,13 +703,6 @@ private:
     bool _upload_set_cookie = false;
     bool _ota_set_cookie = false;
     bool _ota_in_progress = false;
+    mutable ScratchBuffer *_scratch = nullptr;
+    mutable RtosRecursiveLock _scratch_lock;
 };
-
-
-
-
-
-
-
-
-

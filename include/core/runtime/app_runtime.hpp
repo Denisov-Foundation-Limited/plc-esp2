@@ -18,8 +18,9 @@
 #include "controllers/controllers.hpp"
 #include "core/display.hpp"
 #include "hal/ds3231mz.hpp"
-#include "core/network/stack/stack_cache.hpp"
-#include "core/network/stack/stack_protocol.hpp"
+#include "core/network/stack/stack_device_registry.hpp"
+#include "core/network/stack/stack_unit_snapshot.hpp"
+#include "core/network/stack/stack_json_protocol.hpp"
 
 struct CoreContext;
 struct HardwareContext;
@@ -30,7 +31,7 @@ struct NetworkContext;
 struct ConfigContext;
 class TaskBinder;
 
-class StackRuntime
+class AppRuntime
 {
 public:
     enum class TaskPhase : uint8_t
@@ -40,11 +41,9 @@ public:
         PostNetwork
     };
 
-    StackRuntime(CoreContext &core, HardwareContext &hw, CommsContext &comms,
+    AppRuntime(CoreContext &core, HardwareContext &hw, CommsContext &comms,
                  ControlContext &control, UiContext &ui, NetworkContext &net,
                  ConfigContext &cfg);
-
-    StackCache &stackCache();
 
     void bindCallbacks();
     void init();
@@ -87,6 +86,8 @@ private:
     void startStackBootstrapSync_(uint32_t node_id);
     void stopStackBootstrapSync_(bool timeout);
     bool bootstrapSyncCompleted_(uint32_t node_id) const;
+    bool shouldLogStackBootstrapSync_(uint32_t node_id) const;
+    bool queueDisplayStackSnapshotPage_(uint32_t node_id, const char *feature, uint16_t offset);
 
     static bool onRemoteMeteo_(void *ctx, uint32_t node_id, uint8_t sensor_id, float &temp_c, bool &has_temp);
 
@@ -124,7 +125,7 @@ private:
 
     static void onRingHold_(void *ctx, bool on);
 
-    static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame);
+    static void onStackRoute_(void *ctx, uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
 
     static bool onSecurityRfidUid_(void *ctx, const String &uid);
 
@@ -156,11 +157,24 @@ private:
     void publishCloudStackEvent_(uint32_t node_id, const char *kind, const char *reason,
                                  const String &data_json);
 
-    void handleStackFrame_(uint32_t node_id, const StackFrame &frame);
+    void handleStackRoute_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
 
     void handleSepticFrame_(uint32_t node_id, const String &action, JsonVariantConst params);
 
     void handleTankFrame_(uint32_t node_id, const String &action, JsonVariantConst params);
+
+    void handleSocketFrame_(uint32_t node_id, const String &action, JsonVariantConst params);
+
+    void appendSystemSnapshot_(JsonObject root) const;
+    void appendSocketSnapshotSummary_(JsonObject root) const;
+    void appendSocketSnapshotItems_(JsonObject root) const;
+    void appendSocketSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
+    void appendLightSnapshotItems_(JsonObject root) const;
+    void appendLightSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
+    void appendMeteoSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
+    void appendThermoSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
+    void appendTankSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
+    void appendControllerSnapshotSummary_(JsonObject root) const;
 
     void handleWateringFrame_(uint32_t node_id, const String &action, JsonVariantConst params);
 
@@ -171,6 +185,7 @@ private:
     void updateTanksNotifyMode_();
 
     void updateDisplayLayout_();
+    void logStackSendFailDiag_(uint32_t node_id, const char *feature, uint16_t offset, uint16_t range_end);
 
     void flushPendingSecurityDetect_();
 
@@ -179,6 +194,13 @@ private:
     void flushPendingTankEmpty_();
 
     void flushPendingWateringEvent_();
+    void flushPendingStackSocketsResponse_();
+    void flushPendingStackSocketsPage_();
+    void flushPendingStackLightsResponse_();
+    void flushPendingStackLightsPage_();
+    void flushPendingStackMeteoPage_();
+    void flushPendingStackThermoPage_();
+    void flushPendingStackTanksPage_();
 
     void flushPendingRfid_();
 
@@ -211,6 +233,7 @@ private:
     void pollSecurityStatusFromMaster_();
 
     bool collectRemoteSecurityDetections_(String &out, String *plain_out);
+    void syncRemoteSecurityAlarmFromSummary_(uint32_t node_id);
 
     String stackNodeLabel_(uint32_t node_id) const;
 
@@ -246,9 +269,7 @@ private:
     static constexpr uint16_t kInvWatering = 1u << 7;
     static constexpr uint16_t kInvLeak = 1u << 8;
     static constexpr uint16_t kInvAvr = 1u << 9;
-    static constexpr uint16_t kInvAll =
-        kInvSockets | kInvLights | kInvMeteo | kInvThermo | kInvTanks |
-        kInvSeptic | kInvSecurity | kInvWatering | kInvLeak;
+    static constexpr uint16_t kInvAll = kInvSockets | kInvLights;
 
     void broadcastSecurityAlarm_(bool alarm_on);
 
@@ -266,7 +287,8 @@ private:
     static constexpr uint32_t kStackBootstrapPollMs = 250;
     static constexpr uint32_t kStackBootstrapTimeoutMs = 25000;
     static constexpr uint8_t kStackBootstrapPasses = 2;
-    static constexpr uint8_t kStackPollFeatureCount = 15;
+    static constexpr uint8_t kStackPollFeatureCount = 7;
+    static constexpr uint8_t kStackBackgroundPollFeatureCount = 5;
 
     CoreContext &core;
     HardwareContext &hw;
@@ -276,7 +298,6 @@ private:
     NetworkContext &net;
     ConfigContext &cfg;
 
-    StackCache _stack_cache;
     TaskPhase _task_phase = TaskPhase::Idle;
 
     bool _pending_detect = false;
@@ -294,6 +315,56 @@ private:
     WateringController::Event _pending_watering_event_type = WateringController::Event::Stop;
     WateringController::RuleConfig _pending_watering_event_cfg{};
     WateringController::RuleState _pending_watering_event_state{};
+    bool _pending_stack_sockets_response = false;
+    uint32_t _pending_stack_sockets_target_node = 0;
+    uint32_t _pending_stack_sockets_reply_to = 0;
+    uint16_t _pending_stack_sockets_response_offset = 0;
+    uint16_t _pending_stack_sockets_response_limit = 0;
+    bool _pending_stack_sockets_page = false;
+    uint32_t _pending_stack_sockets_node_id = 0;
+    uint16_t _pending_stack_sockets_offset = 0;
+    uint16_t _pending_stack_sockets_limit = 0;
+    bool _pending_stack_sockets_log = false;
+    bool _pending_display_stack_sockets_page = false;
+    uint32_t _pending_display_stack_sockets_node_id = 0;
+    uint16_t _pending_display_stack_sockets_offset = 0;
+    bool _pending_stack_lights_response = false;
+    uint32_t _pending_stack_lights_target_node = 0;
+    uint32_t _pending_stack_lights_reply_to = 0;
+    uint16_t _pending_stack_lights_response_offset = 0;
+    uint16_t _pending_stack_lights_response_limit = 0;
+    bool _pending_stack_lights_page = false;
+    uint32_t _pending_stack_lights_node_id = 0;
+    uint16_t _pending_stack_lights_offset = 0;
+    uint16_t _pending_stack_lights_limit = 0;
+    bool _pending_stack_lights_log = false;
+    bool _pending_stack_meteo_page = false;
+    uint32_t _pending_stack_meteo_node_id = 0;
+    uint16_t _pending_stack_meteo_offset = 0;
+    uint16_t _pending_stack_meteo_limit = 0;
+    bool _pending_stack_meteo_log = false;
+    bool _pending_stack_thermo_page = false;
+    uint32_t _pending_stack_thermo_node_id = 0;
+    uint16_t _pending_stack_thermo_offset = 0;
+    uint16_t _pending_stack_thermo_limit = 0;
+    bool _pending_stack_thermo_log = false;
+    bool _pending_stack_tanks_page = false;
+    uint32_t _pending_stack_tanks_node_id = 0;
+    uint16_t _pending_stack_tanks_offset = 0;
+    uint16_t _pending_stack_tanks_limit = 0;
+    bool _pending_stack_tanks_log = false;
+    bool _pending_display_stack_lights_page = false;
+    uint32_t _pending_display_stack_lights_node_id = 0;
+    uint16_t _pending_display_stack_lights_offset = 0;
+    bool _pending_display_stack_meteo_page = false;
+    uint32_t _pending_display_stack_meteo_node_id = 0;
+    uint16_t _pending_display_stack_meteo_offset = 0;
+    bool _pending_display_stack_thermo_page = false;
+    uint32_t _pending_display_stack_thermo_node_id = 0;
+    uint16_t _pending_display_stack_thermo_offset = 0;
+    bool _pending_display_stack_tanks_page = false;
+    uint32_t _pending_display_stack_tanks_node_id = 0;
+    uint16_t _pending_display_stack_tanks_offset = 0;
     bool _pending_rfid = false;
     String _pending_rfid_uid;
     bool _pending_ibutton = false;
@@ -314,11 +385,27 @@ private:
     uint8_t _stack_bootstrap_feature_index = 0;
     uint8_t _stack_bootstrap_pass = 0;
     uint16_t _stack_bootstrap_feature_sent_mask = 0;
-    uint32_t _stack_bootstrap_queue[StackMaster::MAX_SESSIONS]{};
+    uint32_t _stack_bootstrap_logged_sockets_node_id = 0;
+    uint32_t _stack_bootstrap_logged_lights_node_id = 0;
+    uint32_t _stack_bootstrap_logged_meteo_node_id = 0;
+    uint32_t _stack_bootstrap_logged_thermo_node_id = 0;
+    uint32_t _stack_bootstrap_logged_tanks_node_id = 0;
+    uint16_t _stack_bootstrap_logged_sockets_offset = 0xFFFF;
+    uint16_t _stack_bootstrap_logged_lights_offset = 0xFFFF;
+    uint16_t _stack_bootstrap_logged_meteo_offset = 0xFFFF;
+    uint16_t _stack_bootstrap_logged_thermo_offset = 0xFFFF;
+    uint16_t _stack_bootstrap_logged_tanks_offset = 0xFFFF;
+    uint32_t _stack_bootstrap_queue[StackDeviceRegistry::kMaxDevices]{};
     uint8_t _stack_bootstrap_queue_count = 0;
-    StackInventoryLogState _stack_inventory_log[StackMaster::MAX_SESSIONS]{};
+    StackInventoryLogState _stack_inventory_log[StackDeviceRegistry::kMaxDevices]{};
     DisplaySlotConfig _display_slots[Display::kSlotCount]{};
+    bool _display_remote_slot_online[Display::kSlotCount]{};
     bool _display_rtc_cache_valid = false;
     Ds3231Mz::DateTime _display_rtc_cache{};
     uint32_t _display_rtc_cache_ms = 0;
+    StackUnitSnapshot::SocketItem _stack_socket_page_items[StackUnitSnapshot::kPageSize]{};
+    StackUnitSnapshot::SocketItem _stack_light_page_items[StackUnitSnapshot::kPageSize]{};
+    StackUnitSnapshot::MeteoItem _stack_meteo_page_items[StackUnitSnapshot::kPageSize]{};
+    StackUnitSnapshot::ThermoItem _stack_thermo_page_items[StackUnitSnapshot::kPageSize]{};
+    StackUnitSnapshot::TankItem _stack_tank_page_items[StackUnitSnapshot::kPageSize]{};
 };

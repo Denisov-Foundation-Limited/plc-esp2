@@ -32,31 +32,7 @@ void WateringHandler::handleWateringState(WebInterface &web, AsyncWebServerReque
         const bool stack_view = web.isStackWateringView_(node_id);
         if (stack_view)
         {
-            auto *cache = web._stack_cache ? web._stack_cache->wateringCache(node_id) : nullptr;
-            if (!cache || !cache->has_data)
-            {
-                if (web._stack_cache)
-                    web._stack_cache->requestWatering(node_id);
-                doc["pending"] = true;
-            }
-            else
-            {
-                const bool stale = (cache->pending || (uint32_t)(millis() - cache->updated_ms) > 1500u);
-                if (stale && web._stack_cache)
-                    web._stack_cache->requestWatering(node_id);
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!web.webAclCanViewItem_(UsersRegistry::AclController::Watering, it.id, node_id))
-                        continue;
-                    JsonObject o = items.add<JsonObject>();
-                    o["id"] = it.id;
-                    o["enabled"] = it.enabled;
-                    o["status"] = it.status;
-                    o["active"] = it.active;
-                    o["paused"] = it.paused;
-                }
-            }
+            doc["pending"] = true;
         }
         else
         {
@@ -182,7 +158,10 @@ void WateringHandler::handleWatering(WebInterface &web, AsyncWebServerRequest *r
         }
         page.replace("%NAV%", web.navHtml_());
         page.replace("%WATERING_PAGE_TITLE%", WebUiRu::Watering::kPageTitle);
-        page.replace("%WATERING_ROWS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackWateringHtml_(node_id, (size_t)page_idx * page_size, page_size)
+                                        : web.listWateringHtml_((size_t)page_idx * page_size, page_size);
+        page.replace("%WATERING_ROWS%", initial_html);
         page.replace("%WATERING_PAGINATION%", pagination);
         page.replace("%WATERING_FORM_ACTION%", form_action);
         page.replace("%WATERING_STATUS%", stack_view ? web.stackWateringStatusText_(node_id) : web._watering_status);
@@ -202,25 +181,7 @@ void WateringHandler::handleWatering(WebInterface &web, AsyncWebServerRequest *r
         bool can_save = web.webSessionIsAdmin_();
         if (!can_save)
         {
-            if (stack_view)
-            {
-                const auto *cache = web._stack_cache ? web._stack_cache->wateringCache(node_id) : nullptr;
-                if (cache && cache->has_data && cache->items)
-                {
-                    for (size_t i = 0; i < cache->item_count; ++i)
-                    {
-                        const auto &it = cache->items[i];
-                        if (!web.webAclCanViewItem_(UsersRegistry::AclController::Watering, it.id, node_id))
-                            continue;
-                        if (web.webAclCanControlItem_(UsersRegistry::AclController::Watering, it.id, node_id))
-                        {
-                            can_save = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            else if (web._controllers)
+            if (!stack_view && web._controllers)
             {
                 WateringController &watering = web._controllers->watering();
                 auto watering_guard = watering.lockGuard();
@@ -302,202 +263,7 @@ void WateringHandler::handleWateringSave(WebInterface &web, AsyncWebServerReques
                     back += String((unsigned)pv);
                 }
             }
-            if (!web._stack_master || !web._stack_cache)
-            {
-                web._watering_status = "Stack unavailable";
-                web.sendRedirect_(request, back, set_cookie);
-                return;
-            }
-            auto *cache = web._stack_cache->wateringCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
-            {
-                web._stack_cache->requestWatering(node_id);
-                web._watering_status = "No data";
-                web.sendRedirect_(request, back, set_cookie);
-                return;
-            }
-            auto *cache_mut = web._stack_cache->wateringCache(node_id);
-            bool changed = false;
-            static const uint8_t kWeekdayMap[7] = {2, 3, 4, 5, 6, 7, 1};
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                const auto &it = cache->items[i];
-                const String idx = String((unsigned)it.id);
-                const String prefix = String("w") + idx + "_";
-                const String en_key = prefix + "en";
-                const String status_key = prefix + "status";
-                const String name_key = prefix + "name";
-                const String port_key = prefix + "port";
-                const String tank_key = prefix + "tank";
-                const String time_key = prefix + "time";
-                const String time2_key = prefix + "time2";
-                const String time3_key = prefix + "time3";
-                const String dur_key = prefix + "dur";
-                const String dur2_key = prefix + "dur2";
-                const String dur3_key = prefix + "dur3";
-                const String resume_key = prefix + "resume";
-                const String resume_level_key = prefix + "resume_level";
-                bool has_any = request->hasParam(en_key, true) ||
-                               request->hasParam(status_key, true) ||
-                               request->hasParam(name_key, true) ||
-                               request->hasParam(port_key, true) ||
-                               request->hasParam(tank_key, true) ||
-                               request->hasParam(time_key, true) ||
-                               request->hasParam(time2_key, true) ||
-                               request->hasParam(time3_key, true) ||
-                               request->hasParam(dur_key, true) ||
-                               request->hasParam(dur2_key, true) ||
-                               request->hasParam(dur3_key, true) ||
-                               request->hasParam(resume_key, true) ||
-                               request->hasParam(resume_level_key, true);
-                for (uint8_t dow = 1; dow <= 7 && !has_any; ++dow)
-                {
-                    if (request->hasParam(prefix + "d" + String((unsigned)dow), true))
-                        has_any = true;
-                }
-                if (!has_any)
-                    continue;
-                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Watering, it.id, node_id))
-                {
-                    web._watering_status = String("ACL deny item: ") + idx;
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-
-                const bool enabled = paramChecked_(request, en_key);
-                const bool status_on = request->hasParam(status_key, true);
-                String name = web.paramValue_(request, name_key);
-                name.trim();
-                uint8_t port = WateringController::kInvalidPort;
-                if (!parsePort_(web.paramValue_(request, port_key), port))
-                    port = WateringController::kInvalidPort;
-                uint8_t tank_id = 0;
-                if (!parseTank_(web.paramValue_(request, tank_key), tank_id))
-                    tank_id = 0;
-
-                uint8_t weekdays_mask = 0;
-                for (size_t wi = 0; wi < 7; ++wi)
-                {
-                    const uint8_t dow = kWeekdayMap[wi];
-                    const String key = prefix + "d" + String((unsigned)dow);
-                    if (request->hasParam(key, true))
-                        weekdays_mask |= (uint8_t)(1u << (dow - 1u));
-                }
-
-                uint8_t hour = 0xFF;
-                uint8_t minute = 0xFF;
-                const bool time_ok = parseTime_(web.paramValue_(request, time_key), hour, minute);
-                uint8_t hour2 = 0xFF;
-                uint8_t minute2 = 0xFF;
-                const bool time2_ok = parseTime_(web.paramValue_(request, time2_key), hour2, minute2);
-                uint8_t hour3 = 0xFF;
-                uint8_t minute3 = 0xFF;
-                const bool time3_ok = parseTime_(web.paramValue_(request, time3_key), hour3, minute3);
-
-                uint32_t dur_min = 0;
-                parseDuration_(web.paramValue_(request, dur_key), dur_min);
-                uint32_t duration_sec = time_ok ? (dur_min * 60u) : 0u;
-                uint32_t dur2_min = 0;
-                parseDuration_(web.paramValue_(request, dur2_key), dur2_min);
-                uint32_t duration2_sec = time2_ok ? (dur2_min * 60u) : 0u;
-                uint32_t dur3_min = 0;
-                parseDuration_(web.paramValue_(request, dur3_key), dur3_min);
-                uint32_t duration3_sec = time3_ok ? (dur3_min * 60u) : 0u;
-
-                const bool resume_on = request->hasParam(resume_key, true);
-                uint8_t resume_level = it.resume_level;
-                (void)parseResumeLevel_(web.paramValue_(request, resume_level_key), resume_level);
-
-                const bool item_changed = (enabled != it.enabled) ||
-                                          (status_on != it.status) ||
-                                          (name != String(it.name)) ||
-                                          (port != it.port) ||
-                                          (tank_id != it.tank_id) ||
-                                          (weekdays_mask != it.weekdays_mask) ||
-                                          (hour != it.hour) || (minute != it.minute) ||
-                                          (duration_sec != it.duration_sec) ||
-                                          (hour2 != it.hour2) || (minute2 != it.minute2) ||
-                                          (duration2_sec != it.duration2_sec) ||
-                                          (hour3 != it.hour3) || (minute3 != it.minute3) ||
-                                          (duration3_sec != it.duration3_sec) ||
-                                          (resume_on != it.resume_after_refill) ||
-                                          (resume_level != it.resume_level);
-                if (!item_changed)
-                    continue;
-
-                StaticJsonDocument<512> doc;
-                doc["cmd_id"] = 0;
-                doc["feature"] = (uint8_t)StackFeature::Watering;
-                doc["action"] = "set";
-                JsonObject p = doc["params"].to<JsonObject>();
-                p["id"] = (unsigned)it.id;
-                p["enabled"] = enabled;
-                p["status"] = status_on;
-                p["name"] = name;
-                p["port"] = (port == WateringController::kInvalidPort) ? -1 : (int)port;
-                p["tank"] = tank_id;
-                p["weekdays_mask"] = weekdays_mask;
-                p["hour"] = hour;
-                p["minute"] = minute;
-                p["duration_s"] = duration_sec;
-                p["hour2"] = hour2;
-                p["minute2"] = minute2;
-                p["duration2_s"] = duration2_sec;
-                p["hour3"] = hour3;
-                p["minute3"] = minute3;
-                p["duration3_s"] = duration3_sec;
-                p["resume"] = resume_on;
-                p["resume_level"] = resume_level;
-                char payload[640] = {};
-                const size_t len = serializeJson(doc, payload, sizeof(payload));
-                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                            reinterpret_cast<const uint8_t *>(payload), len))
-                {
-                    web._watering_status = String("Send failed item: ") + idx;
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-                changed = true;
-
-                if (cache_mut && cache_mut->items)
-                {
-                    for (size_t k = 0; k < cache_mut->item_count; ++k)
-                    {
-                        auto &dst = cache_mut->items[k];
-                        if (dst.id != it.id)
-                            continue;
-                        dst.enabled = enabled;
-                        dst.status = status_on;
-                        dst.tank_id = tank_id;
-                        dst.port = port;
-                        dst.weekdays_mask = weekdays_mask;
-                        dst.hour = hour;
-                        dst.minute = minute;
-                        dst.duration_sec = duration_sec;
-                        dst.hour2 = hour2;
-                        dst.minute2 = minute2;
-                        dst.duration2_sec = duration2_sec;
-                        dst.hour3 = hour3;
-                        dst.minute3 = minute3;
-                        dst.duration3_sec = duration3_sec;
-                        dst.resume_after_refill = resume_on;
-                        dst.resume_level = resume_level;
-                        size_t n = 0;
-                        for (; n + 1 < sizeof(dst.name) && n < name.length(); ++n)
-                            dst.name[n] = name[n];
-                        dst.name[n] = '\0';
-                        cache_mut->updated_ms = millis();
-                        cache_mut->has_data = true;
-                        break;
-                    }
-                }
-            }
-            if (changed)
-            {
-                web._stack_cache->requestWatering(node_id);
-                web.refreshStackPorts_(node_id);
-            }
-            web._watering_status = changed ? "Updated" : "No changes";
+            web._watering_status = "not migrated";
             web.sendRedirect_(request, back, set_cookie);
             return;
         }

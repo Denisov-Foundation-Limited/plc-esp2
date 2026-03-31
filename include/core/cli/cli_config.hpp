@@ -77,15 +77,6 @@ public:
             _c._io->println(F("    eeprom show             - show EEPROM save/load flags"));
             _c._io->println(F("    eeprom save <on|off>    - enable/disable EEPROM periodic save"));
             _c._io->println(F("    eeprom load <on|off>    - enable/disable EEPROM load on boot"));
-            _c._io->println(F("  Stack:"));
-            _c._io->println(F("    stack role <master|slave> - set device role"));
-            _c._io->println(F("    stack master <host>       - set master host/IP"));
-            _c._io->println(F("    stack fallback <on|off>   - enable fallback master mode"));
-            _c._io->println(F("    stack fallback_host <host> - set fallback host/IP"));
-            _c._io->println(F("    stack slave_controller <on|off> - mark slave as controller"));
-            _c._io->println(F("    stack api_key <value>     - set stack api_key"));
-            _c._io->println(F("    stack api_key clear       - clear stack api_key"));
-            _c._io->println(F("    stack api_key gen         - generate stack api_key"));
             _c._io->println(F("  Wi-Fi:"));
             _c._io->println(F("    wifi                     - enter Wi-Fi context"));
             _c._io->println(F("  Time:"));
@@ -968,6 +959,73 @@ private:
             String host = cmd.substring(13);
             host.trim();
             if (!_c.setStackMasterHost_(host))
+                _c._io->println(F("Config manager missing"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower.startsWith("stack policy "))
+        {
+            String value = cmd.substring(13);
+            value.trim();
+            value.toLowerCase();
+            ConfigsManagerIface::StackExchangePolicy policy = ConfigsManagerIface::StackExchangePolicy::Auto;
+            if (value == "direct")
+                policy = ConfigsManagerIface::StackExchangePolicy::Direct;
+            else if (value == "poll")
+                policy = ConfigsManagerIface::StackExchangePolicy::Poll;
+            else if (value != "auto")
+            {
+                _c._io->println(F("Invalid policy"));
+                _c.printPrompt_();
+                return;
+            }
+            if (!_c.setStackExchangePolicy_(policy))
+                _c._io->println(F("Config manager missing"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower.startsWith("stack transport "))
+        {
+            String value = cmd.substring(16);
+            value.trim();
+            value.toLowerCase();
+            ConfigsManagerIface::StackTransportKind kind = ConfigsManagerIface::StackTransportKind::WebSocket;
+            if (value == "rs485")
+                kind = ConfigsManagerIface::StackTransportKind::Rs485;
+            else if (value != "websocket" && value != "ws")
+            {
+                _c._io->println(F("Invalid transport"));
+                _c.printPrompt_();
+                return;
+            }
+            if (!_c.setStackTransport_(kind))
+                _c._io->println(F("Config manager missing"));
+            else
+                _c._io->println(F("OK"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower.startsWith("stack payload "))
+        {
+            String value = cmd.substring(14);
+            value.trim();
+            value.toLowerCase();
+            ConfigsManagerIface::StackPayloadMode mode = ConfigsManagerIface::StackPayloadMode::Auto;
+            if (value == "json")
+                mode = ConfigsManagerIface::StackPayloadMode::Json;
+            else if (value == "binary" || value == "bin")
+                mode = ConfigsManagerIface::StackPayloadMode::Binary;
+            else if (value != "auto")
+            {
+                _c._io->println(F("Invalid payload"));
+                _c.printPrompt_();
+                return;
+            }
+            if (!_c.setStackPayloadMode_(mode))
                 _c._io->println(F("Config manager missing"));
             else
                 _c._io->println(F("OK"));

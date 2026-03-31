@@ -10,23 +10,20 @@
 /**********************************************************************/
 
 #include "core/cli/cli_console.hpp"
+#include "core/network/network.hpp"
 
 #include <ArduinoJson.h>
 #include <string.h>
 
 #include "boards/board_profile.hpp"
 #include "core/network/tftp_client.hpp"
-
-#if defined(ESP32)
 #include "mbedtls/sha256.h"
-#include <HTTPClient.h>
 #include <Update.h>
-#endif
 
 CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
-           Configs &configs, Extender &ext,
+           Configs &configs, Extender &ext, Camera &camera,
            UsersRegistry &users,
-           Controllers &controllers, StackMaster *stack_master)
+           Controllers &controllers)
     : _plc(plc),
       _wifi(wifi),
       _rtc(rtc),
@@ -35,10 +32,10 @@ CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftes
       _ow(ow),
       _configs(configs),
       _ext(ext),
+      _camera(camera),
       _users(users),
       _controllers(controllers),
       _wifi_cli(*this),
-      _stack_cli(*this),
       _socket_cli(*this, controllers.sockets()),
       _meteo_cli(*this, controllers.meteo()),
       _thermo_cli(*this, controllers.thermo(), controllers.meteo()),
@@ -54,21 +51,18 @@ CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftes
       _config(*this, _wifi_cli, _socket_cli, _meteo_cli, _thermo_cli, _tank_cli, _septic_cli,
               _security_cli, _ring_cli, _avr_cli, _leak_cli, _watering_cli, _cloud_cli)
 {
-    _stack_cli.bind(stack_master);
 }
 void CliConsole::begin(Stream &io)
 {
-    _io = &io;
+    _raw_io = &io;
+    _locked_io.bind(_raw_io);
+    _io = &_locked_io;
     _state = State::NeedUser;
     _mode = Mode::Enable;
     _line = "";
     _user_input = "";
     printPrompt_();
 }
-void CliConsole::setStackMaster(StackMaster *master)
-{ _stack_cli.bind(master); }
-void CliConsole::setStackSlave(StackSlaveHandler *slave)
-{ _stack_cli.bindSlave(slave); }
 void CliConsole::loop()
 {
     if (!_io)
@@ -119,6 +113,79 @@ void CliConsole::loop()
         if (_line.length() < kMaxLine)
             _line += c;
     }
+}
+void CliConsole::onLoggerOutput_()
+{
+    if (!_io || _raw_io == nullptr)
+        return;
+    Logger::OutputGuard guard;
+    _raw_io->print('\r');
+    if (_state == State::NeedUser)
+    {
+        _raw_io->print(F("login: "));
+        if (_line.length())
+            _raw_io->print(_line);
+        return;
+    }
+    if (_state == State::NeedPass)
+    {
+        _raw_io->print(F("password: "));
+        return;
+    }
+
+    switch (_mode)
+    {
+    case Mode::User:
+        _raw_io->print(F("plc> "));
+        break;
+    case Mode::Enable:
+        _raw_io->print(F("plc# "));
+        break;
+    case Mode::Config:
+        _raw_io->print(F("plc(config)# "));
+        break;
+    case Mode::ConfigWifi:
+        _raw_io->print(F("plc(config-wifi)# "));
+        break;
+    case Mode::ConfigTime:
+        _raw_io->print(F("plc(config-time)# "));
+        break;
+    case Mode::ConfigSocket:
+        _raw_io->print(F("plc(config-socket)# "));
+        break;
+    case Mode::ConfigMeteo:
+        _raw_io->print(F("plc(config-meteo)# "));
+        break;
+    case Mode::ConfigThermo:
+        _raw_io->print(F("plc(config-thermo)# "));
+        break;
+    case Mode::ConfigTank:
+        _raw_io->print(F("plc(config-tank)# "));
+        break;
+    case Mode::ConfigSeptic:
+        _raw_io->print(F("plc(config-septic)# "));
+        break;
+    case Mode::ConfigSecurity:
+        _raw_io->print(F("plc(config-security)# "));
+        break;
+    case Mode::ConfigRing:
+        _raw_io->print(F("plc(config-ring)# "));
+        break;
+    case Mode::ConfigAvr:
+        _raw_io->print(F("plc(config-avr)# "));
+        break;
+    case Mode::ConfigLeak:
+        _raw_io->print(F("plc(config-leak)# "));
+        break;
+    case Mode::ConfigWatering:
+        _raw_io->print(F("plc(config-watering)# "));
+        break;
+    case Mode::ConfigCloud:
+        _raw_io->print(F("plc(config-cloud)# "));
+        break;
+    }
+    if (_line.length())
+        _raw_io->print(_line);
 }
 bool CliConsole::setAdminPassword_(const String &pass)
 {
@@ -206,7 +273,6 @@ void CliConsole::cmdShowPlc_()
     const bool rtc_ok = _rtc.readTemp(rtc_t);
     printPlcRow_("CPU", String(ActiveBoardProfile::UI_NAME), fan, board_t,
                  on_c, hyst_c, rtc_ok ? &rtc_t : nullptr);
-    _stack_cli.requestStackPlc_();
 }
 void CliConsole::cmdShowBoard_()
 {
@@ -256,7 +322,6 @@ void CliConsole::cmdShowPorts_()
         }
         printPortRow_("CPU", i, p);
     }
-    _stack_cli.requestStackPorts_();
 }
 void CliConsole::cmdShowWifi_()
 {
@@ -284,8 +349,6 @@ void CliConsole::cmdShowTime_()
     snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u",
              (unsigned)dt.hour, (unsigned)dt.minute, (unsigned)dt.second);
     printRtcRow_("CPU", date_buf, time_buf, (unsigned)dt.day_of_week);
-
-    _stack_cli.requestStackRtc_();
 }
 void CliConsole::cmdShowCloud_()
 {
@@ -306,6 +369,7 @@ void CliConsole::cmdShowCloud_()
     printKeyValue_(F("event_ms"), String((unsigned)_configs_manager->cloudEventIntervalMs()), key_w);
     printKeyValue_(F("api_key"), _configs_manager->cloudApiKey(), key_w);
     printKeyValue_(F("fw_version"), _configs_manager->cloudFirmwareVersion(), key_w);
+    printKeyValue_(F("device_id"), String((uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFFu)), key_w);
 }
 void CliConsole::cmdCopy_(const String &line)
 {
@@ -451,6 +515,151 @@ void CliConsole::cmdCopy_(const String &line)
     ESP.restart();
 #endif
 }
+void CliConsole::cmdPhoto_(const String &line)
+{
+    auto buildCloudPhotoUrl = [this](String &out_url, String &out_err) -> bool
+    {
+        if (!_configs_manager)
+        {
+            out_err = F("Config manager missing");
+            return false;
+        }
+        if (!_configs_manager->cloudEnabled())
+        {
+            out_err = F("Cloud disabled");
+            return false;
+        }
+        const String host = _configs_manager->cloudHost();
+        const uint16_t port = _configs_manager->cloudPort();
+        if (host.length() == 0 || port == 0)
+        {
+            out_err = F("Cloud host/port not configured");
+            return false;
+        }
+
+        String base_path = _configs_manager->cloudPath();
+        if (!base_path.startsWith("/"))
+            base_path = "/" + base_path;
+        const int ws_idx = base_path.indexOf("/ws/");
+        if (ws_idx >= 0)
+            base_path = base_path.substring(0, ws_idx);
+        else if (base_path.endsWith("/ws/device"))
+            base_path = base_path.substring(0, base_path.length() - String("/ws/device").length());
+        if (!base_path.startsWith("/"))
+            base_path = "/" + base_path;
+        if (base_path.length() == 0)
+            base_path = "/";
+        if (!base_path.endsWith("/"))
+            base_path += "/";
+
+        out_url = String(_configs_manager->cloudUseSsl() ? "https://" : "http://") +
+                  host + ":" + String(port) + base_path + "api/device/photo";
+        return true;
+    };
+
+    String args = line;
+    if (args.startsWith("photo"))
+        args = args.substring(5);
+    args.trim();
+    if (args.length() == 0)
+    {
+        _io->println(F("Usage: photo get <http://...jpg>"));
+        _io->println(F("       photo upload <http://...>"));
+        _io->println(F("       photo cloud"));
+        _io->println(F("       photo status"));
+        _io->println(F("       photo clear"));
+        return;
+    }
+    if (eq_(args, "status"))
+    {
+        Camera::Snapshot snap{};
+        if (!_camera.snapshot(snap))
+        {
+            _io->println(F("Photo status unavailable"));
+            return;
+        }
+        _io->print(F("Photo: busy: "));
+        _io->print(snap.busy ? F("yes") : F("no"));
+        _io->print(F(" ok: "));
+        _io->print(snap.ok ? F("yes") : F("no"));
+        _io->print(F(" op: "));
+        _io->print(Camera::opName(snap.op));
+        _io->print(F(" size: "));
+        _io->print((unsigned)snap.size);
+        _io->print(F(" capacity: "));
+        _io->print((unsigned)snap.capacity);
+        _io->print(F(" http: "));
+        _io->print(snap.http_code);
+        _io->print(F(" err: "));
+        _io->print(Camera::errorName(snap.error));
+        if (snap.error_text.length())
+        {
+            _io->print(F(" text: "));
+            _io->print(snap.error_text);
+        }
+        if (snap.url.length())
+        {
+            _io->print(F(" url: "));
+            _io->print(snap.url);
+        }
+        _io->println();
+        return;
+    }
+    if (eq_(args, "clear"))
+    {
+        if (_camera.clear())
+            _io->println(F("Photo buffer cleared"));
+        else
+            _io->println(F("Camera busy"));
+        return;
+    }
+    if (startsWith_(args, "get "))
+    {
+        String url = args.substring(4);
+        url.trim();
+        if (_camera.startDownload(url))
+            _io->println(F("Photo download scheduled"));
+        else
+            _io->println(_camera.lastErrorText().length() ? _camera.lastErrorText() : String(F("Photo download start failed")));
+        return;
+    }
+    if (startsWith_(args, "upload "))
+    {
+        String url = args.substring(7);
+        url.trim();
+        if (_camera.startUpload(url))
+            _io->println(F("Photo upload scheduled"));
+        else
+            _io->println(_camera.lastErrorText().length() ? _camera.lastErrorText() : String(F("Photo upload start failed")));
+        return;
+    }
+    if (eq_(args, "cloud"))
+    {
+        const String api_key = _configs_manager ? _configs_manager->cloudApiKey() : String();
+        if (api_key.length() == 0)
+        {
+            _io->println(F("Cloud API key not configured"));
+            return;
+        }
+        String url;
+        String err;
+        if (!buildCloudPhotoUrl(url, err))
+        {
+            _io->println(err);
+            return;
+        }
+        if (_camera.startUpload(url, String(F("image/jpeg")), api_key))
+            _io->println(F("Photo cloud upload scheduled"));
+        else
+            _io->println(_camera.lastErrorText().length() ? _camera.lastErrorText() : String(F("Photo cloud upload start failed")));
+        return;
+    }
+    _io->println(F("Usage: photo get <http://...jpg>"));
+    _io->println(F("       photo upload <http://...>"));
+    _io->println(F("       photo cloud"));
+    _io->println(F("       photo status"));
+    _io->println(F("       photo clear"));
+}
 void CliConsole::cmdShowI2c_()
 {
     printI2cHeader_();
@@ -473,11 +682,61 @@ void CliConsole::cmdShowI2c_()
                 printI2cRow_("CPU", bus, addr_buf);
             }
     }
-    _stack_cli.requestStackI2cScan_();
 }
 void CliConsole::cmdShowStack_()
 {
-    _stack_cli.cmdShowStack_();
+    if (!_configs_manager)
+    {
+        _io->println(F("Config manager missing"));
+        return;
+    }
+    _io->println(F("Stack:"));
+    printKeyValue_(F("role"), _configs_manager->stackRole() == ConfigsManagerIface::StackRole::Slave ? F("slave") : F("master"), 13);
+    printKeyValue_(F("master_host"), _configs_manager->stackMasterHost(), 13);
+    const __FlashStringHelper *policy = F("auto");
+    if (_configs_manager->stackExchangePolicy() == ConfigsManagerIface::StackExchangePolicy::Direct)
+        policy = F("direct");
+    else if (_configs_manager->stackExchangePolicy() == ConfigsManagerIface::StackExchangePolicy::Poll)
+        policy = F("poll");
+    printKeyValue_(F("policy"), policy, 13);
+    printKeyValue_(F("transport"),
+                   _configs_manager->stackTransport() == ConfigsManagerIface::StackTransportKind::Rs485 ? F("rs485")
+                                                                                                         : F("websocket"),
+                   13);
+    const __FlashStringHelper *payload = F("auto");
+    if (_configs_manager->stackPayloadMode() == ConfigsManagerIface::StackPayloadMode::Json)
+        payload = F("json");
+    else if (_configs_manager->stackPayloadMode() == ConfigsManagerIface::StackPayloadMode::Binary)
+        payload = F("binary");
+    printKeyValue_(F("payload"), payload, 13);
+    printKeyValue_(F("fallback"), _configs_manager->stackFallbackEnabled() ? F("true") : F("false"), 13);
+    printKeyValue_(F("fallback_host"), _configs_manager->stackFallbackHost(), 13);
+    printKeyValue_(F("controller"), _configs_manager->stackSlaveController() ? F("true") : F("false"), 13);
+    printKeyValue_(F("api_key"), _configs_manager->stackApiKey().length() ? F("***") : F(""), 13);
+    if (_network)
+    {
+        const Network::StackDiagnostics diag = _network->stackDiagnostics();
+        _io->println(F("Stack runtime:"));
+        printKeyValue_(F("state"), String(diag.runtime_state), 13);
+        printKeyValue_(F("master_active"), diag.master_active ? F("true") : F("false"), 13);
+        printKeyValue_(F("fallback_active"), diag.fallback_active ? F("true") : F("false"), 13);
+        printKeyValue_(F("online"), String((unsigned)diag.online_devices), 13);
+        printKeyValue_(F("net_lock_ms"), String((unsigned long)diag.network_lock_held_ms), 13);
+        printKeyValue_(F("rt_lock_ms"), String((unsigned long)diag.exchange.lock_held_ms), 13);
+        printKeyValue_(F("xchg_slave_q"), String((unsigned)diag.exchange.slave_outbox_used), 13);
+        printKeyValue_(F("xchg_master_q"), String((unsigned)diag.exchange.master_inbox_used), 13);
+        printKeyValue_(F("notify_q"), String((unsigned)diag.exchange.notify_outbox_used), 13);
+        printKeyValue_(F("retried"), String((unsigned long)diag.exchange.retried), 13);
+        printKeyValue_(F("expired"), String((unsigned long)diag.exchange.expired), 13);
+        printKeyValue_(F("dropped"), String((unsigned long)diag.exchange.dropped), 13);
+        printKeyValue_(F("rs485_state"), String((unsigned)diag.rs485.bus_state), 13);
+        printKeyValue_(F("rs485_tx_q"), String((unsigned)diag.rs485.tx_queue_used), 13);
+        printKeyValue_(F("rs485_pending"), String((unsigned)diag.rs485.pending_used), 13);
+        printKeyValue_(F("rs485_timeouts"), String((unsigned long)diag.rs485.request_timeouts), 13);
+        printKeyValue_(F("rs485_tx_drop"), String((unsigned long)diag.rs485.tx_queue_drops), 13);
+        printKeyValue_(F("rs485_pend_drop"), String((unsigned long)diag.rs485.pending_full_drops), 13);
+        printKeyValue_(F("rs485_lock_ms"), String((unsigned long)diag.rs485.lock_held_ms), 13);
+    }
 }
 void CliConsole::cmdShowOw_()
 {
@@ -502,7 +761,6 @@ void CliConsole::cmdShowOw_()
             printOwRow_("CPU", i, owBusName_(cfg.bus_id), hex);
         }
     }
-    _stack_cli.requestStackOwScan_();
 }
 void CliConsole::cmdShowConfig_()
 {
@@ -562,19 +820,11 @@ void CliConsole::cmdWifiRestart_()
     else
         _io->println(F("Wi-Fi restart failed"));
 }
-void CliConsole::cmdStack_(const String &line)
-{
-    _stack_cli.cmdStack_(line);
-}
 void CliConsole::cmdRestart_()
 {
-#if defined(ESP32)
     _io->println(F("Restarting..."));
     _io->flush();
     ESP.restart();
-#else
-    _io->println(F("Restart not supported"));
-#endif
 }
 void CliConsole::cmdWriteConfig_()
 {
@@ -616,6 +866,11 @@ bool CliConsole::setStackRole_(ConfigsManagerIface::StackRole role)
     _configs_manager->setStackRole(role);
     return true;
 }
+
+void CliConsole::setNetwork(Network &network)
+{
+    _network = &network;
+}
 bool CliConsole::setStackMasterHost_(const String &host)
 {
     if (!_configs_manager)
@@ -628,6 +883,27 @@ bool CliConsole::setStackApiKey_(const String &key)
     if (!_configs_manager)
         return false;
     _configs_manager->setStackApiKey(key);
+    return true;
+}
+bool CliConsole::setStackExchangePolicy_(ConfigsManagerIface::StackExchangePolicy policy)
+{
+    if (!_configs_manager)
+        return false;
+    _configs_manager->setStackExchangePolicy(policy);
+    return true;
+}
+bool CliConsole::setStackTransport_(ConfigsManagerIface::StackTransportKind kind)
+{
+    if (!_configs_manager)
+        return false;
+    _configs_manager->setStackTransport(kind);
+    return true;
+}
+bool CliConsole::setStackPayloadMode_(ConfigsManagerIface::StackPayloadMode mode)
+{
+    if (!_configs_manager)
+        return false;
+    _configs_manager->setStackPayloadMode(mode);
     return true;
 }
 bool CliConsole::setStackFallbackEnabled_(bool enabled)
@@ -695,7 +971,6 @@ void CliConsole::showHelpTopic_(const String &topic)
         _io->println(F("  show time       - RTC date/time"));
         _io->println(F("  show i2c        - I2C device list"));
         _io->println(F("  show ow         - OneWire device list"));
-        _io->println(F("  show stack      - stack role settings"));
         _io->println(F("  show cloud      - Cloud settings"));
         _io->println(F("  show config     - configuration file contents"));
         _io->println(F("  show port <id>  - port details"));
@@ -743,6 +1018,15 @@ void CliConsole::showHelpTopic_(const String &topic)
         _io->println(F("Admin commands:"));
         _io->println(F("  password <pass>         - set admin password"));
         _io->println(F("  admin password <pass>   - set admin password"));
+        _io->println(F("  stack role <master|slave>"));
+        _io->println(F("  stack master <host>"));
+        _io->println(F("  stack policy <auto|direct|poll>"));
+        _io->println(F("  stack transport <websocket|rs485>"));
+        _io->println(F("  stack payload <auto|json|binary>"));
+        _io->println(F("  stack fallback <on|off>"));
+        _io->println(F("  stack fallback_host <host>"));
+        _io->println(F("  stack slave_controller <on|off>"));
+        _io->println(F("  stack api_key <value|clear|gen>"));
         return;
     }
     if (t == "eeprom")
@@ -812,6 +1096,11 @@ void CliConsole::showHelpTopic_(const String &topic)
     {
         _io->println(F("System commands:"));
         _io->println(F("  ftest   - start functional test task"));
+        _io->println(F("  photo get <url>"));
+        _io->println(F("  photo upload <url>"));
+        _io->println(F("  photo cloud"));
+        _io->println(F("  photo status"));
+        _io->println(F("  photo clear"));
         _io->println(F("  reload  - restart controller"));
         _io->println(F("  reset   - restart controller"));
         _io->println(F("  write   - save configuration"));
@@ -824,14 +1113,13 @@ void CliConsole::handleTab_()
 {
     if (!_io || _state != State::LoggedIn)
         return;
-    static const std::array<const char *, 81> kEnableCmds = {{
+    static const std::array<const char *, 75> kEnableCmds = {{
         "show plc",
         "show board",
         "show wifi",
         "show time",
         "show i2c",
         "show ow",
-        "show stack",
         "show cloud",
         "show config",
         "show ext",
@@ -869,16 +1157,11 @@ void CliConsole::handleTab_()
         "ftest",
         "copy tftp://<ip>/firmware.bin firmware",
         "copy http://<ip>/firmware.bin firmware",
-        "stack nodes",
-        "stack trace",
-        "stack trace on",
-        "stack trace off",
-        "stack send <id> <get|set> <json>",
-        "stack socket <unit> <on|off|toggle> <id>",
-        "stack thermo <unit> <on|off|toggle> <id>",
-        "stack septic <unit> <status|get>",
-        "stack security <unit> <arm|disarm|status|clear>",
-        "stack ring <unit> <on|off>",
+        "photo get <http://...jpg>",
+        "photo upload <http://...>",
+        "photo cloud",
+        "photo status",
+        "photo clear",
         "wifi restart",
         "reload",
         "reset",
@@ -907,20 +1190,21 @@ void CliConsole::handleTab_()
         "help avr",
         "help leak"}};
 
-    static const std::array<const char *, 48> kConfigCmds = {{
+    static const std::array<const char *, 46> kConfigCmds = {{
         "password <pass>",
         "admin password <pass>",
-        "eeprom show",
-        "eeprom save <on|off>",
-        "eeprom load <on|off>",
         "stack role <master|slave>",
         "stack master <host>",
+        "stack policy <auto|direct|poll>",
+        "stack transport <websocket|rs485>",
+        "stack payload <auto|json|binary>",
         "stack fallback <on|off>",
         "stack fallback_host <host>",
         "stack slave_controller <on|off>",
         "stack api_key <value>",
-        "stack api_key clear",
-        "stack api_key gen",
+        "eeprom show",
+        "eeprom save <on|off>",
+        "eeprom load <on|off>",
         "wifi",
         "cloud",
         "time",
@@ -1664,22 +1948,6 @@ bool CliConsole::cliAclAnyView_(UsersRegistry::AclController ctrl, uint16_t max_
             return true;
     return false;
 }
-bool CliConsole::parseStackAclUnit_(const String &raw_unit, uint8_t &out_unit) const
-{
-    String unit = raw_unit;
-    unit.trim();
-    unit.toLowerCase();
-    if (unit.startsWith("unit"))
-        unit = unit.substring(4);
-    unit.trim();
-    if (unit.length() == 0)
-        return false;
-    const uint32_t idx = (uint32_t)strtoul(unit.c_str(), nullptr, 10);
-    if (idx == 0 || idx >= (uint32_t)UsersRegistry::kAclUnitCount)
-        return false;
-    out_unit = (uint8_t)idx; // 1..7 are stack units, 0 is local
-    return true;
-}
 bool CliConsole::denyAcl_()
 {
     _io->println(F("ACL deny"));
@@ -1778,100 +2046,10 @@ bool CliConsole::enforceAclEnable_(const String &line)
         return cliAclAnyView_(UsersRegistry::AclController::Security, 72);
     if (low == "security arm" || low == "security disarm")
         return cliAclCanControlItem_(UsersRegistry::AclController::Security, 1);
-    if (startsWith_(low, "stack send "))
-        return false;
-    if (startsWith_(low, "stack socket "))
-    {
-        String rest = cmd.substring(13);
-        rest.trim();
-        const int sp1 = rest.indexOf(' ');
-        if (sp1 <= 0)
-            return true;
-        const String unit_str = rest.substring(0, sp1);
-        rest = rest.substring(sp1 + 1);
-        rest.trim();
-        const int sp2 = rest.indexOf(' ');
-        if (sp2 <= 0)
-            return true;
-        const String id_str = rest.substring(sp2 + 1);
-        uint8_t unit = 0;
-        uint16_t id = 0;
-        if (!parseStackAclUnit_(unit_str, unit) || !parseUint_(id_str, id))
-            return true;
-        return cliAclCanControlItem_(UsersRegistry::AclController::Sockets, id, unit);
-    }
-    if (startsWith_(low, "stack thermo "))
-    {
-        String rest = cmd.substring(13);
-        rest.trim();
-        const int sp1 = rest.indexOf(' ');
-        if (sp1 <= 0)
-            return true;
-        const String unit_str = rest.substring(0, sp1);
-        rest = rest.substring(sp1 + 1);
-        rest.trim();
-        const int sp2 = rest.indexOf(' ');
-        if (sp2 <= 0)
-            return true;
-        const String id_str = rest.substring(sp2 + 1);
-        uint8_t unit = 0;
-        uint16_t id = 0;
-        if (!parseStackAclUnit_(unit_str, unit) || !parseUint_(id_str, id))
-            return true;
-        return cliAclCanControlItem_(UsersRegistry::AclController::Thermo, id, unit);
-    }
-    if (startsWith_(low, "stack security "))
-    {
-        String rest = cmd.substring(15);
-        rest.trim();
-        const int sp1 = rest.indexOf(' ');
-        if (sp1 <= 0)
-            return true;
-        const String unit_str = rest.substring(0, sp1);
-        String action = rest.substring(sp1 + 1);
-        action.trim();
-        action.toLowerCase();
-        uint8_t unit = 0;
-        if (!parseStackAclUnit_(unit_str, unit))
-            return true;
-        if (action == "status")
-            return cliAclCanViewItem_(UsersRegistry::AclController::Security, 1, unit);
-        return cliAclCanControlItem_(UsersRegistry::AclController::Security, 1, unit);
-    }
-    if (startsWith_(low, "stack septic "))
-    {
-        String rest = cmd.substring(13);
-        rest.trim();
-        const int sp1 = rest.indexOf(' ');
-        if (sp1 <= 0)
-            return true;
-        const String unit_str = rest.substring(0, sp1);
-        String action = rest.substring(sp1 + 1);
-        action.trim();
-        action.toLowerCase();
-        uint8_t unit = 0;
-        if (!parseStackAclUnit_(unit_str, unit))
-            return true;
-        if (action == "status" || action == "get")
-            return cliAclCanViewItem_(UsersRegistry::AclController::Septic, 1, unit);
-        return cliAclCanControlItem_(UsersRegistry::AclController::Septic, 1, unit);
-    }
-    if (startsWith_(low, "stack ring "))
-    {
-        String rest = cmd.substring(11);
-        rest.trim();
-        const int sp1 = rest.indexOf(' ');
-        if (sp1 <= 0)
-            return true;
-        const String unit_str = rest.substring(0, sp1);
-        uint8_t unit = 0;
-        if (!parseStackAclUnit_(unit_str, unit))
-            return true;
-        return cliAclCanControlItem_(UsersRegistry::AclController::Ring, 1, unit);
-    }
     if (startsWith_(low, "configure terminal") || startsWith_(low, "conf t"))
         return false;
-    if (low == "write" || low == "erase" || low == "reload" || low == "reset" || startsWith_(low, "copy "))
+    if (low == "write" || low == "erase" || low == "reload" || low == "reset" || startsWith_(low, "copy ") ||
+        startsWith_(low, "photo "))
         return false;
     return true;
 }
@@ -2287,18 +2465,12 @@ void CliConsole::sha256_(const char *input, uint8_t out[32])
 {
     if (!input)
         return;
-#if defined(ESP32)
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
     mbedtls_sha256_starts_ret(&ctx, 0);
     mbedtls_sha256_update_ret(&ctx, (const unsigned char *)input, strlen(input));
     mbedtls_sha256_finish_ret(&ctx, out);
     mbedtls_sha256_free(&ctx);
-#else
-    (void)input;
-    for (uint8_t i = 0; i < 32; ++i)
-        out[i] = 0;
-#endif
 }
 bool CliConsole::isAdminUser_(const String &user) const
 {
@@ -2351,7 +2523,6 @@ void CliConsole::bytesToHex_(const uint8_t in[32], char out[65])
 void CliConsole::printExtList_()
 {
     const auto *devs = _ext.devs();
-    const bool has_stack = _stack_cli.canRequestStackExt_();
     bool any = false;
     if (devs)
     {
@@ -2367,34 +2538,14 @@ void CliConsole::printExtList_()
             any = true;
             char addr_buf[8] = {};
             snprintf(addr_buf, sizeof(addr_buf), "0x%02X", d.i2c_addr);
-            printExtRow_("CPU", i, d.bus_num, addr_buf, extTypeName_(d.type), nullptr);
+                printExtRow_("CPU", i, d.bus_num, addr_buf, extTypeName_(d.type), nullptr);
         }
     }
-    if (has_stack && !any)
-        printExtHeader_();
-    if (!any && !has_stack)
+    if (!any)
     {
         _io->println(F("Extenders: none"));
         return;
     }
-    if (has_stack)
-        _stack_cli.requestStackExtList_();
-}
-void CliConsole::onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame)
-{
-    if (!ctx)
-        return;
-    static_cast<CliConsole *>(ctx)->_stack_cli.handleStackFrame_(node_id, frame);
-}
-String CliConsole::payloadToString_(const uint8_t *data, size_t len)
-{
-    String out;
-    if (!data || len == 0)
-        return out;
-    out.reserve(len + 1);
-    for (size_t i = 0; i < len; ++i)
-        out += (char)data[i];
-    return out;
 }
 void CliConsole::printExtHeader_()
 {

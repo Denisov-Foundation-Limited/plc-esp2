@@ -13,6 +13,7 @@
 
 #include <atomic>
 
+#include "core/network/network.hpp"
 #include "core/network/web/web_interface.hpp"
 
 namespace
@@ -29,6 +30,81 @@ bool canUseStackPageCache_(uint32_t now_ms, uint8_t role)
     if (g_stack_page_cache_role != role)
         return false;
     return (uint32_t)(now_ms - g_stack_page_cache_built_ms) <= kStackPageCacheMs;
+}
+
+String stackRuntimeBadgeClass_(const WebInterface &web)
+{
+    Network *network = web.network();
+    if (!network)
+        return "bad";
+    const Network::StackRuntimeState st = network->stackRuntimeState();
+    return (st == Network::StackRuntimeState::Online || st == Network::StackRuntimeState::FallbackMaster) ? "ok" : "bad";
+}
+
+String stackRuntimeBadgeText_(const WebInterface &web)
+{
+    Network *network = web.network();
+    if (!network)
+        return "stack: unavailable";
+
+    switch (network->stackRuntimeState())
+    {
+    case Network::StackRuntimeState::Stopped:
+        return "stack: stopped";
+    case Network::StackRuntimeState::Starting:
+        return "stack: starting";
+    case Network::StackRuntimeState::AuthPending:
+        return "stack: auth pending";
+    case Network::StackRuntimeState::Online:
+        return "stack: online";
+    case Network::StackRuntimeState::Degraded:
+        return "stack: degraded";
+    case Network::StackRuntimeState::FallbackMaster:
+        return "stack: fallback master";
+    }
+    return "stack: unknown";
+}
+
+String stackDiagnosticsHtml_(const WebInterface &web)
+{
+    Network *network = web.network();
+    if (!network)
+        return "";
+
+    const Network::StackDiagnostics diag = network->stackDiagnostics();
+    String html;
+    html.reserve(960);
+    html += "<div class=\"section\"><p class=\"status\">stack diagnostics</p><table><tbody>";
+    auto addRow = [&html](const char *key, const String &value) {
+        html += "<tr><th>";
+        html += key;
+        html += "</th><td><strong>";
+        html += value;
+        html += "</strong></td></tr>";
+    };
+    addRow("state", String(diag.runtime_state));
+    addRow("master_active", diag.master_active ? "true" : "false");
+    addRow("fallback_active", diag.fallback_active ? "true" : "false");
+    addRow("online_devices", String((unsigned)diag.online_devices));
+    addRow("network_lock_ms", String((unsigned long)diag.network_lock_held_ms));
+    addRow("route_lock_ms", String((unsigned long)diag.exchange.lock_held_ms));
+    addRow("exchange_slave_q", String((unsigned)diag.exchange.slave_outbox_used));
+    addRow("exchange_master_q", String((unsigned)diag.exchange.master_inbox_used));
+    addRow("notify_q", String((unsigned)diag.exchange.notify_outbox_used));
+    addRow("retried", String((unsigned long)diag.exchange.retried));
+    addRow("expired", String((unsigned long)diag.exchange.expired));
+    addRow("dropped", String((unsigned long)diag.exchange.dropped));
+    addRow("rs485_started", diag.rs485.started ? "true" : "false");
+    addRow("rs485_state", String((unsigned)diag.rs485.bus_state));
+    addRow("rs485_tx_q", String((unsigned)diag.rs485.tx_queue_used));
+    addRow("rs485_pending", String((unsigned)diag.rs485.pending_used));
+    addRow("rs485_timeouts", String((unsigned long)diag.rs485.request_timeouts));
+    addRow("rs485_tx_drop", String((unsigned long)diag.rs485.tx_queue_drops));
+    addRow("rs485_pend_drop", String((unsigned long)diag.rs485.pending_full_drops));
+    addRow("rs485_last_tx", String((unsigned long)diag.rs485.last_tx_size));
+    addRow("rs485_lock_ms", String((unsigned long)diag.rs485.lock_held_ms));
+    html += "</tbody></table></div>";
+    return html;
 }
 }
 
@@ -64,10 +140,22 @@ void StackHandler::handleStack(WebInterface &web, AsyncWebServerRequest *request
             page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
             page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
             page.replace("%STACK_SLAVE_STYLE%", role == ConfigsManagerIface::StackRole::Slave ? "" : "display:none");
+            page.replace("%STACK_LINK_STYLE%", "");
             page.replace("%STACK_PAGE_TITLE%", WebUiRu::StackPage::kPageTitle);
             page.replace("%STACK_TITLE%", WebUiRu::StackPage::kTitle);
             page.replace("%STACK_LABEL_ROLE%", WebUiRu::StackPage::kRole);
             page.replace("%STACK_LABEL_MASTER_HOST%", WebUiRu::StackPage::kMasterHost);
+            page.replace("%STACK_LABEL_EXCHANGE_POLICY%", WebUiRu::StackPage::kExchangePolicy);
+            page.replace("%STACK_POLICY_AUTO_TEXT%", WebUiRu::StackPage::kPolicyAuto);
+            page.replace("%STACK_POLICY_DIRECT_TEXT%", WebUiRu::StackPage::kPolicyDirect);
+            page.replace("%STACK_POLICY_POLL_TEXT%", WebUiRu::StackPage::kPolicyPoll);
+            page.replace("%STACK_LABEL_TRANSPORT%", WebUiRu::StackPage::kTransport);
+            page.replace("%STACK_TRANSPORT_WS_TEXT%", WebUiRu::StackPage::kTransportWebSocket);
+            page.replace("%STACK_TRANSPORT_RS485_TEXT%", WebUiRu::StackPage::kTransportRs485);
+            page.replace("%STACK_LABEL_PAYLOAD_MODE%", WebUiRu::StackPage::kPayloadMode);
+            page.replace("%STACK_PAYLOAD_AUTO_TEXT%", WebUiRu::StackPage::kPayloadAuto);
+            page.replace("%STACK_PAYLOAD_JSON_TEXT%", WebUiRu::StackPage::kPayloadJson);
+            page.replace("%STACK_PAYLOAD_BINARY_TEXT%", WebUiRu::StackPage::kPayloadBinary);
             page.replace("%STACK_LABEL_FALLBACK_MASTER%", WebUiRu::StackPage::kFallbackMaster);
             page.replace("%STACK_LABEL_ENABLE%", WebUiRu::StackPage::kEnable);
             page.replace("%STACK_LABEL_FALLBACK_HOST%", WebUiRu::StackPage::kFallbackHost);
@@ -80,46 +168,30 @@ void StackHandler::handleStack(WebInterface &web, AsyncWebServerRequest *request
             g_stack_page_cache_built_ms = now_ms;
             g_stack_page_cache_role = (uint8_t)role;
         }
-        auto linkDisconnectedText = [role]() -> const char * {
-            return role == ConfigsManagerIface::StackRole::Slave
-                       ? WebUiRu::StackPage::kMasterLinkDisconnected
-                       : WebUiRu::StackPage::kSlaveLinkDisconnected;
-        };
-        auto linkConnectedText = [role]() -> const char * {
-            return role == ConfigsManagerIface::StackRole::Slave
-                       ? WebUiRu::StackPage::kMasterLinkConnected
-                       : WebUiRu::StackPage::kSlaveLinkConnected;
-        };
-        auto linkWaitingHelloText = [role]() -> const char * {
-            return role == ConfigsManagerIface::StackRole::Slave
-                       ? WebUiRu::StackPage::kMasterLinkWaitingHello
-                       : WebUiRu::StackPage::kSlaveLinkWaitingHello;
-        };
-        page.replace("%STACK_SLAVE_LINK_DISCONNECTED%", linkDisconnectedText());
-        String slave_link_class = "bad";
-        String slave_link_text = linkDisconnectedText();
-        if (role == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
-        {
-            if (web._stack_slave->linkReadyAfterHello())
-            {
-                slave_link_class = "ok";
-                slave_link_text = linkConnectedText();
-            }
-            else if (web._stack_slave->nodeConnected())
-            {
-                slave_link_class = "bad";
-                slave_link_text = linkWaitingHelloText();
-            }
-        }
+        page.replace("%STACK_SLAVE_LINK_DISCONNECTED%", "stack: offline");
+        String slave_link_class = stackRuntimeBadgeClass_(web);
+        String slave_link_text = stackRuntimeBadgeText_(web);
         page.replace("%STACK_SLAVE_LINK_CLASS%", slave_link_class);
         page.replace("%STACK_SLAVE_LINK_TEXT%", slave_link_text);
         page.replace("%STACK_MASTER_HOST%", web.stackMasterHost_());
+        const auto policy = web.stackExchangePolicy_();
+        page.replace("%STACK_POLICY_AUTO_SEL%", policy == ConfigsManagerIface::StackExchangePolicy::Auto ? "selected" : "");
+        page.replace("%STACK_POLICY_DIRECT_SEL%", policy == ConfigsManagerIface::StackExchangePolicy::Direct ? "selected" : "");
+        page.replace("%STACK_POLICY_POLL_SEL%", policy == ConfigsManagerIface::StackExchangePolicy::Poll ? "selected" : "");
+        const auto transport = web.stackTransport_();
+        page.replace("%STACK_TRANSPORT_WS_SEL%", transport == ConfigsManagerIface::StackTransportKind::WebSocket ? "selected" : "");
+        page.replace("%STACK_TRANSPORT_RS485_SEL%", transport == ConfigsManagerIface::StackTransportKind::Rs485 ? "selected" : "");
+        const auto payload_mode = web.stackPayloadMode_();
+        page.replace("%STACK_PAYLOAD_AUTO_SEL%", payload_mode == ConfigsManagerIface::StackPayloadMode::Auto ? "selected" : "");
+        page.replace("%STACK_PAYLOAD_JSON_SEL%", payload_mode == ConfigsManagerIface::StackPayloadMode::Json ? "selected" : "");
+        page.replace("%STACK_PAYLOAD_BINARY_SEL%", payload_mode == ConfigsManagerIface::StackPayloadMode::Binary ? "selected" : "");
         page.replace("%STACK_FALLBACK_ENABLED_CHECKED%", web.stackFallbackEnabled_() ? "checked" : "");
         page.replace("%STACK_FALLBACK_HOST%", web.stackFallbackHost_());
         page.replace("%STACK_SLAVE_CONTROLLER_CHECKED%", web.stackSlaveController_() ? "checked" : "");
-        page.replace("%STACK_API_KEY%", WebInterface::maskSecretValue_(web.stackApiKey_()));
+        page.replace("%STACK_API_KEY%", web.stackApiKey_());
         page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         page.replace("%STACK_STATUS%", web._stack_status);
+        page.replace("%STACK_DIAG_BLOCK%", stackDiagnosticsHtml_(web));
         if (role == ConfigsManagerIface::StackRole::Master)
         {
             String self = String("<p class=\"status\">") + WebUiRu::StackPage::kCurrentControllerPrefix + ": <strong>" +
@@ -142,36 +214,8 @@ void StackHandler::handleSlaveLinkStatus(WebInterface &web, AsyncWebServerReques
             return;
         if (!web.requireWebAdmin_(request, &set_cookie))
             return;
-        const auto role = web.stackRole_();
-        auto linkDisconnectedText = [role]() -> const char * {
-            return role == ConfigsManagerIface::StackRole::Slave
-                       ? WebUiRu::StackPage::kMasterLinkDisconnected
-                       : WebUiRu::StackPage::kSlaveLinkDisconnected;
-        };
-        auto linkConnectedText = [role]() -> const char * {
-            return role == ConfigsManagerIface::StackRole::Slave
-                       ? WebUiRu::StackPage::kMasterLinkConnected
-                       : WebUiRu::StackPage::kSlaveLinkConnected;
-        };
-        auto linkWaitingHelloText = [role]() -> const char * {
-            return role == ConfigsManagerIface::StackRole::Slave
-                       ? WebUiRu::StackPage::kMasterLinkWaitingHello
-                       : WebUiRu::StackPage::kSlaveLinkWaitingHello;
-        };
-        String cls = "bad";
-        String text = linkDisconnectedText();
-        if (role == ConfigsManagerIface::StackRole::Slave && web._stack_slave)
-        {
-            if (web._stack_slave->linkReadyAfterHello())
-            {
-                cls = "ok";
-                text = linkConnectedText();
-            }
-            else if (web._stack_slave->nodeConnected())
-            {
-                text = linkWaitingHelloText();
-            }
-        }
+        String cls = stackRuntimeBadgeClass_(web);
+        String text = stackRuntimeBadgeText_(web);
         String json;
         json.reserve(96);
         json += "{\"class\":\"";
@@ -200,7 +244,8 @@ void StackHandler::handleOnlineSnapshot(WebInterface &web, AsyncWebServerRequest
         bool set_cookie = false;
         if (!web.checkAuth_(request, &set_cookie))
             return;
-        if (web.stackRole_() != ConfigsManagerIface::StackRole::Master || !web._stack_master)
+        Network *network = web.network();
+        if (web.stackRole_() != ConfigsManagerIface::StackRole::Master || !network)
         {
             web.sendText_(request, 200, "application/json", "[]", set_cookie);
             return;
@@ -208,34 +253,27 @@ void StackHandler::handleOnlineSnapshot(WebInterface &web, AsyncWebServerRequest
         String out;
         out.reserve(512);
         out += "[";
-        const size_t count = web._stack_master->nodeCount();
+        const size_t count = network->stackOnlineDeviceCount();
         bool first = true;
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t id = web._stack_master->nodeIdAt(i);
-            if (id == 0)
+            StackDeviceRegistry::DeviceInfo device;
+            if (!network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
                 continue;
-            if (!web._stack_master->nodeIsOnline(id, 6000))
-                continue;
-            String name = web._stack_master->nodeNameAt(i);
+            const uint32_t id = device.node_id;
+            String name = device.name[0] ? String(device.name) : String();
             bool sync_ready = false;
-            if (web._stack_cache)
+            if (network)
             {
-                auto cacheReady = [](const auto *cache) -> bool {
-                    return cache && (cache->has_data || cache->last_ok || cache->last_error.length());
-                };
-                const auto *sockets = web._stack_cache->socketsCache(id);
-                const auto *lights = web._stack_cache->lightsCache(id);
-                const auto *meteo = web._stack_cache->meteoCache(id);
-                const auto *thermo = web._stack_cache->thermoCache(id);
-                const auto *tanks = web._stack_cache->tanksCache(id);
-                const auto *septic = web._stack_cache->septicCache(id);
-                const auto *security = web._stack_cache->securityCache(id);
-                const auto *watering = web._stack_cache->wateringCache(id);
-                const auto *leak = web._stack_cache->leakCache(id);
-                sync_ready = cacheReady(sockets) && cacheReady(lights) && cacheReady(meteo) &&
-                             cacheReady(thermo) && cacheReady(tanks) && cacheReady(septic) &&
-                             cacheReady(security) && cacheReady(watering) && cacheReady(leak);
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                const bool has_snapshot = network->stackIndexState(id, snapshot);
+                const bool has_cache = network->stackIndexCacheState(id, cache);
+                sync_ready = has_snapshot &&
+                             has_cache &&
+                             snapshot.updated_ms != 0 &&
+                             cache.socket_count >= snapshot.sockets_enabled &&
+                             cache.light_count >= snapshot.lights_enabled;
             }
             if (!first)
                 out += ",";

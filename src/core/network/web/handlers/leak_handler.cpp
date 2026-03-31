@@ -36,13 +36,10 @@ void LeakHandler::handleLeak(WebInterface &web, AsyncWebServerRequest *request) 
                 page_idx = (uint8_t)(v - 1);
         }
         uint8_t max_pages = 1;
-        if (stack_view && web._stack_cache)
+        if (stack_view)
         {
-            web.stackCache().requestLeak(node_id);
-            const size_t visible = stackLeakVisibleCount_(web, node_id);
-            max_pages = (uint8_t)(((visible ? visible : 1u) + page_size - 1) / page_size);
-            if (page_idx >= max_pages)
-                page_idx = max_pages ? (uint8_t)(max_pages - 1) : 0;
+            max_pages = 1;
+            page_idx = 0;
         }
         else if (!stack_view)
         {
@@ -156,10 +153,7 @@ void LeakHandler::handleLeakSave(WebInterface &web, AsyncWebServerRequest *reque
         {
             if (stack_view)
             {
-                if (sendStackLeakSet_(web, node_id, nullptr, true))
-                    web._leak_status = WebUiRu::Leak::kCmdSent;
-                else
-                    web._leak_status = WebUiRu::Leak::kSendFailed;
+                web._leak_status = "not migrated";
             }
             else
             {
@@ -276,10 +270,7 @@ void LeakHandler::handleLeakSave(WebInterface &web, AsyncWebServerRequest *reque
 
         if (stack_view)
         {
-            if (sendStackLeakSet_(web, node_id, &stack_zones, false))
-                web._leak_status = WebUiRu::Leak::kCmdSent;
-            else
-                web._leak_status = WebUiRu::Leak::kSendFailed;
+            web._leak_status = "not migrated";
             web.sendRedirect_(request, leakRedirectPath_(node_id, true), set_cookie);
             return;
         }
@@ -304,8 +295,10 @@ void LeakHandler::handleLeakSave(WebInterface &web, AsyncWebServerRequest *reque
     }
 
 bool LeakHandler::isStackLeakView_(WebInterface &web, uint32_t node_id) {
-        return node_id != 0 && web._stack_master &&
-               web.stackRole_() == ConfigsManagerIface::StackRole::Master;
+        if (node_id == 0 || !web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackDeviceRegistry::DeviceInfo device{};
+        return web.network()->stackDeviceSnapshotByNodeId(node_id, device) && device.online;
     }
 
 String LeakHandler::leakRedirectPath_(uint32_t node_id, bool stack_view) {
@@ -318,7 +311,7 @@ String LeakHandler::leakRedirectPath_(uint32_t node_id, bool stack_view) {
     }
 
 String LeakHandler::leakDeviceSelectHtml_(WebInterface &web, uint32_t selected_node_id, bool stack_view) {
-        if (web.stackRole_() != ConfigsManagerIface::StackRole::Master || !web._stack_master)
+        if (!web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
             return "";
         String html;
         html.reserve(512);
@@ -331,17 +324,20 @@ String LeakHandler::leakDeviceSelectHtml_(WebInterface &web, uint32_t selected_n
         if (!stack_view)
             html += " selected";
         html += ">local</option>";
-        const size_t count = web._stack_master->nodeCount();
+        const size_t count = web.network()->stackOnlineDeviceCount();
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t id = web._stack_master->nodeIdAt(i);
+            StackDeviceRegistry::DeviceInfo device{};
+            if (!web.network()->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+                continue;
+            const uint32_t id = device.node_id;
             html += "<option value=\"";
             html += String((unsigned long)id);
             html += "\"";
             if (stack_view && id == selected_node_id)
                 html += " selected";
             html += ">";
-            String name = web._stack_master->nodeNameAt(i);
+            String name = device.name[0] ? String(device.name) : String();
             if (name.length() > 0)
                 web.appendHtmlEscaped_(html, name.c_str());
             else
@@ -353,50 +349,17 @@ String LeakHandler::leakDeviceSelectHtml_(WebInterface &web, uint32_t selected_n
     }
 
 String LeakHandler::stackLeakStatusText_(WebInterface &web, uint32_t node_id) {
-        if (!web._stack_cache)
-            return WebUiRu::Leak::kStackCacheUnavailable;
-        const auto *cache = web.stackCache().leakCache(node_id);
-        if (!cache)
-            return WebUiRu::Common::kNoDataFromSlave;
-        if (cache->pending)
-            return WebUiRu::Leak::kRequestingSlaveData;
-        if (!cache->last_ok && cache->last_error.length())
-        {
-            String msg = WebUiRu::Common::kErrorPrefix;
-            msg += cache->last_error;
-            return msg;
-        }
-        if (!cache->has_data)
-            return WebUiRu::Common::kNoDataFromSlave;
-        return "OK";
+        (void)web;
+        (void)node_id;
+        return "not migrated";
     }
 
 bool LeakHandler::sendStackLeakSet_(WebInterface &web, uint32_t node_id, JsonArray *zones, bool ack_all) {
-        if (!web._stack_master || node_id == 0)
-            return false;
-        StaticJsonDocument<4096> doc;
-        doc["cmd_id"] = web.nextStackCmdId_();
-        doc["feature"] = (uint8_t)StackFeature::Leak;
-        doc["action"] = "set";
-        JsonObject params = doc["params"].to<JsonObject>();
-        if (ack_all)
-            params["ack_all"] = true;
-        if (zones)
-        {
-            JsonArray dst = params["zones"].to<JsonArray>();
-            for (JsonObjectConst zone : *zones)
-            {
-                JsonObject out = dst.add<JsonObject>();
-                for (JsonPairConst kv : zone)
-                    out[kv.key()] = kv.value();
-            }
-        }
-        char payload[3800] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0)
-            return false;
-        return web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                         (const uint8_t *)payload, len);
+        (void)web;
+        (void)node_id;
+        (void)zones;
+        (void)ack_all;
+        return false;
     }
 
 String LeakHandler::paramName_(const char *prefix, size_t id) {
@@ -416,49 +379,9 @@ String LeakHandler::portValue_(uint8_t port) {
     }
 
 size_t LeakHandler::stackLeakVisibleCount_(WebInterface &web, uint32_t node_id) {
-    if (!web._controllers)
-        return 0;
-    LeakController &leak = web._controllers->leak();
-    auto leak_guard = leak.lockGuard();
-    const bool can_view_disabled = web.webSessionIsAdmin_();
-        const StackCache::StackLeakCache *stack_cache = web._stack_cache ? web.stackCache().leakCache(node_id) : nullptr;
-        if (!stack_cache || !stack_cache->has_data || !stack_cache->items)
-            return 0;
-        size_t render_count = LeakController::kZoneCount ? 1u : 0u;
-        if (stack_cache->item_count)
-        {
-            size_t last_enabled_id = 0;
-            for (size_t i = 0; i < stack_cache->item_count; ++i)
-            {
-                const auto &it = stack_cache->items[i];
-                if (it.enabled && it.id > last_enabled_id)
-                    last_enabled_id = it.id;
-            }
-            if (last_enabled_id > 0)
-            {
-                const size_t count = last_enabled_id + 1u;
-                render_count = count > LeakController::kZoneCount ? LeakController::kZoneCount : count;
-            }
-        }
-        size_t visible = 0;
-        for (size_t i = 0; i < render_count; ++i)
-        {
-            const size_t id = i + 1;
-            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Leak, (uint16_t)id, node_id))
-                continue;
-            const StackCache::StackLeakItem *it = nullptr;
-            for (size_t k = 0; k < stack_cache->item_count; ++k)
-            {
-                if (stack_cache->items[k].id != id)
-                    continue;
-                it = &stack_cache->items[k];
-                break;
-            }
-            if (!it || (!can_view_disabled && !it->enabled))
-                continue;
-            ++visible;
-        }
-        return visible;
+    (void)web;
+    (void)node_id;
+    return 0;
     }
 
 size_t LeakHandler::localLeakVisibleCount_(WebInterface &web, uint32_t node_id) {
@@ -493,34 +416,15 @@ size_t LeakHandler::localLeakVisibleCount_(WebInterface &web, uint32_t node_id) 
 String LeakHandler::buildRows_(WebInterface &web, uint32_t node_id, bool stack_view, size_t offset, size_t limit) {
     if (!web._controllers)
         return String("<div class=\"tile tile-empty\">") + WebUiRu::Common::kControllersUnavailable + "</div>";
+    if (stack_view)
+        return String("<div class=\"tile tile-empty\">not migrated</div>");
     LeakController &leak = web._controllers->leak();
     auto leak_guard = leak.lockGuard();
     String rows;
         rows.reserve(LeakController::kZoneCount * 1200);
-        const StackCache::StackLeakCache *stack_cache = nullptr;
         const bool can_view_disabled = web.webSessionIsAdmin_();
-        if (stack_view && web._stack_cache)
-            stack_cache = web.stackCache().leakCache(node_id);
         size_t render_count = LeakController::kZoneCount ? 1u : 0u;
-        if (stack_view)
-        {
-            if (stack_cache && stack_cache->has_data && stack_cache->items && stack_cache->item_count)
-            {
-                size_t last_enabled_id = 0;
-                for (size_t i = 0; i < stack_cache->item_count; ++i)
-                {
-                    const auto &it = stack_cache->items[i];
-                    if (it.enabled && it.id > last_enabled_id)
-                        last_enabled_id = it.id;
-                }
-                if (last_enabled_id > 0)
-                {
-                    const size_t count = last_enabled_id + 1u;
-                    render_count = count > LeakController::kZoneCount ? LeakController::kZoneCount : count;
-                }
-            }
-        }
-        else
+        if (!stack_view)
         {
             size_t last_enabled_idx = SIZE_MAX;
             for (size_t i = 0; i < LeakController::kZoneCount; ++i)
@@ -554,34 +458,7 @@ String LeakHandler::buildRows_(WebInterface &web, uint32_t node_id, bool stack_v
             uint8_t cfg_alarm = LeakController::kInvalidPort;
             bool st_wet = false;
             bool st_latched = false;
-            if (stack_view)
-            {
-                if (!stack_cache || !stack_cache->has_data || !stack_cache->items)
-                    continue;
-                const StackCache::StackLeakItem *it = nullptr;
-                for (size_t k = 0; k < stack_cache->item_count; ++k)
-                {
-                    if (stack_cache->items[k].id != id)
-                        continue;
-                    it = &stack_cache->items[k];
-                    break;
-                }
-                if (!it)
-                    continue;
-                cfg_enabled = it->enabled;
-                if (!can_view_disabled && !cfg_enabled)
-                    continue;
-                cfg_power = it->power_on;
-                cfg_active_low = it->sensor_active_low;
-                if (it->name[0])
-                    cfg_name = it->name;
-                cfg_sensor = it->sensor;
-                cfg_valve = it->valve;
-                cfg_alarm = it->alarm;
-                st_wet = it->wet;
-                st_latched = it->alarm_latched;
-            }
-            else
+            if (!stack_view)
             {
                 const LeakController::ZoneConfig *cfg = leak.configByIndex(i);
                 const LeakController::ZoneState *st = leak.stateByIndex(i);
@@ -681,8 +558,6 @@ String LeakHandler::buildRows_(WebInterface &web, uint32_t node_id, bool stack_v
             rows += "</div></div></div>";
             ++rendered;
         }
-        if (rows.length() == 0 && stack_view)
-            return String("<div class=\"tile tile-empty\">") + WebUiRu::Leak::kWaitingSlave + "</div>";
         if (rows.length() == 0)
             return String("<div class=\"tile tile-empty\">") + WebUiRu::Leak::kNoLeakZones + "</div>";
         return rows;

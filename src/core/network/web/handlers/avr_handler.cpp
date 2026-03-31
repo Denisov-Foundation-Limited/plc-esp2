@@ -31,8 +31,6 @@ void AvrHandler::handleAvr(WebInterface &web, AsyncWebServerRequest *request) {
             return;
         }
         const bool stack_view = isStackAvrView_(web, node_id);
-        if (stack_view && web._stack_cache)
-            web.stackCache().requestAvr(node_id);
         String page = FPSTR(kWebInterfaceAvrHtml);
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", web.navHtml_());
@@ -86,52 +84,9 @@ void AvrHandler::handleAvr(WebInterface &web, AsyncWebServerRequest *request) {
 
         if (stack_view)
         {
-            if (!web._stack_cache)
-            {
-                page.replace("%AVR_STATUS%", WebUiRu::Avr::kStackCacheUnavailable);
-                page.replace("%AVR_STATE_TEXT%", buildStateIndicatorsUnknown_());
-                fillDefaults_(page);
-            }
-            else
-            {
-                const auto *cache = web.stackCache().avrCache(node_id);
-                if (!cache || !cache->has_data)
-                {
-                    page.replace("%AVR_STATUS%", WebUiRu::Avr::kWaitingSlave);
-                    page.replace("%AVR_STATE_TEXT%", buildStateIndicatorsUnknown_());
-                    fillDefaults_(page);
-                }
-                else
-                {
-                    page.replace("%AVR_STATUS%", stackAvrStatusText_(web, node_id));
-                    page.replace("%AVR_STATE_TEXT%", buildStateIndicators_(cache));
-                    page.replace("%AVR_ENABLED_CHECKED%", cache->enabled ? "checked" : "");
-                    page.replace("%AVR_AUTO_MODE_CHECKED%", cache->auto_mode ? "checked" : "");
-                    page.replace("%AVR_PREFER_MAIN_CHECKED%", cache->prefer_main ? "checked" : "");
-                    page.replace("%AVR_AUTO_RETURN_MAIN_CHECKED%", cache->auto_return_main ? "checked" : "");
-                    page.replace("%AVR_MANUAL_OFF_SELECTED%", "checked");
-                    page.replace("%AVR_MANUAL_MAIN_SELECTED%", "");
-                    page.replace("%AVR_MANUAL_RESERVE_SELECTED%", "");
-                    page.replace("%AVR_MAIN_OK_SELECTED%", portValue_(cache->main_ok_port));
-                    page.replace("%AVR_RESERVE_OK_SELECTED%", portValue_(cache->reserve_ok_port));
-                    page.replace("%AVR_RELAY_MAIN_SELECTED%", portValue_(cache->relay_main_port));
-                    page.replace("%AVR_RELAY_RESERVE_SELECTED%", portValue_(cache->relay_reserve_port));
-                    page.replace("%AVR_FB_MAIN_SELECTED%", portValue_(cache->feedback_main_port));
-                    page.replace("%AVR_FB_RESERVE_SELECTED%", portValue_(cache->feedback_reserve_port));
-                    page.replace("%AVR_MAIN_OK_AL_CHECKED%", "");
-                    page.replace("%AVR_RESERVE_OK_AL_CHECKED%", "");
-                    page.replace("%AVR_FB_MAIN_AL_CHECKED%", "");
-                    page.replace("%AVR_FB_RESERVE_AL_CHECKED%", "");
-                    page.replace("%AVR_RELAY_MAIN_INV_CHECKED%", "");
-                    page.replace("%AVR_RELAY_RESERVE_INV_CHECKED%", "");
-                    page.replace("%AVR_DEBOUNCE_MS%", "500");
-                    page.replace("%AVR_LOSS_DELAY_MS%", "1500");
-                    page.replace("%AVR_RETURN_DELAY_MS%", "5000");
-                    page.replace("%AVR_BREAK_MS%", "250");
-                    page.replace("%AVR_WARMUP_MS%", "1500");
-                    page.replace("%AVR_TRANSFER_TIMEOUT_MS%", "15000");
-                }
-            }
+            page.replace("%AVR_STATUS%", "not migrated");
+            page.replace("%AVR_STATE_TEXT%", buildStateIndicatorsUnknown_());
+            fillDefaults_(page);
             page.replace("%AVR_DINPUT_JSON%", web.socketPortOptionsJson_(PortIO::PinType::DInput));
             page.replace("%AVR_RELAY_JSON%", web.socketPortOptionsJson_(PortIO::PinType::Relay));
             page.replace("%AVR_DINPUT_USED_JSON%", "[]");
@@ -213,10 +168,7 @@ void AvrHandler::handleAvrSave(WebInterface &web, AsyncWebServerRequest *request
         {
             if (stack_view)
             {
-                if (sendStackAvrSet_(web, node_id, nullptr, true))
-                    web._avr_status = WebUiRu::Avr::kCmdSent;
-                else
-                    web._avr_status = WebUiRu::Avr::kSendFailed;
+                web._avr_status = "not migrated";
             }
             else
             {
@@ -362,41 +314,7 @@ void AvrHandler::handleAvrSave(WebInterface &web, AsyncWebServerRequest *request
 
         if (stack_view)
         {
-            DynamicJsonDocument doc(1024);
-            JsonObject obj = doc.to<JsonObject>();
-            obj["enabled"] = enabled;
-            obj["auto_mode"] = auto_mode;
-            obj["prefer_main"] = prefer_main;
-            obj["auto_return_main"] = auto_return_main;
-            if (main_ok != AvrController::kInvalidPort)
-                obj["main_ok"] = main_ok;
-            if (reserve_ok != AvrController::kInvalidPort)
-                obj["reserve_ok"] = reserve_ok;
-            if (relay_main != AvrController::kInvalidPort)
-                obj["relay_main"] = relay_main;
-            if (relay_reserve != AvrController::kInvalidPort)
-                obj["relay_reserve"] = relay_reserve;
-            if (fb_main != AvrController::kInvalidPort)
-                obj["feedback_main"] = fb_main;
-            if (fb_reserve != AvrController::kInvalidPort)
-                obj["feedback_reserve"] = fb_reserve;
-            obj["main_ok_active_low"] = main_ok_al;
-            obj["reserve_ok_active_low"] = reserve_ok_al;
-            obj["feedback_main_active_low"] = fb_main_al;
-            obj["feedback_reserve_active_low"] = fb_reserve_al;
-            obj["relay_main_invert"] = relay_main_inv;
-            obj["relay_reserve_invert"] = relay_reserve_inv;
-            obj["debounce_ms"] = debounce_ms;
-            obj["loss_delay_ms"] = loss_delay_ms;
-            obj["return_delay_ms"] = return_delay_ms;
-            obj["break_ms"] = break_ms;
-            obj["warmup_ms"] = warmup_ms;
-            obj["transfer_timeout_ms"] = transfer_timeout_ms;
-            obj["manual_source"] = manualSourceName_(manual);
-            if (sendStackAvrSet_(web, node_id, &obj, false))
-                web._avr_status = WebUiRu::Avr::kCmdSent;
-            else
-                web._avr_status = WebUiRu::Avr::kSendFailed;
+            web._avr_status = "not migrated";
             web.sendRedirect_(request, avrRedirectPath_(node_id, true), set_cookie);
             return;
         }
@@ -461,8 +379,10 @@ void AvrHandler::handleAvrSave(WebInterface &web, AsyncWebServerRequest *request
     }
 
 bool AvrHandler::isStackAvrView_(WebInterface &web, uint32_t node_id) {
-        return node_id != 0 && web._stack_master &&
-               web.stackRole_() == ConfigsManagerIface::StackRole::Master;
+        if (node_id == 0 || !web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackDeviceRegistry::DeviceInfo device{};
+        return web.network()->stackDeviceSnapshotByNodeId(node_id, device) && device.online;
     }
 
 String AvrHandler::avrRedirectPath_(uint32_t node_id, bool stack_view) {
@@ -487,26 +407,13 @@ const char * AvrHandler::manualSourceName_(AvrController::Source src) {
     }
 
 String AvrHandler::stackAvrStatusText_(WebInterface &web, uint32_t node_id) {
-        if (!web._stack_cache)
-            return WebUiRu::Avr::kStackCacheUnavailable;
-        const auto *cache = web.stackCache().avrCache(node_id);
-        if (!cache)
-            return WebUiRu::Common::kNoDataFromSlave;
-        if (cache->pending)
-            return WebUiRu::Avr::kRequestingSlaveData;
-        if (!cache->last_ok && cache->last_error.length())
-        {
-            String msg = WebUiRu::Common::kErrorPrefix;
-            msg += cache->last_error;
-            return msg;
-        }
-        if (!cache->has_data)
-            return WebUiRu::Common::kNoDataFromSlave;
-        return WebUiRu::Common::kStatusOk;
+        (void)web;
+        (void)node_id;
+        return "not migrated";
     }
 
 String AvrHandler::avrDeviceSelectHtml_(WebInterface &web, uint32_t selected_node_id, bool stack_view) {
-        if (web.stackRole_() != ConfigsManagerIface::StackRole::Master || !web._stack_master)
+        if (!web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
             return "";
         String html;
         html.reserve(512);
@@ -519,17 +426,20 @@ String AvrHandler::avrDeviceSelectHtml_(WebInterface &web, uint32_t selected_nod
         if (!stack_view)
             html += " selected";
         html += ">local</option>";
-        const size_t count = web._stack_master->nodeCount();
+        const size_t count = web.network()->stackOnlineDeviceCount();
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t id = web._stack_master->nodeIdAt(i);
+            StackDeviceRegistry::DeviceInfo device{};
+            if (!web.network()->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+                continue;
+            const uint32_t id = device.node_id;
             html += "<option value=\"";
             html += String((unsigned long)id);
             html += "\"";
             if (stack_view && id == selected_node_id)
                 html += " selected";
             html += ">";
-            String name = web._stack_master->nodeNameAt(i);
+            String name = device.name[0] ? String(device.name) : String();
             if (name.length() > 0)
                 web.appendHtmlEscaped_(html, name.c_str());
             else
@@ -541,26 +451,11 @@ String AvrHandler::avrDeviceSelectHtml_(WebInterface &web, uint32_t selected_nod
     }
 
 bool AvrHandler::sendStackAvrSet_(WebInterface &web, uint32_t node_id, JsonObject *cfg, bool clear_fault) {
-        if (!web._stack_master || node_id == 0)
-            return false;
-        StaticJsonDocument<1536> doc;
-        doc["cmd_id"] = web.nextStackCmdId_();
-        doc["feature"] = (uint8_t)StackFeature::Avr;
-        doc["action"] = "set";
-        JsonObject params = doc["params"].to<JsonObject>();
-        if (cfg)
-        {
-            for (JsonPair kv : *cfg)
-                params[kv.key()] = kv.value();
-        }
-        if (clear_fault)
-            params["clear_fault"] = true;
-        char payload[1400] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0)
-            return false;
-        return web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                         (const uint8_t *)payload, len);
+        (void)web;
+        (void)node_id;
+        (void)cfg;
+        (void)clear_fault;
+        return false;
     }
 
 void AvrHandler::fillDefaults_(String &page) {
@@ -668,23 +563,6 @@ String AvrHandler::buildStateIndicators_(const AvrController::State &st) {
         return out;
     }
 
-String AvrHandler::buildStateIndicators_(const StackCache::StackAvrCache *st) {
-        if (!st)
-            return buildStateIndicatorsUnknown_();
-        String fault = st->fault;
-        fault.trim();
-        fault.toLowerCase();
-        const bool has_fault = fault.length() > 0 && fault != "none";
-        String out;
-        out.reserve(256);
-        out += "<div class=\"state-indicators\">";
-        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateMain, st->main_ok, false);
-        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateReserve, st->reserve_ok, false);
-        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateFault, has_fault, true);
-        out += "</div>";
-        return out;
-    }
-
 String AvrHandler::buildStateText_(const AvrController::State &st) {
         String out;
         out.reserve(192);
@@ -704,29 +582,5 @@ String AvrHandler::buildStateText_(const AvrController::State &st) {
         out += boolTxt_(st.relay_main_on);
         out += " relay_reserve:";
         out += boolTxt_(st.relay_reserve_on);
-        return out;
-    }
-
-String AvrHandler::buildStateText_(const StackCache::StackAvrCache *st) {
-        if (!st)
-            return String("n/a");
-        String out;
-        out.reserve(192);
-        out += WebUiRu::Avr::kActive;
-        out += st->active_source;
-        out += WebUiRu::Avr::kTarget;
-        out += st->target_source;
-        out += WebUiRu::Avr::kFault;
-        out += st->fault;
-        out += WebUiRu::Avr::kSwitching;
-        out += boolTxt_(st->transfer);
-        out += " main_ok:";
-        out += boolTxt_(st->main_ok);
-        out += " reserve_ok:";
-        out += boolTxt_(st->reserve_ok);
-        out += " relay_main:";
-        out += boolTxt_(st->relay_main_on);
-        out += " relay_reserve:";
-        out += boolTxt_(st->relay_reserve_on);
         return out;
     }

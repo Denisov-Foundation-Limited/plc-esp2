@@ -11,6 +11,7 @@
 
 #include "core/network/web/web_interface_controllers_ops.hpp"
 
+#include "core/network/network.hpp"
 #include "core/network/web/web_interface.hpp"
 
 #define _allowed_exts _web._allowed_exts
@@ -37,8 +38,6 @@
 #define _ow _web._ow
 #define _plc _web._plc
 #define _session_user_idx _web._session_user_idx
-#define _stack_cache _web._stack_cache
-#define _stack_master _web._stack_master
 #define _stack_status _web._stack_status
 #define _upload _web._upload
 #define _upload_error _web._upload_error
@@ -180,96 +179,14 @@ String WebInterfaceControllersOps::listExtendersHtml_()
 
 String WebInterfaceControllersOps::listStackPortsHtml_(uint32_t node_id) const
 {
-    const auto *cache = _stack_cache ? _stack_cache->portsCache(node_id) : nullptr;
-    if (!cache)
-        return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
-    if (cache->pending)
-        return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>pending</strong></td></tr>";
-    if (!cache->has_data)
-        return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>no data</strong></td></tr>";
-    String items;
-    items.reserve(cache->item_count * 120 + 128);
-    for (size_t i = 0; i < cache->item_count; ++i)
-    {
-        const auto &it = cache->items[i];
-        items += "<tr><td class=\"right\"><strong>";
-        items += String((unsigned)it.id);
-        items += "</strong></td><td><strong>";
-        if (it.backend[0])
-            appendHtmlEscaped_(items, it.backend);
-        else
-            items += "n/a";
-        items += "</strong></td><td><strong>";
-        if (it.loc[0])
-            appendHtmlEscaped_(items, it.loc);
-        else
-            items += "n/a";
-        items += "</strong></td><td><strong>";
-        if (it.type[0])
-            appendHtmlEscaped_(items, it.type);
-        else
-            items += "n/a";
-        items += "</strong></td><td><strong>";
-        items += it.ctrl ? "yes" : "no";
-        items += "</strong></td><td class=\"right\"><strong>";
-        if (it.is_extender)
-            items += String((int)it.dev);
-        else
-            items += "--";
-        items += "</strong></td><td class=\"right\"><strong>";
-        if (it.pin >= 0)
-            items += String((int)it.pin);
-        else
-            items += "--";
-        items += "</strong></td><td><strong>n/a";
-        items += "</strong></td><td><strong>";
-        if (it.hw[0])
-            appendHtmlEscaped_(items, it.hw);
-        else
-            items += "n/a";
-        items += "</strong></td></tr>";
-    }
-    if (items.length() == 0)
-        items = "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>No ports</strong></td></tr>";
-    return items;
+    (void)node_id;
+    return "<tr><td colspan=\"9\" style=\"color:#94a3b8\"><strong>not migrated</strong></td></tr>";
 }
 
 String WebInterfaceControllersOps::listStackExtendersHtml_(uint32_t node_id) const
 {
-    const auto *cache = _stack_cache ? _stack_cache->extendersCache(node_id) : nullptr;
-    if (!cache)
-        return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
-    if (cache->pending)
-        return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>pending</strong></td></tr>";
-    if (!cache->has_data)
-        return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>no data</strong></td></tr>";
-    String items;
-    items.reserve(cache->item_count * 64 + 96);
-    for (size_t i = 0; i < cache->item_count; ++i)
-    {
-        const auto &it = cache->items[i];
-        if (!it.present)
-            continue;
-        items += "<tr><td class=\"right\"><strong>";
-        items += String((unsigned)it.id);
-        items += "</strong></td><td class=\"right\"><strong>";
-        items += String((unsigned)it.bus);
-        items += "</strong></td><td><strong>";
-        if (it.addr[0])
-            appendHtmlEscaped_(items, it.addr);
-        else
-            items += "n/a";
-        items += "</strong></td><td><strong>";
-        if (it.type[0])
-            appendHtmlEscaped_(items, it.type);
-        else
-            items += "n/a";
-        items += "</strong></td></tr>";
-    }
-    if (items.length() == 0)
-        items = String("<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>") +
-                WebUiRu::WebCore::kExtendersAbsent + "</strong></td></tr>";
-    return items;
+    (void)node_id;
+    return "<tr><td colspan=\"4\" style=\"color:#94a3b8\"><strong>not migrated</strong></td></tr>";
 }
 
 String WebInterfaceControllersOps::listI2cHtml_()
@@ -308,29 +225,8 @@ String WebInterfaceControllersOps::listI2cHtml_()
 
 String WebInterfaceControllersOps::listStackI2cHtml_(uint32_t node_id) const
 {
-    const auto *cache = _stack_cache ? _stack_cache->i2cCache(node_id) : nullptr;
-    if (!cache)
-        return "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
-    if (cache->pending)
-        return "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>pending</strong></td></tr>";
-    if (!cache->has_data)
-        return "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>no data</strong></td></tr>";
-    String items;
-    items.reserve(cache->item_count * 32 + 64);
-    for (size_t i = 0; i < cache->item_count; ++i)
-    {
-        const auto &it = cache->items[i];
-        char addr_buf[8] = {};
-        snprintf(addr_buf, sizeof(addr_buf), "0x%02X", (unsigned)it.addr);
-        items += "<tr><td class=\"right\"><strong>";
-        items += String((unsigned)it.bus);
-        items += "</strong></td><td><strong>";
-        items += addr_buf;
-        items += "</strong></td></tr>";
-    }
-    if (items.length() == 0)
-        items = "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>none</strong></td></tr>";
-    return items;
+    (void)node_id;
+    return "<tr><td colspan=\"2\" style=\"color:#94a3b8\"><strong>not migrated</strong></td></tr>";
 }
 
 String WebInterfaceControllersOps::stackNodesBlockHtml_() const
@@ -355,34 +251,38 @@ String WebInterfaceControllersOps::listStackNodesStatusHtml_() const
     html += "<tr><th>";
     html += WebUiRu::Controllers::kIpRtcCpu;
     html += "</th></tr>";
-    if (!_stack_master)
+    if (!_web._network)
         return WebUiRu::Controllers::kText3;
-    const size_t count = _stack_master->nodeCount();
+    const size_t count = _web._network->stackOnlineDeviceCount();
     if (count == 0)
         return WebUiRu::Controllers::kText4;
     for (size_t i = 0; i < count; ++i)
     {
-        const uint32_t id = _stack_master->nodeIdAt(i);
-        const auto *cache = _stack_cache ? _stack_cache->statusCache(id) : nullptr;
-        const bool has_rtc = cache && cache->has_rtc && cache->last_rtc_ok;
-        const bool has_plc = cache && cache->has_plc && cache->last_plc_ok;
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!_web._network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+            continue;
+        StackUnitSnapshot::State snapshot{};
+        const bool has_snapshot = _web._network->stackIndexState(device.node_id, snapshot) && snapshot.updated_ms != 0;
         html += "<tr><td><strong>";
-        html += _stack_master->nodeNameAt(i);
+        if (device.name[0])
+            appendHtmlEscaped_(html, device.name);
+        else
+            html += stackNodeIdHex_(device.node_id);
         html += "</strong></td><td><strong>";
-        html += _stack_master->nodeIpAt(i);
+        appendHtmlEscaped_(html, device.ip);
         html += "</strong></td><td><strong>";
-        html += has_rtc ? safeHtmlValue_(cache->rtc_date, "n/a") : "n/a";
+        html += has_snapshot ? safeHtmlValue_(snapshot.rtc_date, "n/a") : "n/a";
         html += "</strong></td><td><strong>";
-        html += has_rtc ? safeHtmlValue_(cache->rtc_time, "n/a") : "n/a";
+        html += has_snapshot ? safeHtmlValue_(snapshot.rtc_time, "n/a") : "n/a";
         html += "</strong></td><td><strong>";
-        html += has_rtc ? formatTemp_(cache->rtc_temp) : "n/a";
+        html += has_snapshot ? formatTemp_(snapshot.rtc_temp) : "n/a";
         html += "</strong></td><td><strong>";
-        html += has_plc ? formatTemp_(cache->board_temp) : "n/a";
+        html += has_snapshot ? formatTemp_(snapshot.board_temp) : "n/a";
         html += "</strong></td><td><strong>";
         html += "n/a";
         html += "</strong></td><td class=\"center\"><strong>";
-        if (has_plc)
-            html += fanStatusIcon_(cache->fan_on);
+        if (has_snapshot)
+            html += fanStatusIcon_(snapshot.fan_on);
         else
             html += "n/a";
         html += "</strong></td></tr>";
@@ -392,28 +292,31 @@ String WebInterfaceControllersOps::listStackNodesStatusHtml_() const
 
 String WebInterfaceControllersOps::listStackNodesHtml_() const
 {
-    if (!_stack_master)
+    if (!_web._network)
         return WebUiRu::Controllers::kText3;
-    const size_t count = _stack_master->nodeCount();
+    const size_t count = _web._network->stackOnlineDeviceCount();
     if (count == 0)
         return WebUiRu::Controllers::kText4;
     String items;
     items.reserve(1024);
     for (size_t i = 0; i < count; ++i)
     {
-        const uint32_t id = _stack_master->nodeIdAt(i);
-        const String name = _stack_master->nodeNameAt(i);
-        const String ip = _stack_master->nodeIpAt(i);
+        StackDeviceRegistry::DeviceInfo device;
+        if (!_web._network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+            continue;
         items += "<tr data-node=\"";
-        items += String((unsigned long)id);
+        items += String((unsigned long)device.node_id);
         items += "\"><td><strong>";
-        appendHtmlEscaped_(items, name);
+        if (device.name[0])
+            appendHtmlEscaped_(items, device.name);
+        else
+            items += "-";
         items += "</strong></td><td><strong>";
-        items += stackNodeIdHex_(id);
+        items += stackNodeIdHex_(device.node_id);
         items += "</strong></td><td><strong>";
-        appendHtmlEscaped_(items, ip);
+        appendHtmlEscaped_(items, device.ip);
         items += "</strong></td><td><strong>";
-        items += _stack_master->nodeIsControllerAt(i) ? WebUiRu::Controllers::kText5 : WebUiRu::Controllers::kText6;
+        items += (device.caps & kStackCapController) ? WebUiRu::Controllers::kText5 : WebUiRu::Controllers::kText6;
         items += "</strong></td></tr>";
     }
     return items;
@@ -441,225 +344,37 @@ String WebInterfaceControllersOps::globalUsedPortsJson_(PortIO::PinType type) co
     return out;
 }
 
-bool WebInterfaceControllersOps::stackPortTypeMatch_(const StackCache::StackPortItem &it, PortIO::PinType type) const
-{
-        const bool has_pin_type = (it.pin_type != 0xFFu);
-        if (has_pin_type && ((uint8_t)type == it.pin_type))
-            return true;
-
-        String t = it.type;
-        t.toLowerCase();
-        switch (type)
-        {
-        case PortIO::PinType::Relay:
-            return t == "relay" || t == "output" || t == "out" || t == "rly";
-        case PortIO::PinType::DInput:
-            return t == "dinput" || t == "din" || t == "input" || t == "button" || t == "btn" || t == "switch";
-        case PortIO::PinType::Sensor:
-            return t == "sensor";
-        case PortIO::PinType::Button:
-            return t == "button" || t == "btn" || t == "dinput" || t == "din" || t == "input" || t == "switch";
-        case PortIO::PinType::Led:
-            return t == "led";
-        case PortIO::PinType::System:
-            return t == "system";
-        case PortIO::PinType::Buzzer:
-            return t == "buzzer";
-        case PortIO::PinType::Fan:
-            return t == "fan";
-        default:
-            break;
-        }
-        return false;
-    }
-
-
 
     String WebInterfaceControllersOps::stackPortOptionsJson_(uint32_t node_id, PortIO::PinType type) const
 {
-        String out;
-        out.reserve(256);
-        out += "[";
-        const auto *cache = _stack_cache ? _stack_cache->portsCache(node_id) : nullptr;
-        if (!cache || !cache->has_data || !cache->items)
-            return "[]";
-
-        const bool pending_indexed = (cache->pending && cache->parts_received > 0 && cache->parts_expected > 0);
-        bool first = true;
-        size_t matched = 0;
-        const size_t scan_limit = pending_indexed ? (size_t)PortIO::PORT_COUNT : cache->item_count;
-        for (size_t i = 0; i < scan_limit; ++i)
-        {
-            if (pending_indexed && !cache->present[i])
-                continue;
-            const auto &it = cache->items[i];
-            if (!stackPortTypeMatch_(it, type))
-                continue;
-            ++matched;
-            if (!first)
-                out += ",";
-            out += "{\"v\":";
-            out += String((unsigned)it.id);
-            out += ",\"l\":\"";
-            if (it.alias[0])
-                appendJsonEscaped_(out, it.alias);
-            else
-            {
-                out += "#";
-                out += String((unsigned)it.id);
-                out += " ";
-                if (it.type[0])
-                    appendJsonEscaped_(out, it.type);
-                else
-                    out += "Port";
-                if (it.loc[0])
-                {
-                    out += " @";
-                    appendJsonEscaped_(out, it.loc);
-                }
-                if (it.pin >= 0)
-                {
-                    out += " GPIO";
-                    out += String((int)it.pin);
-                }
-            }
-            out += "\"}";
-            first = false;
-        }
-        // Fallback: old/incompatible slave may send unknown type/ptype values.
-        // Keep dropdown usable by exposing all controllable ports.
-        if (matched == 0)
-        {
-            for (size_t i = 0; i < scan_limit; ++i)
-            {
-                if (pending_indexed && !cache->present[i])
-                    continue;
-                const auto &it = cache->items[i];
-                if (!it.ctrl)
-                    continue;
-                if (!first)
-                    out += ",";
-                out += "{\"v\":";
-                out += String((unsigned)it.id);
-                out += ",\"l\":\"";
-                if (it.alias[0])
-                {
-                    appendJsonEscaped_(out, it.alias);
-                }
-                else
-                {
-                    out += "#";
-                    out += String((unsigned)it.id);
-                    if (it.type[0])
-                    {
-                        out += " ";
-                        appendJsonEscaped_(out, it.type);
-                    }
-                    if (it.loc[0])
-                    {
-                        out += " @";
-                        appendJsonEscaped_(out, it.loc);
-                    }
-                    if (it.pin >= 0)
-                    {
-                        out += " GPIO";
-                        out += String((int)it.pin);
-                    }
-                }
-                out += "\"}";
-                first = false;
-            }
-        }
-        out += "]";
-        return out;
+        (void)node_id;
+        (void)type;
+        return "[]";
     }
 
 
 
     String WebInterfaceControllersOps::stackUsedPortsJson_(uint32_t node_id, PortIO::PinType type) const
 {
-        String out;
-        out.reserve(128);
-        out += "[";
-        const auto *cache = _stack_cache ? _stack_cache->portsCache(node_id) : nullptr;
-        if (!cache || !cache->has_data || !cache->items)
-            return "[]";
-
-        const bool pending_indexed = (cache->pending && cache->parts_received > 0 && cache->parts_expected > 0);
-        const size_t scan_limit = pending_indexed ? (size_t)PortIO::PORT_COUNT : cache->item_count;
-        bool first = true;
-        for (size_t i = 0; i < scan_limit; ++i)
-        {
-            if (pending_indexed && !cache->present[i])
-                continue;
-            const auto &it = cache->items[i];
-            if (!stackPortTypeMatch_(it, type))
-                continue;
-            if (!it.used)
-                continue;
-            if (!first)
-                out += ",";
-            out += String((unsigned)it.id);
-            first = false;
-        }
-        out += "]";
-        return out;
+        (void)node_id;
+        (void)type;
+        return "[]";
     }
 
 
 
     String WebInterfaceControllersOps::stackMeteoDs18OptionsJson_(uint32_t node_id) const
 {
-        String out;
-        out.reserve(256);
-        out += "[";
-        const auto *cache = _stack_cache ? _stack_cache->tempSensorsCache(node_id) : nullptr;
-        if (!cache || !cache->has_data || !cache->items)
-            return "[]";
-        bool first = true;
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &it = cache->items[i];
-            if (!it.addr[0])
-                continue;
-            if (!first)
-                out += ",";
-            out += "{\"v\":\"";
-            appendJsonEscaped_(out, it.addr);
-            out += "\",\"l\":\"";
-            appendJsonEscaped_(out, it.addr);
-            out += "\"}";
-            first = false;
-        }
-        out += "]";
-        return out;
+        (void)node_id;
+        return "[]";
     }
 
 
 
     String WebInterfaceControllersOps::stackMeteoDs18UsedJson_(uint32_t node_id) const
 {
-        String out;
-        out.reserve(128);
-        out += "[";
-        const auto *cache = _stack_cache ? _stack_cache->tempSensorsCache(node_id) : nullptr;
-        if (!cache || !cache->has_data || !cache->items)
-            return "[]";
-        bool first = true;
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &it = cache->items[i];
-            if (!it.used || !it.addr[0])
-                continue;
-            if (!first)
-                out += ",";
-            out += "\"";
-            appendJsonEscaped_(out, it.addr);
-            out += "\"";
-            first = false;
-        }
-        out += "]";
-        return out;
+        (void)node_id;
+        return "[]";
     }
 
 
@@ -705,35 +420,8 @@ bool WebInterfaceControllersOps::stackPortTypeMatch_(const StackCache::StackPort
 
     String WebInterfaceControllersOps::listStackOwHtml_(uint32_t node_id) const
 {
-        const auto *cache = _stack_cache ? _stack_cache->owCache(node_id) : nullptr;
-        if (!cache)
-            return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>n/a</strong></td></tr>";
-        if (cache->pending)
-            return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>pending</strong></td></tr>";
-        if (!cache->has_data)
-            return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>no data</strong></td></tr>";
-        String items;
-        items.reserve(cache->item_count * 48 + 64);
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &it = cache->items[i];
-            items += "<tr><td class=\"right\"><strong>";
-            items += String((unsigned)it.bus);
-            items += "</strong></td><td><strong>";
-            if (it.addr[0])
-                appendHtmlEscaped_(items, it.addr);
-            else
-                items += "n/a";
-            items += "</strong></td><td><strong>";
-            if (it.type[0])
-                appendHtmlEscaped_(items, it.type);
-            else
-                items += "n/a";
-            items += "</strong></td></tr>";
-        }
-        if (items.length() == 0)
-            items = "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>none</strong></td></tr>";
-        return items;
+        (void)node_id;
+        return "<tr><td colspan=\"3\" style=\"color:#94a3b8\"><strong>not migrated</strong></td></tr>";
     }
 
 
@@ -824,12 +512,6 @@ bool WebInterfaceControllersOps::stackPortTypeMatch_(const StackCache::StackPort
             if (!requireWebAdmin_(request, &set_cookie))
                 return;
             _ota_set_cookie = set_cookie;
-#if !defined(ESP32)
-            _ota_ok = false;
-            _ota_error = "OTA not supported";
-            _ota_in_progress = false;
-            return;
-#else
             if (_ota_in_progress)
                 Update.abort();
             _ota_in_progress = true;
@@ -851,9 +533,7 @@ bool WebInterfaceControllersOps::stackPortTypeMatch_(const StackCache::StackPort
                 _ota_error = Update.errorString();
                 _ota_in_progress = false;
             }
-#endif
         }
-#if defined(ESP32)
         if (!_ota_ok)
             return;
         _ota_size += len;
@@ -882,7 +562,6 @@ bool WebInterfaceControllersOps::stackPortTypeMatch_(const StackCache::StackPort
             }
             _ota_in_progress = false;
         }
-#endif
     }
 
 
@@ -907,13 +586,11 @@ sendRedirect_(request, "/status", _upload_set_cookie);
             _last_status = "Firmware updated. Rebooting...";
 sendRedirect_(request, "/status", _ota_set_cookie);
         _ota_set_cookie = false;
-#if defined(ESP32)
         if (_ota_ok)
         {
             delay(500);
             ESP.restart();
         }
-#endif
     }
 
 
@@ -1040,81 +717,67 @@ sendRedirect_(request, "/", set_cookie);
         if (!_configs_manager)
         {
             _stack_status = "Config manager missing";
-            sendRedirect_(request, "/", set_cookie);
+            sendRedirect_(request, "/stack", set_cookie);
             return;
         }
 
-        bool changed = false;
-        if (request->hasParam("role", true))
-        {
-            String role = request->getParam("role", true)->value();
-            role.trim();
-            role.toLowerCase();
-            const auto new_role = (role == "slave") ? ConfigsManagerIface::StackRole::Slave
-                                                    : ConfigsManagerIface::StackRole::Master;
-            if (new_role != _configs_manager->stackRole())
-            {
-                _configs_manager->setStackRole(new_role);
-                changed = true;
-            }
-        }
+        const String role_value = request->hasParam("role", true) ? request->getParam("role", true)->value() : "master";
+        String role = role_value;
+        role.trim();
+        role.toLowerCase();
+        _configs_manager->setStackRole(role == "slave" ? ConfigsManagerIface::StackRole::Slave
+                                                        : ConfigsManagerIface::StackRole::Master);
 
-        String host = request->hasParam("master_host", true)
-                          ? request->getParam("master_host", true)->value()
-                          : String("");
+        String host = request->hasParam("master_host", true) ? request->getParam("master_host", true)->value() : "";
         host.trim();
-        if (host != _configs_manager->stackMasterHost())
-        {
-            _configs_manager->setStackMasterHost(host);
-            changed = true;
-        }
+        _configs_manager->setStackMasterHost(host);
 
-        const bool fallback_enabled = request->hasParam("fallback_enabled", true);
-        if (fallback_enabled != _configs_manager->stackFallbackEnabled())
-        {
-            _configs_manager->setStackFallbackEnabled(fallback_enabled);
-            changed = true;
-        }
+        String policy_value =
+            request->hasParam("exchange_policy", true) ? request->getParam("exchange_policy", true)->value() : "auto";
+        policy_value.trim();
+        policy_value.toLowerCase();
+        ConfigsManagerIface::StackExchangePolicy policy = ConfigsManagerIface::StackExchangePolicy::Auto;
+        if (policy_value == "direct")
+            policy = ConfigsManagerIface::StackExchangePolicy::Direct;
+        else if (policy_value == "poll")
+            policy = ConfigsManagerIface::StackExchangePolicy::Poll;
+        _configs_manager->setStackExchangePolicy(policy);
 
-        String fallback_host = request->hasParam("fallback_host", true)
-                                   ? request->getParam("fallback_host", true)->value()
-                                   : String("");
+        String transport_value =
+            request->hasParam("transport", true) ? request->getParam("transport", true)->value() : "websocket";
+        transport_value.trim();
+        transport_value.toLowerCase();
+        _configs_manager->setStackTransport(transport_value == "rs485" ? ConfigsManagerIface::StackTransportKind::Rs485
+                                                                       : ConfigsManagerIface::StackTransportKind::WebSocket);
+
+        String payload_value =
+            request->hasParam("payload_mode", true) ? request->getParam("payload_mode", true)->value() : "auto";
+        payload_value.trim();
+        payload_value.toLowerCase();
+        ConfigsManagerIface::StackPayloadMode payload_mode = ConfigsManagerIface::StackPayloadMode::Auto;
+        if (payload_value == "json")
+            payload_mode = ConfigsManagerIface::StackPayloadMode::Json;
+        else if (payload_value == "binary")
+            payload_mode = ConfigsManagerIface::StackPayloadMode::Binary;
+        _configs_manager->setStackPayloadMode(payload_mode);
+
+        _configs_manager->setStackFallbackEnabled(request->hasParam("fallback_enabled", true));
+
+        String fallback_host =
+            request->hasParam("fallback_host", true) ? request->getParam("fallback_host", true)->value() : "";
         fallback_host.trim();
-        if (fallback_host != _configs_manager->stackFallbackHost())
-        {
-            _configs_manager->setStackFallbackHost(fallback_host);
-            changed = true;
-        }
+        _configs_manager->setStackFallbackHost(fallback_host);
 
-        const bool slave_controller = request->hasParam("slave_controller", true);
-        if (slave_controller != _configs_manager->stackSlaveController())
-        {
-            _configs_manager->setStackSlaveController(slave_controller);
-            changed = true;
-        }
+        _configs_manager->setStackSlaveController(request->hasParam("slave_controller", true));
 
-        String api_key = request->hasParam("api_key", true)
-                             ? request->getParam("api_key", true)->value()
-                             : String("");
+        String api_key = request->hasParam("api_key", true) ? request->getParam("api_key", true)->value() : "";
         api_key.trim();
-        if (!WebInterface::isMaskedSecret_(api_key, _configs_manager->stackApiKey()) &&
-            api_key != _configs_manager->stackApiKey())
-        {
-            _configs_manager->setStackApiKey(api_key);
-            changed = true;
-        }
+        if (api_key == WebInterface::maskSecretValue_(_configs_manager->stackApiKey()))
+            api_key = _configs_manager->stackApiKey();
+        _configs_manager->setStackApiKey(api_key);
 
-        bool save_ok = true;
-        if (changed)
-            save_ok = saveWifiConfig_();
-
-        if (!changed)
-            _stack_status = "No changes";
-        else if (!save_ok)
-            _stack_status = "Save failed";
-        else
-            _stack_status = "Saved";
-
+        const bool saved = _configs_manager->save();
+        _stack_status = saved ? "Stack updated" : "Stack applied, save failed";
         sendRedirect_(request, "/stack", set_cookie);
     }
 
@@ -1127,25 +790,7 @@ sendRedirect_(request, "/", set_cookie);
             return;
         if (!requireWebAdmin_(request, &set_cookie))
             return;
-        if (!_configs_manager)
-        {
-            sendText_(request, 500, "text/plain", "Config manager missing", set_cookie);
-            return;
-        }
-        if (_configs_manager->stackRole() != ConfigsManagerIface::StackRole::Master)
-        {
-            sendText_(request, 403, "text/plain", "Stack role is slave", set_cookie);
-            return;
-        }
-        const String key = genApiKey_();
-        _configs_manager->setStackApiKey(key);
-        if (!_configs_manager->save())
-        {
-            sendText_(request, 500, "text/plain", "Save failed", set_cookie);
-            return;
-        }
-        _stack_status = "Saved";
-        sendText_(request, 200, "text/plain", key, set_cookie);
+        sendText_(request, 200, "text/plain", genApiKey_(), set_cookie);
     }
 
 
@@ -1199,13 +844,9 @@ sendRedirect_(request, "/", set_cookie);
             return;
         if (!requireWebAdmin_(request, &set_cookie))
             return;
-#if defined(ESP32)
         sendRedirect_(request, "/", set_cookie);
         delay(100);
         ESP.restart();
-#else
-        sendRedirect_(request, "/", set_cookie);
-#endif
     }
 
 
@@ -1496,11 +1137,15 @@ sendRedirect_(request, "/", set_cookie);
 {
         if (node_id == 0)
             return 0;
-        if (!_stack_master)
+        if (!_web._network)
             return UsersRegistry::kAclUnitCount;
-        for (size_t i = 0; i < _stack_master->nodeCount(); ++i)
+        const size_t count = _web._network->stackOnlineDeviceCount();
+        for (size_t i = 0; i < count; ++i)
         {
-            if (_stack_master->nodeIdAt(i) == node_id)
+            StackDeviceRegistry::DeviceInfo device{};
+            if (!_web._network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+                continue;
+            if (device.node_id == node_id)
             {
                 const size_t unit = i + 1u;
                 if (unit >= (size_t)UsersRegistry::kAclUnitCount)
@@ -1698,18 +1343,17 @@ String WebInterfaceControllersOps::navHtml_() const
             appendNavLink(nav, F("/manage"), F("Прошивка и файлы"));
             appendNavLink(nav, F("/ports"), F("Порты"));
             appendNavLink(nav, F("/buses"), F("Шины"));
-            appendNavLink(nav, F("/stack"), F("Стек"));
             appendNavLink(nav, F("/users"), F("Пользователи"));
             appendNavLink(nav, F("/display"), F("Дисплей"));
             appendNavLink(nav, F("/rules"), F("Правила"));
             appendNavLink(nav, F("/groups"), F("Группы"));
             appendNavLink(nav, F("/cloud"), F("Облако"));
+            appendNavLink(nav, F("/stack"), F("Стек"));
             appendNavLink(nav, F("/admin"), F("Система"));
             appendNavLink(nav, F("/logs"), F("Logs"));
         }
         nav += F("</div></div>");
         nav += F(R"HTML(
-<div id="global-stack-toast-wrap" style="position:fixed;left:16px;top:16px;display:flex;flex-direction:column;gap:8px;z-index:9999;pointer-events:none"></div>
 <script>
 (function(){
   const currentPath = window.location.pathname || '/';
@@ -1720,90 +1364,9 @@ String WebInterfaceControllersOps::navHtml_() const
       link.classList.add('fc-nav__active');
     }
   });
-  const wrap = document.getElementById('global-stack-toast-wrap');
-  if (!wrap) return;
-  const TOAST_SLAVE_CONNECTED_PREFIX = '%TOAST_SLAVE_CONNECTED_PREFIX%';
-  const TOAST_SLAVE_DISCONNECTED_PREFIX = '%TOAST_SLAVE_DISCONNECTED_PREFIX%';
-  const TOAST_SLAVE_SYNC_COMPLETE_PREFIX = '%TOAST_SLAVE_SYNC_COMPLETE_PREFIX%';
-  function makeToastEl(kind){
-    const el = document.createElement('div');
-    const ok = kind !== 'error';
-    const border = ok ? 'rgba(34,197,94,0.45)' : 'rgba(239,68,68,0.50)';
-    const bg = ok ? 'rgba(6,33,23,.94)' : 'rgba(46,12,12,.94)';
-    const color = ok ? '#d1fae5' : '#fee2e2';
-    el.style.cssText = 'min-width:220px;max-width:340px;padding:10px 12px;border-radius:10px;border:1px solid ' + border + ';background:' + bg + ';color:' + color + ';font-size:13px;box-shadow:0 8px 20px rgba(0,0,0,.35);opacity:0;transform:translateY(8px);transition:opacity .18s ease,transform .18s ease';
-    return { el, ok };
-  }
-  function showToast(msg, kind){
-    const { el } = makeToastEl(kind);
-    el.textContent = msg;
-    wrap.appendChild(el);
-    requestAnimationFrame(()=>{ el.style.opacity='1'; el.style.transform='translateY(0)'; });
-    setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(8px)'; setTimeout(()=>{ if(el.parentNode) el.parentNode.removeChild(el); },220); },3200);
-  }
-  function showToastName(prefix, name, kind){
-    const { el, ok } = makeToastEl(kind);
-    const pre = document.createElement('span');
-    pre.textContent = prefix;
-    const who = document.createElement('span');
-    who.textContent = name || '-';
-    who.style.fontWeight = '700';
-    who.style.color = ok ? '#86efac' : '#fecaca';
-    el.appendChild(pre);
-    el.appendChild(who);
-    wrap.appendChild(el);
-    requestAnimationFrame(()=>{ el.style.opacity='1'; el.style.transform='translateY(0)'; });
-    setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(8px)'; setTimeout(()=>{ if(el.parentNode) el.parentNode.removeChild(el); },220); },3200);
-  }
-  let known = null;
-  const syncShown = new Set();
-  async function poll(){
-    try{
-      const r = await fetch('/stack/online_snapshot', {cache:'no-store', credentials:'same-origin'});
-      if(!r.ok) return;
-      const data = await r.json();
-      const next = new Map();
-      if(Array.isArray(data)){
-        data.forEach((n)=>{
-          const id = String((n && n.id != null) ? n.id : '').trim();
-          if(!id) return;
-          const name = String((n && n.name) ? n.name : id);
-          const sync = !!(n && (n.sync === 1 || n.sync === true || n.sync === '1'));
-          next.set(id, { name, sync });
-        });
-      }
-      if (known === null){
-        next.forEach((cur,id)=>{
-          if(cur && cur.sync) syncShown.add(id);
-        });
-        known = next;
-        return;
-      }
-      next.forEach((cur,id)=>{
-        const prev = known.get(id);
-        if(!prev) showToastName(TOAST_SLAVE_CONNECTED_PREFIX, cur.name, 'success');
-        if(cur.sync && !syncShown.has(id)){
-          showToastName(TOAST_SLAVE_SYNC_COMPLETE_PREFIX, cur.name, 'success');
-          syncShown.add(id);
-        }
-      });
-      known.forEach((prev,id)=>{
-        if(!next.has(id)){
-          showToastName(TOAST_SLAVE_DISCONNECTED_PREFIX, prev.name, 'error');
-          syncShown.delete(id);
-        }
-      });
-      known = next;
-    }catch(e){}
-  }
-  poll();
-  setInterval(poll, 3000);
 })();
 </script>
 )HTML");
-        nav.replace("%TOAST_SLAVE_CONNECTED_PREFIX%", WebUiRu::Common::kToastSlaveConnectedPrefix);
-        nav.replace("%TOAST_SLAVE_DISCONNECTED_PREFIX%", WebUiRu::Common::kToastSlaveDisconnectedPrefix);
-        nav.replace("%TOAST_SLAVE_SYNC_COMPLETE_PREFIX%", WebUiRu::Common::kToastSlaveSyncCompletePrefix);
         return nav;
     }
 
@@ -1820,54 +1383,63 @@ String WebInterfaceControllersOps::navHtml_() const
 
     ConfigsManagerIface::StackRole WebInterfaceControllersOps::stackRole_() const
 {
-        if (_configs_manager)
-            return _configs_manager->stackRole();
-        return ConfigsManagerIface::StackRole::Master;
+        return _configs_manager ? _configs_manager->stackRole() : ConfigsManagerIface::StackRole::Master;
     }
 
 
 
     String WebInterfaceControllersOps::stackMasterHost_() const
 {
-        if (_configs_manager)
-            return _configs_manager->stackMasterHost();
-        return "";
+        return _configs_manager ? _configs_manager->stackMasterHost() : String();
+    }
+
+
+
+    ConfigsManagerIface::StackExchangePolicy WebInterfaceControllersOps::stackExchangePolicy_() const
+{
+        return _configs_manager ? _configs_manager->stackExchangePolicy() : ConfigsManagerIface::StackExchangePolicy::Auto;
+    }
+
+
+
+    ConfigsManagerIface::StackTransportKind WebInterfaceControllersOps::stackTransport_() const
+{
+        return _configs_manager ? _configs_manager->stackTransport() : ConfigsManagerIface::StackTransportKind::WebSocket;
+    }
+
+
+
+    ConfigsManagerIface::StackPayloadMode WebInterfaceControllersOps::stackPayloadMode_() const
+{
+        return _configs_manager ? _configs_manager->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Auto;
     }
 
 
 
     bool WebInterfaceControllersOps::stackFallbackEnabled_() const
 {
-        if (_configs_manager)
-            return _configs_manager->stackFallbackEnabled();
-        return false;
+        return _configs_manager ? _configs_manager->stackFallbackEnabled() : false;
     }
 
 
 
     String WebInterfaceControllersOps::stackFallbackHost_() const
 {
-        if (_configs_manager)
-            return _configs_manager->stackFallbackHost();
-        return "";
+        return _configs_manager ? _configs_manager->stackFallbackHost() : String();
     }
 
 
 
     bool WebInterfaceControllersOps::stackSlaveController_() const
 {
-        if (_configs_manager)
-            return _configs_manager->stackSlaveController();
-        return true;
+        return _configs_manager ? _configs_manager->stackSlaveController() : true;
     }
 
 
 
     String WebInterfaceControllersOps::stackApiKey_() const
 {
-        if (_configs_manager)
-            return _configs_manager->stackApiKey();
-        return "";
+        return _configs_manager ? _configs_manager->stackApiKey() : String();
     }
 
 
@@ -1963,11 +1535,7 @@ String WebInterfaceControllersOps::navHtml_() const
 
     uint32_t WebInterfaceControllersOps::cloudDeviceId_() const
 {
-#if defined(ESP32)
         return (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFFu);
-#else
-        return 0;
-#endif
     }
 
 
@@ -2440,7 +2008,6 @@ bool WebInterfaceControllersOps::parseThermoFloat_(const String &input, float &o
 #undef _upload_ok
 #undef _upload_in_progress
 #undef _upload
-#undef _stack_master
 #undef _session_user_idx
 #undef _ow
 #undef _ota_set_cookie
@@ -2489,8 +2056,6 @@ bool WebInterfaceControllersOps::parseThermoFloat_(const String &input, float &o
 #undef _upload_error
 #undef _upload
 #undef _stack_status
-#undef _stack_master
-#undef _stack_cache
 #undef _session_user_idx
 #undef _plc
 #undef _ow

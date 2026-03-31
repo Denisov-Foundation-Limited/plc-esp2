@@ -61,10 +61,8 @@ private:
     static bool busPins_(uint8_t bus_num, uint8_t &out_sda_gpio, uint8_t &out_scl_gpio);
     static void recoverBus_(uint8_t sda_gpio, uint8_t scl_gpio);
     static void recoverBus_(uint8_t bus_num);
-#if defined(ESP32)
     void ensureBusMutex_(uint8_t bus_num);
     void *currentTaskToken_() const;
     void *_bus_owner_[3] = {nullptr, nullptr, nullptr};
     void *_bus_mtx_[3] = {nullptr, nullptr, nullptr};
-#endif
 };

@@ -33,10 +33,33 @@ public:
         Slave
     };
 
+    enum class StackExchangePolicy : uint8_t
+    {
+        Auto = 0,
+        Direct,
+        Poll
+    };
+
+    enum class StackTransportKind : uint8_t
+    {
+        WebSocket = 0,
+        Rs485
+    };
+
+    enum class StackPayloadMode : uint8_t
+    {
+        Auto = 0,
+        Json,
+        Binary
+    };
+
     virtual ~ConfigsManagerIface() = default;
     virtual StackRole stackRole() const = 0;
     virtual String stackMasterHost() const = 0;
     virtual String stackApiKey() const = 0;
+    virtual StackExchangePolicy stackExchangePolicy() const = 0;
+    virtual StackTransportKind stackTransport() const = 0;
+    virtual StackPayloadMode stackPayloadMode() const = 0;
     virtual bool stackFallbackEnabled() const = 0;
     virtual String stackFallbackHost() const = 0;
     virtual bool stackSlaveController() const = 0;
@@ -62,6 +85,9 @@ public:
     virtual void setStackRole(StackRole role) = 0;
     virtual void setStackMasterHost(const String &host) = 0;
     virtual void setStackApiKey(const String &key) = 0;
+    virtual void setStackExchangePolicy(StackExchangePolicy policy) = 0;
+    virtual void setStackTransport(StackTransportKind kind) = 0;
+    virtual void setStackPayloadMode(StackPayloadMode mode) = 0;
     virtual void setStackFallbackEnabled(bool enabled) = 0;
     virtual void setStackFallbackHost(const String &host) = 0;
     virtual void setStackSlaveController(bool controller) = 0;

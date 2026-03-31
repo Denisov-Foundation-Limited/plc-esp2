@@ -14,10 +14,8 @@
 #include <new>
 #include <stdlib.h>
 
-#if defined(ESP32)
 #include "esp32-hal-psram.h"
 #include "esp_heap_caps.h"
-#endif
 
 RulesController::RulesController()
 {
@@ -293,10 +291,8 @@ void RulesController::initStorage_()
 {
     const size_t bytes = sizeof(Rule) * kRuleCount;
     void *mem = nullptr;
-#if defined(ESP32)
     if (psramFound())
         mem = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#endif
     if (!mem)
         mem = malloc(bytes);
     if (!mem)

@@ -145,7 +145,7 @@ void SepticHandler::handleSeptic(WebInterface &web, AsyncWebServerRequest *reque
                      web.webSessionIsAdmin_() ? (String("<button type=\"submit\">") + WebUiRu::kSave + "</button>") : String(""));
         if (!web._controllers)
         {
-            page.replace("%SEPTIC_ITEMS%", "<div class=\"tile empty\">Loading...</div>");
+            page.replace("%SEPTIC_ITEMS%", WebUiRu::Septic::kText9);
             page.replace("%SEPTIC_DINPUT_JSON%", "[]");
             page.replace("%SEPTIC_RELAY_JSON%", "[]");
             page.replace("%SEPTIC_DINPUT_USED_JSON%", "[]");
@@ -164,7 +164,12 @@ void SepticHandler::handleSeptic(WebInterface &web, AsyncWebServerRequest *reque
             web.sendHtml_(request, page, set_cookie);
             return;
         }
-        page.replace("%SEPTIC_ITEMS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackSepticHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                   groups_available ? SIZE_MAX : page_size)
+                                        : web.listSepticHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                                              groups_available ? SIZE_MAX : page_size);
+        page.replace("%SEPTIC_ITEMS%", initial_html);
         page.replace("%SEPTIC_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
                                                         : web.septicPortOptionsJson_(PortIO::PinType::DInput));
         page.replace("%SEPTIC_RELAY_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay)
@@ -285,173 +290,7 @@ void SepticHandler::handleSepticSave(WebInterface &web, AsyncWebServerRequest *r
                     back += String((unsigned)pv);
                 }
             }
-            if (!web._stack_master || !web._stack_cache)
-            {
-                web._septic_status = "Stack unavailable";
-                web.sendRedirect_(request, back, set_cookie);
-                return;
-            }
-            auto *cache = web._stack_cache->septicCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
-            {
-                web._stack_cache->requestSeptic(node_id);
-                web._septic_status = "No data";
-                web.sendRedirect_(request, back, set_cookie);
-                return;
-            }
-            auto *cache_mut = web._stack_cache->septicCache(node_id);
-            bool changed = false;
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                const auto &it = cache->items[i];
-                const String idx = String((unsigned)it.id);
-                const String prefix = String("sep") + idx + "_";
-                const String en_key = prefix + "en";
-                const String name_key = prefix + "name";
-                const String warn_key = prefix + "warn";
-                const String alarm_key = prefix + "alarm";
-                const String relay_warn_key = prefix + "relay_warn";
-                const String relay_alarm_key = prefix + "relay_alarm";
-                const String monitor_key = prefix + "mon";
-                const String group_key = prefix + "group";
-                const bool has_any = request->hasParam(en_key, true) || request->hasParam(name_key, true) ||
-                                     request->hasParam(warn_key, true) || request->hasParam(alarm_key, true) ||
-                                     request->hasParam(relay_warn_key, true) || request->hasParam(relay_alarm_key, true) ||
-                                     request->hasParam(group_key, true) || request->hasParam(monitor_key, true);
-                if (!has_any)
-                    continue;
-                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Septic, it.id, node_id))
-                {
-                    web._septic_status = String("ACL deny item: ") + idx;
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-
-                const bool can_admin = web.webSessionIsAdmin_();
-                const bool enabled = request->hasParam(en_key, true);
-                const String monitor_val = web.paramValue_(request, monitor_key);
-                const bool monitoring = (monitor_val == "on" || monitor_val == "1" || monitor_val == "true");
-                String name = web.paramValue_(request, name_key);
-                name.trim();
-                const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
-                String warn = web.paramValue_(request, warn_key);
-                String alarm = web.paramValue_(request, alarm_key);
-                String relay_warn = web.paramValue_(request, relay_warn_key);
-                String relay_alarm = web.paramValue_(request, relay_alarm_key);
-                uint8_t warn_port = SepticController::kInvalidPort;
-                uint8_t alarm_port = SepticController::kInvalidPort;
-                uint8_t relay_warn_port = SepticController::kInvalidPort;
-                uint8_t relay_alarm_port = SepticController::kInvalidPort;
-                if (!web.parseSocketPort_(warn, warn_port) || !web.parseSocketPort_(alarm, alarm_port) ||
-                    !web.parseSocketPort_(relay_warn, relay_warn_port) || !web.parseSocketPort_(relay_alarm, relay_alarm_port))
-                {
-                    web._septic_status = String("Invalid port for septic ") + idx;
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-
-                bool item_changed = false;
-                StaticJsonDocument<384> doc;
-                doc["cmd_id"] = 0;
-                doc["feature"] = (uint8_t)StackFeature::Septic;
-                doc["action"] = "set";
-                JsonObject p = doc["params"].to<JsonObject>();
-                p["id"] = (unsigned)it.id;
-
-                if (it.monitor != monitoring)
-                {
-                    p["monitor"] = monitoring;
-                    item_changed = true;
-                }
-                if (can_admin)
-                {
-                    if (it.enabled != enabled)
-                    {
-                        p["enabled"] = enabled;
-                        item_changed = true;
-                    }
-                    if (name != String(it.name))
-                    {
-                        p["name"] = name;
-                        item_changed = true;
-                    }
-                    if (it.group_id != group_id)
-                    {
-                        p["group_id"] = group_id;
-                        item_changed = true;
-                    }
-                    if (it.warning_port != warn_port)
-                    {
-                        p["warning_port"] = (warn_port == SepticController::kInvalidPort) ? -1 : (int)warn_port;
-                        item_changed = true;
-                    }
-                    if (it.alarm_port != alarm_port)
-                    {
-                        p["alarm_port"] = (alarm_port == SepticController::kInvalidPort) ? -1 : (int)alarm_port;
-                        item_changed = true;
-                    }
-                    if (it.relay_warning != relay_warn_port)
-                    {
-                        p["relay_warning"] = (relay_warn_port == SepticController::kInvalidPort) ? -1 : (int)relay_warn_port;
-                        item_changed = true;
-                    }
-                    if (it.relay_alarm != relay_alarm_port)
-                    {
-                        p["relay_alarm"] = (relay_alarm_port == SepticController::kInvalidPort) ? -1 : (int)relay_alarm_port;
-                        item_changed = true;
-                    }
-                }
-                if (!item_changed)
-                    continue;
-
-                char payload[384] = {};
-                const size_t len = serializeJson(doc, payload, sizeof(payload));
-                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                           reinterpret_cast<const uint8_t *>(payload), len))
-                {
-                    web._septic_status = String("Send failed item: ") + idx;
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-                changed = true;
-
-                if (cache_mut && cache_mut->items)
-                {
-                    for (size_t k = 0; k < cache_mut->item_count; ++k)
-                    {
-                        auto &dst = cache_mut->items[k];
-                        if (dst.id != it.id)
-                            continue;
-                        dst.monitor = monitoring;
-                        if (can_admin)
-                        {
-                            dst.enabled = enabled;
-                            dst.group_id = group_id;
-                            dst.warning_port = warn_port;
-                            dst.alarm_port = alarm_port;
-                            dst.relay_warning = relay_warn_port;
-                            dst.relay_alarm = relay_alarm_port;
-                            size_t n = 0;
-                            for (; n + 1 < sizeof(dst.name) && n < name.length(); ++n)
-                                dst.name[n] = name[n];
-                            dst.name[n] = '\0';
-                        }
-                        cache_mut->updated_ms = millis();
-                        cache_mut->has_data = true;
-                        break;
-                    }
-                }
-            }
-            if (changed)
-            {
-                web._stack_cache->requestSeptic(node_id);
-                web.refreshStackPorts_(node_id);
-                web._septic_status = "Updated";
-            }
-            else
-            {
-                web._septic_status = "Saved";
-            }
+            web._septic_status = "not migrated";
             web.sendRedirect_(request, back, set_cookie);
             return;
         }
@@ -606,93 +445,8 @@ void SepticHandler::handleSepticToggle(WebInterface &web, AsyncWebServerRequest 
 
         if (web.isStackSepticView_(node_id))
         {
-            if (!web._stack_master)
-            {
-                web.sendText_(request, 400, "text/plain", "Stack master missing", set_cookie);
-                return;
-            }
-            auto *cache = web._stack_cache ? web._stack_cache->septicCache(node_id) : nullptr;
-            StackCache::StackSepticItem *item = nullptr;
-            if (cache && cache->items)
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    if (cache->items[i].id == id)
-                    {
-                        item = &cache->items[i];
-                        break;
-                    }
-                }
-            }
-
-            if (action == "state")
-            {
-                if (!cache || !cache->has_data)
-                {
-                    if (web._stack_cache)
-                        web._stack_cache->requestSeptic(node_id);
-                    web.sendText_(request, 200, "text/plain", "pending", set_cookie);
-                    return;
-                }
-                const bool stale = (cache->pending || (uint32_t)(millis() - cache->updated_ms) > 1500u);
-                if (stale)
-                {
-                    if (web._stack_cache)
-                        web._stack_cache->requestSeptic(node_id);
-                    web.sendText_(request, 200, "text/plain", "pending", set_cookie);
-                    return;
-                }
-                if (!item)
-                {
-                    web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
-                    return;
-                }
-                send_state(item->monitor, item->warning, item->alarm, false, false);
-                return;
-            }
-
-            StaticJsonDocument<192> doc;
-            doc["cmd_id"] = 0;
-            doc["feature"] = (uint8_t)StackFeature::Septic;
-            doc["action"] = "set";
-            doc["params"]["id"] = id;
-            if (action == "on")
-                doc["params"]["monitor"] = true;
-            else if (action == "off")
-                doc["params"]["monitor"] = false;
-            else if (item)
-                doc["params"]["monitor"] = !item->monitor;
-            else
-                doc["params"]["monitor"] = true;
-            char payload[192] = {};
-            const size_t len = serializeJson(doc, payload, sizeof(payload));
-            if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                       reinterpret_cast<const uint8_t *>(payload), len))
-            {
-                web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
-                return;
-            }
-            if (cache && item)
-            {
-                bool new_monitor = item->monitor;
-                if (action == "on")
-                    new_monitor = true;
-                else if (action == "off")
-                    new_monitor = false;
-                else
-                    new_monitor = !item->monitor;
-                item->monitor = new_monitor;
-                cache->updated_ms = millis();
-                cache->has_data = true;
-            }
-            if (web._stack_cache)
-                web._stack_cache->requestSeptic(node_id);
-            if (item)
-            {
-                send_state(item->monitor, item->warning, item->alarm, false, false);
-                return;
-            }
-            web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+            (void)action;
+            web.sendText_(request, 200, "text/plain", "not migrated", set_cookie);
             return;
         }
 

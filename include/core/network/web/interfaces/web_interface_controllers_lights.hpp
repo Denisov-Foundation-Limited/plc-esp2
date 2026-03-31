@@ -29,6 +29,7 @@ public:
     static bool isStackLightsView_(const WebInterface &web, uint32_t node_id);
 
     static void handleStackLightsToggle_(WebInterface &web, AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie);
+    static void handleStackLightsEnable_(WebInterface &web, AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie);
 
     static bool requestStackLights_(WebInterface &web, uint32_t node_id);
 

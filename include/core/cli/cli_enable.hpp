@@ -48,7 +48,6 @@ public:
             _c._io->println(F("    show time       - RTC date/time"));
             _c._io->println(F("    show i2c        - I2C device list"));
             _c._io->println(F("    show ow         - OneWire device list"));
-            _c._io->println(F("    show stack      - stack role settings"));
             _c._io->println(F("    show cloud      - Cloud settings"));
             _c._io->println(F("    show config     - configuration file contents"));
             _c._io->println(F("    show port <id>  - port details"));
@@ -97,20 +96,11 @@ public:
             _c._io->println(F("    ftest           - start functional test task"));
             _c._io->println(F("    copy tftp://<ip>/firmware.bin firmware - update firmware"));
             _c._io->println(F("    copy http://<ip>/firmware.bin firmware - update firmware"));
-            _c._io->println(F("    stack nodes     - list stack nodes"));
-            _c._io->println(F("    stack trace     - show stack trace state"));
-            _c._io->println(F("    stack trace on  - enable stack trace"));
-            _c._io->println(F("    stack trace off - disable stack trace"));
-            _c._io->println(F("    stack send <id> <get|set> <json> - send stack command"));
-            _c._io->print(F("    stack socket <unit> <on|off|toggle> <id>"));
-            printSocketIdRangeInline_();
-            _c._io->println(F(" - control socket"));
-            _c._io->print(F("    stack thermo <unit> <on|off|toggle> <id>"));
-            printThermoIdRangeInline_();
-            _c._io->println(F(" - control thermo device"));
-            _c._io->println(F("    stack septic <unit> <status|get> - control septic"));
-            _c._io->println(F("    stack security <unit> <arm|disarm|status|clear> - control security"));
-            _c._io->println(F("    stack ring <unit> <on|off> - control ring"));
+            _c._io->println(F("    photo get <url>    - download JPEG to PSRAM in background"));
+            _c._io->println(F("    photo upload <url> - upload current JPEG buffer"));
+            _c._io->println(F("    photo cloud        - upload current JPEG to plc-cloud"));
+            _c._io->println(F("    photo status       - show camera task and buffer state"));
+            _c._io->println(F("    photo clear        - free downloaded photo buffer"));
             _c._io->println(F("    security status - show security status"));
             _c._io->println(F("    security arm    - arm security"));
             _c._io->println(F("    security disarm - disarm security"));
@@ -204,12 +194,6 @@ public:
             _c.printPrompt_();
             return;
         }
-        if (startsWith_(cmd, "stack "))
-        {
-            _c.cmdStack_(cmd);
-            _c.printPrompt_();
-            return;
-        }
         if (eq_(cmd, "ring on") || eq_(cmd, "ring off"))
         {
             const bool on = eq_(cmd, "ring on");
@@ -281,6 +265,12 @@ public:
         if (startsWith_(cmd, "copy "))
         {
             _c.cmdCopy_(cmd);
+            _c.printPrompt_();
+            return;
+        }
+        if (startsWith_(cmd, "photo "))
+        {
+            _c.cmdPhoto_(cmd);
             _c.printPrompt_();
             return;
         }

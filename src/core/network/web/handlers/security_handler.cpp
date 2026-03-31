@@ -34,31 +34,33 @@ void SecurityHandler::handleSecurityState(WebInterface &web, AsyncWebServerReque
         const bool stack_view = web.isStackSecurityView_(node_id);
         if (stack_view)
         {
-            auto *cache = web._stack_cache ? web._stack_cache->securityCache(node_id) : nullptr;
-            if (!cache || !cache->has_data)
+            StackUnitSnapshot::State snapshot{};
+            if (web.network() && web.network()->stackIndexState(node_id, snapshot))
             {
-                if (web._stack_cache)
-                    web._stack_cache->requestSecurity(node_id);
-                doc["pending"] = true;
+                doc["enabled"] = snapshot.security_enabled;
+                doc["armed"] = snapshot.security_armed;
+                doc["alarm"] = snapshot.security_alarm;
+                if (web._controllers)
+                {
+                    SecurityController &sec = web._controllers->security();
+                    const size_t count = sec.remoteDetectCount(node_id);
+                    for (size_t i = 0; i < count; ++i)
+                    {
+                        SecurityController::RemoteDetect remote{};
+                        if (!sec.remoteDetectAt(i, remote, node_id))
+                            continue;
+                        JsonObject o = items.add<JsonObject>();
+                        o["id"] = remote.sensor_id;
+                        o["enabled"] = true;
+                        o["detect"] = remote.active;
+                    }
+                }
+                doc["pending"] = false;
             }
             else
             {
-                const bool stale = (cache->pending || (uint32_t)(millis() - cache->updated_ms) > 1500u);
-                if (stale && web._stack_cache)
-                    web._stack_cache->requestSecurity(node_id);
-                doc["enabled"] = cache->enabled;
-                doc["armed"] = cache->armed;
-                doc["alarm"] = cache->alarm;
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!web.webAclCanViewItem_(UsersRegistry::AclController::Security, it.id, node_id))
-                        continue;
-                    JsonObject o = items.add<JsonObject>();
-                    o["id"] = it.id;
-                    o["enabled"] = it.enabled;
-                    o["detect"] = it.detect;
-                }
+                web.requestStackSecurity_(node_id);
+                doc["pending"] = true;
             }
         }
         else
@@ -84,7 +86,7 @@ void SecurityHandler::handleSecurityState(WebInterface &web, AsyncWebServerReque
                 JsonObject o = items.add<JsonObject>();
                 o["id"] = cfg->id;
                 o["enabled"] = cfg->enabled;
-                o["detect"] = st->is_detect;
+                o["detect"] = st->active;
             }
         }
         String body;
@@ -103,11 +105,6 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
         const uint8_t page_size = 8u;
         const bool stack_view = web.isStackSecurityView_(node_id);
         const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
-        if (stack_view)
-        {
-            web.requestStackSecurity_(node_id);
-            web.requestStackPorts_(node_id);
-        }
         const String page_str = web.paramValueAny_(request, "page");
         uint8_t page_idx = 0;
         if (page_str.length())
@@ -171,7 +168,7 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
             page.replace("%SECURITY_ALARM_LABEL%", WebUiRu::ControllersPage::kUnavailable);
             page.replace("%SECURITY_GSM_LABEL%", web.gsmStatusLabel_());
             page.replace("%SECURITY_SIREN%", "");
-            page.replace("%SECURITY_SENSORS%", "<div class=\"tile empty\">Loading...</div>");
+            page.replace("%SECURITY_SENSORS%", WebUiRu::Security::kText9);
             page.replace("%SECURITY_SENSORS_PAGE%", "1");
             page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)(max_pages ? max_pages : 1)));
             page.replace("%SECURITY_SENSOR_JSON%", "[]");
@@ -189,13 +186,27 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
 
         SecurityController &sec = web._controllers->security();
         auto sec_guard = sec.lockGuard();
-        const auto *stack_cache = (stack_view && web._stack_cache) ? web._stack_cache->securityCache(node_id) : nullptr;
-        const bool sec_enabled = stack_view ? (stack_cache && stack_cache->has_data && stack_cache->enabled) : sec.controllerEnabled();
-        const bool sec_armed = stack_view ? (stack_cache && stack_cache->has_data && stack_cache->armed) : sec.armed();
-        const bool sec_alarm = stack_view ? (stack_cache && stack_cache->has_data && stack_cache->alarm) : sec.alarmOn();
-        const uint8_t sec_siren = stack_view
-                                      ? ((stack_cache && stack_cache->has_data) ? stack_cache->siren : SecurityController::kInvalidPort)
-                                      : sec.sirenPort();
+        bool sec_enabled = sec.controllerEnabled();
+        bool sec_armed = sec.armed();
+        bool sec_alarm = sec.alarmOn();
+        if (stack_view && web.network())
+        {
+            StackUnitSnapshot::State snapshot{};
+            if (web.network()->stackIndexState(node_id, snapshot))
+            {
+                sec_enabled = snapshot.security_enabled;
+                sec_armed = snapshot.security_armed;
+                sec_alarm = snapshot.security_alarm;
+            }
+            else
+            {
+                web.requestStackSecurity_(node_id);
+                sec_enabled = false;
+                sec_armed = false;
+                sec_alarm = false;
+            }
+        }
+        const uint8_t sec_siren = stack_view ? SecurityController::kInvalidPort : sec.sirenPort();
         page.replace("%SECURITY_ENABLED_CHECKED%", sec_enabled ? "checked" : "");
             page.replace("%SECURITY_ENABLED_LABEL%", sec_enabled ? WebUiRu::ControllersPage::kEnabledNeut
                                                                  : WebUiRu::ControllersPage::kDisabledNeut);
@@ -207,7 +218,11 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
             page.replace("%SECURITY_SIREN%", String((unsigned)sec_siren));
         else
             page.replace("%SECURITY_SIREN%", "");
-        page.replace("%SECURITY_SENSORS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackSecuritySensorsTiles_(node_id, (size_t)page_idx * page_size, page_size)
+                                        : web.listSecuritySensorsTiles_(groups_available ? 0 : start,
+                                                                        groups_available ? SecurityController::kSensorCount : end);
+        page.replace("%SECURITY_SENSORS%", initial_html);
         page.replace("%SECURITY_SENSORS_PAGE%", String((unsigned)(page_idx + 1)));
         page.replace("%SECURITY_SENSORS_PAGES%", String((unsigned)max_pages));
         page.replace("%SECURITY_SENSOR_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
@@ -222,7 +237,7 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
         page.replace("%SECURITY_SENSORS_TITLE%", stack_view ? web.stackSecurityTitle_(node_id) : String(WebUiRu::Security::kText));
         page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", (!groups_available && max_pages > 1) ? "" : "style=\"display:none\"");
         page.replace("%SECURITY_SAVE_BTN%",
-                     (!web.webSessionIsAdmin_()) ? String("") : (String("<button class=\"primary\" name=\"action\" value=\"save\">") + WebUiRu::kSave + "</button>"));
+                     (stack_view || !web.webSessionIsAdmin_()) ? String("") : (String("<button class=\"primary\" name=\"action\" value=\"save\">") + WebUiRu::kSave + "</button>"));
         page.replace("%SECURITY_DEVICE_SELECT%",
                      web.composeTopFiltersHtml_(web.securityDeviceSelectHtml_(node_id, stack_view),
                                                 groups_available ? web.groupFilterHtml_("security-group-filter", stack_view ? node_id : 0u) : String("")));
@@ -282,6 +297,20 @@ void SecurityHandler::handleSecuritySave(WebInterface &web, AsyncWebServerReques
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackSecurityView_(node_id))
         {
+            StaticJsonDocument<128> doc;
+            const String action = web.paramValue_(request, "action");
+            if (action == "arm")
+                doc["armed"] = true;
+            else if (action == "disarm")
+                doc["armed"] = false;
+            else if (action == "clear")
+                doc["clear"] = true;
+            const bool sent = web.network() &&
+                              web.network()->stackRoute().sendEvent(node_id, "security", "set", &doc,
+                                                                    StackRouteAdapter::Mode::Json);
+            if (sent && web.network())
+                web.network()->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
+                                                        StackRouteAdapter::Mode::Json, true);
             String back = String("/security?unit=stack&node=") + String((unsigned long)node_id);
             const String page_str = web.paramValueAny_(request, "page");
             if (page_str.length())
@@ -293,222 +322,7 @@ void SecurityHandler::handleSecuritySave(WebInterface &web, AsyncWebServerReques
                     back += String((unsigned)pv);
                 }
             }
-            if (!web._stack_master || !web._stack_cache)
-            {
-                web._security_status = "Stack unavailable";
-                web.sendRedirect_(request, back, set_cookie);
-                return;
-            }
-            auto *cache = web._stack_cache->securityCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
-            {
-                web.requestStackSecurity_(node_id);
-                web._security_status = "No data";
-                web.sendRedirect_(request, back, set_cookie);
-                return;
-            }
-            const String action = web.paramValue_(request, "action");
-            if (action == "arm" || action == "disarm" || action == "clear")
-            {
-                StaticJsonDocument<192> doc;
-                doc["cmd_id"] = 0;
-                doc["feature"] = (uint8_t)StackFeature::Security;
-                doc["action"] = "set";
-                JsonObject p = doc["params"].to<JsonObject>();
-                if (action == "arm")
-                    p["armed"] = true;
-                else if (action == "disarm")
-                    p["armed"] = false;
-                else if (action == "clear")
-                    p["clear"] = true;
-                char payload[192] = {};
-                const size_t len = serializeJson(doc, payload, sizeof(payload));
-                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                           reinterpret_cast<const uint8_t *>(payload), len))
-                {
-                    web._security_status = "Send failed";
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-                web._stack_cache->requestSecurity(node_id);
-                web._security_status = "Updated";
-                web.sendRedirect_(request, back, set_cookie);
-                return;
-            }
-            const bool enabled = request->hasParam("security_enabled", true);
-            String siren_str = web.paramValue_(request, "security_siren");
-            siren_str.trim();
-            int siren_port_i = -1;
-            bool has_siren = false;
-            if (siren_str.length() > 0)
-            {
-                if (siren_str == "none" || siren_str == "-" || siren_str == "")
-                {
-                    has_siren = true;
-                    siren_port_i = -1;
-                }
-                else
-                {
-                    const int v = siren_str.toInt();
-                    if (v < 0 || v > 255)
-                    {
-                        web._security_status = "Invalid siren port";
-                        web.sendRedirect_(request, back, set_cookie);
-                        return;
-                    }
-                    has_siren = true;
-                    siren_port_i = v;
-                }
-            }
-            bool changed = false;
-            auto *cache_mut = web._stack_cache->securityCache(node_id);
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                const auto &it = cache->items[i];
-                const String idx = String((unsigned)it.id);
-                const String prefix = String("sec") + idx + "_";
-                const String en_key = prefix + "en";
-                const String name_key = prefix + "name";
-                const String type_key = prefix + "type";
-                const String port_key = prefix + "port";
-                const String silent_key = prefix + "silent";
-                const String group_key = prefix + "group";
-                const bool has_any = request->hasParam(en_key, true) ||
-                                     request->hasParam(name_key, true) ||
-                                     request->hasParam(type_key, true) ||
-                                     request->hasParam(port_key, true) ||
-                                     request->hasParam(group_key, true) ||
-                                     request->hasParam(silent_key, true);
-                if (!has_any)
-                    continue;
-                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Security, it.id, node_id))
-                {
-                    web._security_status = String("ACL deny item: ") + idx;
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-
-                const bool item_enabled = request->hasParam(en_key, true);
-                const bool item_silent = request->hasParam(silent_key, true);
-                const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
-                String name = web.paramValue_(request, name_key);
-                name.trim();
-                SecurityController::SensorType type = SecurityController::SensorType::Pir;
-                if (!web.parseSecurityType_(web.paramValue_(request, type_key), type))
-                {
-                    web._security_status = String("Invalid type for sensor ") + idx;
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-                uint8_t port = SecurityController::kInvalidPort;
-                if (!web.parseSocketPort_(web.paramValue_(request, port_key), port))
-                {
-                    web._security_status = String("Invalid port for sensor ") + idx;
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-
-                const String new_type = (type == SecurityController::SensorType::Reed) ? "reed" : "pir";
-                bool item_changed = false;
-                StaticJsonDocument<384> doc;
-                doc["cmd_id"] = 0;
-                doc["feature"] = (uint8_t)StackFeature::Security;
-                doc["action"] = "set";
-                JsonObject p = doc["params"].to<JsonObject>();
-                if ((i == 0) && cache_mut)
-                {
-                    if (cache_mut->enabled != enabled)
-                    {
-                        p["enabled"] = enabled;
-                        item_changed = true;
-                    }
-                    if (has_siren && ((cache_mut->siren == SecurityController::kInvalidPort ? -1 : (int)cache_mut->siren) != siren_port_i))
-                    {
-                        p["siren"] = siren_port_i;
-                        item_changed = true;
-                    }
-                }
-                JsonArray arr = p["items"].to<JsonArray>();
-                JsonObject o = arr.add<JsonObject>();
-                o["id"] = (unsigned)it.id;
-                if (it.enabled != item_enabled)
-                {
-                    o["enabled"] = item_enabled;
-                    item_changed = true;
-                }
-                if (String(it.name) != name)
-                {
-                    o["name"] = name;
-                    item_changed = true;
-                }
-                if (String(it.type) != new_type)
-                {
-                    o["type"] = new_type;
-                    item_changed = true;
-                }
-                if (it.port != port)
-                {
-                    o["port"] = (port == SecurityController::kInvalidPort) ? -1 : (int)port;
-                    item_changed = true;
-                }
-                if (it.silent != item_silent)
-                {
-                    o["silent"] = item_silent;
-                    item_changed = true;
-                }
-                if (it.group_id != group_id)
-                {
-                    o["group_id"] = group_id;
-                    item_changed = true;
-                }
-                if (!item_changed)
-                    continue;
-
-                char payload[384] = {};
-                const size_t len = serializeJson(doc, payload, sizeof(payload));
-                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                           reinterpret_cast<const uint8_t *>(payload), len))
-                {
-                    web._security_status = String("Send failed sensor: ") + idx;
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-                changed = true;
-                if (cache_mut && cache_mut->items)
-                {
-                    if (p["enabled"].is<bool>())
-                        cache_mut->enabled = enabled;
-                    if (p["siren"].is<int>())
-                        cache_mut->siren = (siren_port_i < 0) ? SecurityController::kInvalidPort : (uint8_t)siren_port_i;
-                    for (size_t k = 0; k < cache_mut->item_count; ++k)
-                    {
-                        auto &dst = cache_mut->items[k];
-                        if (dst.id != it.id)
-                            continue;
-                        dst.enabled = item_enabled;
-                        dst.group_id = group_id;
-                        dst.silent = item_silent;
-                        dst.port = port;
-                        strncpy(dst.type, new_type.c_str(), sizeof(dst.type) - 1);
-                        dst.type[sizeof(dst.type) - 1] = '\0';
-                        strncpy(dst.name, name.c_str(), sizeof(dst.name) - 1);
-                        dst.name[sizeof(dst.name) - 1] = '\0';
-                        cache_mut->updated_ms = millis();
-                        cache_mut->has_data = true;
-                        break;
-                    }
-                }
-            }
-            if (changed)
-            {
-                web._stack_cache->requestSecurity(node_id);
-                web.refreshStackPorts_(node_id);
-                web._security_status = "Updated";
-            }
-            else
-            {
-                web._security_status = "Saved";
-            }
+            web._security_status = sent ? "Updated" : "Stack send failed";
             web.sendRedirect_(request, back, set_cookie);
             return;
         }

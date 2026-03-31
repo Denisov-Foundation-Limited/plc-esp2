@@ -92,7 +92,7 @@ private:
     TwoWire *_wire = nullptr;
     uint8_t _addr = 0x20;
     mutable Error _err = Error::Ok;
-
+ 
     bool _dirty_dir = false;
     bool _dirty_pull = false;
     bool _dirty_olat = false;

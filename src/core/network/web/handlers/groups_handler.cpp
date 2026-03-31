@@ -54,40 +54,7 @@ void GroupsHandler::handleGroups(WebInterface &web, AsyncWebServerRequest *reque
         rows.reserve(2048);
         if (stack_view)
         {
-            const auto *cache = web._stack_cache ? web._stack_cache->groupsCache(node_id) : nullptr;
-            if ((!cache || (!cache->has_data && !cache->pending && !cache->last_error.length())) && web._stack_cache)
-            {
-                web._stack_cache->requestGroups(node_id);
-                cache = web._stack_cache->groupsCache(node_id);
-            }
-            if (cache && cache->pending && cache->updated_ms &&
-                (uint32_t)(millis() - cache->updated_ms) > 4500u)
-            {
-                rows = String("<tr><td colspan=\"4\" class=\"muted\"><strong>") +
-                       WebUiRu::kErrorPrefix + "timeout" + "</strong></td></tr>";
-            }
-            else if (cache && !cache->pending && !cache->last_ok && cache->last_error.length())
-            {
-                rows = String("<tr><td colspan=\"4\" class=\"muted\"><strong>") +
-                       WebUiRu::kErrorPrefix + cache->last_error + "</strong></td></tr>";
-            }
-            else if (!cache || cache->pending || !cache->has_data)
-            {
-                rows = String("<tr><td colspan=\"4\" class=\"muted\"><strong>") +
-                       WebUiRu::GroupsPage::kWaitingSlave + "</strong></td></tr>";
-                page.replace("%GROUPS_AUTO_REFRESH%",
-                             "<meta http-equiv=\"refresh\" content=\"1\">"
-                             "<script>setTimeout(function(){ window.location.reload(); }, 1000);</script>");
-            }
-            else if (cache->item_count == 0)
-            {
-                rows = String("<tr><td colspan=\"4\" class=\"muted\"><strong>") +
-                       WebUiRu::GroupsPage::kEmptyList + "</strong></td></tr>";
-            }
-            else
-            {
-                appendRowsFromStackCache_(web, rows, cache);
-            }
+            rows = String("<tr><td colspan=\"4\" class=\"muted\"><strong>not migrated</strong></td></tr>");
         }
         else if (!web._configs_manager || web._configs_manager->groupCount() == 0)
         {
@@ -170,8 +137,10 @@ void GroupsHandler::handleGroupsSave(WebInterface &web, AsyncWebServerRequest *r
     }
 
 bool GroupsHandler::isStackGroupsView_(WebInterface &web, uint32_t node_id) {
-        return node_id != 0 && web._stack_master &&
-               web.stackRole_() == ConfigsManagerIface::StackRole::Master;
+        if (node_id == 0 || !web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackDeviceRegistry::DeviceInfo device{};
+        return web.network()->stackDeviceSnapshotByNodeId(node_id, device) && device.online;
     }
 
 String GroupsHandler::groupsPath_(uint32_t node_id, bool stack_view) {
@@ -228,77 +197,8 @@ void GroupsHandler::appendRowsFromStackCache_(WebInterface &web, String &rows, c
 
 void GroupsHandler::handleGroupsSaveStack_(WebInterface &web, AsyncWebServerRequest *request,
                                        uint32_t node_id, const String &back, bool set_cookie) {
-        if (!web._stack_master || !web._stack_cache)
-        {
-            web.sendRedirect_(request, back, set_cookie);
-            return;
-        }
-        const auto *cache = web._stack_cache->groupsCache(node_id);
-        if (!cache || !cache->has_data || !cache->items)
-        {
-            web._stack_cache->requestGroups(node_id);
-            web.sendRedirect_(request, back, set_cookie);
-            return;
-        }
-
-        String action = web.paramValue_(request, "action");
-        action.trim();
-        action.toLowerCase();
-
-        DynamicJsonDocument doc(2048);
-        doc["cmd_id"] = 0;
-        doc["feature"] = (uint8_t)StackFeature::Groups;
-        doc["action"] = "set";
-        JsonArray groups = doc["params"]["groups"].to<JsonArray>();
-
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &g = cache->items[i];
-            if (g.id == 0)
-                continue;
-            const String prefix = String("g") + String((unsigned)g.id) + "_";
-            if (action != "add" && request->hasParam(prefix + "delete", true))
-                continue;
-            String name = (action == "add") ? String(g.name) : web.paramValue_(request, prefix + "name");
-            name.trim();
-            if (!name.length())
-                continue;
-            const uint16_t sort = (uint16_t)((action == "add") ? g.sort : web.paramValue_(request, prefix + "sort").toInt());
-            JsonObject item = groups.add<JsonObject>();
-            item["id"] = (unsigned)g.id;
-            item["name"] = name;
-            item["sort"] = (unsigned)sort;
-        }
-        if (action == "add")
-        {
-            String name = web.paramValue_(request, "name");
-            name.trim();
-            if (name.length())
-            {
-                JsonObject item = groups.add<JsonObject>();
-                item["id"] = 0;
-                item["name"] = name;
-                item["sort"] = (unsigned)((uint16_t)web.paramValue_(request, "sort").toInt());
-            }
-        }
-
-        char payload[2048] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                   reinterpret_cast<const uint8_t *>(payload), len))
-        {
-            web.sendRedirect_(request, back, set_cookie);
-            return;
-        }
-        if (auto *cache_mut = web._stack_cache->groupsCache(node_id))
-        {
-            cache_mut->has_data = false;
-            cache_mut->pending = false;
-            cache_mut->pending_cmd_id = 0;
-            cache_mut->updated_ms = 0;
-            cache_mut->item_count = 0;
-            cache_mut->last_error = "";
-        }
-        web._stack_cache->requestGroups(node_id);
+        (void)request;
+        (void)node_id;
+        web._groups_status = "not migrated";
         web.sendRedirect_(request, back, set_cookie);
     }

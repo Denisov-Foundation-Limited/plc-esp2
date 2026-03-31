@@ -14,11 +14,9 @@
 #include <Wire.h>
 #include "boards/board_profile.hpp"
 #include "hal/gpio/portio.hpp"
-#if defined(ESP32)
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
-#endif
 
 #ifndef I2C_LOCK_TIMEOUT_MS
 #define I2C_LOCK_TIMEOUT_MS 50
@@ -45,7 +43,6 @@ bool I2CManager::beginAll()
             return false;
         }
 
-#if defined(ESP32)
         uint8_t sda_gpio = 0;
         uint8_t scl_gpio = 0;
         if (!i2cPinsFromPorts_(c.sda, c.scl, sda_gpio, scl_gpio))
@@ -55,10 +52,6 @@ bool I2CManager::beginAll()
         }
         w->begin(sda_gpio, scl_gpio, c.freq);
         w->setTimeOut(50);
-#else
-        w->begin();
-        w->setClock(c.freq);
-#endif
     }
     return true;
 }
@@ -94,7 +87,7 @@ bool I2CManager::scanDevices(uint8_t bus_num, bool present[127])
 
 bool I2CManager::scanDevicesLocked(uint8_t bus_num, bool present[127])
 {
-#if defined(ESP32) && I2C_LOCK_DEBUG
+#if I2C_LOCK_DEBUG
     if (!busLockHeldByCurrentTask(bus_num))
         Serial.printf("I2C unlocked access: op: scan bus: %u\n", (unsigned)bus_num);
 #endif
@@ -126,7 +119,7 @@ bool I2CManager::probeAddress(uint8_t bus_num, uint8_t addr)
 
 bool I2CManager::probeAddressLocked(uint8_t bus_num, uint8_t addr)
 {
-#if defined(ESP32) && I2C_LOCK_DEBUG
+#if I2C_LOCK_DEBUG
     if (!busLockHeldByCurrentTask(bus_num))
         Serial.printf("I2C unlocked access: op: probe bus: %u\n", (unsigned)bus_num);
 #endif
@@ -151,7 +144,6 @@ bool I2CManager::probeAddressLocked(uint8_t bus_num, uint8_t addr)
 
 bool I2CManager::lockBus(uint8_t bus_num, uint32_t timeout_ms)
 {
-#if defined(ESP32)
     const int8_t idx = busIdx_(bus_num);
     if (idx < 0)
     {
@@ -189,16 +181,10 @@ bool I2CManager::lockBus(uint8_t bus_num, uint32_t timeout_ms)
     }
 #endif
     return true;
-#else
-    (void)bus_num;
-    (void)timeout_ms;
-    return true;
-#endif
 }
 
 void I2CManager::unlockBus(uint8_t bus_num)
 {
-#if defined(ESP32)
     const int8_t idx = busIdx_(bus_num);
     if (idx < 0)
         return;
@@ -207,22 +193,14 @@ void I2CManager::unlockBus(uint8_t bus_num)
         return;
     _bus_owner_[idx] = nullptr;
     xSemaphoreGive(mtx);
-#else
-    (void)bus_num;
-#endif
 }
 
 bool I2CManager::busLockHeldByCurrentTask(uint8_t bus_num) const
 {
-#if defined(ESP32)
     const int8_t idx = busIdx_(bus_num);
     if (idx < 0)
         return false;
     return _bus_owner_[idx] == currentTaskToken_();
-#else
-    (void)bus_num;
-    return false;
-#endif
 }
 
 I2CManager::ScopedBusLock::ScopedBusLock(I2CManager &mgr, uint8_t bus_num, uint32_t timeout_ms)
@@ -267,7 +245,6 @@ bool I2CManager::busPins_(uint8_t bus_num, uint8_t &out_sda_gpio, uint8_t &out_s
 
 void I2CManager::recoverBus_(uint8_t sda_gpio, uint8_t scl_gpio)
 {
-#if defined(ESP32)
     pinMode(sda_gpio, INPUT_PULLUP);
     pinMode(scl_gpio, INPUT_PULLUP);
     delayMicroseconds(10);
@@ -291,10 +268,6 @@ void I2CManager::recoverBus_(uint8_t sda_gpio, uint8_t scl_gpio)
     delayMicroseconds(8);
     pinMode(sda_gpio, INPUT_PULLUP);
     delayMicroseconds(8);
-#else
-    (void)sda_gpio;
-    (void)scl_gpio;
-#endif
 }
 
 void I2CManager::recoverBus_(uint8_t bus_num)
@@ -312,13 +285,11 @@ TwoWire *I2CManager::wirePtr_(uint8_t bus_num)
     {
     case 0:
         return &Wire;
-#if defined(ESP32)
     case 1:
         return &Wire1;
 #if defined(Wire2)
     case 2:
         return &Wire2;
-#endif
 #endif
     default:
         return nullptr;
@@ -332,7 +303,6 @@ int8_t I2CManager::busIdx_(uint8_t bus_num)
     return -1;
 }
 
-#if defined(ESP32)
 void I2CManager::ensureBusMutex_(uint8_t bus_num)
 {
     const int8_t idx = busIdx_(bus_num);
@@ -346,4 +316,3 @@ void *I2CManager::currentTaskToken_() const
 {
     return (void *)xTaskGetCurrentTaskHandle();
 }
-#endif

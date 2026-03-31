@@ -17,21 +17,29 @@
 #include "core/network/web/web_interface_stack_routes.hpp"
 #include "core/network/web/web_interface_system_routes.hpp"
 #include "core/network/web/interfaces/web_interface_controllers_ring.hpp"
+#include "core/network/network.hpp"
+#include "esp32-hal-psram.h"
+#include "esp_heap_caps.h"
 
 void WebInterface::registerRoutes()
 {
     WebInterfaceSystemRoutes::registerPrimary(*this, _server);
-    WebInterfaceStackRoutes::registerRoutes(*this, _server);
     WebInterfaceSystemRoutes::registerSecondary(*this, _server);
     WebInterfaceDevicesRoutes::registerRoutes(*this, _server);
+    WebInterfaceStackRoutes::registerRoutes(*this, _server);
     WebInterfaceSystemRoutes::registerTail(*this, _server);
     WebInterfaceApiRoutes::registerRoutes(*this, _server);
     WebInterfaceSystemRoutes::registerDisplay(*this, _server);
     WebInterfaceApiRoutes::registerNotFound(*this, _server);
 }
 
+WebInterface::~WebInterface()
+{
+    releaseScratch_();
+}
+
     WebInterface::WebInterface(AsyncWebServer &server, CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
-                 RTC &rtc, Logger &logs,
+                 RTC &rtc, Logger &logs, Camera &camera,
                  Extender &ext,
                  I2CManager &i2c, OneWireManager &ow, Controllers &controllers, RulesController &rules)
         : _server(server),
@@ -41,6 +49,7 @@ void WebInterface::registerRoutes()
           _plc(&plc),
           _rtc(&rtc),
           _controllers(&controllers),
+          _camera(&camera),
           _rules(&rules),
           _ext(&ext),
           _i2c(&i2c),
@@ -55,6 +64,7 @@ void WebInterface::registerRoutes()
 
     bool WebInterface::begin(bool format_on_fail )
 {
+        ensureScratch_();
         return LittleFS.begin(format_on_fail, FsConfig::kBasePath, FsConfig::kMaxOpenFiles,
                               FsConfig::kPartitionLabel);
     }
@@ -87,24 +97,9 @@ void WebInterface::registerRoutes()
     void WebInterface::setGsmModem(GsmModem &modem)
 { _gsm = &modem; }
 
-
-    void WebInterface::setStackCache(StackCache &cache)
-{
-        _stack_cache = &cache;
-        if (_log)
-            _stack_cache->setLogger(_log);
-        if (_configs_manager)
-            _stack_cache->setConfigsManager(_configs_manager);
-        if (_stack_master)
-            _stack_cache->setStackMaster(_stack_master);
-    }
-
-
     void WebInterface::setConfigsManager(ConfigsManagerIface &mgr)
 {
         _configs_manager = &mgr;
-        if (_stack_cache)
-            _stack_cache->setConfigsManager(&mgr);
     }
 
 
@@ -112,42 +107,61 @@ void WebInterface::registerRoutes()
 { _users = &users; }
 
 
-    void WebInterface::setStackMaster(StackMaster &master)
-{
-        _stack_master = &master;
-        if (_stack_cache)
-            _stack_cache->setStackMaster(&master);
-        _stack_master->setFrameHandlerSecondary(&WebInterface::onStackFrame_, this);
-    }
-
-
-    void WebInterface::setStackSlave(StackSlaveHandler *slave)
-{ _stack_slave = slave; }
-
-
     void WebInterface::setCloudClient(CloudClient &client)
 { _cloud = &client; }
+
+
+    void WebInterface::setNetwork(Network &network)
+{ _network = &network; }
 
 
     void WebInterface::setRules(RulesController &rules)
 { _rules = &rules; }
 
 
+    Network *WebInterface::network() const
+{ return _network; }
 
-    StackCache &WebInterface::stackCache()
-{ return *_stack_cache; }
-
-
-    const StackCache &WebInterface::stackCache() const
-{ return *_stack_cache; }
-
-
-    void WebInterface::logStackCacheAllocations()
+WebInterface::ScratchBuffer *WebInterface::scratchBuffer_() const
 {
-        if (_stack_cache)
-            _stack_cache->logAllocations();
-    }
+    return ensureScratch_() ? _scratch : nullptr;
+}
 
+RtosRecursiveLock::Guard WebInterface::scratchLockGuard_(uint32_t timeout_ms) const
+{
+    return _scratch_lock.guard(timeout_ms);
+}
+
+bool WebInterface::ensureScratch_() const
+{
+    if (_scratch)
+        return true;
+    const auto guard = _scratch_lock.guard();
+    if (_scratch)
+        return true;
+    const size_t bytes = sizeof(ScratchBuffer);
+    void *mem = nullptr;
+    if (psramFound())
+        mem = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!mem)
+        mem = calloc(1, bytes);
+    if (!mem)
+        return false;
+    memset(mem, 0, bytes);
+    _scratch = static_cast<ScratchBuffer *>(mem);
+    return true;
+}
+
+void WebInterface::releaseScratch_()
+{
+    const auto guard = _scratch_lock.guard();
+    if (_scratch)
+    {
+        free(_scratch);
+        _scratch = nullptr;
+    }
+}
+ 
 
     void WebInterface::handleAdminSave_(AsyncWebServerRequest *request)
 {
@@ -483,11 +497,6 @@ uint32_t WebInterface::parseStackNodeIdParam_(AsyncWebServerRequest *request) co
     return _stack_ops.parseStackNodeIdParam_(request);
 }
 
-void WebInterface::handleStackFrame_(uint32_t node_id, const StackFrame &frame)
-{
-    _stack_ops.handleStackFrame_(node_id, frame);
-}
-
 bool WebInterface::requestStackPorts_(uint32_t node_id)
 {
     return _stack_ops.requestStackPorts_(node_id);
@@ -523,6 +532,11 @@ bool WebInterface::refreshStackTempSensors_(uint32_t node_id)
     return _stack_ops.refreshStackTempSensors_(node_id);
 }
 
+bool WebInterface::requestStackIndexState_(uint32_t node_id)
+{
+    return _stack_ops.requestStackIndexState_(node_id);
+}
+
 bool WebInterface::requestStackPlcStatus_(uint32_t node_id)
 {
     return _stack_ops.requestStackPlcStatus_(node_id);
@@ -556,11 +570,6 @@ bool WebInterface::sendStackRingCmd_(uint32_t node_id, bool set_state, bool stat
 bool WebInterface::sendStackRingCmdAll_(bool set_state, bool state)
 {
     return WebInterfaceControllersRingHelper::sendStackRingCmdAll_(*this, set_state, state);
-}
-
-void WebInterface::onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame)
-{
-    WebInterfaceControllersRingHelper::onStackFrame_(ctx, node_id, frame);
 }
 
     String WebInterface::listI2cHtml_()
@@ -603,13 +612,6 @@ void WebInterface::onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &
     return _controllers_ops.globalUsedPortsJson_(type);
 }
 
-bool WebInterface::stackPortTypeMatch_(const StackCache::StackPortItem &it, PortIO::PinType type) const
-{
-    return _controllers_ops.stackPortTypeMatch_(it, type);
-}
-
-
-
     String WebInterface::stackPortOptionsJson_(uint32_t node_id, PortIO::PinType type) const
 {
     return _controllers_ops.stackPortOptionsJson_(node_id, type);
@@ -626,14 +628,14 @@ bool WebInterface::stackPortTypeMatch_(const StackCache::StackPortItem &it, Port
 
     String WebInterface::stackMeteoDs18OptionsJson_(uint32_t node_id) const
 {
-    return _controllers_ops.stackMeteoDs18OptionsJson_(node_id);
+    return WebInterfaceControllersMeteoHelper::stackMeteoDs18OptionsJson_(*this, node_id);
 }
 
 
 
     String WebInterface::stackMeteoDs18UsedJson_(uint32_t node_id) const
 {
-    return _controllers_ops.stackMeteoDs18UsedJson_(node_id);
+    return WebInterfaceControllersMeteoHelper::stackMeteoDs18UsedJson_(*this, node_id);
 }
 
 
@@ -874,28 +876,14 @@ bool WebInterface::stackPortTypeMatch_(const StackCache::StackPortItem &it, Port
     bool WebInterface::hasGroups_(uint32_t node_id) const
 {
     if (node_id != 0)
-    {
-        const auto *cache = _stack_cache ? _stack_cache->groupsCache(node_id) : nullptr;
-        return cache && cache->has_data && cache->items && cache->item_count > 0;
-    }
+        return false;
     return _configs_manager && _configs_manager->groupCount() > 0;
 }
 
     uint8_t WebInterface::firstGroupId_(uint32_t node_id) const
 {
     if (node_id != 0)
-    {
-        const auto *cache = _stack_cache ? _stack_cache->groupsCache(node_id) : nullptr;
-        if (!cache || !cache->has_data || !cache->items)
-            return 0;
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &g = cache->items[i];
-            if (g.id != 0 && g.name[0] != '\0')
-                return g.id;
-        }
         return 0;
-    }
     if (!_configs_manager)
         return 0;
     for (size_t i = 0; i < _configs_manager->groupCount(); ++i)
@@ -931,28 +919,9 @@ bool WebInterface::stackPortTypeMatch_(const StackCache::StackPortItem &it, Port
         html += "</option>";
     }
     if (node_id != 0)
-    {
-        const auto *cache = _stack_cache ? _stack_cache->groupsCache(node_id) : nullptr;
-        if (!cache || !cache->has_data || !cache->items)
-            return html;
-        for (size_t i = 0; i < cache->item_count; ++i)
-        {
-            const auto &g = cache->items[i];
-            if (g.id == 0 || g.name[0] == '\0')
-                continue;
-            html += "<option value=\"";
-            html += String((unsigned)g.id);
-            html += "\"";
-            if (selected_group_id == g.id)
-                html += " selected";
-            html += ">";
-            appendHtmlEscaped_(html, g.name);
-            html += "</option>";
-        }
         if (!has_groups && disabled_if_empty && !include_none)
             html += String("<option value=\"0\" selected>") + WebUiRu::GroupsPage::kNoGroups + "</option>";
         return html;
-    }
     if (!_configs_manager)
         return html;
     for (size_t i = 0; i < _configs_manager->groupCount(); ++i)
@@ -1079,6 +1048,27 @@ String WebInterface::topFiltersBackHtml_() const
     String WebInterface::stackMasterHost_() const
 {
     return _controllers_ops.stackMasterHost_();
+}
+
+
+
+    ConfigsManagerIface::StackExchangePolicy WebInterface::stackExchangePolicy_() const
+{
+    return _controllers_ops.stackExchangePolicy_();
+}
+
+
+
+    ConfigsManagerIface::StackTransportKind WebInterface::stackTransport_() const
+{
+    return _controllers_ops.stackTransport_();
+}
+
+
+
+    ConfigsManagerIface::StackPayloadMode WebInterface::stackPayloadMode_() const
+{
+    return _controllers_ops.stackPayloadMode_();
 }
 
 
@@ -2028,12 +2018,13 @@ int32_t WebInterface::scaled10_(float value)
             hashAdd_(hash, stackRoleName_(stackRole_()));
             hashAdd_(hash, stackMasterHost_());
             hashAdd_(hash, stackApiKey_());
+            hashAdd_(hash, (uint32_t)stackExchangePolicy_());
+            hashAdd_(hash, (uint32_t)stackTransport_());
+            hashAdd_(hash, (uint32_t)stackPayloadMode_());
+            hashAdd_(hash, stackFallbackEnabled_() ? 1u : 0u);
+            hashAdd_(hash, stackFallbackHost_());
+            hashAdd_(hash, stackSlaveController_() ? 1u : 0u);
             hashAdd_(hash, listStackNodesHtml_());
-            if (stackRole_() == ConfigsManagerIface::StackRole::Slave && _stack_slave)
-            {
-                hashAdd_(hash, _stack_slave->nodeConnected() ? 1u : 0u);
-                hashAdd_(hash, _stack_slave->linkReadyAfterHello() ? 1u : 0u);
-            }
             return hash;
         }
 
@@ -2067,36 +2058,6 @@ int32_t WebInterface::scaled10_(float value)
                     hashAdd_(hash, st->last_read_ms);
                 }
             }
-            if (_stack_cache && _stack_master)
-            {
-                const size_t count = _stack_master->nodeCount();
-                for (size_t i = 0; i < count; ++i)
-                {
-                    const uint32_t node_id = _stack_master->nodeIdAt(i);
-                    const auto *cache = _stack_cache->meteoCache(node_id);
-                    if (!cache)
-                        continue;
-                    hashAdd_(hash, node_id);
-                    hashAdd_(hash, cache->has_data ? 1u : 0u);
-                    hashAdd_(hash, cache->pending ? 1u : 0u);
-                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
-                    hashAdd_(hash, cache->last_error);
-                    hashAdd_(hash, (uint32_t)cache->item_count);
-                    for (size_t j = 0; j < cache->item_count; ++j)
-                    {
-                        const auto &it = cache->items[j];
-                        hashAdd_(hash, (uint32_t)it.id);
-                        hashAdd_(hash, it.enabled ? 1u : 0u);
-                        hashAdd_(hash, it.ok ? 1u : 0u);
-                        hashAdd_(hash, it.has_temp ? 1u : 0u);
-                        hashAdd_(hash, it.has_hum ? 1u : 0u);
-                        if (it.has_temp)
-                            hashAdd_(hash, scaled10_(it.temp_c));
-                        if (it.has_hum)
-                            hashAdd_(hash, scaled10_(it.hum));
-                    }
-                }
-            }
             return hash;
         }
 
@@ -2126,41 +2087,6 @@ int32_t WebInterface::scaled10_(float value)
                     hashAdd_(hash, st->power_on ? 1u : 0u);
                     hashAdd_(hash, st->heat_on ? 1u : 0u);
                     hashAdd_(hash, st->cool_on ? 1u : 0u);
-                }
-            }
-            if (_stack_cache && _stack_master)
-            {
-                const size_t count = _stack_master->nodeCount();
-                for (size_t i = 0; i < count; ++i)
-                {
-                    const uint32_t node_id = _stack_master->nodeIdAt(i);
-                    const auto *cache = _stack_cache->thermoCache(node_id);
-                    if (!cache)
-                        continue;
-                    hashAdd_(hash, node_id);
-                    hashAdd_(hash, cache->has_data ? 1u : 0u);
-                    hashAdd_(hash, cache->pending ? 1u : 0u);
-                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
-                    hashAdd_(hash, cache->last_error);
-                    hashAdd_(hash, (uint32_t)cache->item_count);
-                    for (size_t j = 0; j < cache->item_count; ++j)
-                    {
-                        const auto &it = cache->items[j];
-                        hashAdd_(hash, (uint32_t)it.id);
-                        hashAdd_(hash, it.enabled ? 1u : 0u);
-                        hashAdd_(hash, it.power_on ? 1u : 0u);
-                        hashAdd_(hash, it.heat_on ? 1u : 0u);
-                        hashAdd_(hash, it.cool_on ? 1u : 0u);
-                        hashAdd_(hash, (uint32_t)it.sensor);
-                        hashAdd_(hash, it.sensor_node);
-                        hashAdd_(hash, scaled10_(it.target));
-                        hashAdd_(hash, scaled10_(it.hyst));
-                        hashAdd_(hash, (uint32_t)it.heat);
-                        hashAdd_(hash, (uint32_t)it.cool);
-                        hashAdd_(hash, (uint32_t)it.button);
-                        hashAdd_(hash, it.name);
-                        hashAdd_(hash, it.mode);
-                    }
                 }
             }
             return hash;
@@ -2197,44 +2123,6 @@ int32_t WebInterface::scaled10_(float value)
                     hashAdd_(hash, st->alarm_on ? 1u : 0u);
                 }
             }
-            if (_stack_cache && _stack_master)
-            {
-                const size_t count = _stack_master->nodeCount();
-                for (size_t i = 0; i < count; ++i)
-                {
-                    const uint32_t node_id = _stack_master->nodeIdAt(i);
-                    const auto *cache = _stack_cache->tanksCache(node_id);
-                    if (!cache)
-                        continue;
-                    hashAdd_(hash, node_id);
-                    hashAdd_(hash, cache->has_data ? 1u : 0u);
-                    hashAdd_(hash, cache->pending ? 1u : 0u);
-                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
-                    hashAdd_(hash, cache->last_error);
-                    hashAdd_(hash, (uint32_t)cache->item_count);
-                    for (size_t j = 0; j < cache->item_count; ++j)
-                    {
-                        const auto &it = cache->items[j];
-                        hashAdd_(hash, (uint32_t)it.id);
-                        hashAdd_(hash, it.enabled ? 1u : 0u);
-                        hashAdd_(hash, it.power_on ? 1u : 0u);
-                        hashAdd_(hash, (uint32_t)it.low);
-                        hashAdd_(hash, (uint32_t)it.mid);
-                        hashAdd_(hash, (uint32_t)it.full);
-                        hashAdd_(hash, (uint32_t)it.valve);
-                        hashAdd_(hash, (uint32_t)it.pump);
-                        hashAdd_(hash, (uint32_t)it.alarm);
-                        hashAdd_(hash, it.level_low ? 1u : 0u);
-                        hashAdd_(hash, it.level_mid ? 1u : 0u);
-                        hashAdd_(hash, it.level_full ? 1u : 0u);
-                        hashAdd_(hash, it.levels_ok ? 1u : 0u);
-                        hashAdd_(hash, it.valve_on ? 1u : 0u);
-                        hashAdd_(hash, it.pump_on ? 1u : 0u);
-                        hashAdd_(hash, it.alarm_on ? 1u : 0u);
-                        hashAdd_(hash, it.name);
-                    }
-                }
-            }
             return hash;
         }
 
@@ -2262,36 +2150,6 @@ int32_t WebInterface::scaled10_(float value)
                     hashAdd_(hash, st->alarm ? 1u : 0u);
                     hashAdd_(hash, st->relay_warning ? 1u : 0u);
                     hashAdd_(hash, st->relay_alarm ? 1u : 0u);
-                }
-            }
-            if (_stack_cache && _stack_master)
-            {
-                const size_t count = _stack_master->nodeCount();
-                for (size_t i = 0; i < count; ++i)
-                {
-                    const uint32_t node_id = _stack_master->nodeIdAt(i);
-                    const auto *cache = _stack_cache->septicCache(node_id);
-                    if (!cache)
-                        continue;
-                    hashAdd_(hash, node_id);
-                    hashAdd_(hash, cache->has_data ? 1u : 0u);
-                    hashAdd_(hash, cache->pending ? 1u : 0u);
-                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
-                    hashAdd_(hash, cache->last_error);
-                    hashAdd_(hash, (uint32_t)cache->item_count);
-                    for (size_t j = 0; j < cache->item_count; ++j)
-                    {
-                        const auto &it = cache->items[j];
-                        hashAdd_(hash, (uint32_t)it.id);
-                        hashAdd_(hash, it.enabled ? 1u : 0u);
-                        hashAdd_(hash, it.monitor ? 1u : 0u);
-                        hashAdd_(hash, (uint32_t)it.warning_port);
-                        hashAdd_(hash, (uint32_t)it.alarm_port);
-                        hashAdd_(hash, (uint32_t)it.relay_warning);
-                        hashAdd_(hash, (uint32_t)it.relay_alarm);
-                        hashAdd_(hash, it.warning ? 1u : 0u);
-                        hashAdd_(hash, it.alarm ? 1u : 0u);
-                    }
                 }
             }
             return hash;
@@ -2332,48 +2190,6 @@ int32_t WebInterface::scaled10_(float value)
                     hashAdd_(hash, (uint32_t)st->remaining_ms);
                 }
             }
-            if (_stack_cache && _stack_master)
-            {
-                const size_t count = _stack_master->nodeCount();
-                for (size_t i = 0; i < count; ++i)
-                {
-                    const uint32_t node_id = _stack_master->nodeIdAt(i);
-                    const auto *cache = _stack_cache->wateringCache(node_id);
-                    if (!cache)
-                        continue;
-                    hashAdd_(hash, node_id);
-                    hashAdd_(hash, cache->has_data ? 1u : 0u);
-                    hashAdd_(hash, cache->pending ? 1u : 0u);
-                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
-                    hashAdd_(hash, cache->last_error);
-                    hashAdd_(hash, (uint32_t)cache->item_count);
-                    for (size_t j = 0; j < cache->item_count; ++j)
-                    {
-                        const auto &it = cache->items[j];
-                        hashAdd_(hash, (uint32_t)it.id);
-                        hashAdd_(hash, it.enabled ? 1u : 0u);
-                        hashAdd_(hash, it.status ? 1u : 0u);
-                        hashAdd_(hash, (uint32_t)it.port);
-                        hashAdd_(hash, (uint32_t)it.tank_id);
-                        hashAdd_(hash, (uint32_t)it.weekdays_mask);
-                        hashAdd_(hash, (uint32_t)it.hour);
-                        hashAdd_(hash, (uint32_t)it.minute);
-                        hashAdd_(hash, (uint32_t)it.duration_sec);
-                        hashAdd_(hash, (uint32_t)it.hour2);
-                        hashAdd_(hash, (uint32_t)it.minute2);
-                        hashAdd_(hash, (uint32_t)it.duration2_sec);
-                        hashAdd_(hash, (uint32_t)it.hour3);
-                        hashAdd_(hash, (uint32_t)it.minute3);
-                        hashAdd_(hash, (uint32_t)it.duration3_sec);
-                        hashAdd_(hash, it.resume_after_refill ? 1u : 0u);
-                        hashAdd_(hash, (uint32_t)it.resume_level);
-                        hashAdd_(hash, it.active ? 1u : 0u);
-                        hashAdd_(hash, it.paused ? 1u : 0u);
-                        hashAdd_(hash, (uint32_t)it.remaining_ms);
-                        hashAdd_(hash, it.name);
-                    }
-                }
-            }
             return hash;
         }
 
@@ -2400,7 +2216,7 @@ int32_t WebInterface::scaled10_(float value)
                     hashAdd_(hash, cfg->silent ? 1u : 0u);
                     hashAdd_(hash, cfg->name);
                     hashAdd_(hash, st->raw ? 1u : 0u);
-                    hashAdd_(hash, st->is_detect ? 1u : 0u);
+                    hashAdd_(hash, st->active ? 1u : 0u);
                 }
                 for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
                 {
@@ -2411,37 +2227,6 @@ int32_t WebInterface::scaled10_(float value)
                         hashAdd_(hash, enabled ? 1u : 0u);
                         if (enabled)
                             hashAdd_(hash, addr, sizeof(addr));
-                    }
-                }
-            }
-            if (_stack_cache && _stack_master)
-            {
-                const size_t count = _stack_master->nodeCount();
-                for (size_t i = 0; i < count; ++i)
-                {
-                    const uint32_t node_id = _stack_master->nodeIdAt(i);
-                    const auto *cache = _stack_cache->securityCache(node_id);
-                    if (!cache)
-                        continue;
-                    hashAdd_(hash, node_id);
-                    hashAdd_(hash, cache->has_data ? 1u : 0u);
-                    hashAdd_(hash, cache->pending ? 1u : 0u);
-                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
-                    hashAdd_(hash, cache->last_error);
-                    hashAdd_(hash, cache->enabled ? 1u : 0u);
-                    hashAdd_(hash, cache->armed ? 1u : 0u);
-                    hashAdd_(hash, cache->alarm ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)cache->item_count);
-                    for (size_t j = 0; j < cache->item_count; ++j)
-                    {
-                        const auto &it = cache->items[j];
-                        hashAdd_(hash, (uint32_t)it.id);
-                        hashAdd_(hash, it.enabled ? 1u : 0u);
-                        hashAdd_(hash, it.detect ? 1u : 0u);
-                        hashAdd_(hash, it.silent ? 1u : 0u);
-                        hashAdd_(hash, (uint32_t)it.port);
-                        hashAdd_(hash, it.type);
-                        hashAdd_(hash, it.name);
                     }
                 }
             }
@@ -2499,40 +2284,6 @@ int32_t WebInterface::scaled10_(float value)
                 hashAdd_(hash, st.main_ok ? 1u : 0u);
                 hashAdd_(hash, st.reserve_ok ? 1u : 0u);
             }
-            if (_stack_cache && _stack_master)
-            {
-                const size_t count = _stack_master->nodeCount();
-                for (size_t i = 0; i < count; ++i)
-                {
-                    const uint32_t node_id = _stack_master->nodeIdAt(i);
-                    const auto *cache = _stack_cache->avrCache(node_id);
-                    if (!cache)
-                        continue;
-                    hashAdd_(hash, node_id);
-                    hashAdd_(hash, cache->has_data ? 1u : 0u);
-                    hashAdd_(hash, cache->pending ? 1u : 0u);
-                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
-                    hashAdd_(hash, cache->last_error);
-                    hashAdd_(hash, cache->enabled ? 1u : 0u);
-                    hashAdd_(hash, cache->auto_mode ? 1u : 0u);
-                    hashAdd_(hash, cache->prefer_main ? 1u : 0u);
-                    hashAdd_(hash, cache->auto_return_main ? 1u : 0u);
-                    hashAdd_(hash, cache->main_ok ? 1u : 0u);
-                    hashAdd_(hash, cache->reserve_ok ? 1u : 0u);
-                    hashAdd_(hash, cache->relay_main_on ? 1u : 0u);
-                    hashAdd_(hash, cache->relay_reserve_on ? 1u : 0u);
-                    hashAdd_(hash, cache->transfer ? 1u : 0u);
-                    hashAdd_(hash, (uint32_t)cache->main_ok_port);
-                    hashAdd_(hash, (uint32_t)cache->reserve_ok_port);
-                    hashAdd_(hash, (uint32_t)cache->relay_main_port);
-                    hashAdd_(hash, (uint32_t)cache->relay_reserve_port);
-                    hashAdd_(hash, (uint32_t)cache->feedback_main_port);
-                    hashAdd_(hash, (uint32_t)cache->feedback_reserve_port);
-                    hashAdd_(hash, cache->active_source);
-                    hashAdd_(hash, cache->target_source);
-                    hashAdd_(hash, cache->fault);
-                }
-            }
             hashAdd_(hash, _avr_status);
             return hash;
         }
@@ -2561,37 +2312,6 @@ int32_t WebInterface::scaled10_(float value)
                     hashAdd_(hash, cfg->name);
                     hashAdd_(hash, st->wet ? 1u : 0u);
                     hashAdd_(hash, st->alarm_latched ? 1u : 0u);
-                }
-            }
-            if (_stack_cache && _stack_master)
-            {
-                const size_t count = _stack_master->nodeCount();
-                for (size_t i = 0; i < count; ++i)
-                {
-                    const uint32_t node_id = _stack_master->nodeIdAt(i);
-                    const auto *cache = _stack_cache->leakCache(node_id);
-                    if (!cache)
-                        continue;
-                    hashAdd_(hash, node_id);
-                    hashAdd_(hash, cache->has_data ? 1u : 0u);
-                    hashAdd_(hash, cache->pending ? 1u : 0u);
-                    hashAdd_(hash, cache->last_ok ? 1u : 0u);
-                    hashAdd_(hash, cache->last_error);
-                    hashAdd_(hash, (uint32_t)cache->item_count);
-                    for (size_t j = 0; j < cache->item_count; ++j)
-                    {
-                        const auto &it = cache->items[j];
-                        hashAdd_(hash, (uint32_t)it.id);
-                        hashAdd_(hash, it.enabled ? 1u : 0u);
-                        hashAdd_(hash, it.power_on ? 1u : 0u);
-                        hashAdd_(hash, it.sensor_active_low ? 1u : 0u);
-                        hashAdd_(hash, (uint32_t)it.sensor);
-                        hashAdd_(hash, (uint32_t)it.valve);
-                        hashAdd_(hash, (uint32_t)it.alarm);
-                        hashAdd_(hash, it.wet ? 1u : 0u);
-                        hashAdd_(hash, it.alarm_latched ? 1u : 0u);
-                        hashAdd_(hash, it.name);
-                    }
                 }
             }
             hashAdd_(hash, _leak_status);
@@ -2672,13 +2392,7 @@ String WebInterface::genApiKey_()
 
 uint32_t WebInterface::rand32_()
 {
-#if defined(ESP32)
         return esp_random();
-#else
-        uint32_t r = (uint32_t)random(0x7FFFFFFF);
-        r = (r << 1) ^ (uint32_t)micros();
-        return r;
-#endif
     }
 
 

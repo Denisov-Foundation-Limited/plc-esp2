@@ -165,7 +165,7 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     }
     .tile {
       display: grid;
-      grid-template-columns: 140px minmax(0, 1fr);
+      grid-template-columns: 180px minmax(0, 1fr);
       gap: 14px;
       padding: 16px;
       border-radius: 12px;
@@ -173,6 +173,7 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       background: #0b1220;
       position: relative;
       overflow: hidden;
+      align-items: stretch;
     }
     .tile.disabled { opacity: 0.55; }
     .tile.empty { grid-template-columns: 1fr; text-align: center; color: var(--muted); }
@@ -185,7 +186,8 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     }
     .sensor-visual {
       position: relative;
-      height: 140px;
+      min-height: 180px;
+      height: 100%;
       border-radius: 16px;
       border: 2px solid #1f2937;
       background: linear-gradient(180deg, #0a1220 0%, #0c1628 100%);
@@ -289,7 +291,7 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       h1 { font-size: 20px; }
       .grid { grid-template-columns: 1fr; }
       .tile { grid-template-columns: 1fr; }
-      .sensor-visual { height: 120px; }
+      .sensor-visual { min-height: 120px; height: auto; }
       .sensor-value { font-size: 22px; }
       .field { padding: 5px 6px; }
       .btn { padding: 8px 12px; }
@@ -645,7 +647,9 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     setTimeout(pollMeteoStates, 500);
     setInterval(pollMeteoStates, 2000);
     refreshMeteoPins();
-    loadMeteoList();
+    if (meteoIsStackView) {
+      loadMeteoList();
+    }
     bindMeteoHandlers();
     const scrollKey = 'meteo_scroll_y';
     const savedScroll = sessionStorage.getItem(scrollKey);

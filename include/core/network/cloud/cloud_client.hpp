@@ -19,11 +19,11 @@
 #include "controllers/watering_controller.hpp"
 #include "controllers/thermo_controller.hpp"
 #include "core/network/cloud/cloud_transport.hpp"
+#include "core/network/stack/stack_device_registry.hpp"
 #include "core/network/cloud/cloud_ws_transport.hpp"
 #include "core/rules_controller.hpp"
-#include "core/network/stack/stack_features.hpp"
-#include "core/network/stack/stack_protocol.hpp"
 #include "utils/users_registry.hpp"
+#include "utils/rtos_lock.hpp"
 
 class Logger;
 class Controllers;
@@ -32,12 +32,14 @@ class PlcControl;
 class WifiManager;
 class RTC;
 class GsmModem;
-class StackMaster;
-class StackCache;
 class ConfigsManagerIface;
+class Network;
+class Camera;
 class CloudClient
 {
 public:
+    using StackNodeNameProvider = bool (*)(void *ctx, uint32_t node_id, String &out);
+
     struct Config
     {
         String host;
@@ -49,13 +51,15 @@ public:
     };
 
     CloudClient(Logger &log, Controllers &controllers, PlcControl &plc, WifiManager &wifi, RTC &rtc);
+    ~CloudClient();
 
     void setGsm(GsmModem *gsm);
-    void setStackMaster(StackMaster *master);
-    void setStackCache(StackCache *cache);
+    void setNetwork(Network *network);
+    void setStackNodeNameProvider(StackNodeNameProvider cb, void *ctx);
     void setConfigsManager(ConfigsManagerIface *cfg);
     void setUsersRegistry(UsersRegistry *users);
     void setRulesController(RulesController *rules);
+    void setCamera(Camera *camera);
     void setTransport(CloudTransport &transport);
     void useDefaultTransport();
     void bindControllerCallbacks();
@@ -79,11 +83,8 @@ public:
     void loop();
 
 private:
+    struct ScratchBuffer;
     static constexpr uint8_t kProtoVersion = 1;
-    static constexpr uint16_t kStackCmdIdBase = 0x8000;
-    static constexpr uint16_t kStackCmdIdMax = 0xFFFE;
-    static constexpr uint8_t kMaxPending = 6;
-    static constexpr uint8_t kMaxStackCmds = 32;
     static constexpr uint8_t kMaxQueuedEvents = 64;
     static constexpr uint32_t kStackTimeoutMs = 1500;
     static constexpr size_t kWsDocCapacity = 8192;
@@ -94,49 +95,6 @@ private:
     static constexpr uint32_t kSnapshotLockTimeoutMs = 250;
     static constexpr uint32_t kSnapshotWarnIntervalMs = 5000;
     static constexpr uint32_t kFastReconnectMs = 2000;
-
-    enum class StackPart : uint8_t
-    {
-        None = 0,
-        SystemInfo,
-        PlcStatus,
-        FanStatus,
-        RtcTime,
-        Sockets,
-        Lights,
-        Meteo,
-        Thermo,
-        Tanks,
-        Septic,
-        Watering,
-        SecurityStatus,
-        SecuritySensors,
-        Groups,
-        Ring,
-        Avr,
-        Leak
-    };
-
-    struct PendingStackCmd
-    {
-        bool used = false;
-        uint16_t cmd_id = 0;
-        uint8_t pending_idx = 0;
-        StackPart part = StackPart::None;
-        bool started = false;
-    };
-
-    struct PendingRequest
-    {
-        bool used = false;
-        String ws_id;
-        uint32_t node_id = 0;
-        uint32_t deadline_ms = 0;
-        uint32_t pending_mask = 0;
-        bool want_system = false;
-        bool want_controllers = false;
-        DynamicJsonDocument *doc = nullptr;
-    };
 
     struct ActorInfo
     {
@@ -158,6 +116,20 @@ private:
         String reason;
         String data_json;
     };
+    struct CameraCloudItem
+    {
+        String latest_url;
+        String last_error;
+        uint32_t updated_ms = 0;
+        uint32_t busy_since_ms = 0;
+        bool busy = false;
+    };
+    enum class CameraCloudPhase : uint8_t
+    {
+        Idle = 0,
+        Download,
+        Upload
+    };
 
     Logger &_log;
     Controllers &_controllers;
@@ -165,11 +137,13 @@ private:
     WifiManager &_wifi;
     RTC &_rtc;
     GsmModem *_gsm = nullptr;
-    StackMaster *_stack_master = nullptr;
-    StackCache *_stack_cache = nullptr;
+    Network *_network = nullptr;
+    StackNodeNameProvider _stack_node_name_cb = nullptr;
+    void *_stack_node_name_ctx = nullptr;
     ConfigsManagerIface *_configs = nullptr;
     UsersRegistry *_users = nullptr;
     RulesController *_rules = nullptr;
+    Camera *_camera = nullptr;
 
     Config _cfg;
     CloudWsTransport _default_transport;
@@ -187,12 +161,16 @@ private:
     bool _disconnect_reported = false;
     uint32_t _reconnect_backoff_until_ms = 0;
     uint8_t _reconnect_fail_streak = 0;
-    PendingRequest _pending[kMaxPending] = {};
-    PendingStackCmd _stack_cmds[kMaxStackCmds] = {};
-    uint16_t _next_stack_cmd_id = kStackCmdIdBase;
     QueuedEvent _event_queue[kMaxQueuedEvents] = {};
     uint8_t _event_head = 0;
     uint8_t _event_count = 0;
+    mutable ScratchBuffer *_scratch = nullptr;
+    mutable RtosRecursiveLock _scratch_lock;
+    CameraCloudItem _camera_cloud[4] = {};
+    CameraCloudPhase _camera_cloud_phase = CameraCloudPhase::Idle;
+    uint8_t _camera_cloud_id = 0;
+    String _camera_cloud_upload_url;
+    String _camera_cloud_latest_url;
 
     void handleMessage_(const uint8_t *payload, size_t len);
 
@@ -212,6 +190,10 @@ private:
                                  const String &unit, uint32_t node_id);
     static bool isCoalescibleStateEvent_(const String &kind);
     static uint32_t eventItemId_(const String &data_json);
+    static String sanitizeUtf8_(const String &in);
+    static bool isValidUtf8_(const String &in);
+    static void appendUtf8_(String &out, uint16_t code);
+    static String cp1251ToUtf8_(const String &in);
     void logEvent_(const __FlashStringHelper *stage, const String &kind, const String &reason,
                    const String &unit = String(), uint32_t node_id = 0);
 
@@ -232,7 +214,7 @@ private:
                          const String &ctrl, const String &action, JsonObjectConst args, const ActorInfo &actor);
 
     bool handleCmdSockets_(SocketController &s, const String &action, JsonObjectConst args, bool lights,
-                           const ActorInfo &actor);
+                           const ActorInfo &actor, String *error_out = nullptr);
 
     bool handleCmdThermo_(const String &action, JsonObjectConst args);
 
@@ -249,39 +231,11 @@ private:
     bool handleCmdAvr_(const String &action, JsonObjectConst args);
 
     bool handleCmdLeak_(const String &action, JsonObjectConst args);
+    bool handleCmdCameras_(const String &action, JsonObjectConst args, String *error_out = nullptr);
 
     void sendAck_(const String &reply_to, bool ok, const char *error);
 
     void sendError_(const String &reply_to, const char *msg);
-
-    void finalizePending_(PendingRequest *p, bool ok, const char *err);
-
-    void scheduleStackSystem_(PendingRequest *p);
-
-    void scheduleStackControllers_(PendingRequest *p);
-
-    bool sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                       const char *action, PendingRequest *p = nullptr);
-
-    bool sendStackCmd_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                       const char *action, const DynamicJsonDocument &params,
-                       PendingRequest *p = nullptr);
-
-    bool sendStackCmdSimple_(uint32_t node_id, StackMsgType type, StackFeature feature,
-                             const char *action, const DynamicJsonDocument &params,
-                             PendingRequest *p = nullptr);
-
-    static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame);
-
-    void handleStackFrame_(uint32_t node_id, const StackFrame &frame);
-
-    void applyStackPart_(PendingRequest *p, StackPart part, bool ok, JsonObject data, bool first_part, bool done);
-
-    void applyStackSystem_(JsonObject root, StackPart part, JsonObject data, uint32_t node_id);
-
-    void applyStackControllers_(JsonObject root, StackPart part, JsonObject data, bool first_part);
-
-    static void copyItems_(JsonObject &dst_parent, const char *key, JsonArrayConst items, bool reset);
     static void onSocketEvent_(void *ctx, bool lights, uint8_t id, const String &name, bool state_on,
                                const char *source);
     static void onMeteoAlarmEvent_(void *ctx, uint32_t node_id, uint8_t sensor_id, bool alarm);
@@ -320,6 +274,7 @@ private:
     void fillSeptic_(JsonArray out);
 
     void fillWatering_(JsonArray out);
+    void fillCameras_(JsonArray out);
 
     void fillSecurity_(JsonObject out);
 
@@ -337,10 +292,6 @@ private:
 
     void handlePendingTimeouts_();
 
-    PendingRequest *allocPending_(const String &ws_id, uint32_t node_id);
-
-    void freePending_(PendingRequest *p);
-
     bool parseActor_(JsonObjectConst payload, ActorInfo &out) const;
     bool resolveActor_(ActorInfo &actor) const;
     uint8_t aclUnitByNodeId_(uint32_t node_id) const;
@@ -350,20 +301,9 @@ private:
                         JsonObjectConst args, uint32_t node_id) const;
 
     void clearPending_();
-
-    void ensurePendingDoc_(PendingRequest *p);
-
-    PendingRequest *findPendingByNode_(uint32_t node_id);
-
-    void registerStackCmd_(uint16_t cmd_id, PendingRequest *p, StackPart part);
-
-    PendingStackCmd *findStackCmd_(uint16_t cmd_id);
-
-    uint16_t nextStackCmdId_();
-
-    StackPart partFrom_(StackFeature feature, const char *action) const;
-
-    static uint32_t maskFor_(StackPart p);
+    bool ensureScratch_() const;
+    ScratchBuffer *scratch_() const;
+    void releaseScratch_();
 
     static bool hasWhat_(JsonArrayConst what, const char *name);
     const char *transportName_() const;
@@ -378,6 +318,10 @@ private:
 
     String stackNodeName_(uint32_t node_id) const;
     String eventSourceName_(const String &unit, uint32_t node_id) const;
+    static String normalizeCloudBasePath_(const String &path);
+    bool buildCloudPhotoUrls_(uint8_t camera_id, String &upload_url, String &latest_url, String &error_out) const;
+    void resetCameraCloudJob_();
+    void updateCameraCloud_();
 
     static ThermoController::Mode parseThermoMode_(const String &mode);
 

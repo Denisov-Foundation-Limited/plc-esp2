@@ -174,18 +174,17 @@ void UsersHandler::handleUsersAcl(WebInterface &web, AsyncWebServerRequest *requ
             else
             {
                 String label;
-                if (web._stack_master)
+                if (web.network())
                 {
                     const size_t node_idx = (size_t)(i - 1);
-                    if (node_idx < web._stack_master->nodeCount())
+                    StackDeviceRegistry::DeviceInfo device{};
+                    if (web.network()->stackDeviceSnapshotAt(node_idx, device) && device.online && device.node_id != 0)
                     {
-                        const uint32_t node_id = web._stack_master->nodeIdAt(node_idx);
-                        const String node_name = web._stack_master->nodeNameAt(node_idx);
                         label = "Unit: ";
-                        if (node_name.length())
-                            label += node_name;
+                        if (device.name[0])
+                            label += String(device.name);
                         else
-                            label += String((unsigned long)node_id);
+                            label += String((unsigned long)device.node_id);
                     }
                 }
                 if (!label.length())
@@ -550,12 +549,13 @@ bool UsersHandler::aclUnitNodeId_(WebInterface &web, uint8_t unit, uint32_t &nod
         node_id = 0;
         if (unit == 0)
             return false;
-        if (!web._stack_master)
+        if (!web.network())
             return false;
         const size_t idx = (size_t)(unit - 1);
-        if (idx >= web._stack_master->nodeCount())
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!web.network()->stackDeviceSnapshotAt(idx, device) || !device.online || device.node_id == 0)
             return false;
-        node_id = web._stack_master->nodeIdAt(idx);
+        node_id = device.node_id;
         return node_id != 0;
     }
 
@@ -718,26 +718,32 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
     }
 
     uint32_t node_id = 0;
-    if (aclUnitNodeId_(web, unit, node_id) && web._stack_cache)
+    if (aclUnitNodeId_(web, unit, node_id))
     {
         switch (ctrl)
         {
         case UsersRegistry::AclController::Sockets:
         {
-            const auto *cache = web._stack_cache->socketsCache(node_id);
-            if (cache && cache->has_data)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                web.network()->stackIndexCacheState(node_id, cache) && snapshot.updated_ms != 0)
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
+                web.network()->forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                     if (!it.enabled)
-                        continue;
+                        return;
                     fn(it.id, aclItemLabel_(WebUiRu::Users::kItemSocket, it.id, it.name[0] ? String(it.name) : String()));
+                });
+                if (snapshot.sockets_enabled > cache.socket_count)
+                {
+                    web.requestStackSockets_(node_id);
+                    if (loading)
+                        *loading = true;
                 }
             }
             else
             {
-                web._stack_cache->requestSockets(node_id);
+                web.requestStackSockets_(node_id);
                 if (loading)
                     *loading = true;
             }
@@ -745,188 +751,47 @@ void UsersHandler::forEachAclItem_(WebInterface &web, uint8_t unit, UsersRegistr
         }
         case UsersRegistry::AclController::Lights:
         {
-            const auto *cache = web._stack_cache->lightsCache(node_id);
-            if (cache && cache->has_data)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                web.network()->stackIndexCacheState(node_id, cache) && snapshot.updated_ms != 0)
             {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
+                web.network()->forEachStackLight(node_id, cache.light_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                     if (!it.enabled)
-                        continue;
+                        return;
                     fn(it.id, aclItemLabel_(WebUiRu::Users::kItemLight, it.id, it.name[0] ? String(it.name) : String()));
+                });
+                if (snapshot.lights_enabled > cache.light_count)
+                {
+                    web.requestStackLights_(node_id);
+                    if (loading)
+                        *loading = true;
                 }
             }
             else
             {
-                web._stack_cache->requestLights(node_id);
+                web.requestStackLights_(node_id);
                 if (loading)
                     *loading = true;
             }
             return;
         }
         case UsersRegistry::AclController::Meteo:
-        {
-            const auto *cache = web._stack_cache->meteoCache(node_id);
-            if (cache && cache->has_data)
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    fn(it.id, aclItemLabel_(WebUiRu::Users::kItemMeteo, it.id, it.name[0] ? String(it.name) : String()));
-                }
-            }
-            else
-            {
-                web._stack_cache->requestMeteo(node_id);
-                if (loading)
-                    *loading = true;
-            }
             return;
-        }
         case UsersRegistry::AclController::Thermo:
-        {
-            const auto *cache = web._stack_cache->thermoCache(node_id);
-            if (cache && cache->has_data)
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    fn(it.id, aclItemLabel_(WebUiRu::Users::kItemThermo, it.id, it.name[0] ? String(it.name) : String()));
-                }
-            }
-            else
-            {
-                web._stack_cache->requestThermo(node_id);
-                if (loading)
-                    *loading = true;
-            }
             return;
-        }
         case UsersRegistry::AclController::Tanks:
-        {
-            const auto *cache = web._stack_cache->tanksCache(node_id);
-            if (cache && cache->has_data)
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    fn(it.id, aclItemLabel_(WebUiRu::Users::kItemTank, it.id, it.name[0] ? String(it.name) : String()));
-                }
-            }
-            else
-            {
-                web._stack_cache->requestTanks(node_id);
-                if (loading)
-                    *loading = true;
-            }
             return;
-        }
         case UsersRegistry::AclController::Septic:
-        {
-            const auto *cache = web._stack_cache->septicCache(node_id);
-            if (cache && cache->has_data)
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    fn(it.id, aclItemLabel_(WebUiRu::Users::kItemSeptic, it.id, String()));
-                }
-            }
-            else
-            {
-                web._stack_cache->requestSeptic(node_id);
-                if (loading)
-                    *loading = true;
-            }
             return;
-        }
         case UsersRegistry::AclController::Security:
-        {
-            const auto *cache = web._stack_cache->securityCache(node_id);
-            if (cache && cache->has_data)
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    fn(it.id, aclItemLabel_(WebUiRu::Users::kItemSensor, it.id, it.name[0] ? String(it.name) : String()));
-                }
-            }
-            else
-            {
-                web._stack_cache->requestSecurity(node_id);
-                if (loading)
-                    *loading = true;
-            }
             return;
-        }
         case UsersRegistry::AclController::Watering:
-        {
-            const auto *cache = web._stack_cache->wateringCache(node_id);
-            if (cache && cache->has_data)
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    fn(it.id, aclItemLabel_(WebUiRu::Users::kItemRule, it.id, it.name[0] ? String(it.name) : String()));
-                }
-            }
-            else
-            {
-                web._stack_cache->requestWatering(node_id);
-                if (loading)
-                    *loading = true;
-            }
             return;
-        }
         case UsersRegistry::AclController::Leak:
-        {
-            const auto *cache = web._stack_cache->leakCache(node_id);
-            if (cache && cache->has_data)
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!it.enabled)
-                        continue;
-                    fn(it.id, aclItemLabel_(WebUiRu::Users::kItemLeak, it.id, it.name[0] ? String(it.name) : String()));
-                }
-            }
-            else
-            {
-                web._stack_cache->requestLeak(node_id);
-                if (loading)
-                    *loading = true;
-            }
             return;
-        }
         case UsersRegistry::AclController::Avr:
-        {
-            const auto *cache = web._stack_cache->avrCache(node_id);
-            if (cache && cache->has_data)
-            {
-                if (cache->enabled)
-                    fn(1, String("AVR"));
-            }
-            else
-            {
-                web._stack_cache->requestAvr(node_id);
-                if (loading)
-                    *loading = true;
-            }
             return;
-        }
         case UsersRegistry::AclController::Ring:
             fn(1, String("Ring"));
             return;

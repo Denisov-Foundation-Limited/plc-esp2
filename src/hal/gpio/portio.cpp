@@ -12,10 +12,7 @@
 #include "hal/gpio/portio.hpp"
 
 #include <Arduino.h>
-
-#if defined(ESP32)
 #include "driver/gpio.h"
-#endif
 
 bool PortIO::begin()
 {
@@ -192,7 +189,15 @@ void PortIO::write(PortId id, bool logicalLevel)
 
 bool PortIO::read(PortId id) const
 {
+    bool out = false;
+    (void)read(id, out);
+    return out;
+}
+
+bool PortIO::read(PortId id, bool &out) const
+{
     auto guard = _lock.guard();
+    out = false;
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _ports[id];
@@ -207,14 +212,17 @@ bool PortIO::read(PortId id) const
         v = (::digitalRead(p.u.esp.gpio) != 0);
         if (p.u.esp.inverted)
             v = !v;
-        return v;
+        out = v;
+        return true;
     }
     if (_ext)
     {
-        v = _ext->read(p.u.ext.dev, p.u.ext.pin);
+        if (!_ext->read(p.u.ext.dev, p.u.ext.pin, v))
+            return false;
         if (p.u.ext.inverted)
             v = !v;
-        return v;
+        out = v;
+        return true;
     }
     return false;
 }
@@ -266,16 +274,11 @@ bool PortIO::writeFast(PortId id, bool logicalLevel)
     if (p.u.esp.gpio == 0xFF)
         return false;
 
-#if defined(ESP32)
     bool v = logicalLevel;
     if (p.u.esp.inverted)
         v = !v;
     gpio_set_level((gpio_num_t)p.u.esp.gpio, v ? 1 : 0);
     return true;
-#else
-    (void)logicalLevel;
-    return false;
-#endif
 }
 
 bool PortIO::readFast(PortId id, bool &outLogicalLevel) const
@@ -291,17 +294,12 @@ bool PortIO::readFast(PortId id, bool &outLogicalLevel) const
     if (p.u.esp.gpio == 0xFF)
         return false;
 
-#if defined(ESP32)
     int v = gpio_get_level((gpio_num_t)p.u.esp.gpio);
     bool b = (v != 0);
     if (p.u.esp.inverted)
         b = !b;
     outLogicalLevel = b;
     return true;
-#else
-    (void)outLogicalLevel;
-    return false;
-#endif
 }
 
 bool PortIO::usesExtender_() const

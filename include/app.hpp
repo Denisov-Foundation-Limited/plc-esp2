@@ -24,7 +24,6 @@
 #include "core/display.hpp"
 #include "core/eeprom_storage.hpp"
 #include "core/network/network.hpp"
-#include "core/network/stack/stack_slave_handler.hpp"
 #include "core/cli/cli_console.hpp"
 #include "core/network/web/web_interface.hpp"
 #include "core/plc_scan.hpp"
@@ -36,6 +35,7 @@
 #include "hal/ds3231mz.hpp"
 #include "hal/lcd1602_i2c.hpp"
 #include "hal/lm75ad.hpp"
+#include "hal/camera.hpp"
 #include "hal/sim800l.hpp"
 #include "hal/ibutton.hpp"
 #include "hal/gpio/extender.hpp"
@@ -57,6 +57,8 @@
 #include "utils/configs_manager.hpp"
 #include "utils/meteo_history.hpp"
 #include "utils/users_registry.hpp"
+
+#include "core/runtime/app_runtime.hpp"
 
 struct CoreContext
 {
@@ -91,6 +93,7 @@ struct HardwareContext
     PortIO portio;
     IoStack io;
     Gpio gpio;
+    Camera camera;
 
     Hal hal;
     PlcControl plc;
@@ -133,7 +136,6 @@ struct NetworkContext
     AsyncWebServer web;
     WebInterface fw_upgrade;
     Network network;
-    StackSlaveHandler stack_slave;
 
     NetworkContext(CoreContext &core, HardwareContext &hw, CommsContext &comms, ControlContext &control, UiContext &ui);
 };
@@ -146,8 +148,6 @@ struct ConfigContext
                   ControlContext &control, UiContext &ui, NetworkContext &network);
 };
 
-#include "core/stack/stack_runtime.hpp"
-
 struct App
 {
     CoreContext core;
@@ -157,7 +157,7 @@ struct App
     UiContext ui;
     NetworkContext net;
     ConfigContext cfg;
-    StackRuntime stack;
+    AppRuntime runtime;
 
     App();
 

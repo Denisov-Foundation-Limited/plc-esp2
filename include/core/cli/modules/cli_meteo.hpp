@@ -94,8 +94,7 @@ public:
             any = true;
             printSensorRow_(*cfg, *st);
         }
-        const bool requested = _c._stack_cli.requestStackMeteo_();
-        if (!any && !requested)
+        if (!any)
             _c._io->println(F("  none"));
     }
 

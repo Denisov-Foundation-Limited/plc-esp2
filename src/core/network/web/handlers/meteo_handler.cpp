@@ -29,11 +29,6 @@ void MeteoHandler::handleRemoteSources(WebInterface &web, AsyncWebServerRequest 
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Meteo, node_id))
             return;
-        if (web.isStackMeteoView_(node_id))
-        {
-            web.sendText_(request, 200, "text/html; charset=utf-8", "", set_cookie);
-            return;
-        }
         web.sendText_(request, 200, "text/html; charset=utf-8", web.meteoRemoteSensorOptionsHtml_(0, 0), set_cookie);
     }
 
@@ -154,13 +149,18 @@ void MeteoHandler::handleMeteo(WebInterface &web, AsyncWebServerRequest *request
         }
         page.replace("%METEO_PAGE_TITLE%", WebUiRu::Meteo::kPageTitle);
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%METEO_TILES%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackMeteoHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                  groups_available ? SIZE_MAX : page_size)
+                                        : web.listMeteoHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                                             groups_available ? SIZE_MAX : page_size);
+        page.replace("%METEO_TILES%", initial_html);
         page.replace("%METEO_PAGINATION%", pagination);
         page.replace("%METEO_STATUS%", stack_view ? web.stackMeteoStatusText_(node_id) : web._meteo_status);
-        page.replace("%SENSOR_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Sensor)
+        page.replace("%SENSOR_JSON%", stack_view ? web.stackMeteoPortOptionsJson_(node_id)
                                                  : web.meteoPortOptionsJson_());
         page.replace("%SENSOR_USED_JSON%",
-                     stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Sensor)
+                     stack_view ? web.stackMeteoUsedPinsJson_(node_id)
                                 : web.globalUsedPortsJson_(PortIO::PinType::Sensor));
         if (stack_view)
         {
@@ -254,34 +254,34 @@ void MeteoHandler::handleMeteoState(WebInterface &web, AsyncWebServerRequest *re
 
         if (web.isStackMeteoView_(node_id))
         {
-            auto *cache = web._stack_cache ? web._stack_cache->meteoCache(node_id) : nullptr;
-            if (!cache || !cache->has_data)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            const bool has_snapshot = web.network() && web.network()->stackIndexState(node_id, snapshot);
+            const bool has_cache = web.network() && web.network()->stackIndexCacheState(node_id, cache);
+            const bool stale = !has_snapshot || snapshot.updated_ms == 0 || (uint32_t)(millis() - snapshot.updated_ms) > 1500u;
+            const bool partial = has_snapshot && has_cache && snapshot.meteo_enabled > cache.meteo_count;
+            if (stale || partial)
             {
-                if (web._stack_cache)
-                    web._stack_cache->requestMeteo(node_id);
+                web.requestStackMeteo_(node_id);
                 doc["pending"] = true;
             }
             else
             {
-                const bool stale = (cache->pending || (uint32_t)(millis() - cache->updated_ms) > 1500u);
-                if (stale && web._stack_cache)
-                    web._stack_cache->requestMeteo(node_id);
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &cfg = cache->items[i];
-                    if (!web.webAclCanViewItem_(UsersRegistry::AclController::Meteo, cfg.id, node_id))
-                        continue;
+                doc["pending"] = false;
+                web.network()->forEachStackMeteo(node_id, cache.meteo_count, [&](uint8_t, const StackUnitSnapshot::MeteoItem &item) {
+                    if (!web.webAclCanViewItem_(UsersRegistry::AclController::Meteo, item.id, node_id))
+                        return;
                     JsonObject o = items.add<JsonObject>();
-                    o["id"] = cfg.id;
-                    o["enabled"] = cfg.enabled;
-                    o["ok"] = cfg.ok;
-                    o["has_temp"] = cfg.has_temp;
-                    o["temp"] = cfg.temp_c;
-                    o["has_hum"] = cfg.has_hum;
-                    o["hum"] = cfg.hum;
-                    o["has_read"] = cfg.has_read;
-                    o["age_s"] = cfg.age_s;
-                }
+                    o["id"] = item.id;
+                    o["enabled"] = item.enabled;
+                    o["ok"] = item.ok;
+                    o["has_temp"] = item.has_temp;
+                    o["temp"] = item.temp_c;
+                    o["has_hum"] = item.has_humidity;
+                    o["hum"] = item.humidity;
+                    o["age_s"] = item.age_s;
+                    o["has_read"] = item.has_read;
+                });
             }
         }
         else
@@ -343,236 +343,104 @@ void MeteoHandler::handleMeteoSave(WebInterface &web, AsyncWebServerRequest *req
                     back += String((unsigned)pv);
                 }
             }
-            if (!web._stack_master || !web._stack_cache)
+            if (!web.network())
             {
                 web._meteo_status = "Stack unavailable";
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            const auto *cache = web._stack_cache->meteoCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
+            DynamicJsonDocument doc(2048);
+            doc["source"] = "localweb";
+            if (const auto *u = web.sessionUser_())
+                doc["source_user"] = u->username;
+            JsonArray items = doc["items"].to<JsonArray>();
+            for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
             {
-                web._meteo_status = "No data";
-                web.sendRedirect_(request, back, set_cookie);
-                return;
-            }
-            auto *cache_mut = web._stack_cache->meteoCache(node_id);
-            bool changed = false;
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                const auto &it = cache->items[i];
-                const String idx = String((unsigned)it.id);
+                const String idx = String((unsigned)(i + 1u));
                 const String prefix = String("m") + idx + "_";
                 const String en_key = prefix + "en";
                 const String name_key = prefix + "name";
                 const String type_key = prefix + "type";
                 const String pin_key = prefix + "pin";
                 const String addr_key = prefix + "addr";
+                const String src_key = prefix + "src";
                 const String group_key = prefix + "group";
                 const bool has_any = request->hasParam(en_key, true) ||
                                      request->hasParam(name_key, true) ||
                                      request->hasParam(type_key, true) ||
                                      request->hasParam(pin_key, true) ||
                                      request->hasParam(addr_key, true) ||
-                                     request->hasParam(group_key, true);
+                                     request->hasParam(group_key, true) ||
+                                     request->hasParam(src_key, true);
                 if (!has_any)
                     continue;
-                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Meteo, it.id, node_id))
+                const uint8_t id = (uint8_t)(i + 1u);
+                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Meteo, id, node_id))
                 {
                     web._meteo_status = String("ACL deny item: ") + idx;
                     web.sendRedirect_(request, back, set_cookie);
                     return;
                 }
-
-                const bool can_admin = web.webSessionIsAdmin_();
+                JsonObject item = items.add<JsonObject>();
+                item["id"] = id;
                 const bool enabled = request->hasParam(en_key, true);
+                item["enabled"] = enabled;
                 String name = web.paramValue_(request, name_key);
                 name.trim();
-                const String type_str = web.paramValue_(request, type_key);
-                const String pin_str = web.paramValue_(request, pin_key);
-                const String addr_str = web.paramValue_(request, addr_key);
-
-                bool set_enabled = false;
-                bool set_name = false;
-                bool set_type = false;
-                bool set_pin = false;
-                bool set_addr = false;
-                bool set_group = false;
-                bool item_changed = false;
-                bool is_dht22 = (strcmp(it.type, "dht22") == 0);
-                bool is_ds18 = (strcmp(it.type, "ds18b20") == 0);
-                String new_type = it.type[0] ? String(it.type) : String("none");
-                String new_name = it.name[0] ? String(it.name) : String();
-                int new_pin = it.pin;
-                String new_addr = it.addr[0] ? String(it.addr) : String();
-
-                if (enabled != it.enabled)
+                item["name"] = name;
+                item["group_id"] = web.parseGroupIdParam_(request, group_key);
+                MeteoController::SensorType type = MeteoController::SensorType::None;
+                if (!enabled)
+                    type = MeteoController::SensorType::None;
+                else if (!web.parseMeteoType_(web.paramValue_(request, type_key), type))
                 {
-                    item_changed = true;
-                    set_enabled = true;
-                }
-                if (can_admin && name != new_name)
-                {
-                    item_changed = true;
-                    set_name = true;
-                    new_name = name;
-                }
-                if (can_admin && request->hasParam(type_key, true))
-                {
-                    MeteoController::SensorType t = MeteoController::SensorType::None;
-                    if (!web.parseMeteoType_(type_str, t))
-                    {
-                        web._meteo_status = String("Invalid type for sensor ") + idx;
-                        web.sendRedirect_(request, back, set_cookie);
-                        return;
-                    }
-                    const char *tn = (t == MeteoController::SensorType::Dht22) ? "dht22"
-                                      : (t == MeteoController::SensorType::Ds18b20) ? "ds18b20"
-                                                                                     : "none";
-                    if (new_type != tn)
-                    {
-                        item_changed = true;
-                        set_type = true;
-                        new_type = tn;
-                    }
-                    is_dht22 = (t == MeteoController::SensorType::Dht22);
-                    is_ds18 = (t == MeteoController::SensorType::Ds18b20);
-                }
-                if (can_admin && request->hasParam(pin_key, true))
-                {
-                    uint8_t pin = MeteoController::kInvalidPin;
-                    if (!web.parseMeteoPin_(pin_str, pin))
-                    {
-                        web._meteo_status = String("Invalid pin for sensor ") + idx;
-                        web.sendRedirect_(request, back, set_cookie);
-                        return;
-                    }
-                    const int pin_i = (pin == MeteoController::kInvalidPin) ? -1 : (int)pin;
-                    if (pin_i != new_pin)
-                    {
-                        item_changed = true;
-                        set_pin = true;
-                        new_pin = pin_i;
-                    }
-                }
-                if (can_admin && request->hasParam(addr_key, true))
-                {
-                    uint8_t addr[MeteoController::kAddrLen] = {};
-                    bool addr_set = false;
-                    if (!web.parseMeteoAddr_(addr_str, addr, addr_set))
-                    {
-                        web._meteo_status = String("Invalid addr for sensor ") + idx;
-                        web.sendRedirect_(request, back, set_cookie);
-                        return;
-                    }
-                    String addr_norm;
-                    if (addr_set)
-                    {
-                        char hex[17] = {};
-                        MeteoController::formatHexAddr(addr, hex);
-                        addr_norm = hex;
-                    }
-                    if (addr_norm != new_addr)
-                    {
-                        item_changed = true;
-                        set_addr = true;
-                        new_addr = addr_norm;
-                    }
-                }
-                const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
-                if (it.group_id != group_id)
-                {
-                    item_changed = true;
-                    set_group = true;
-                }
-
-                if (!item_changed)
-                    continue;
-
-                StaticJsonDocument<256> doc;
-                doc["cmd_id"] = 0;
-                doc["feature"] = (uint8_t)StackFeature::Meteo;
-                doc["action"] = "set";
-                JsonArray arr = doc["params"]["items"].to<JsonArray>();
-                JsonObject obj = arr.add<JsonObject>();
-                obj["id"] = (unsigned)it.id;
-                if (set_name)
-                    obj["name"] = new_name;
-                if (set_type)
-                    obj["type"] = new_type;
-                if (set_pin)
-                {
-                    if (new_pin < 0)
-                        obj["pin"] = -1;
-                    else
-                        obj["pin"] = (unsigned)new_pin;
-                }
-                if (set_addr)
-                    obj["addr"] = new_addr;
-                if (set_enabled)
-                    obj["enabled"] = enabled;
-                if (set_group)
-                    obj["group_id"] = group_id;
-                char payload[256] = {};
-                const size_t len = serializeJson(doc, payload, sizeof(payload));
-                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                           reinterpret_cast<const uint8_t *>(payload), len))
-                {
-                    web._meteo_status = String("Send failed for sensor ") + idx;
+                    web._meteo_status = String("Invalid type for sensor ") + idx;
                     web.sendRedirect_(request, back, set_cookie);
                     return;
                 }
-                changed = true;
-                if (cache_mut && cache_mut->items)
+                item["type_id"] = (uint8_t)type;
+                uint8_t pin = MeteoController::kInvalidPin;
+                if (!web.parseMeteoPin_(web.paramValue_(request, pin_key), pin))
                 {
-                    for (size_t k = 0; k < cache_mut->item_count; ++k)
-                    {
-                        auto &dst = cache_mut->items[k];
-                        if (dst.id != it.id)
-                            continue;
-                        if (set_enabled)
-                            dst.enabled = enabled;
-                        if (set_group)
-                            dst.group_id = group_id;
-                        if (set_name)
-                        {
-                            const char *src = new_name.c_str();
-                            size_t p = 0;
-                            for (; p + 1 < sizeof(dst.name) && src[p]; ++p)
-                                dst.name[p] = src[p];
-                            dst.name[p] = '\0';
-                        }
-                        if (set_type)
-                        {
-                            const char *src = new_type.c_str();
-                            size_t p = 0;
-                            for (; p + 1 < sizeof(dst.type) && src[p]; ++p)
-                                dst.type[p] = src[p];
-                            dst.type[p] = '\0';
-                        }
-                        if (set_pin)
-                            dst.pin = new_pin;
-                        if (set_addr)
-                        {
-                            const char *src = new_addr.c_str();
-                            size_t p = 0;
-                            for (; p + 1 < sizeof(dst.addr) && src[p]; ++p)
-                                dst.addr[p] = src[p];
-                            dst.addr[p] = '\0';
-                        }
-                        dst.group_id = group_id;
-                        break;
-                    }
-                    cache_mut->updated_ms = millis();
+                    web._meteo_status = String("Invalid pin for sensor ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
                 }
+                item["pin"] = pin;
+                uint8_t addr[MeteoController::kAddrLen] = {};
+                bool addr_set = false;
+                if (!web.parseMeteoAddr_(web.paramValue_(request, addr_key), addr, addr_set))
+                {
+                    web._meteo_status = String("Invalid addr for sensor ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+                item["addr_set"] = addr_set;
+                if (addr_set)
+                {
+                    char hex[17] = {};
+                    MeteoController::formatHexAddr(addr, hex);
+                    item["addr"] = hex;
+                }
+                uint8_t src_id = 0;
+                uint32_t src_node = 0;
+                const String src_str = web.paramValue_(request, src_key);
+                if (src_str.length() > 0 && !web.parseThermoSensor_(src_str, src_id, src_node))
+                {
+                    web._meteo_status = String("Invalid source for sensor ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+                item["src_node"] = (unsigned long)src_node;
+                item["src_sensor"] = src_id;
             }
-            if (changed)
-            {
-                web._meteo_status = "Updated";
-            }
+            if (!web.network()->stackRoute().sendEvent(node_id, "meteo", "set", &doc, StackRouteAdapter::Mode::Json))
+                web._meteo_status = "Send failed";
             else
             {
-                web._meteo_status = "Saved";
+                web._meteo_status = "Updated";
+                web.requestStackMeteo_(node_id);
+                web.requestStackIndexState_(node_id);
             }
             web.sendRedirect_(request, back, set_cookie);
             return;

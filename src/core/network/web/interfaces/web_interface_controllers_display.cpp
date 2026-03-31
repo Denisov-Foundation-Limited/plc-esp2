@@ -11,6 +11,132 @@
 
 #include "core/network/web/web_interface.hpp"
 
+namespace
+{
+void loadLocalSocketOptionItems_(const SocketController &sockets, WebInterface::ScratchBuffer &scratch,
+                                 size_t count, bool lights)
+{
+    if (count == 0)
+        return;
+    auto guard = sockets.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (lights)
+            scratch.light_valid[i] = false;
+        else
+            scratch.socket_valid[i] = false;
+        const auto *cfg = lights ? sockets.lightConfigByIndex(i) : sockets.configByIndex(i);
+        if (!cfg || !cfg->enabled)
+            continue;
+        if (lights)
+        {
+            scratch.light_valid[i] = true;
+            scratch.light_cfg[i] = *static_cast<const SocketController::LightConfig *>(cfg);
+        }
+        else
+        {
+            scratch.socket_valid[i] = true;
+            scratch.socket_cfg[i] = *static_cast<const SocketController::SocketConfig *>(cfg);
+        }
+    }
+}
+
+void loadLocalMeteoOptionItems_(const MeteoController &meteo, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto guard = meteo.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.meteo_valid[i] = false;
+        const auto *cfg = meteo.configByIndex(i);
+        if (!cfg || !cfg->enabled)
+            continue;
+        scratch.meteo_valid[i] = true;
+        scratch.meteo_cfg[i] = *cfg;
+    }
+}
+
+void loadLocalThermoOptionItems_(const ThermoController &thermo, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto guard = thermo.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.thermo_valid[i] = false;
+        const auto *cfg = thermo.configByIndex(i);
+        if (!cfg || !cfg->enabled)
+            continue;
+        scratch.thermo_valid[i] = true;
+        scratch.thermo_cfg[i] = *cfg;
+    }
+}
+
+void loadLocalTankOptionItems_(const TankController &tanks, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto guard = tanks.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.tank_valid[i] = false;
+        const auto *cfg = tanks.configByIndex(i);
+        if (!cfg || !cfg->enabled)
+            continue;
+        scratch.tank_valid[i] = true;
+        scratch.tank_cfg[i] = *cfg;
+    }
+}
+
+void loadLocalSepticOptionItems_(const SepticController &septic, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto guard = septic.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.septic_valid[i] = false;
+        const auto *cfg = septic.configByIndex(i);
+        if (!cfg || !cfg->enabled)
+            continue;
+        scratch.septic_valid[i] = true;
+        scratch.septic_cfg[i] = *cfg;
+    }
+}
+
+void loadLocalLeakOptionItems_(const LeakController &leak, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto guard = leak.lockGuard();
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.leak_valid[i] = false;
+        const auto *cfg = leak.configByIndex(i);
+        if (!cfg || !cfg->enabled)
+            continue;
+        scratch.leak_valid[i] = true;
+        scratch.leak_cfg[i] = *cfg;
+    }
+}
+
+template <typename Fn>
+void forEachDisplayStackDevice_(const WebInterface &web, Fn &&fn)
+{
+    if (!web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+        return;
+    const size_t count = web.network()->stackOnlineDeviceCount();
+    for (size_t i = 0; i < count; ++i)
+    {
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!web.network()->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+            continue;
+        fn(device);
+    }
+}
+}
+
 String WebInterfaceControllersDisplayHelper::displaySlotsHtml_(const WebInterface &web) {
         String html;
         html.reserve(2048);
@@ -76,17 +202,10 @@ String WebInterfaceControllersDisplayHelper::displayDeviceOptionsJson_(const Web
             first = false;
         };
         append("0", "local");
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t id = web._stack_master->nodeIdAt(i);
-                String name = web._stack_master->nodeNameAt(i);
-                const String label = name.length() ? name : web.stackNodeIdHex_(id);
-                append(String((unsigned long)id), label);
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            const String label = device.name[0] ? String(device.name) : web.stackNodeIdHex_(device.node_id);
+            append(String((unsigned long)device.node_id), label);
+        });
         out += "]";
         return out;
     }
@@ -112,22 +231,26 @@ String WebInterfaceControllersDisplayHelper::displaySocketOptionsJson_(const Web
         bool first = true;
         if (web._controllers)
         {
+            auto scratch_guard = web.scratchLockGuard_();
+            WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+            if (!scratch)
+                return "{}";
             const SocketController &sockets = web._controllers->sockets();
-            auto guard = sockets.lockGuard();
+            loadLocalSocketOptionItems_(sockets, *scratch, SocketController::kSocketCount, false);
             for (size_t i = 0; i < SocketController::kSocketCount; ++i)
             {
-                const auto *cfg = sockets.configByIndex(i);
-                if (!cfg || !cfg->enabled)
+                if (!scratch->socket_valid[i])
                     continue;
+                const auto &cfg = scratch->socket_cfg[i];
                 if (!first)
                     local += ",";
                 local += "{\"v\":";
-                local += String((unsigned)cfg->id);
+                local += String((unsigned)cfg.id);
                 local += ",\"l\":\"";
-                if (cfg->name.length())
-                    web.appendJsonEscaped_(local, cfg->name);
+                if (cfg.name.length())
+                    web.appendJsonEscaped_(local, cfg.name);
                 else
-                    local += String("Socket #") + String((unsigned)cfg->id);
+                    local += String("Socket #") + String((unsigned)cfg.id);
                 local += "\"}";
                 first = false;
             }
@@ -135,28 +258,24 @@ String WebInterfaceControllersDisplayHelper::displaySocketOptionsJson_(const Web
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackSocketsCache *cache = web.stackCache().socketsCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+                const uint32_t node_id = device.node_id;
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache) ||
+                    snapshot.updated_ms == 0)
                 {
-                    const_cast<StackCache *>(web._stack_cache)->requestSockets(node_id);
+                    const_cast<WebInterface &>(web).requestStackSockets_(node_id);
                     append_node(String((unsigned long)node_id), "[]");
-                    continue;
+                    return;
                 }
                 String list;
                 list.reserve(256);
                 list += "[";
                 bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
-                {
-                    const auto &it = cache->items[k];
+                web.network()->forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                     if (!it.enabled)
-                        continue;
+                        return;
                     if (!first_item)
                         list += ",";
                     list += "{\"v\":";
@@ -168,11 +287,12 @@ String WebInterfaceControllersDisplayHelper::displaySocketOptionsJson_(const Web
                         list += String("Socket #") + String((unsigned)it.id);
                     list += "\"}";
                     first_item = false;
-                }
+                });
                 list += "]";
+                if (snapshot.sockets_enabled > cache.socket_count)
+                    const_cast<WebInterface &>(web).requestStackSockets_(node_id);
                 append_node(String((unsigned long)node_id), list);
-            }
-        }
+        });
         out += "}";
         return out;
     }
@@ -198,22 +318,26 @@ String WebInterfaceControllersDisplayHelper::displayLightOptionsJson_(const WebI
         bool first = true;
         if (web._controllers)
         {
+            auto scratch_guard = web.scratchLockGuard_();
+            WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+            if (!scratch)
+                return "{}";
             const SocketController &sockets = web._controllers->sockets();
-            auto guard = sockets.lockGuard();
+            loadLocalSocketOptionItems_(sockets, *scratch, SocketController::kLightCount, true);
             for (size_t i = 0; i < SocketController::kLightCount; ++i)
             {
-                const auto *cfg = sockets.lightConfigByIndex(i);
-                if (!cfg || !cfg->enabled)
+                if (!scratch->light_valid[i])
                     continue;
+                const auto &cfg = scratch->light_cfg[i];
                 if (!first)
                     local += ",";
                 local += "{\"v\":";
-                local += String((unsigned)cfg->id);
+                local += String((unsigned)cfg.id);
                 local += ",\"l\":\"";
-                if (cfg->name.length())
-                    web.appendJsonEscaped_(local, cfg->name);
+                if (cfg.name.length())
+                    web.appendJsonEscaped_(local, cfg.name);
                 else
-                    local += String("Light #") + String((unsigned)cfg->id);
+                    local += String("Light #") + String((unsigned)cfg.id);
                 local += "\"}";
                 first = false;
             }
@@ -221,28 +345,24 @@ String WebInterfaceControllersDisplayHelper::displayLightOptionsJson_(const WebI
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackLightsCache *cache = web.stackCache().lightsCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+                const uint32_t node_id = device.node_id;
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache) ||
+                    snapshot.updated_ms == 0)
                 {
-                    const_cast<StackCache *>(web._stack_cache)->requestLights(node_id);
+                    const_cast<WebInterface &>(web).requestStackLights_(node_id);
                     append_node(String((unsigned long)node_id), "[]");
-                    continue;
+                    return;
                 }
                 String list;
                 list.reserve(256);
                 list += "[";
                 bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
-                {
-                    const auto &it = cache->items[k];
+                web.network()->forEachStackLight(node_id, cache.light_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &it) {
                     if (!it.enabled)
-                        continue;
+                        return;
                     if (!first_item)
                         list += ",";
                     list += "{\"v\":";
@@ -254,11 +374,12 @@ String WebInterfaceControllersDisplayHelper::displayLightOptionsJson_(const WebI
                         list += String("Light #") + String((unsigned)it.id);
                     list += "\"}";
                     first_item = false;
-                }
+                });
                 list += "]";
+                if (snapshot.lights_enabled > cache.light_count)
+                    const_cast<WebInterface &>(web).requestStackLights_(node_id);
                 append_node(String((unsigned long)node_id), list);
-            }
-        }
+        });
         out += "}";
         return out;
     }
@@ -284,22 +405,26 @@ String WebInterfaceControllersDisplayHelper::displayMeteoOptionsJson_(const WebI
         bool first = true;
         if (web._controllers)
         {
+            auto scratch_guard = web.scratchLockGuard_();
+            WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+            if (!scratch)
+                return "{}";
             const MeteoController &meteo = web._controllers->meteo();
-            auto guard = meteo.lockGuard();
+            loadLocalMeteoOptionItems_(meteo, *scratch, MeteoController::kSensorCount);
             for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
             {
-                const auto *cfg = meteo.configByIndex(i);
-                if (!cfg || !cfg->enabled)
+                if (!scratch->meteo_valid[i])
                     continue;
+                const auto &cfg = scratch->meteo_cfg[i];
                 if (!first)
                     local += ",";
                 local += "{\"v\":";
-                local += String((unsigned)cfg->id);
+                local += String((unsigned)cfg.id);
                 local += ",\"l\":\"";
-                if (cfg->name.length())
-                    web.appendJsonEscaped_(local, cfg->name);
+                if (cfg.name.length())
+                    web.appendJsonEscaped_(local, cfg.name);
                 else
-                    local += String("Sensor #") + String((unsigned)cfg->id);
+                    local += String("Sensor #") + String((unsigned)cfg.id);
                 local += "\"}";
                 first = false;
             }
@@ -307,44 +432,9 @@ String WebInterfaceControllersDisplayHelper::displayMeteoOptionsJson_(const WebI
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackMeteoCache *cache = web.stackCache().meteoCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
-                {
-                    const_cast<StackCache *>(web._stack_cache)->requestMeteo(node_id);
-                    append_node(String((unsigned long)node_id), "[]");
-                    continue;
-                }
-                String list;
-                list.reserve(256);
-                list += "[";
-                bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
-                {
-                    const auto &it = cache->items[k];
-                    if (!it.enabled)
-                        continue;
-                    if (!first_item)
-                        list += ",";
-                    list += "{\"v\":";
-                    list += String((unsigned)it.id);
-                    list += ",\"l\":\"";
-                    if (it.name[0])
-                        web.appendJsonEscaped_(list, it.name);
-                    else
-                        list += String("Sensor #") + String((unsigned)it.id);
-                    list += "\"}";
-                    first_item = false;
-                }
-                list += "]";
-                append_node(String((unsigned long)node_id), list);
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            append_node(String((unsigned long)device.node_id), "[]");
+        });
         out += "}";
         return out;
     }
@@ -370,22 +460,26 @@ String WebInterfaceControllersDisplayHelper::displayThermoOptionsJson_(const Web
         bool first = true;
         if (web._controllers)
         {
+            auto scratch_guard = web.scratchLockGuard_();
+            WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+            if (!scratch)
+                return "{}";
             const ThermoController &thermo = web._controllers->thermo();
-            auto guard = thermo.lockGuard();
+            loadLocalThermoOptionItems_(thermo, *scratch, ThermoController::kDeviceCount);
             for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
             {
-                const auto *cfg = thermo.configByIndex(i);
-                if (!cfg || !cfg->enabled)
+                if (!scratch->thermo_valid[i])
                     continue;
+                const auto &cfg = scratch->thermo_cfg[i];
                 if (!first)
                     local += ",";
                 local += "{\"v\":";
-                local += String((unsigned)cfg->id);
+                local += String((unsigned)cfg.id);
                 local += ",\"l\":\"";
-                if (cfg->name.length())
-                    web.appendJsonEscaped_(local, cfg->name);
+                if (cfg.name.length())
+                    web.appendJsonEscaped_(local, cfg.name);
                 else
-                    local += String("Thermo #") + String((unsigned)cfg->id);
+                    local += String("Thermo #") + String((unsigned)cfg.id);
                 local += "\"}";
                 first = false;
             }
@@ -393,44 +487,9 @@ String WebInterfaceControllersDisplayHelper::displayThermoOptionsJson_(const Web
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackThermoCache *cache = web.stackCache().thermoCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
-                {
-                    const_cast<StackCache *>(web._stack_cache)->requestThermo(node_id);
-                    append_node(String((unsigned long)node_id), "[]");
-                    continue;
-                }
-                String list;
-                list.reserve(256);
-                list += "[";
-                bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
-                {
-                    const auto &it = cache->items[k];
-                    if (!it.enabled)
-                        continue;
-                    if (!first_item)
-                        list += ",";
-                    list += "{\"v\":";
-                    list += String((unsigned)it.id);
-                    list += ",\"l\":\"";
-                    if (it.name[0])
-                        web.appendJsonEscaped_(list, it.name);
-                    else
-                        list += String("Thermo #") + String((unsigned)it.id);
-                    list += "\"}";
-                    first_item = false;
-                }
-                list += "]";
-                append_node(String((unsigned long)node_id), list);
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            append_node(String((unsigned long)device.node_id), "[]");
+        });
         out += "}";
         return out;
     }
@@ -456,22 +515,26 @@ String WebInterfaceControllersDisplayHelper::displayTankOptionsJson_(const WebIn
         bool first = true;
         if (web._controllers)
         {
+            auto scratch_guard = web.scratchLockGuard_();
+            WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+            if (!scratch)
+                return "{}";
             const TankController &tanks = web._controllers->tanks();
-            auto guard = tanks.lockGuard();
+            loadLocalTankOptionItems_(tanks, *scratch, TankController::kTankCount);
             for (size_t i = 0; i < TankController::kTankCount; ++i)
             {
-                const auto *cfg = tanks.configByIndex(i);
-                if (!cfg || !cfg->enabled)
+                if (!scratch->tank_valid[i])
                     continue;
+                const auto &cfg = scratch->tank_cfg[i];
                 if (!first)
                     local += ",";
                 local += "{\"v\":";
-                local += String((unsigned)cfg->id);
+                local += String((unsigned)cfg.id);
                 local += ",\"l\":\"";
-                if (cfg->name.length())
-                    web.appendJsonEscaped_(local, cfg->name);
+                if (cfg.name.length())
+                    web.appendJsonEscaped_(local, cfg.name);
                 else
-                    local += String("Tank #") + String((unsigned)cfg->id);
+                    local += String("Tank #") + String((unsigned)cfg.id);
                 local += "\"}";
                 first = false;
             }
@@ -479,44 +542,9 @@ String WebInterfaceControllersDisplayHelper::displayTankOptionsJson_(const WebIn
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackTankCache *cache = web.stackCache().tanksCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
-                {
-                    const_cast<StackCache *>(web._stack_cache)->requestTanks(node_id);
-                    append_node(String((unsigned long)node_id), "[]");
-                    continue;
-                }
-                String list;
-                list.reserve(256);
-                list += "[";
-                bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
-                {
-                    const auto &it = cache->items[k];
-                    if (!it.enabled)
-                        continue;
-                    if (!first_item)
-                        list += ",";
-                    list += "{\"v\":";
-                    list += String((unsigned)it.id);
-                    list += ",\"l\":\"";
-                    if (it.name[0])
-                        web.appendJsonEscaped_(list, it.name);
-                    else
-                        list += String("Tank #") + String((unsigned)it.id);
-                    list += "\"}";
-                    first_item = false;
-                }
-                list += "]";
-                append_node(String((unsigned long)node_id), list);
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            append_node(String((unsigned long)device.node_id), "[]");
+        });
         out += "}";
         return out;
     }
@@ -542,22 +570,26 @@ String WebInterfaceControllersDisplayHelper::displaySepticOptionsJson_(const Web
         bool first = true;
         if (web._controllers)
         {
+            auto scratch_guard = web.scratchLockGuard_();
+            WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+            if (!scratch)
+                return "{}";
             const SepticController &septic = web._controllers->septic();
-            auto guard = septic.lockGuard();
+            loadLocalSepticOptionItems_(septic, *scratch, SepticController::kSepticCount);
             for (size_t i = 0; i < SepticController::kSepticCount; ++i)
             {
-                const auto *cfg = septic.configByIndex(i);
-                if (!cfg || !cfg->enabled)
+                if (!scratch->septic_valid[i])
                     continue;
+                const auto &cfg = scratch->septic_cfg[i];
                 if (!first)
                     local += ",";
                 local += "{\"v\":";
-                local += String((unsigned)cfg->id);
+                local += String((unsigned)cfg.id);
                 local += ",\"l\":\"";
-                if (cfg->name.length())
-                    web.appendJsonEscaped_(local, cfg->name);
+                if (cfg.name.length())
+                    web.appendJsonEscaped_(local, cfg.name);
                 else
-                    local += String("Septic #") + String((unsigned)cfg->id);
+                    local += String("Septic #") + String((unsigned)cfg.id);
                 local += "\"}";
                 first = false;
             }
@@ -565,44 +597,9 @@ String WebInterfaceControllersDisplayHelper::displaySepticOptionsJson_(const Web
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackSepticCache *cache = web.stackCache().septicCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
-                {
-                    const_cast<StackCache *>(web._stack_cache)->requestSeptic(node_id);
-                    append_node(String((unsigned long)node_id), "[]");
-                    continue;
-                }
-                String list;
-                list.reserve(256);
-                list += "[";
-                bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
-                {
-                    const auto &it = cache->items[k];
-                    if (!it.enabled)
-                        continue;
-                    if (!first_item)
-                        list += ",";
-                    list += "{\"v\":";
-                    list += String((unsigned)it.id);
-                    list += ",\"l\":\"";
-                    if (it.id)
-                        list += String("Septic #") + String((unsigned)it.id);
-                    else
-                        list += String("Septic");
-                    list += "\"}";
-                    first_item = false;
-                }
-                list += "]";
-                append_node(String((unsigned long)node_id), list);
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            append_node(String((unsigned long)device.node_id), "[]");
+        });
         out += "}";
         return out;
     }
@@ -624,22 +621,9 @@ String WebInterfaceControllersDisplayHelper::displayAvrOptionsJson_(const WebInt
     
         append_node("0", "[{\"v\":1,\"l\":\"AVR\"}]");
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackAvrCache *cache = web.stackCache().avrCache(node_id);
-                if (!cache || !cache->has_data)
-                {
-                    const_cast<StackCache *>(web._stack_cache)->requestAvr(node_id);
-                    append_node(String((unsigned long)node_id), "[]");
-                    continue;
-                }
-                append_node(String((unsigned long)node_id), "[{\"v\":1,\"l\":\"AVR\"}]");
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            append_node(String((unsigned long)device.node_id), "[]");
+        });
         out += "}";
         return out;
     }
@@ -665,22 +649,26 @@ String WebInterfaceControllersDisplayHelper::displayLeakOptionsJson_(const WebIn
         bool first = true;
         if (web._controllers)
         {
+            auto scratch_guard = web.scratchLockGuard_();
+            WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+            if (!scratch)
+                return "{}";
             const LeakController &leak = web._controllers->leak();
-            auto guard = leak.lockGuard();
+            loadLocalLeakOptionItems_(leak, *scratch, LeakController::kZoneCount);
             for (size_t i = 0; i < LeakController::kZoneCount; ++i)
             {
-                const auto *cfg = leak.configByIndex(i);
-                if (!cfg || !cfg->enabled)
+                if (!scratch->leak_valid[i])
                     continue;
+                const auto &cfg = scratch->leak_cfg[i];
                 if (!first)
                     local += ",";
                 local += "{\"v\":";
-                local += String((unsigned)cfg->id);
+                local += String((unsigned)cfg.id);
                 local += ",\"l\":\"";
-                if (cfg->name.length())
-                    web.appendJsonEscaped_(local, cfg->name);
+                if (cfg.name.length())
+                    web.appendJsonEscaped_(local, cfg.name);
                 else
-                    local += String("Leak #") + String((unsigned)cfg->id);
+                    local += String("Leak #") + String((unsigned)cfg.id);
                 local += "\"}";
                 first = false;
             }
@@ -688,44 +676,9 @@ String WebInterfaceControllersDisplayHelper::displayLeakOptionsJson_(const WebIn
         local += "]";
         append_node("0", local);
     
-        if (web._stack_master && web.stackRole_() == ConfigsManagerIface::StackRole::Master && web._stack_cache)
-        {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t node_id = web._stack_master->nodeIdAt(i);
-                const StackCache::StackLeakCache *cache = web.stackCache().leakCache(node_id);
-                if (!cache || !cache->has_data || !cache->items)
-                {
-                    const_cast<StackCache *>(web._stack_cache)->requestLeak(node_id);
-                    append_node(String((unsigned long)node_id), "[]");
-                    continue;
-                }
-                String list;
-                list.reserve(256);
-                list += "[";
-                bool first_item = true;
-                for (size_t k = 0; k < cache->item_count; ++k)
-                {
-                    const auto &it = cache->items[k];
-                    if (!it.enabled)
-                        continue;
-                    if (!first_item)
-                        list += ",";
-                    list += "{\"v\":";
-                    list += String((unsigned)it.id);
-                    list += ",\"l\":\"";
-                    if (it.name[0])
-                        web.appendJsonEscaped_(list, it.name);
-                    else
-                        list += String("Leak #") + String((unsigned)it.id);
-                    list += "\"}";
-                    first_item = false;
-                }
-                list += "]";
-                append_node(String((unsigned long)node_id), list);
-            }
-        }
+        forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
+            append_node(String((unsigned long)device.node_id), "[]");
+        });
         out += "}";
         return out;
     }

@@ -14,7 +14,6 @@
 #include <Arduino.h>
 
 #include "core/display_slots.hpp"
-#include "core/network/stack/stack_cache.hpp"
 #include "controllers/meteo_controller.hpp"
 #include "controllers/security_controller.hpp"
 #include "controllers/thermo_controller.hpp"
@@ -49,8 +48,6 @@ public:
     String listStackNodesHtml_() const;
 
     String globalUsedPortsJson_(PortIO::PinType type) const;
-
-    bool stackPortTypeMatch_(const StackCache::StackPortItem &it, PortIO::PinType type) const;
 
     String stackPortOptionsJson_(uint32_t node_id, PortIO::PinType type) const;
 
@@ -134,6 +131,12 @@ public:
     ConfigsManagerIface::StackRole stackRole_() const;
 
     String stackMasterHost_() const;
+
+    ConfigsManagerIface::StackExchangePolicy stackExchangePolicy_() const;
+
+    ConfigsManagerIface::StackTransportKind stackTransport_() const;
+
+    ConfigsManagerIface::StackPayloadMode stackPayloadMode_() const;
 
     bool stackFallbackEnabled_() const;
 

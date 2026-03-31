@@ -133,7 +133,12 @@ void TankHandler::handleTanks(WebInterface &web, AsyncWebServerRequest *request)
         page.replace("%NAV%", web.navHtml_());
         page.replace("%TANK_PAGE_TITLE%", WebUiRu::Tanks::kPageTitle);
         page.replace("%TANK_STATUS%", stack_view ? web.stackTanksStatusText_(node_id) : web._tanks_status);
-        page.replace("%TANK_ITEMS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackTanksHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                  groups_available ? SIZE_MAX : page_size)
+                                        : web.listTanksHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                                             groups_available ? SIZE_MAX : page_size);
+        page.replace("%TANK_ITEMS%", initial_html);
         page.replace("%TANK_PAGINATION%", pagination);
         page.replace("%TANK_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
                                                       : web.tankPortOptionsJson_(PortIO::PinType::DInput));
@@ -145,6 +150,23 @@ void TankHandler::handleTanks(WebInterface &web, AsyncWebServerRequest *request)
         page.replace("%TANK_RELAY_USED_JSON%",
                      stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
                                 : web.globalUsedPortsJson_(PortIO::PinType::Relay));
+        if (stack_view)
+        {
+            String hidden;
+            hidden.reserve(96);
+            hidden += "<input type=\"hidden\" name=\"unit\" value=\"stack\">";
+            hidden += "<input type=\"hidden\" name=\"node\" value=\"";
+            hidden += String((unsigned long)node_id);
+            hidden += "\">";
+            hidden += "<input type=\"hidden\" name=\"page\" value=\"";
+            hidden += String((unsigned)(page_idx + 1));
+            hidden += "\">";
+            page.replace("%TANK_FORM_HIDDEN%", hidden);
+        }
+        else
+        {
+            page.replace("%TANK_FORM_HIDDEN%", "");
+        }
         page.replace("%TANK_DEVICE_SELECT%",
                      web.composeTopFiltersHtml_(web.tanksDeviceSelectHtml_(node_id, stack_view),
                                                 groups_available ? web.groupFilterHtml_("tanks-group-filter", stack_view ? node_id : 0u) : String("")));
@@ -222,182 +244,81 @@ void TankHandler::handleTanksSave(WebInterface &web, AsyncWebServerRequest *requ
                     back += String((unsigned)pv);
                 }
             }
-            if (!web._stack_master || !web._stack_cache)
+            if (!web.network())
             {
                 web._tanks_status = "Stack unavailable";
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            const auto *cache = web._stack_cache->tanksCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
+            DynamicJsonDocument doc(1536);
+            doc["source"] = "localweb";
+            if (const auto *u = web.sessionUser_())
+                doc["source_user"] = u->username;
+            JsonArray items = doc["items"].to<JsonArray>();
+            for (uint8_t i = 1; i <= TankController::kTankCount; ++i)
             {
-                web.requestStackTanks_(node_id);
-                web._tanks_status = "No data";
+                const String idx = String((unsigned)i);
+                const String prefix = String("k") + idx + "_";
+                const bool has_any = request->hasParam(prefix + "en", true) ||
+                                     request->hasParam(prefix + "name", true) ||
+                                     request->hasParam(prefix + "low", true) ||
+                                     request->hasParam(prefix + "mid", true) ||
+                                     request->hasParam(prefix + "full", true) ||
+                                     request->hasParam(prefix + "valve", true) ||
+                                     request->hasParam(prefix + "pump", true) ||
+                                     request->hasParam(prefix + "alarm", true) ||
+                                     request->hasParam(prefix + "group", true) ||
+                                     request->hasParam(prefix + "power", true);
+                if (!has_any || !web.webAclCanControlItem_(UsersRegistry::AclController::Tanks, i, node_id))
+                    continue;
+                JsonObject o = items.add<JsonObject>();
+                o["id"] = i;
+                o["enabled"] = request->hasParam(prefix + "en", true);
+
+                String name = web.paramValue_(request, prefix + "name");
+                name.trim();
+                o["name"] = name;
+                o["group_id"] = web.parseGroupIdParam_(request, prefix + "group");
+
+                uint8_t low_port = TankController::kInvalidPort;
+                uint8_t mid_port = TankController::kInvalidPort;
+                uint8_t full_port = TankController::kInvalidPort;
+                uint8_t valve_port = TankController::kInvalidPort;
+                uint8_t pump_port = TankController::kInvalidPort;
+                uint8_t alarm_port = TankController::kInvalidPort;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "low"), low_port))
+                    o["low"] = low_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "mid"), mid_port))
+                    o["mid"] = mid_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "full"), full_port))
+                    o["full"] = full_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "valve"), valve_port))
+                    o["valve"] = valve_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "pump"), pump_port))
+                    o["pump"] = pump_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "alarm"), alarm_port))
+                    o["alarm"] = alarm_port;
+
+                const String power_str = web.paramValue_(request, prefix + "power");
+                if (power_str == "on" || power_str == "off" || power_str == "1" || power_str == "0" ||
+                    power_str == "true" || power_str == "false")
+                    o["power_on"] = (power_str == "on" || power_str == "1" || power_str == "true");
+            }
+            if (items.size() == 0)
+            {
+                web._tanks_status = "No changes";
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            auto *cache_mut = web._stack_cache->tanksCache(node_id);
-            bool changed_any = false;
-            for (size_t i = 0; i < cache->item_count; ++i)
+            if (!web.network()->stackRoute().sendEvent(node_id, "tanks", "set", &doc, StackRouteAdapter::Mode::Json))
             {
-                const auto &cfg = cache->items[i];
-                const String idx = String((unsigned)cfg.id);
-                const String prefix = String("k") + idx + "_";
-                const String en_key = prefix + "en";
-                const String power_key = prefix + "power";
-                const String name_key = prefix + "name";
-                const String low_key = prefix + "low";
-                const String mid_key = prefix + "mid";
-                const String full_key = prefix + "full";
-                const String valve_key = prefix + "valve";
-                const String pump_key = prefix + "pump";
-                const String alarm_key = prefix + "alarm";
-                const String group_key = prefix + "group";
-                const bool has_any = request->hasParam(en_key, true) ||
-                                     request->hasParam(power_key, true) ||
-                                     request->hasParam(name_key, true) ||
-                                     request->hasParam(low_key, true) ||
-                                     request->hasParam(mid_key, true) ||
-                                     request->hasParam(full_key, true) ||
-                                     request->hasParam(valve_key, true) ||
-                                     request->hasParam(pump_key, true) ||
-                                     request->hasParam(group_key, true) ||
-                                     request->hasParam(alarm_key, true);
-                if (!has_any)
-                    continue;
-                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Tanks, cfg.id, node_id))
-                {
-                    web._tanks_status = String("ACL deny item: ") + idx;
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-                const bool can_admin = web.webSessionIsAdmin_();
-                const bool enabled = request->hasParam(en_key, true);
-                const String power_str = web.paramValue_(request, power_key);
-                const bool power_on = (power_str == "on" || power_str == "1" || power_str == "true");
-                String name = web.paramValue_(request, name_key);
-                name.trim();
-                const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
-
-                uint8_t low_port = cfg.low;
-                uint8_t mid_port = cfg.mid;
-                uint8_t full_port = cfg.full;
-                uint8_t valve_port = cfg.valve;
-                uint8_t pump_port = cfg.pump;
-                uint8_t alarm_port = cfg.alarm;
-                if (can_admin)
-                {
-                    if (!web.parseSocketPort_(web.paramValue_(request, low_key), low_port) ||
-                        !web.parseSocketPort_(web.paramValue_(request, mid_key), mid_port) ||
-                        !web.parseSocketPort_(web.paramValue_(request, full_key), full_port) ||
-                        !web.parseSocketPort_(web.paramValue_(request, valve_key), valve_port) ||
-                        !web.parseSocketPort_(web.paramValue_(request, pump_key), pump_port) ||
-                        !web.parseSocketPort_(web.paramValue_(request, alarm_key), alarm_port))
-                    {
-                        web._tanks_status = String(WebUiRu::Tanks::kInvalidPortForTankPrefix) + idx;
-                        web.sendRedirect_(request, back, set_cookie);
-                        return;
-                    }
-                }
-
-                bool item_changed = false;
-                StaticJsonDocument<320> doc;
-                doc["cmd_id"] = 0;
-                doc["feature"] = (uint8_t)StackFeature::Tanks;
-                doc["action"] = "set";
-                JsonArray arr = doc["params"]["items"].to<JsonArray>();
-                JsonObject obj = arr.add<JsonObject>();
-                obj["id"] = (unsigned)cfg.id;
-                if (cfg.enabled != enabled)
-                {
-                    obj["enabled"] = enabled;
-                    item_changed = true;
-                }
-                if (cfg.power_on != power_on)
-                {
-                    obj["power_on"] = power_on;
-                    item_changed = true;
-                }
-                if (can_admin && strcmp(cfg.name, name.c_str()) != 0)
-                {
-                    obj["name"] = name;
-                    item_changed = true;
-                }
-                if (cfg.group_id != group_id)
-                {
-                    obj["group_id"] = group_id;
-                    item_changed = true;
-                }
-                auto put_port = [&](const char *key, uint8_t old_p, uint8_t new_p) {
-                    if (old_p == new_p)
-                        return;
-                    if (new_p == TankController::kInvalidPort)
-                        obj[key] = -1;
-                    else
-                        obj[key] = (unsigned)new_p;
-                    item_changed = true;
-                };
-                if (can_admin)
-                {
-                    put_port("low", cfg.low, low_port);
-                    put_port("mid", cfg.mid, mid_port);
-                    put_port("full", cfg.full, full_port);
-                    put_port("valve", cfg.valve, valve_port);
-                    put_port("pump", cfg.pump, pump_port);
-                    put_port("alarm", cfg.alarm, alarm_port);
-                }
-                if (!item_changed)
-                    continue;
-
-                char payload[320] = {};
-                const size_t len = serializeJson(doc, payload, sizeof(payload));
-                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                           reinterpret_cast<const uint8_t *>(payload), len))
-                {
-                    web._tanks_status = String("Send failed for tank ") + idx;
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-                changed_any = true;
-                if (cache_mut && cache_mut->items)
-                {
-                    for (size_t k = 0; k < cache_mut->item_count; ++k)
-                    {
-                        auto &dst = cache_mut->items[k];
-                        if (dst.id != cfg.id)
-                            continue;
-                        dst.enabled = enabled;
-                        dst.power_on = power_on;
-                        if (can_admin)
-                        {
-                            dst.low = low_port;
-                            dst.mid = mid_port;
-                            dst.full = full_port;
-                            dst.valve = valve_port;
-                            dst.pump = pump_port;
-                            dst.alarm = alarm_port;
-                            dst.group_id = group_id;
-                            const char *src = name.c_str();
-                            size_t p = 0;
-                            for (; p + 1 < sizeof(dst.name) && src[p]; ++p)
-                                dst.name[p] = src[p];
-                            dst.name[p] = '\0';
-                        }
-                        break;
-                    }
-                    cache_mut->updated_ms = millis();
-                }
+                web._tanks_status = "Send failed";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
             }
-            if (changed_any)
-            {
-                web.requestStackTanks_(node_id);
-                web.refreshStackPorts_(node_id);
-                web._tanks_status = WebUiRu::Common::kUpdated;
-            }
-            else
-            {
-                web._tanks_status = WebUiRu::Common::kSaved;
-            }
+            web.requestStackTanks_(node_id);
+            web.requestStackIndexState_(node_id);
+            web._tanks_status = "Updated";
             web.sendRedirect_(request, back, set_cookie);
             return;
         }
@@ -606,67 +527,80 @@ void TankHandler::handleTanksToggle(WebInterface &web, AsyncWebServerRequest *re
 
         if (web.isStackTanksView_(node_id))
         {
-            if (!web._stack_master)
-            {
-                web.sendText_(request, 400, "text/plain", "Stack master missing", set_cookie);
-                return;
-            }
-            auto *cache = web._stack_cache ? web._stack_cache->tanksCache(node_id) : nullptr;
-            StackCache::StackTankItem *item = nullptr;
-            if (cache && cache->items)
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    if (cache->items[i].id == id)
-                    {
-                        item = &cache->items[i];
-                        break;
-                    }
-                }
-            }
-
             if (action == "state")
             {
-                const bool stale = (!cache || !cache->has_data || cache->pending ||
-                                    (uint32_t)(millis() - cache->updated_ms) > 1500u);
-                if (stale)
+                if (!web.network())
                 {
-                    if (web._stack_cache)
-                        web._stack_cache->requestTanks(node_id);
+                    web.sendText_(request, 400, "text/plain", "Stack unavailable", set_cookie);
+                    return;
+                }
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                StackUnitSnapshot::RequestState request_state{};
+                const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+                const bool has_cache = web.network()->stackIndexCacheState(node_id, cache);
+                const bool has_request = web.network()->stackIndexRequestState(node_id, request_state);
+                StackUnitSnapshot::TankItem item{};
+                const bool has_item = has_snapshot && web.network()->stackIndexTankById(node_id, (uint8_t)id, item);
+                const bool stale = !has_snapshot || snapshot.updated_ms == 0 ||
+                                   (uint32_t)(millis() - snapshot.updated_ms) > 1500u;
+                const bool partial = has_snapshot && has_cache && snapshot.tanks_enabled > cache.tank_count;
+                if (stale || partial)
+                {
+                    web.requestStackTanks_(node_id);
                     web.sendText_(request, 200, "text/plain", "pending", set_cookie);
                     return;
                 }
-                if (!item)
+                if (has_request && request_state.pending)
+                {
+                    web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                    return;
+                }
+                if (!has_item)
                 {
                     web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
                     return;
                 }
-                send_state(item->power_on, item->level_low, item->level_mid, item->level_full,
-                           item->levels_ok, item->valve_on, item->pump_on, item->alarm_on);
+
+                StaticJsonDocument<224> out;
+                out["power"] = item.power_on;
+                out["level_low"] = item.level_low;
+                out["level_mid"] = item.level_mid;
+                out["level_full"] = item.level_full;
+                out["levels_ok"] = item.levels_ok;
+                out["valve"] = item.valve_on;
+                out["pump"] = item.pump_on;
+                out["alarm"] = item.alarm_on;
+                String body;
+                serializeJson(out, body);
+                web.sendText_(request, 200, "application/json", body, set_cookie);
                 return;
             }
-
-            StaticJsonDocument<192> doc;
-            doc["cmd_id"] = 0;
-            doc["feature"] = (uint8_t)StackFeature::Tanks;
-            doc["action"] = "set";
-            JsonArray items = doc["params"]["items"].to<JsonArray>();
+            if (!web.network())
+            {
+                web.sendText_(request, 400, "text/plain", "Stack unavailable", set_cookie);
+                return;
+            }
+            StaticJsonDocument<224> doc;
+            doc["source"] = "localweb";
+            if (const auto *u = web.sessionUser_())
+                doc["source_user"] = u->username;
+            JsonArray items = doc["items"].to<JsonArray>();
             JsonObject o = items.add<JsonObject>();
             o["id"] = id;
-            if (action == "on" || action == "off")
-                o["power"] = (action == "on");
+            if (action == "on")
+                o["power_on"] = true;
+            else if (action == "off")
+                o["power_on"] = false;
             else
                 o["toggle"] = true;
-            char payload[192] = {};
-            const size_t len = serializeJson(doc, payload, sizeof(payload));
-            if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                       reinterpret_cast<const uint8_t *>(payload), len))
+            if (!web.network()->stackRoute().sendEvent(node_id, "tanks", "set", &doc, StackRouteAdapter::Mode::Json))
             {
                 web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
                 return;
             }
-            if (web._stack_cache)
-                web._stack_cache->requestTanks(node_id);
+            web.requestStackTanks_(node_id);
+            web.requestStackIndexState_(node_id);
             web.sendText_(request, 200, "text/plain", "pending", set_cookie);
             return;
         }

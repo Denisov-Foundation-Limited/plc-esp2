@@ -437,7 +437,10 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       }
     }
     refreshSocketSelects();
-    loadSocketList();
+    bindSocketHandlers();
+    if (socketsUnit === 'stack') {
+      loadSocketList();
+    }
     setTimeout(pollSocketPortOptions, 50);
     if (socketsUnit === 'stack') {
       setInterval(pollSocketPortOptions, 2000);
@@ -554,8 +557,12 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         el.dataset.busy = '1';
         el.disabled = true;
         try {
-          const action = el.checked ? 'on' : 'off';
-          const state = await postForm('/sockets/toggle', 'id=' + encodeURIComponent(id) + '&action=' + action);
+          let body = 'id=' + encodeURIComponent(id) + '&action=toggle';
+          if (socketsUnit === 'stack' && socketsNodeId) {
+            body += '&unit=stack';
+            body += '&node_id=' + encodeURIComponent(String(socketsNodeId));
+          }
+          const state = await postForm('/sockets/toggle', body);
           if (state === 'pending' || state === 'OK') {
             updateSocketVisual(tile, desired);
             return;
@@ -580,7 +587,12 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         const tile = el.closest('.tile');
         const enabled = el.checked ? '1' : '0';
         try {
-          const state = await postForm('/sockets/enable', 'id=' + encodeURIComponent(id) + '&enabled=' + enabled);
+          let body = 'id=' + encodeURIComponent(id) + '&enabled=' + enabled;
+          if (socketsUnit === 'stack' && socketsNodeId) {
+            body += '&unit=stack';
+            body += '&node_id=' + encodeURIComponent(String(socketsNodeId));
+          }
+          const state = await postForm('/sockets/enable', body);
           let isEnabled = false;
           try {
             const data = JSON.parse(state);
@@ -600,6 +612,7 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       async function fetchState(id) {
         let url = '/sockets/toggle?id=' + encodeURIComponent(id) + '&action=state';
         if (socketsUnit === 'stack' && socketsNodeId) {
+          url += '&unit=stack';
           url += '&node_id=' + encodeURIComponent(String(socketsNodeId));
         }
         const res = await fetch(url, {

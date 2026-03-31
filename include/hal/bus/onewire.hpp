@@ -69,7 +69,5 @@ private:
     Error _err = Error::Ok;
 
     static bool oneWirePinFromPort_(int8_t port, uint8_t &out_gpio);
-#if defined(ESP32)
     void *_bus_mtx_[MAX_BUSES] = {};
-#endif
 };

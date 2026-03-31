@@ -14,10 +14,7 @@
 #include "hal/bus/uart.hpp"
 #include "hal/sim800l.hpp"
 #include "utils/logger.hpp"
-
-#if defined(ESP32)
 #include <freertos/task.h>
-#endif
 
 namespace
 {
@@ -776,29 +773,20 @@ void GsmModem::logInitSummary_()
 
 void GsmModem::ensureModemLock_()
 {
-#if defined(ESP32)
     if (_modem_mtx == nullptr)
         _modem_mtx = xSemaphoreCreateRecursiveMutex();
-#endif
 }
 
 bool GsmModem::lockModem_(uint32_t timeout_ms)
 {
-#if defined(ESP32)
     ensureModemLock_();
     if (_modem_mtx == nullptr)
         return false;
     return xSemaphoreTakeRecursive(_modem_mtx, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
-#else
-    (void)timeout_ms;
-    return true;
-#endif
 }
 
 void GsmModem::unlockModem_()
 {
-#if defined(ESP32)
     if (_modem_mtx)
         xSemaphoreGiveRecursive(_modem_mtx);
-#endif
 }

@@ -14,7 +14,6 @@
 #include <Arduino.h>
 
 class WebInterface;
-struct StackFrame;
 
 class WebInterfaceControllersRingHelper
 {
@@ -23,5 +22,4 @@ public:
     static bool isStackRingView_(const WebInterface &web, uint32_t node_id);
     static bool sendStackRingCmd_(WebInterface &web, uint32_t node_id, bool set_state, bool state);
     static bool sendStackRingCmdAll_(WebInterface &web, bool set_state, bool state);
-    static void onStackFrame_(void *ctx, uint32_t node_id, const StackFrame &frame);
 };

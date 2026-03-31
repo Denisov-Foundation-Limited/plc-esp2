@@ -16,6 +16,9 @@
 
 using LoggerLevel = Logger::Level;
 
+SemaphoreHandle_t Logger::_output_lock = nullptr;
+portMUX_TYPE Logger::_output_lock_init_mux = portMUX_INITIALIZER_UNLOCKED;
+
 namespace
 {
 uint8_t daysInMonth_(uint16_t year, uint8_t month)
@@ -154,15 +157,18 @@ bool Logger::beginAuto(){
     return false;
 }
 
+void Logger::setOutputObserver(OutputObserver cb, void *ctx){
+    _observer = cb;
+    _observer_ctx = ctx;
+}
+
 void Logger::ensureLock_(){
-#if defined(ESP32)
-    if (_lock != nullptr)
+    if (_output_lock != nullptr)
         return;
-    portENTER_CRITICAL(&_lock_init_mux);
-    if (_lock == nullptr)
-        _lock = xSemaphoreCreateMutex();
-    portEXIT_CRITICAL(&_lock_init_mux);
-#endif
+    portENTER_CRITICAL(&_output_lock_init_mux);
+    if (_output_lock == nullptr)
+        _output_lock = xSemaphoreCreateMutex();
+    portEXIT_CRITICAL(&_output_lock_init_mux);
 }
 
 char Logger::levelChar_(LoggerLevel l){
@@ -261,17 +267,26 @@ bool Logger::formatTimestamp_(char *out, size_t cap){
 #endif
 }
 
+void Logger::notifyObserver_(){
+    if (_observer)
+        _observer(_observer_ctx);
+}
+
 void Logger::lock_(){
-#if defined(ESP32)
-    ensureLock_();
-    if (_lock)
-        xSemaphoreTake(_lock, portMAX_DELAY);
-#endif
+    lockOutput_();
 }
 
 void Logger::unlock_(){
-#if defined(ESP32)
-    if (_lock)
-        xSemaphoreGive(_lock);
-#endif
+    unlockOutput_();
+}
+
+void Logger::lockOutput_(){
+    ensureLock_();
+    if (_output_lock)
+        xSemaphoreTake(_output_lock, portMAX_DELAY);
+}
+
+void Logger::unlockOutput_(){
+    if (_output_lock)
+        xSemaphoreGive(_output_lock);
 }

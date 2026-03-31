@@ -51,6 +51,14 @@ bool canUseIndexPageCache_(uint32_t now_ms, uint32_t node_id, bool stack_view, b
         return false;
     return (uint32_t)(now_ms - g_index_page_cache_built_ms) <= kIndexPageCacheMs;
 }
+
+bool isStackIndexView_(WebInterface &web, uint32_t node_id)
+{
+    if (node_id == 0 || !web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+        return false;
+    StackDeviceRegistry::DeviceInfo device{};
+    return web.network()->stackDeviceSnapshotByNodeId(node_id, device) && device.online;
+}
 }
 
 void IndexHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
@@ -77,8 +85,7 @@ void IndexHandler::handleIndex(WebInterface &web, AsyncWebServerRequest *request
             return;
         }
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
-        const bool stack_view = node_id != 0 && web._stack_master &&
-                                web.stackRole_() == ConfigsManagerIface::StackRole::Master;
+        const bool stack_view = isStackIndexView_(web, node_id);
         const bool can_edit_device = web.webSessionIsAdmin_();
         String page;
         if (canUseIndexPageCache_(now_ms, node_id, stack_view, can_edit_device))
@@ -121,8 +128,7 @@ void IndexHandler::handleIndexState(WebInterface &web, AsyncWebServerRequest *re
             return;
         }
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
-        const bool stack_view = node_id != 0 && web._stack_master &&
-                                web.stackRole_() == ConfigsManagerIface::StackRole::Master;
+        const bool stack_view = isStackIndexView_(web, node_id);
         const IndexState st = collectIndexState_(web, node_id, stack_view);
         StaticJsonDocument<512> doc;
         doc["device_name"] = st.device_name;
@@ -155,13 +161,12 @@ String IndexHandler::buildIndexPage_(WebInterface &web, uint32_t node_id, bool s
         page.replace("%INDEX_LABEL_RTC_TEMP%", WebUiRu::Index::kRtcTemp);
         page.replace("%INDEX_LABEL_BOARD_TEMP%", WebUiRu::Index::kBoardTemp);
         page.replace("%INDEX_LABEL_FAN%", WebUiRu::Index::kFan);
-        const auto role = web.stackRole_();
-        page.replace("%STACK_ROLE%", web.stackRoleName_(role));
-        page.replace("%STACK_ROLE_MASTER_SEL%", role == ConfigsManagerIface::StackRole::Master ? "selected" : "");
-        page.replace("%STACK_ROLE_SLAVE_SEL%", role == ConfigsManagerIface::StackRole::Slave ? "selected" : "");
-        page.replace("%STACK_MASTER_HOST%", web.stackMasterHost_());
-        page.replace("%STACK_API_KEY%", web.stackApiKey_());
-        page.replace("%STACK_STATUS%", web._stack_status);
+        page.replace("%STACK_ROLE%", "");
+        page.replace("%STACK_ROLE_MASTER_SEL%", "");
+        page.replace("%STACK_ROLE_SLAVE_SEL%", "");
+        page.replace("%STACK_MASTER_HOST%", "");
+        page.replace("%STACK_API_KEY%", "");
+        page.replace("%STACK_STATUS%", "");
         page.replace("%INDEX_DEVICE_SELECT%", web.indexDeviceSelectHtml_(node_id, stack_view));
         const String loading = "...";
         page.replace("%STATUS_DEVICE_NAME%", loading);
@@ -191,20 +196,17 @@ IndexHandler::IndexState IndexHandler::collectIndexState_(WebInterface &web, uin
         out.rtc_temp = "n/a";
         out.board_temp = "n/a";
         out.fan_html = "n/a";
-        if (web._stack_cache)
+        if (web.network())
         {
-            web._stack_cache->requestPlcStatus(node_id);
-            web._stack_cache->requestRtcStatus(node_id);
-            const auto *cache = web._stack_cache->statusCache(node_id);
-            if (cache)
+            web.requestStackIndexState_(node_id);
+            StackUnitSnapshot::State cache{};
+            if (web.network()->stackIndexState(node_id, cache))
             {
-                const bool has_rtc = cache->has_rtc && cache->last_rtc_ok;
-                const bool has_plc = cache->has_plc && cache->last_plc_ok;
-                out.rtc_date = has_rtc ? cache->rtc_date : "n/a";
-                out.rtc_time = has_rtc ? cache->rtc_time : "n/a";
-                out.rtc_temp = has_rtc ? web.formatTemp_(cache->rtc_temp) : "n/a";
-                out.board_temp = has_plc ? web.formatTemp_(cache->board_temp) : "n/a";
-                out.fan_html = has_plc ? web.fanStatusIcon_(cache->fan_on) : "n/a";
+                out.rtc_date = cache.has_rtc ? String(cache.rtc_date) : "n/a";
+                out.rtc_time = cache.has_rtc ? String(cache.rtc_time) : "n/a";
+                out.rtc_temp = (cache.has_rtc && cache.rtc_temp_ok) ? web.formatTemp_(cache.rtc_temp) : "n/a";
+                out.board_temp = cache.has_plc ? web.formatTemp_(cache.board_temp) : "n/a";
+                out.fan_html = cache.has_plc ? web.fanStatusIcon_(cache.fan_on) : "n/a";
             }
         }
         if (out.rtc_date == "" || out.rtc_time == "")
@@ -212,18 +214,11 @@ IndexHandler::IndexState IndexHandler::collectIndexState_(WebInterface &web, uin
             out.rtc_date = "n/a";
             out.rtc_time = "n/a";
         }
-        if (web._stack_master)
+        if (web.network())
         {
-            const size_t count = web._stack_master->nodeCount();
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t id = web._stack_master->nodeIdAt(i);
-                if (id != node_id)
-                    continue;
-                String name = web._stack_master->nodeNameAt(i);
-                out.device_name = name.length() > 0 ? name : web.stackNodeIdHex_(id);
-                break;
-            }
+            StackDeviceRegistry::DeviceInfo device{};
+            if (web.network()->stackDeviceSnapshotByNodeId(node_id, device))
+                out.device_name = device.name[0] ? String(device.name) : web.stackNodeIdHex_(node_id);
         }
         return out;
     }

@@ -33,6 +33,7 @@
 #include "core/network/web/handlers/security_handler.hpp"
 #include "core/network/web/handlers/cloud_handler.hpp"
 #include "core/network/web/handlers/meteo_handler.hpp"
+#include "core/network/web/handlers/cameras_handler.hpp"
 #include "core/network/web/handlers/tank_handler.hpp"
 #include "core/network/web/handlers/avr_handler.hpp"
 #include "core/network/web/handlers/leak_handler.hpp"

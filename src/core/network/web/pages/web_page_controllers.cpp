@@ -264,6 +264,16 @@ const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
           </div>
           <div class="tile-hero" aria-hidden="true"><svg viewBox="0 0 96 96" fill="none"><rect x="30" y="12" width="36" height="72" rx="18" stroke="currentColor" stroke-width="5"/><path d="M48 24v34" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><circle cx="48" cy="66" r="12" fill="currentColor"/><path d="M24 28h10M24 42h10M24 56h10" stroke="currentColor" stroke-width="5" stroke-linecap="round"/></svg></div>
         </div>
+        <div class="tile js-controller-tile" data-href="/cameras" style="%ACL_HIDE_CAMERAS%">
+          <div class="tile-body">
+            <div class="tile-head">
+              <a href="/cameras">%CTRL_CAMERAS_TITLE%</a>
+            </div>
+            <span>%CTRL_CAMERAS_DESC%</span>
+            <span class="status">%CAMERAS_STATUS%</span>
+          </div>
+          <div class="tile-hero" aria-hidden="true"><svg viewBox="0 0 96 96" fill="none"><rect x="18" y="24" width="46" height="34" rx="8" stroke="currentColor" stroke-width="5"/><path d="M64 34l14-8v30l-14-8" stroke="currentColor" stroke-width="5" stroke-linejoin="round"/><circle cx="40" cy="41" r="8" stroke="currentColor" stroke-width="5"/><path d="M26 58l10-10 8 8 6-6 14 14" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        </div>
         <div class="tile js-controller-tile" data-href="/tanks" style="%ACL_HIDE_TANKS%">
           <div class="tile-body">
           <form method="POST" action="/controllers" id="tanks-form">

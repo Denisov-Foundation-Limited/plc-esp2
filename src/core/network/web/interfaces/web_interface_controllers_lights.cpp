@@ -11,9 +11,76 @@
 
 #include "core/network/web/web_interface.hpp"
 
+namespace
+{
+void loadLocalLightItems_(SocketController &sockets, WebInterface::ScratchBuffer &scratch, size_t count)
+{
+    if (count == 0)
+        return;
+    auto guard = sockets.lockGuard();
+    bool tmp_state = false;
+    for (size_t i = 0; i < count; ++i)
+    {
+        scratch.light_valid[i] = false;
+        scratch.light_relay_on[i] = false;
+        const auto *cfg = sockets.lightConfigByIndex(i);
+        if (!cfg)
+            continue;
+        scratch.light_valid[i] = true;
+        scratch.light_cfg[i] = *cfg;
+        scratch.light_relay_on[i] = cfg->enabled && sockets.lightRelayState(cfg->id, tmp_state) ? tmp_state : false;
+    }
+}
+
+bool stackLightsState_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::State &out)
+{
+    return web.network() && node_id != 0 && web.network()->stackIndexState(node_id, out);
+}
+
+bool stackLightsCacheState_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::CacheState &out)
+{
+    return web.network() && node_id != 0 && web.network()->stackIndexCacheState(node_id, out);
+}
+
+bool stackLightsRequestState_(const WebInterface &web, uint32_t node_id, StackUnitSnapshot::RequestState &out)
+{
+    return web.network() && node_id != 0 && web.network()->stackIndexRequestState(node_id, out);
+}
+
+bool requestNextStackLightsPage_(WebInterface &web, uint32_t node_id, uint16_t offset, uint16_t limit)
+{
+    if (!web.network() || node_id == 0 || limit == 0)
+        return false;
+    DynamicJsonDocument req(64);
+    req["offset"] = offset;
+    req["limit"] = limit;
+    const bool sent = web.network()->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
+                                                              StackRouteAdapter::Mode::Json, true);
+    if (!sent)
+        web.network()->clearStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id);
+    return sent;
+}
+
+size_t stackLightsRenderCount_(const WebInterface &web, uint32_t node_id, uint8_t loaded_count, bool can_view_disabled)
+{
+    if (!can_view_disabled || !web.network())
+        return loaded_count;
+    size_t last_enabled_idx = SIZE_MAX;
+    web.network()->forEachStackLight(node_id, loaded_count, [&](uint8_t index, const StackUnitSnapshot::SocketItem &item) {
+        if (item.enabled)
+            last_enabled_idx = index;
+    });
+    if (last_enabled_idx == SIZE_MAX)
+        return loaded_count ? 1u : 0u;
+    const size_t rc = last_enabled_idx + 2u;
+    return rc > loaded_count ? loaded_count : rc;
+}
+}
+
 size_t WebInterfaceControllersLightsHelper::lightsLocalRenderCount_(const WebInterface &web) {
         if (!web._controllers)
             return 0;
+        web._controllers->ensureSocketConfigsLoaded();
         SocketController &sockets = web._controllers->sockets();
         auto guard = sockets.lockGuard();
         size_t last_enabled_idx = SIZE_MAX;
@@ -30,7 +97,7 @@ size_t WebInterfaceControllersLightsHelper::lightsLocalRenderCount_(const WebInt
     }
 
 String WebInterfaceControllersLightsHelper::lightsDeviceSelectHtml_(const WebInterface &web, uint32_t selected_node_id, bool stack_view) {
-        if (web.stackRole_() != ConfigsManagerIface::StackRole::Master || !web._stack_master)
+        if (!web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
             return "";
         String html;
         html.reserve(512);
@@ -41,17 +108,20 @@ String WebInterfaceControllersLightsHelper::lightsDeviceSelectHtml_(const WebInt
         if (!stack_view)
             html += " selected";
         html += ">local</option>";
-        const size_t count = web._stack_master->nodeCount();
+        const size_t count = web.network()->stackOnlineDeviceCount();
         for (size_t i = 0; i < count; ++i)
         {
-            const uint32_t id = web._stack_master->nodeIdAt(i);
+            StackDeviceRegistry::DeviceInfo device{};
+            if (!web.network()->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
+                continue;
+            const uint32_t id = device.node_id;
             html += "<option value=\"";
             html += String((unsigned long)id);
             html += "\"";
             if (stack_view && id == selected_node_id)
                 html += " selected";
             html += ">";
-            String name = web._stack_master->nodeNameAt(i);
+            String name = device.name[0] ? String(device.name) : String();
             if (name.length() > 0)
                 web.appendHtmlEscaped_(html, name.c_str());
             else
@@ -63,32 +133,33 @@ String WebInterfaceControllersLightsHelper::lightsDeviceSelectHtml_(const WebInt
     }
 
 String WebInterfaceControllersLightsHelper::stackLightsStatusText_(const WebInterface &web, uint32_t node_id) {
-            const auto *cache = web._stack_cache->lightsCache(node_id);
-            if (!cache)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::RequestState request{};
+            if (!stackLightsState_(web, node_id, snapshot))
                 return WebUiRu::kNoDataFromSlave;
-            if (cache->pending)
+            if (stackLightsRequestState_(web, node_id, request) &&
+                request.pending &&
+                (uint32_t)(millis() - request.started_ms) > 15000u)
+                return WebUiRu::Sockets::kText10;
+            if (request.pending)
                 return "";
-            if (!cache->last_ok && cache->last_error.length())
-            {
-                String msg = WebUiRu::kErrorPrefix;
-                msg += cache->last_error;
-                return msg;
-            }
-            if (!cache->has_data)
+            if (snapshot.updated_ms == 0)
                 return WebUiRu::kNoDataFromSlave;
             return WebUiRu::kStatusOk;
-        
+
     }
 
 bool WebInterfaceControllersLightsHelper::isStackLightsView_(const WebInterface &web, uint32_t node_id) {
-        return node_id != 0 && web._stack_master &&
-               web.stackRole_() == ConfigsManagerIface::StackRole::Master;
+        if (node_id == 0 || !web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+            return false;
+        StackDeviceRegistry::DeviceInfo device{};
+        return web.network()->stackDeviceSnapshotByNodeId(node_id, device) && device.online;
     }
 
 void WebInterfaceControllersLightsHelper::handleStackLightsToggle_(WebInterface &web, AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie) {
-        if (!web._stack_master)
+        if (!web.network())
         {
-            web.sendText_(request, 400, "text/plain", "Stack master missing", set_cookie);
+            web.sendText_(request, 400, "text/plain", "Stack unavailable", set_cookie);
             return;
         }
         const String id_str = web.paramValueAny_(request, "id");
@@ -106,47 +177,45 @@ void WebInterfaceControllersLightsHelper::handleStackLightsToggle_(WebInterface 
         String action = web.paramValueAny_(request, "action");
         action.trim();
         action.toLowerCase();
-        const auto *cache = web._stack_cache ? web._stack_cache->lightsCache(node_id) : nullptr;
-        const StackCache::StackLightItem *item = nullptr;
-        if (cache)
-        {
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                if (cache->items[i].id == id)
-                {
-                    item = &cache->items[i];
-                    break;
-                }
-            }
-        }
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        StackUnitSnapshot::RequestState request_state{};
+        const bool has_snapshot = stackLightsState_(web, node_id, snapshot);
+        const bool has_cache = stackLightsCacheState_(web, node_id, cache);
+        const bool has_request = stackLightsRequestState_(web, node_id, request_state);
+        StackUnitSnapshot::SocketItem item{};
+        const bool has_item = has_snapshot && web.network()->stackIndexLightById(node_id, id, item);
     
         if (action == "state")
         {
-            if (!cache || !cache->has_data ||
-                (uint32_t)(millis() - cache->updated_ms) > 1500u)
+            const bool stale = !has_snapshot || snapshot.updated_ms == 0 ||
+                (uint32_t)(millis() - snapshot.updated_ms) > 1500u;
+            const bool partial = has_snapshot && has_cache && snapshot.lights_enabled > cache.light_count;
+            if (stale || partial)
             {
                 web.requestStackLights_(node_id);
+                web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                return;
             }
-            if (cache && cache->pending)
+            if (has_request && request_state.pending)
             {
                 web.sendText_(request, 200, "text/plain", "pending", set_cookie);
                 return;
             }
-            if (!item)
+            if (!has_item)
             {
                 web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
                 return;
             }
-            web.sendText_(request, 200, "text/plain", (item->enabled && item->state) ? "on" : "off", set_cookie);
+            web.sendText_(request, 200, "text/plain", (item.enabled && item.state) ? "on" : "off", set_cookie);
             return;
         }
     
-        StaticJsonDocument<192> doc;
-        doc["cmd_id"] = web.nextStackCmdId_();
-        doc["feature"] = (uint8_t)StackFeature::Sockets;
-        doc["action"] = "set_lights";
-        JsonObject params = doc["params"].to<JsonObject>();
-        JsonArray items = params["items"].to<JsonArray>();
+        StaticJsonDocument<224> doc;
+        doc["source"] = "localweb";
+        if (const auto *u = web.sessionUser_())
+            doc["source_user"] = u->username;
+        JsonArray items = doc["items"].to<JsonArray>();
         JsonObject o = items.add<JsonObject>();
         o["id"] = id;
     
@@ -161,36 +230,113 @@ void WebInterfaceControllersLightsHelper::handleStackLightsToggle_(WebInterface 
         else
         {
             o["toggle"] = true;
-            if (item)
+            if (has_item)
             {
-                desired = !item->state;
+                desired = !item.state;
                 desired_known = true;
             }
         }
-    
-        char payload[160] = {};
-        const size_t len = serializeJson(doc, payload, sizeof(payload));
-        if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                               (const uint8_t *)payload, len))
+
+        if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set_lights", &doc, StackRouteAdapter::Mode::Json))
         {
             web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
             return;
         }
 
-        // Immediately request a fresh snapshot; the switch request itself returns simple ack.
         web.requestStackLights_(node_id);
+        web.requestStackIndexState_(node_id);
         (void)desired_known;
         (void)desired;
         web.sendText_(request, 200, "text/plain", "OK", set_cookie);
     }
 
+void WebInterfaceControllersLightsHelper::handleStackLightsEnable_(WebInterface &web, AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie) {
+        if (!web.network())
+        {
+            web.sendText_(request, 400, "text/plain", "Stack unavailable", set_cookie);
+            return;
+        }
+        if (!web.webSessionIsAdmin_())
+        {
+            web.sendText_(request, 403, "text/plain", "Admin only", set_cookie);
+            return;
+        }
+        const String id_str = web.paramValueAny_(request, "id");
+        if (!id_str.length())
+        {
+            web.sendText_(request, 400, "text/plain", "Missing id", set_cookie);
+            return;
+        }
+        const uint8_t id = (uint8_t)id_str.toInt();
+        if (id == 0 || !web.webAclCanControlItem_(UsersRegistry::AclController::Lights, id, node_id))
+        {
+            web.sendText_(request, 403, "text/plain", "ACL deny", set_cookie);
+            return;
+        }
+        const String enabled_str = web.paramValueAny_(request, "enabled");
+        const bool enabled = (enabled_str == "1" || enabled_str == "true" || enabled_str == "on");
+        StaticJsonDocument<192> doc;
+        doc["source"] = "localweb";
+        if (const auto *u = web.sessionUser_())
+            doc["source_user"] = u->username;
+        JsonArray items = doc["items"].to<JsonArray>();
+        JsonObject o = items.add<JsonObject>();
+        o["id"] = id;
+        o["enabled"] = enabled;
+        if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set_lights", &doc, StackRouteAdapter::Mode::Json))
+        {
+            web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
+            return;
+        }
+        web.requestStackLights_(node_id);
+        web.requestStackIndexState_(node_id);
+        web.requestStackPorts_(node_id);
+        String dbg = String("{\"ok\":true");
+        dbg += ",\"id\":\"" + id_str + "\"";
+        dbg += ",\"enabled\":\"" + enabled_str + "\"";
+        dbg += ",\"parsed\":" + String(enabled ? "true" : "false");
+        dbg += ",\"result\":\"" + String(enabled ? "1" : "0") + "\"";
+        dbg += "}";
+        web.sendText_(request, 200, "application/json", dbg, set_cookie);
+    }
+
 bool WebInterfaceControllersLightsHelper::requestStackLights_(WebInterface &web, uint32_t node_id) {
-        return web._stack_cache && web._stack_cache->requestLights(node_id);
+        if (!web.network() || node_id == 0)
+            return false;
+        const uint32_t now = millis();
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        StackUnitSnapshot::RequestState request{};
+        const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+        const bool has_cache = web.network()->stackIndexCacheState(node_id, cache);
+        const bool has_request = web.network()->stackIndexRequestState(node_id, request);
+        if (!has_snapshot || snapshot.updated_ms == 0 ||
+            (uint32_t)(now - snapshot.updated_ms) > 5000u)
+        {
+            const bool refresh = web.requestStackIndexState_(node_id);
+            DynamicJsonDocument req(64);
+            req["offset"] = 0;
+            req["limit"] = StackUnitSnapshot::kPageSize;
+            const bool lights_req = web.network()->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
+                                                                            StackRouteAdapter::Mode::Json, true);
+            return refresh || lights_req;
+        }
+        if (has_request && request.pending && (uint32_t)(now - request.started_ms) < 1500u)
+            return true;
+        if (has_cache && snapshot.lights_enabled > cache.light_count)
+        {
+            if (!web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id, now,
+                                                        cache.light_count, 4000u))
+                return true;
+            return requestNextStackLightsPage_(web, node_id, cache.light_count, StackUnitSnapshot::kPageSize);
+        }
+        return true;
     }
 
 String WebInterfaceControllersLightsHelper::listLightsHtml_(WebInterface &web, uint8_t start_id, uint8_t end_id) {
         if (!web._controllers)
             return WebUiRu::Lights::kText;
+        web._controllers->ensureSocketConfigsLoaded();
         String items;
         if (start_id == 0)
             start_id = 1;
@@ -200,14 +346,16 @@ String WebInterfaceControllersLightsHelper::listLightsHtml_(WebInterface &web, u
         if (reserve < 16384u)
             reserve = 16384u;
         items.reserve(reserve);
+        auto scratch_guard = web.scratchLockGuard_();
+        WebInterface::ScratchBuffer *scratch = (scratch_guard.locked() ? web.scratchBuffer_() : nullptr);
+        if (!scratch)
+            return WebUiRu::Lights::kText;
         SocketController &sockets = web._controllers->sockets();
-        auto guard = sockets.lockGuard();
-        bool tmp_state = false;
-        auto appendRow = [&](const SocketController::LightConfig &cfg, bool enabled) {
+        loadLocalLightItems_(sockets, *scratch, SocketController::kLightCount);
+        auto appendRow = [&](const SocketController::LightConfig &cfg, bool enabled, bool on) {
             const bool can_edit = web.webSessionIsAdmin_();
             const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Lights, cfg.id);
             const bool has_groups = web.hasGroups_();
-            const bool on = enabled && sockets.lightRelayState(cfg.id, tmp_state) ? tmp_state : false;
             items += "<div class=\"tile js-group-item";
             if (!enabled)
                 items += " disabled";
@@ -307,16 +455,16 @@ String WebInterfaceControllersLightsHelper::listLightsHtml_(WebInterface &web, u
         const bool can_view_disabled = web.webSessionIsAdmin_();
         for (size_t i = 0; i < render_count; ++i)
         {
-            const auto *cfg = sockets.lightConfigByIndex(i);
-            if (!cfg)
+            if (!scratch->light_valid[i])
                 continue;
-            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Lights, cfg->id))
+            const auto &cfg = scratch->light_cfg[i];
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Lights, cfg.id))
                 continue;
-            if (cfg->id < start_id || cfg->id > end_id)
+            if (cfg.id < start_id || cfg.id > end_id)
                 continue;
-            if (!can_view_disabled && !cfg->enabled)
+            if (!can_view_disabled && !cfg.enabled)
                 continue;
-            appendRow(*cfg, cfg->enabled);
+            appendRow(cfg, cfg.enabled, scratch->light_relay_on[i]);
         }
         if (items.length() == 0)
             items = WebUiRu::Lights::kText8;
@@ -324,46 +472,32 @@ String WebInterfaceControllersLightsHelper::listLightsHtml_(WebInterface &web, u
     }
 
 size_t WebInterfaceControllersLightsHelper::stackLightsVisibleCount_(const WebInterface &web, uint32_t node_id) {
-            const auto *cache = web._stack_cache ? web._stack_cache->lightsCache(node_id) : nullptr;
-            if (!cache || !cache->has_data || !cache->items)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!stackLightsState_(web, node_id, snapshot) || !stackLightsCacheState_(web, node_id, cache))
+                return 0;
+            if (cache.light_count == 0)
                 return 0;
             const bool can_view_disabled = web.webSessionIsAdmin_();
-            size_t render_count = cache->item_count;
-            if (can_view_disabled)
-            {
-                size_t last_enabled_idx = SIZE_MAX;
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    if (cache->items[i].enabled)
-                        last_enabled_idx = i;
-                }
-                if (last_enabled_idx == SIZE_MAX)
-                    render_count = cache->item_count ? 1u : 0u;
-                else
-                {
-                    const size_t rc = last_enabled_idx + 2u;
-                    render_count = rc > cache->item_count ? cache->item_count : rc;
-                }
-            }
+            const size_t render_count = stackLightsRenderCount_(web, node_id, cache.light_count, can_view_disabled);
             size_t count = 0;
-            for (size_t i = 0; i < render_count; ++i)
-            {
-                const auto &cfg = cache->items[i];
-                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Lights, cfg.id, node_id))
-                    continue;
+            web.network()->forEachStackLight(node_id, (uint8_t)render_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &cfg) {
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Lights, cfg.id, snapshot.node_id))
+                    return;
                 if (!can_view_disabled && !cfg.enabled)
-                    continue;
+                    return;
                 ++count;
-            }
+            });
             return count;
         
     }
 
 String WebInterfaceControllersLightsHelper::listStackLightsHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
-            const auto *cache = web._stack_cache->lightsCache(node_id);
-            if (!cache || !cache->has_data)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!stackLightsState_(web, node_id, snapshot) || !stackLightsCacheState_(web, node_id, cache))
                 return WebUiRu::Lights::kText9;
-            if (cache->item_count == 0)
+            if (cache.light_count == 0)
                 return WebUiRu::Lights::kText8;
             String items;
             const size_t page_limit = (limit == 0) ? 1u : limit;
@@ -372,36 +506,20 @@ String WebInterfaceControllersLightsHelper::listStackLightsHtml_(WebInterface &w
                 reserve = 8192u;
             items.reserve(reserve);
             const bool can_view_disabled = web.webSessionIsAdmin_();
-            size_t render_count = cache->item_count;
-            if (can_view_disabled)
-            {
-                size_t last_enabled_idx = SIZE_MAX;
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    if (cache->items[i].enabled)
-                        last_enabled_idx = i;
-                }
-                if (last_enabled_idx == SIZE_MAX)
-                    render_count = cache->item_count ? 1u : 0u;
-                else
-                {
-                    const size_t rc = last_enabled_idx + 2u;
-                    render_count = rc > cache->item_count ? cache->item_count : rc;
-                }
-            }
+            const size_t render_count = stackLightsRenderCount_(web, node_id, cache.light_count, can_view_disabled);
             size_t rendered = 0;
             size_t visible_idx = 0;
-            for (size_t i = 0; i < render_count && rendered < page_limit; ++i)
-            {
-                const auto &cfg = cache->items[i];
+            web.network()->forEachStackLight(node_id, (uint8_t)render_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &cfg) {
+                if (rendered >= page_limit)
+                    return;
                 if (!web.webAclCanViewItem_(UsersRegistry::AclController::Lights, cfg.id, node_id))
-                    continue;
+                    return;
                 if (!can_view_disabled && !cfg.enabled)
-                    continue;
+                    return;
                 if (visible_idx < offset)
                 {
                     ++visible_idx;
-                    continue;
+                    return;
                 }
                 ++visible_idx;
                 const bool can_edit = web.webSessionIsAdmin_();
@@ -501,7 +619,7 @@ String WebInterfaceControllersLightsHelper::listStackLightsHtml_(WebInterface &w
                 items += "_action\" value=\"\">";
                 items += "</div></div>";
                 ++rendered;
-            }
+            });
             if (items.length() == 0)
                 items = WebUiRu::Lights::kText8;
             return items;
@@ -528,6 +646,10 @@ void WebInterface::handleStackLightsToggle_(AsyncWebServerRequest *request, uint
         WebInterfaceControllersLightsHelper::handleStackLightsToggle_(*this, request, node_id, set_cookie);
     }
 
+void WebInterface::handleStackLightsEnable_(AsyncWebServerRequest *request, uint32_t node_id, bool set_cookie) {
+        WebInterfaceControllersLightsHelper::handleStackLightsEnable_(*this, request, node_id, set_cookie);
+    }
+
 bool WebInterface::requestStackLights_(uint32_t node_id) {
         return WebInterfaceControllersLightsHelper::requestStackLights_(*this, node_id);
     }
@@ -543,5 +665,4 @@ size_t WebInterface::stackLightsVisibleCount_(uint32_t node_id) const {
 String WebInterface::listStackLightsHtml_(uint32_t node_id, size_t offset, size_t limit) {
         return WebInterfaceControllersLightsHelper::listStackLightsHtml_(*this, node_id, offset, limit);
     }
-
 

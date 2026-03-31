@@ -42,9 +42,6 @@ void ThermoHandler::handleThermo(WebInterface &web, AsyncWebServerRequest *reque
         uint8_t max_pages = 1;
         if (stack_view)
         {
-            web.requestStackThermo_(node_id);
-            web.requestStackMeteo_(node_id);
-            web.requestStackPorts_(node_id);
             if (!groups_available)
             {
                 const size_t visible = web.stackThermoVisibleCount_(node_id);
@@ -69,21 +66,6 @@ void ThermoHandler::handleThermo(WebInterface &web, AsyncWebServerRequest *reque
         {
             page_idx = 0;
             max_pages = 1;
-        }
-        if (!stack_view && web.stackRole_() == ConfigsManagerIface::StackRole::Slave)
-        {
-            if (web._stack_slave)
-                web._stack_slave->requestRemoteMeteoAll();
-        }
-        else if (!stack_view && web.stackRole_() == ConfigsManagerIface::StackRole::Master)
-        {
-            const size_t count = web._stack_master ? web._stack_master->nodeCount() : 0;
-            for (size_t i = 0; i < count; ++i)
-            {
-                const uint32_t id = web._stack_master->nodeIdAt(i);
-                if (id != 0)
-                    web.stackCache().requestMeteo(id);
-            }
         }
         String page = FPSTR(kWebInterfaceThermoHtml);
         page.reserve(page.length() + 16384);
@@ -148,7 +130,12 @@ void ThermoHandler::handleThermo(WebInterface &web, AsyncWebServerRequest *reque
             pagination += "</div>";
         }
         page.replace("%NAV%", web.navHtml_());
-        page.replace("%THERMO_ROWS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackThermoHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                   groups_available ? SIZE_MAX : page_size)
+                                        : web.listThermoHtml_(groups_available ? 0u : (size_t)page_idx * page_size,
+                                                              groups_available ? SIZE_MAX : page_size);
+        page.replace("%THERMO_ROWS%", initial_html);
         page.replace("%THERMO_PAGINATION%", pagination);
         page.replace("%THERMO_STATUS%", stack_view ? web.stackThermoStatusText_(node_id) : web._thermo_status);
         page.replace("%THERMO_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
@@ -183,27 +170,7 @@ void ThermoHandler::handleThermo(WebInterface &web, AsyncWebServerRequest *reque
         }
         bool can_save = web.webSessionIsAdmin_();
         const bool can_view_disabled = web.webSessionIsAdmin_();
-        if (stack_view)
-        {
-            const auto *cache = web._stack_cache ? web._stack_cache->thermoCache(node_id) : nullptr;
-            if (cache && cache->has_data && cache->items)
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    const auto &it = cache->items[i];
-                    if (!web.webAclCanViewItem_(UsersRegistry::AclController::Thermo, it.id, node_id))
-                        continue;
-                    if (!can_view_disabled && !it.enabled)
-                        continue;
-                    if (web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, it.id, node_id))
-                    {
-                        can_save = true;
-                        break;
-                    }
-                }
-            }
-        }
-        else if (web._controllers)
+        if (!stack_view && web._controllers)
         {
             ThermoController &thermo = web._controllers->thermo();
             auto thermo_guard = thermo.lockGuard();
@@ -299,421 +266,92 @@ void ThermoHandler::handleThermoSave(WebInterface &web, AsyncWebServerRequest *r
                     back += String((unsigned)pv);
                 }
             }
-            if (!web._stack_master || !web._stack_cache)
+            if (!web.network())
             {
                 web._thermo_status = "Stack unavailable";
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            const auto *cache = web._stack_cache->thermoCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
+            DynamicJsonDocument doc(1536);
+            doc["source"] = "localweb";
+            if (const auto *u = web.sessionUser_())
+                doc["source_user"] = u->username;
+            JsonArray items = doc["items"].to<JsonArray>();
+            for (uint8_t i = 1; i <= ThermoController::kDeviceCount; ++i)
             {
-                web._stack_cache->requestThermo(node_id);
-                web._thermo_status = "No data";
+                const String idx = String((unsigned)i);
+                const String prefix = String("t") + idx + "_";
+                const bool has_any = request->hasParam(prefix + "en", true) ||
+                                     request->hasParam(prefix + "name", true) ||
+                                     request->hasParam(prefix + "sensor", true) ||
+                                     request->hasParam(prefix + "mode", true) ||
+                                     request->hasParam(prefix + "target", true) ||
+                                     request->hasParam(prefix + "hyst", true) ||
+                                     request->hasParam(prefix + "heat", true) ||
+                                     request->hasParam(prefix + "cool", true) ||
+                                     request->hasParam(prefix + "button", true) ||
+                                     request->hasParam(prefix + "group", true) ||
+                                     request->hasParam(prefix + "power", true);
+                if (!has_any || !web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, i, node_id))
+                    continue;
+                JsonObject o = items.add<JsonObject>();
+                o["id"] = i;
+                const String en_force_str = web.paramValue_(request, prefix + "en_force");
+                const bool en_force_known = (en_force_str == "1" || en_force_str == "0" ||
+                                             en_force_str == "true" || en_force_str == "false" ||
+                                             en_force_str == "on" || en_force_str == "off");
+                if (en_force_known)
+                    o["enabled"] = (en_force_str == "1" || en_force_str == "true" || en_force_str == "on");
+                const String name = web.paramValue_(request, prefix + "name");
+                if (name.length())
+                    o["name"] = name;
+                o["group_id"] = web.parseGroupIdParam_(request, prefix + "group");
+                uint8_t sensor_id = ThermoController::kInvalidSensor;
+                uint32_t sensor_node_id = 0;
+                const String sensor_str = web.paramValue_(request, prefix + "sensor");
+                if (web.parseThermoSensor_(sensor_str, sensor_id, sensor_node_id))
+                {
+                    o["sensor_id"] = sensor_id;
+                    o["sensor_node_id"] = sensor_node_id;
+                }
+                ThermoController::Mode mode = ThermoController::Mode::Off;
+                if (web.parseThermoMode_(web.paramValue_(request, prefix + "mode"), mode))
+                    o["mode_id"] = (uint8_t)mode;
+                float target = 0.0f;
+                if (web.parseThermoFloat_(web.paramValue_(request, prefix + "target"), target))
+                    o["target_c"] = target;
+                float hyst = 0.0f;
+                if (web.parseThermoFloat_(web.paramValue_(request, prefix + "hyst"), hyst))
+                    o["hyst"] = hyst;
+                uint8_t heat_port = ThermoController::kInvalidPort;
+                uint8_t cool_port = ThermoController::kInvalidPort;
+                uint8_t button_port = ThermoController::kInvalidPort;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "heat"), heat_port))
+                    o["heat_port"] = heat_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "cool"), cool_port))
+                    o["cool_port"] = cool_port;
+                if (web.parseSocketPort_(web.paramValue_(request, prefix + "button"), button_port))
+                    o["button_port"] = button_port;
+                const String power_str = web.paramValue_(request, prefix + "power");
+                if (power_str == "on" || power_str == "off" || power_str == "1" || power_str == "0" ||
+                    power_str == "true" || power_str == "false")
+                    o["power_on"] = (power_str == "on" || power_str == "1" || power_str == "true");
+            }
+            if (items.size() == 0)
+            {
+                web._thermo_status = "No changes";
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            auto *cache_mut = web._stack_cache->thermoCache(node_id);
-            bool changed = false;
-            for (size_t i = 0; i < cache->item_count; ++i)
+            if (!web.network()->stackRoute().sendEvent(node_id, "thermo", "set", &doc, StackRouteAdapter::Mode::Json))
             {
-                const auto &it = cache->items[i];
-                const String group_key = String("t") + String((unsigned)it.id) + "_group";
-                const String power_key = String("t") + String((unsigned)it.id) + "_power";
-                const String mode_key = String("t") + String((unsigned)it.id) + "_mode";
-                const String target_key = String("t") + String((unsigned)it.id) + "_target";
-                const String hyst_key = String("t") + String((unsigned)it.id) + "_hyst";
-                const String heat_key = String("t") + String((unsigned)it.id) + "_heat";
-                const String cool_key = String("t") + String((unsigned)it.id) + "_cool";
-                const String button_key = String("t") + String((unsigned)it.id) + "_button";
-                const bool has_any = request->hasParam(power_key, true) ||
-                                     request->hasParam(group_key, true) ||
-                                     request->hasParam(mode_key, true) ||
-                                     request->hasParam(target_key, true) ||
-                                     request->hasParam(hyst_key, true) ||
-                                     request->hasParam(heat_key, true) ||
-                                     request->hasParam(cool_key, true) ||
-                                     request->hasParam(button_key, true);
-                if (!has_any)
-                    continue;
-                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Thermo, it.id, node_id))
-                {
-                    web._thermo_status = String("ACL deny item: ") + String((unsigned)it.id);
-                    web.sendRedirect_(request, back, set_cookie);
-                    return;
-                }
-                bool item_changed = false;
-                bool set_power = false;
-                bool new_power_on = it.power_on;
-                bool set_mode = false;
-                ThermoController::Mode new_mode = ThermoController::Mode::Off;
-                bool set_target = false;
-                float new_target = it.target;
-                bool set_hyst = false;
-                float new_hyst = it.hyst;
-                bool set_heat = false;
-                uint8_t new_heat = it.heat;
-                bool set_cool = false;
-                uint8_t new_cool = it.cool;
-                bool set_button = false;
-                uint8_t new_button = it.button;
-                bool set_group = false;
-                uint8_t new_group_id = it.group_id;
-
-                if (request->hasParam(group_key, true))
-                {
-                    const uint8_t group_id = web.parseGroupIdParam_(request, group_key);
-                    if (group_id != it.group_id)
-                    {
-                        item_changed = true;
-                        set_group = true;
-                        new_group_id = group_id;
-                    }
-                }
-
-                if (request->hasParam(power_key, true))
-                {
-                    const String power_str = web.paramValue_(request, power_key);
-                    const bool has_power = (power_str == "on" || power_str == "off" || power_str == "1" || power_str == "0" ||
-                                            power_str == "true" || power_str == "false");
-                    if (!has_power)
-                    {
-                        web._thermo_status = String("Invalid power for device ") + String((unsigned)it.id);
-                        web.sendRedirect_(request, back, set_cookie);
-                        return;
-                    }
-                    const bool power_on = (power_str == "on" || power_str == "1" || power_str == "true");
-                    if (power_on != it.power_on)
-                    {
-                        item_changed = true;
-                        set_power = true;
-                        new_power_on = power_on;
-                    }
-                }
-
-                if (request->hasParam(mode_key, true))
-                {
-                    ThermoController::Mode mode = ThermoController::Mode::Off;
-                    const String mode_str = web.paramValue_(request, mode_key);
-                    if (!web.parseThermoMode_(mode_str, mode))
-                    {
-                        web._thermo_status = String("Invalid mode for device ") + String((unsigned)it.id);
-                        web.sendRedirect_(request, back, set_cookie);
-                        return;
-                    }
-                    ThermoController::Mode current_mode = ThermoController::Mode::Off;
-                    (void)web.parseThermoMode_(String(it.mode), current_mode);
-                    if (mode != current_mode)
-                    {
-                        item_changed = true;
-                        set_mode = true;
-                        new_mode = mode;
-                    }
-                }
-
-                if (request->hasParam(target_key, true))
-                {
-                    float target = it.target;
-                    const String target_str = web.paramValue_(request, target_key);
-                    if (!web.parseThermoFloat_(target_str, target))
-                    {
-                        web._thermo_status = String("Invalid target for device ") + String((unsigned)it.id);
-                        web.sendRedirect_(request, back, set_cookie);
-                        return;
-                    }
-                    const float delta = (target > it.target) ? (target - it.target) : (it.target - target);
-                    if (delta > 0.01f)
-                    {
-                        item_changed = true;
-                        set_target = true;
-                        new_target = target;
-                    }
-                }
-
-                if (request->hasParam(hyst_key, true))
-                {
-                    float hyst = it.hyst;
-                    const String hyst_str = web.paramValue_(request, hyst_key);
-                    if (!web.parseThermoFloat_(hyst_str, hyst))
-                    {
-                        web._thermo_status = String("Invalid hyst for device ") + String((unsigned)it.id);
-                        web.sendRedirect_(request, back, set_cookie);
-                        return;
-                    }
-                    const float delta = (hyst > it.hyst) ? (hyst - it.hyst) : (it.hyst - hyst);
-                    if (delta > 0.01f)
-                    {
-                        item_changed = true;
-                        set_hyst = true;
-                        new_hyst = hyst;
-                    }
-                }
-
-                if (request->hasParam(heat_key, true))
-                {
-                    uint8_t port = it.heat;
-                    const String port_str = web.paramValue_(request, heat_key);
-                    if (!web.parseSocketPort_(port_str, port))
-                    {
-                        web._thermo_status = String("Invalid heat port for device ") + String((unsigned)it.id);
-                        web.sendRedirect_(request, back, set_cookie);
-                        return;
-                    }
-                    if (port != it.heat)
-                    {
-                        item_changed = true;
-                        set_heat = true;
-                        new_heat = port;
-                    }
-                }
-
-                if (request->hasParam(cool_key, true))
-                {
-                    uint8_t port = it.cool;
-                    const String port_str = web.paramValue_(request, cool_key);
-                    if (!web.parseSocketPort_(port_str, port))
-                    {
-                        web._thermo_status = String("Invalid cool port for device ") + String((unsigned)it.id);
-                        web.sendRedirect_(request, back, set_cookie);
-                        return;
-                    }
-                    if (port != it.cool)
-                    {
-                        item_changed = true;
-                        set_cool = true;
-                        new_cool = port;
-                    }
-                }
-
-                if (request->hasParam(button_key, true))
-                {
-                    uint8_t port = it.button;
-                    const String port_str = web.paramValue_(request, button_key);
-                    if (!web.parseSocketPort_(port_str, port))
-                    {
-                        web._thermo_status = String("Invalid button port for device ") + String((unsigned)it.id);
-                        web.sendRedirect_(request, back, set_cookie);
-                        return;
-                    }
-                    if (port != it.button)
-                    {
-                        item_changed = true;
-                        set_button = true;
-                        new_button = port;
-                    }
-                }
-
-                if (!item_changed)
-                    continue;
-
-                bool sent_any = false;
-                // Slave handler applies one field per set-item, so send separate frames.
-                if (set_mode)
-                {
-                    StaticJsonDocument<192> doc;
-                    doc["cmd_id"] = 0;
-                    doc["feature"] = (uint8_t)StackFeature::Thermo;
-                    doc["action"] = "set";
-                    JsonArray items = doc["params"]["items"].to<JsonArray>();
-                    JsonObject obj = items.add<JsonObject>();
-                    obj["id"] = (unsigned)it.id;
-                    obj["mode"] = ThermoController::modeName(new_mode);
-                    char payload[192] = {};
-                    const size_t len = serializeJson(doc, payload, sizeof(payload));
-                    if (len > 0 && web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                             reinterpret_cast<const uint8_t *>(payload), len))
-                        sent_any = true;
-                }
-                if (set_group)
-                {
-                    StaticJsonDocument<192> doc;
-                    doc["cmd_id"] = 0;
-                    doc["feature"] = (uint8_t)StackFeature::Thermo;
-                    doc["action"] = "set";
-                    JsonArray items = doc["params"]["items"].to<JsonArray>();
-                    JsonObject obj = items.add<JsonObject>();
-                    obj["id"] = (unsigned)it.id;
-                    obj["group_id"] = new_group_id;
-                    char payload[192] = {};
-                    const size_t len = serializeJson(doc, payload, sizeof(payload));
-                    if (len > 0 && web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                             reinterpret_cast<const uint8_t *>(payload), len))
-                        sent_any = true;
-                }
-                if (set_target)
-                {
-                    StaticJsonDocument<192> doc;
-                    doc["cmd_id"] = 0;
-                    doc["feature"] = (uint8_t)StackFeature::Thermo;
-                    doc["action"] = "set";
-                    JsonArray items = doc["params"]["items"].to<JsonArray>();
-                    JsonObject obj = items.add<JsonObject>();
-                    obj["id"] = (unsigned)it.id;
-                    obj["target"] = new_target;
-                    char payload[192] = {};
-                    const size_t len = serializeJson(doc, payload, sizeof(payload));
-                    if (len > 0 && web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                             reinterpret_cast<const uint8_t *>(payload), len))
-                        sent_any = true;
-                }
-                if (set_hyst)
-                {
-                    StaticJsonDocument<192> doc;
-                    doc["cmd_id"] = 0;
-                    doc["feature"] = (uint8_t)StackFeature::Thermo;
-                    doc["action"] = "set";
-                    JsonArray items = doc["params"]["items"].to<JsonArray>();
-                    JsonObject obj = items.add<JsonObject>();
-                    obj["id"] = (unsigned)it.id;
-                    obj["hyst"] = new_hyst;
-                    char payload[192] = {};
-                    const size_t len = serializeJson(doc, payload, sizeof(payload));
-                    if (len > 0 && web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                             reinterpret_cast<const uint8_t *>(payload), len))
-                        sent_any = true;
-                }
-                if (set_power)
-                {
-                    StaticJsonDocument<192> doc;
-                    doc["cmd_id"] = 0;
-                    doc["feature"] = (uint8_t)StackFeature::Thermo;
-                    doc["action"] = "set";
-                    JsonArray items = doc["params"]["items"].to<JsonArray>();
-                    JsonObject obj = items.add<JsonObject>();
-                    obj["id"] = (unsigned)it.id;
-                    obj["power"] = new_power_on;
-                    char payload[192] = {};
-                    const size_t len = serializeJson(doc, payload, sizeof(payload));
-                    if (len > 0 && web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                             reinterpret_cast<const uint8_t *>(payload), len))
-                        sent_any = true;
-                }
-                if (set_heat)
-                {
-                    StaticJsonDocument<192> doc;
-                    doc["cmd_id"] = 0;
-                    doc["feature"] = (uint8_t)StackFeature::Thermo;
-                    doc["action"] = "set";
-                    JsonArray items = doc["params"]["items"].to<JsonArray>();
-                    JsonObject obj = items.add<JsonObject>();
-                    obj["id"] = (unsigned)it.id;
-                    if (new_heat == ThermoController::kInvalidPort)
-                        obj["heat"] = -1;
-                    else
-                        obj["heat"] = (unsigned)new_heat;
-                    char payload[192] = {};
-                    const size_t len = serializeJson(doc, payload, sizeof(payload));
-                    if (len > 0 && web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                             reinterpret_cast<const uint8_t *>(payload), len))
-                        sent_any = true;
-                }
-                if (set_cool)
-                {
-                    StaticJsonDocument<192> doc;
-                    doc["cmd_id"] = 0;
-                    doc["feature"] = (uint8_t)StackFeature::Thermo;
-                    doc["action"] = "set";
-                    JsonArray items = doc["params"]["items"].to<JsonArray>();
-                    JsonObject obj = items.add<JsonObject>();
-                    obj["id"] = (unsigned)it.id;
-                    if (new_cool == ThermoController::kInvalidPort)
-                        obj["cool"] = -1;
-                    else
-                        obj["cool"] = (unsigned)new_cool;
-                    char payload[192] = {};
-                    const size_t len = serializeJson(doc, payload, sizeof(payload));
-                    if (len > 0 && web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                             reinterpret_cast<const uint8_t *>(payload), len))
-                        sent_any = true;
-                }
-                if (set_button)
-                {
-                    StaticJsonDocument<192> doc;
-                    doc["cmd_id"] = 0;
-                    doc["feature"] = (uint8_t)StackFeature::Thermo;
-                    doc["action"] = "set";
-                    JsonArray items = doc["params"]["items"].to<JsonArray>();
-                    JsonObject obj = items.add<JsonObject>();
-                    obj["id"] = (unsigned)it.id;
-                    if (new_button == ThermoController::kInvalidPort)
-                        obj["button"] = -1;
-                    else
-                        obj["button"] = (unsigned)new_button;
-                    char payload[192] = {};
-                    const size_t len = serializeJson(doc, payload, sizeof(payload));
-                    if (len > 0 && web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                             reinterpret_cast<const uint8_t *>(payload), len))
-                        sent_any = true;
-                }
-
-                if (sent_any)
-                {
-                    changed = true;
-                    if (cache_mut && cache_mut->items)
-                    {
-                        for (size_t k = 0; k < cache_mut->item_count; ++k)
-                        {
-                            auto &dst = cache_mut->items[k];
-                            if (dst.id != it.id)
-                                continue;
-                            if (set_power)
-                                dst.power_on = new_power_on;
-                            if (set_group)
-                                dst.group_id = new_group_id;
-                            if (set_mode)
-                            {
-                                const char *mode_name = ThermoController::modeName(new_mode);
-                                size_t m = 0;
-                                for (; m + 1 < sizeof(dst.mode) && mode_name[m]; ++m)
-                                    dst.mode[m] = mode_name[m];
-                                dst.mode[m] = '\0';
-                            }
-                            if (set_target)
-                                dst.target = new_target;
-                            if (set_hyst)
-                                dst.hyst = new_hyst;
-                            if (set_heat)
-                                dst.heat = new_heat;
-                            if (set_cool)
-                                dst.cool = new_cool;
-                            if (set_button)
-                                dst.button = new_button;
-                            // Update visual state immediately so UI does not lag until next stack poll/ack.
-                            bool eff_power = dst.power_on;
-                            if (set_power)
-                                eff_power = new_power_on;
-                            ThermoController::Mode eff_mode = ThermoController::Mode::Off;
-                            (void)web.parseThermoMode_(String(dst.mode), eff_mode);
-                            if (set_mode)
-                                eff_mode = new_mode;
-                            if (!eff_power || eff_mode == ThermoController::Mode::Off)
-                            {
-                                dst.heat_on = false;
-                                dst.cool_on = false;
-                            }
-                            else if (eff_mode == ThermoController::Mode::Heat)
-                            {
-                                dst.heat_on = true;
-                                dst.cool_on = false;
-                            }
-                            else if (eff_mode == ThermoController::Mode::Cool)
-                            {
-                                dst.heat_on = false;
-                                dst.cool_on = true;
-                            }
-                            cache_mut->updated_ms = millis();
-                            cache_mut->has_data = true;
-                            break;
-                        }
-                    }
-                }
+                web._thermo_status = "Send failed";
+                web.sendRedirect_(request, back, set_cookie);
+                return;
             }
-            if (changed)
-            {
-                web._stack_cache->requestThermo(node_id);
-                web.refreshStackPorts_(node_id);
-            }
-            web._thermo_status = changed ? "Updated" : "No changes";
+            web.requestStackThermo_(node_id);
+            web.requestStackIndexState_(node_id);
+            web._thermo_status = "Updated";
             web.sendRedirect_(request, back, set_cookie);
             return;
         }
@@ -861,12 +499,6 @@ void ThermoHandler::handleThermoSave(WebInterface &web, AsyncWebServerRequest *r
                 {
                     if (web.stackRole_() != ConfigsManagerIface::StackRole::Master &&
                         web.stackRole_() != ConfigsManagerIface::StackRole::Slave)
-                    {
-                        ok = false;
-                        web._thermo_status = String("?????? ?????????? (") + idx + ")";
-                        break;
-                    }
-                    if (web.stackRole_() == ConfigsManagerIface::StackRole::Slave && !web._stack_slave)
                     {
                         ok = false;
                         web._thermo_status = String("?????? ?????????? (") + idx + ")";
@@ -1059,112 +691,64 @@ void ThermoHandler::handleThermoToggle(WebInterface &web, AsyncWebServerRequest 
 
         if (web.isStackThermoView_(node_id))
         {
-            if (!web._stack_master)
+            if (!web.network())
             {
-                web.sendText_(request, 400, "text/plain", "Stack master missing", set_cookie);
+                web.sendText_(request, 400, "text/plain", "Stack unavailable", set_cookie);
                 return;
             }
-            auto *cache = web._stack_cache ? web._stack_cache->thermoCache(node_id) : nullptr;
-            StackCache::StackThermoItem *item = nullptr;
-            if (cache && cache->items)
-            {
-                for (size_t i = 0; i < cache->item_count; ++i)
-                {
-                    if (cache->items[i].id == id)
-                    {
-                        item = &cache->items[i];
-                        break;
-                    }
-                }
-            }
-
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            StackUnitSnapshot::RequestState request_state{};
+            const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+            const bool has_cache = web.network()->stackIndexCacheState(node_id, cache);
+            const bool has_request = web.network()->stackIndexRequestState(node_id, request_state);
+            StackUnitSnapshot::ThermoItem item{};
+            const bool has_item = has_snapshot && web.network()->stackIndexThermoById(node_id, (uint8_t)id, item);
             if (action == "state")
             {
-                if (!cache || !cache->has_data)
+                const bool stale = !has_snapshot || snapshot.updated_ms == 0 ||
+                    (uint32_t)(millis() - snapshot.updated_ms) > 1500u;
+                const bool partial = has_snapshot && has_cache && snapshot.thermo_enabled > cache.thermo_count;
+                if (stale || partial)
                 {
-                    if (web._stack_cache)
-                        web._stack_cache->requestThermo(node_id);
+                    web.requestStackThermo_(node_id);
                     web.sendText_(request, 200, "text/plain", "pending", set_cookie);
                     return;
                 }
-                const bool stale = (cache->pending || (uint32_t)(millis() - cache->updated_ms) > 1500u);
-                if (stale)
+                if (has_request && request_state.pending)
                 {
-                    if (web._stack_cache)
-                        web._stack_cache->requestThermo(node_id);
                     web.sendText_(request, 200, "text/plain", "pending", set_cookie);
                     return;
                 }
-                if (!item)
+                if (!has_item)
                 {
                     web.sendText_(request, 200, "text/plain", "unknown", set_cookie);
                     return;
                 }
-                send_state(item->power_on, item->heat_on, item->cool_on);
+                send_state(item.power_on, item.heat_on, item.cool_on);
                 return;
             }
-
-            StaticJsonDocument<192> doc;
-            doc["cmd_id"] = 0;
-            doc["feature"] = (uint8_t)StackFeature::Thermo;
-            doc["action"] = "set";
-            JsonArray items = doc["params"]["items"].to<JsonArray>();
+            StaticJsonDocument<224> doc;
+            doc["source"] = "localweb";
+            if (const auto *u = web.sessionUser_())
+                doc["source_user"] = u->username;
+            JsonArray items = doc["items"].to<JsonArray>();
             JsonObject o = items.add<JsonObject>();
             o["id"] = id;
-            if (action == "on" || action == "off")
-            {
-                o["power"] = (action == "on");
-            }
+            if (action == "on")
+                o["power_on"] = true;
+            else if (action == "off")
+                o["power_on"] = false;
             else
-            {
                 o["toggle"] = true;
-            }
-            char payload[192] = {};
-            const size_t len = serializeJson(doc, payload, sizeof(payload));
-            if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                       reinterpret_cast<const uint8_t *>(payload), len))
+            if (!web.network()->stackRoute().sendEvent(node_id, "thermo", "set", &doc, StackRouteAdapter::Mode::Json))
             {
                 web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
                 return;
             }
-            if (cache && item)
-            {
-                bool new_power = item->power_on;
-                if (action == "on")
-                    new_power = true;
-                else if (action == "off")
-                    new_power = false;
-                else
-                    new_power = !item->power_on;
-                item->power_on = new_power;
-                ThermoController::Mode mode = ThermoController::Mode::Off;
-                (void)web.parseThermoMode_(String(item->mode), mode);
-                if (!new_power || mode == ThermoController::Mode::Off)
-                {
-                    item->heat_on = false;
-                    item->cool_on = false;
-                }
-                else if (mode == ThermoController::Mode::Heat)
-                {
-                    item->heat_on = true;
-                    item->cool_on = false;
-                }
-                else if (mode == ThermoController::Mode::Cool)
-                {
-                    item->heat_on = false;
-                    item->cool_on = true;
-                }
-                cache->updated_ms = millis();
-                cache->has_data = true;
-            }
-            if (web._stack_cache)
-                web._stack_cache->requestThermo(node_id);
-            if (item)
-            {
-                send_state(item->power_on, item->heat_on, item->cool_on);
-                return;
-            }
-            web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+            web.requestStackThermo_(node_id);
+            web.requestStackIndexState_(node_id);
+            web.sendText_(request, 200, "text/plain", "OK", set_cookie);
             return;
         }
 

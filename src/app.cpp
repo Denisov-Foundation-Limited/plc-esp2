@@ -25,6 +25,13 @@ void appConsoleLoopCb_(void *ctx)
     static_cast<CliConsole *>(ctx)->loop();
 }
 
+void appConsoleLogOutputCb_(void *ctx)
+{
+    if (!ctx)
+        return;
+    static_cast<CliConsole *>(ctx)->onLoggerOutput_();
+}
+
 struct AppI2cLockCtx
 {
     I2CManager *i2c = nullptr;
@@ -104,7 +111,8 @@ HardwareContext::HardwareContext(Logger &logs, UartManager &uart)
           ext(i2c, ActiveBoardProfile::EXT_DEVS, &logs),
           portio(ActiveBoardProfile::PORTS, &ext),
           io(portio),
-          gpio(io),
+          gpio(io, &logs),
+          camera(logs),
           hal(ow, i2c, spi, uart, gpio, logs),
           plc(i2c, io, rtc)
 {
@@ -132,20 +140,15 @@ ControlContext::ControlContext(CoreContext &core, HardwareContext &hw, CommsCont
 
 UiContext::UiContext(CoreContext &core, HardwareContext &hw, CommsContext &comms, ControlContext &control)
         : console(hw.plc, comms.wifi, hw.rtc, control.ftest, hw.i2c, hw.ow,
-                  core.configs, hw.ext, control.users, control.controllers, nullptr)
+                  core.configs, hw.ext, hw.camera, control.users, control.controllers)
 {
 }
 
 NetworkContext::NetworkContext(CoreContext &core, HardwareContext &hw, CommsContext &comms, ControlContext &control, UiContext &ui)
         : web(ActiveBoardProfile::WEB_PORT),
-          fw_upgrade(web, ui.console, comms.wifi, core.configs, hw.plc, hw.rtc, core.logs, hw.ext, hw.i2c, hw.ow,
+          fw_upgrade(web, ui.console, comms.wifi, core.configs, hw.plc, hw.rtc, core.logs, hw.camera, hw.ext, hw.i2c, hw.ow,
                      control.controllers, control.rules),
-          network(core.logs, comms.wifi, comms.gsm, fw_upgrade, web, control.controllers, hw.plc, hw.rtc),
-          stack_slave(hw.io, hw.ds18b20, hw.ow, hw.i2c, hw.plc, hw.rtc, core.logs, hw.ext,
-                      control.controllers.sockets(), control.controllers.meteo(), control.controllers.thermo(),
-                      control.controllers.septic(), control.controllers.security(), control.controllers.tanks(),
-                      control.controllers.watering(), control.controllers.ring(),
-                      control.controllers.avr(), control.controllers.leak(), control.controllers)
+          network(core.logs, comms.wifi, comms.gsm, fw_upgrade, web, control.controllers, hw.plc, hw.rtc)
 {
 }
 
@@ -160,43 +163,41 @@ ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContex
             : core(),
               hw(core.logs, core.uart),
               comms(core.logs, core.uart),
-          control(core, hw, comms),
-          ui(core, hw, comms, control),
-          net(core, hw, comms, control, ui),
+              control(core, hw, comms),
+              ui(core, hw, comms, control),
+              net(core, hw, comms, control, ui),
               cfg(core, hw, comms, control, ui, net),
-              stack(core, hw, comms, control, ui, net, cfg)
+              runtime(core, hw, comms, control, ui, net, cfg)
     {
         comms.wifi.setIo(hw.io);
-        ui.console.setStackMaster(&net.network.stackMaster());
-        ui.console.setStackSlave(&net.stack_slave);
         ui.console.setConfigsManager(cfg.configs_manager);
+        ui.console.setNetwork(net.network);
+        core.logs.setOutputObserver(&appConsoleLogOutputCb_, &ui.console);
 
-    net.fw_upgrade.setStackCache(stack.stackCache());
-    net.fw_upgrade.setConfigsManager(cfg.configs_manager);
-    net.fw_upgrade.setStackMaster(net.network.stackMaster());
-    net.fw_upgrade.setStackSlave(&net.stack_slave);
-    net.fw_upgrade.setGsmModem(comms.gsm);
-    net.fw_upgrade.setCloudClient(net.network.cloudClient());
-    net.network.cloudClient().setStackCache(&stack.stackCache());
-    net.network.cloudClient().setUsersRegistry(&control.users);
-    net.network.cloudClient().setRulesController(&control.rules);
-    net.network.cloudClient().bindControllerCallbacks();
-    net.network.cloudClient().bindRuleCallbacks();
-    net.fw_upgrade.setUsersRegistry(control.users);
-    net.fw_upgrade.setRules(control.rules);
+        net.fw_upgrade.setConfigsManager(cfg.configs_manager);
+        net.fw_upgrade.setGsmModem(comms.gsm);
+        net.fw_upgrade.setCloudClient(net.network.cloudClient());
+        net.fw_upgrade.setNetwork(net.network);
+        net.network.cloudClient().setConfigsManager(&cfg.configs_manager);
+        net.network.cloudClient().setUsersRegistry(&control.users);
+        net.network.cloudClient().setRulesController(&control.rules);
+        net.network.cloudClient().setCamera(&hw.camera);
+        net.network.cloudClient().bindControllerCallbacks();
+        net.network.cloudClient().bindRuleCallbacks();
+        net.fw_upgrade.setUsersRegistry(control.users);
+        net.fw_upgrade.setRules(control.rules);
 
-    net.network.setStackConfig(cfg.configs_manager);
-    control.task_binder.setGsmModem(comms.gsm);
-    control.task_binder.setCloudClient(net.network.cloudClient());
-    control.task_binder.setNetwork(net.network);
-    control.task_binder.setConsoleLoop(&appConsoleLoopCb_, &ui.console);
+        control.task_binder.setGsmModem(comms.gsm);
+        control.task_binder.setCloudClient(net.network.cloudClient());
+        control.task_binder.setNetwork(net.network);
+        control.task_binder.setConsoleLoop(&appConsoleLoopCb_, &ui.console);
 
-    control.controllers.security().setRfidI2c(&hw.i2c);
-    control.controllers.security().setUsersRegistry(control.users);
-    control.controllers.security().setPlcControl(hw.plc);
+        control.controllers.security().setRfidI2c(&hw.i2c);
+        control.controllers.security().setUsersRegistry(control.users);
+        control.controllers.security().setPlcControl(hw.plc);
 
-    stack.bindCallbacks();
-}
+        runtime.bindCallbacks();
+    }
 
 bool App::begin()
 {
@@ -206,9 +207,6 @@ bool App::begin()
         core.logs.begin(Serial);
         core.logs.error(F("APP"), F("LOG Auto bind failed, fallback to USB"));
     }
-
-    stack.init();
-
     delay(1000);
     ui.console.begin(Serial);
 
@@ -286,9 +284,11 @@ bool App::begin()
             }
         }
     }
+    runtime.init();
+    runtime.applyLoadedConfig();
 
-    stack.applyLoadedConfig();
-
+    net.network.setStackConfig(cfg.configs_manager);
+    net.network.setStackDeviceName(hw.plc.deviceName());
     cfg.configs_manager.setCloudFirmwareVersion(BuildInfo::kFwVersion);
     net.network.setCloudFirmwareVersion(BuildInfo::kFwVersion);
     switch (comms.wifi.mode())
@@ -451,8 +451,8 @@ bool App::begin()
         core.logs.error(F("APP"), F("Application init [FAIL]"));
 
     control.task_binder.bindFtest(control.ftest);
+    control.task_binder.bindRuntime(runtime);
     control.task_binder.bindAll();
-    control.task_binder.bindStack(stack);
     if (rtc_ok)
         core.logs.setRtc(hw.rtc);
 
@@ -461,7 +461,7 @@ bool App::begin()
 
 void App::loop()
 {
-    control.task_binder.runStackPre(stack);
+    control.task_binder.runRuntimePre(runtime);
 
 #if APP_GPIO_SCAN_METRICS
     {

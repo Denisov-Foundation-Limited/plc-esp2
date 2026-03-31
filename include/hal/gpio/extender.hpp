@@ -63,6 +63,7 @@ public:
 
     void pinMode(uint8_t dev, uint8_t pin, uint8_t mode);
     void write(uint8_t dev, uint8_t pin, bool level);
+    bool read(uint8_t dev, uint8_t pin, bool &out) const;
     bool read(uint8_t dev, uint8_t pin) const;
     void flushAll();
 
@@ -70,6 +71,14 @@ public:
     uint8_t devCount() const { return _dev_count; }
 
 private:
+    struct RuntimeDiag
+    {
+        uint32_t mcp_read_fail = 0;
+        uint32_t mcp_cache_fallback = 0;
+        uint32_t pcf_read_fail = 0;
+        uint32_t pcf_cache_fallback = 0;
+    };
+
     const DevCfg *_devs = nullptr;
     uint8_t _dev_count = 0;
     I2CManager *_i2c = nullptr;
@@ -102,6 +111,9 @@ private:
     mutable uint8_t _scan_index = 0;
     mutable bool _scan_active = false;
     mutable bool _suppress_first_pass_logs = false;
+    mutable RuntimeDiag _diag{};
+    mutable RuntimeDiag _diag_last_reported{};
+    mutable uint32_t _diag_last_report_ms = 0;
 
     void initState_();
     void scanDevice_(uint8_t dev);
@@ -116,4 +128,5 @@ private:
     void noteRuntimeIoFailure_(uint8_t dev) const;
     bool anyMissing_() const;
     void scheduleFastRescan_() const;
+    void maybeLogDiag_() const;
 };

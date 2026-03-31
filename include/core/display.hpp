@@ -67,6 +67,9 @@ private:
     uint8_t _bus_num = 0;
     String _line0;
     String _line1;
+    char _last_hw_line0[17]{};
+    char _last_hw_line1[17]{};
+    bool _custom_chars_ready = false;
     DisplaySlotConfig _slots[kSlotCount]{};
     SlotProvider _slot_provider = nullptr;
     void *_slot_ctx = nullptr;

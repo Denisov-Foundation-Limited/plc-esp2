@@ -12,10 +12,7 @@
 #include "core/network/web/handlers/sockets_handler.hpp"
 
 #include <atomic>
-
-#if defined(ESP32)
 #include <esp_heap_caps.h>
-#endif
 
 #include "core/network/web/web_interface.hpp"
 
@@ -55,6 +52,37 @@ void invalidateLocalSocketsPortsCache_()
     g_sockets_local_ports_cache_valid = false;
     g_sockets_local_ports_cache_built_ms = 0;
     g_sockets_local_ports_cache_body = "";
+}
+
+uint32_t requestedStackNodeId_(WebInterface &web, AsyncWebServerRequest *request)
+{
+    if (!web.network() || web.network()->stackRole() != ConfigsManagerIface::StackRole::Master)
+        return 0;
+    if (!request)
+        return 0;
+    String node;
+    if (request->hasParam("node_id", true))
+        node = request->getParam("node_id", true)->value();
+    else if (request->hasParam("node_id", false))
+        node = request->getParam("node_id", false)->value();
+    else if (request->hasParam("node_id"))
+        node = request->getParam("node_id")->value();
+    if (node.length() == 0)
+    {
+        if (request->hasParam("node", true))
+            node = request->getParam("node", true)->value();
+        else if (request->hasParam("node", false))
+            node = request->getParam("node", false)->value();
+        else if (request->hasParam("node"))
+            node = request->getParam("node")->value();
+    }
+    if (node.length() == 0)
+        return 0;
+    char *end = nullptr;
+    const unsigned long value = strtoul(node.c_str(), &end, 0);
+    if (!end || end == node.c_str())
+        return 0;
+    return (uint32_t)value;
 }
 }
 
@@ -149,7 +177,11 @@ void SocketsHandler::handleSockets(WebInterface &web, AsyncWebServerRequest *req
         }
         const size_t extra = 4096u + (size_t)page_size * 900u;
         page.reserve(page.length() + extra);
-        page.replace("%SOCKETS%", "<div class=\"tile empty\">Loading...</div>");
+        const String initial_html = stack_view
+                                        ? web.listStackSocketsHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
+                                                                    groups_available ? SIZE_MAX : page_size)
+                                        : web.listSocketsHtml_(start, end);
+        page.replace("%SOCKETS%", initial_html);
         page.replace("%SOCKETS_PAGE_TITLE%", WebUiRu::Sockets::kPageTitle);
         page.replace("%SOCKETS_PAGE_PREV%", WebUiRu::Sockets::kPagePrev);
         page.replace("%SOCKETS_PAGE_LABEL%", WebUiRu::Sockets::kPagePage);
@@ -160,8 +192,6 @@ void SocketsHandler::handleSockets(WebInterface &web, AsyncWebServerRequest *req
         page.replace("%SOCKETS_PAGES%", String((unsigned)max_pages));
         if (stack_view)
         {
-            const auto *pcache = web._stack_cache ? web._stack_cache->portsCache(node_id) : nullptr;
-            (void)pcache;
             page.replace("%DINPUT_JSON%", "[]");
             page.replace("%RELAY_JSON%", "[]");
             page.replace("%DINPUT_USED_JSON%", "[]");
@@ -272,25 +302,24 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
                     back += String((unsigned)pv);
                 }
             }
-            if (!web._stack_master || !web._stack_cache)
+            if (!web.network())
             {
                 web._sockets_status = "Stack unavailable";
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            const auto *cache = web._stack_cache->socketsCache(node_id);
-            if (!cache || !cache->has_data || !cache->items)
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache) ||
+                cache.socket_count == 0)
             {
                 web.requestStackSockets_(node_id);
                 web._sockets_status = "No data";
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            auto *cache_mut = web._stack_cache->socketsCache(node_id);
             bool changed_stack = false;
-            for (size_t i = 0; i < cache->item_count; ++i)
-            {
-                const auto &cfg = cache->items[i];
+            web.network()->forEachStackSocket(node_id, cache.socket_count, [&](uint8_t, const StackUnitSnapshot::SocketItem &cfg) {
                 const String idx = String((unsigned)cfg.id);
                 const String prefix = String("s") + idx + "_";
                 const String en_key = prefix + "en";
@@ -306,7 +335,7 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
                                      request->hasParam(group_key, true) ||
                                      request->hasParam(action_key, true);
                 if (!has_any)
-                    continue;
+                    return;
                 if (!web.webAclCanControlItem_(UsersRegistry::AclController::Sockets, cfg.id, node_id))
                 {
                     web._sockets_status = String("ACL deny item: ") + idx;
@@ -332,10 +361,10 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
                 bool desired_state = cfg.state;
                 bool set_state = false;
                 StaticJsonDocument<256> doc;
-                doc["cmd_id"] = web.nextStackCmdId_();
-                doc["feature"] = (uint8_t)StackFeature::Sockets;
-                doc["action"] = "set";
-                JsonArray items = doc["params"]["items"].to<JsonArray>();
+                doc["source"] = "localweb";
+                if (const auto *u = web.sessionUser_())
+                    doc["source_user"] = u->username;
+                JsonArray items = doc["items"].to<JsonArray>();
                 JsonObject o = items.add<JsonObject>();
                 o["id"] = (unsigned)cfg.id;
                 if (cfg.enabled != enabled)
@@ -390,43 +419,21 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
                     }
                 }
                 if (!send)
-                    continue;
-                char payload[256] = {};
-                const size_t len = serializeJson(doc, payload, sizeof(payload));
-                if (len == 0 || !web._stack_master->sendTo(node_id, (uint8_t)StackMsgType::CmdSet,
-                                                           reinterpret_cast<const uint8_t *>(payload), len))
+                    return;
+                if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set", &doc, StackRouteAdapter::Mode::Json))
                 {
                     web._sockets_status = String("Send failed for socket ") + idx;
                     web.sendRedirect_(request, back, set_cookie);
                     return;
                 }
                 changed_stack = true;
-                if (cache_mut && cache_mut->items)
-                {
-                    for (size_t k = 0; k < cache_mut->item_count; ++k)
-                    {
-                        auto &dst = cache_mut->items[k];
-                        if (dst.id != cfg.id)
-                            continue;
-                        dst.enabled = enabled;
-                        if (set_state)
-                            dst.state = desired_state;
-                        dst.button_port = btn_port;
-                        dst.relay_port = relay_port;
-                        dst.group_id = group_id;
-                        const char *src = name.c_str();
-                        size_t p = 0;
-                        for (; p + 1 < sizeof(dst.name) && src[p]; ++p)
-                            dst.name[p] = src[p];
-                        dst.name[p] = '\0';
-                        break;
-                    }
-                    cache_mut->updated_ms = millis();
-                }
-            }
+                (void)desired_state;
+                (void)set_state;
+            });
             if (changed_stack)
             {
                 web.requestStackSockets_(node_id);
+                web.requestStackIndexState_(node_id);
                 web.refreshStackPorts_(node_id);
                 web._sockets_status = "Updated";
             }
@@ -549,9 +556,15 @@ void SocketsHandler::handleSocketsToggle(WebInterface &web, AsyncWebServerReques
             return;
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Sockets))
             return;
-        const uint32_t node_id = web.parseStackNodeIdParam_(request);
-        if (web.isStackSocketsView_(node_id))
+        const uint32_t requested_node_id = requestedStackNodeId_(web, request);
+        const uint32_t node_id = requested_node_id ? requested_node_id : web.parseStackNodeIdParam_(request);
+        if (requested_node_id != 0)
         {
+            if (!web.isStackSocketsView_(node_id))
+            {
+                web.sendText_(request, 409, "text/plain", "Stack offline", set_cookie);
+                return;
+            }
             web.handleStackSocketsToggle_(request, node_id, set_cookie);
             return;
         }
@@ -577,28 +590,34 @@ void SocketsHandler::handleSocketsToggle(WebInterface &web, AsyncWebServerReques
             return;
         }
         SocketController &sockets = web._controllers->sockets();
-        auto sockets_guard = sockets.lockGuard(300);
-        if (!sockets_guard.locked())
+        String name = "-";
         {
-            web.sendText_(request, 503, "text/plain", "Controller busy", set_cookie);
-            return;
+            auto sockets_guard = sockets.lockGuard(300);
+            if (!sockets_guard.locked())
+            {
+                web.sendText_(request, 503, "text/plain", "Controller busy", set_cookie);
+                return;
+            }
+            if (id == 0 || !sockets.config(id))
+            {
+                web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
+                return;
+            }
+            const SocketController::SocketConfig *cfg = sockets.config(id);
+            if (cfg && cfg->name.length())
+                name = cfg->name;
         }
-        if (id == 0 || !sockets.config(id))
-        {
-            web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
-            return;
-        }
-        const SocketController::SocketConfig *cfg = sockets.config(id);
-        const char *name = (cfg && cfg->name.length()) ? cfg->name.c_str() : "-";
         String action = web.paramValueAny_(request, "action");
         action.trim();
         action.toLowerCase();
         bool ok = false;
         bool state = false;
+        bool state_known = false;
         const bool state_poll = (action == "state");
         if (action == "state")
         {
             ok = sockets.relayStateById(id, state, 300);
+            state_known = ok;
         }
         else if (action.length() == 0 || action == "toggle")
         {
@@ -616,20 +635,34 @@ void SocketsHandler::handleSocketsToggle(WebInterface &web, AsyncWebServerReques
         {
             if (web._log && !state_poll)
                 web._log->warn(F("WEB"), F("Sockets toggle failed: id: %u name: %s action: %s"),
-                               (unsigned)id, name, action.c_str());
+                               (unsigned)id, name.c_str(), action.c_str());
             web.sendText_(request, 400, "text/plain", "Toggle failed", set_cookie);
             return;
         }
+        if (!state_poll)
+        {
+            bool actual = false;
+            if (sockets.relayStateById(id, actual, 300))
+            {
+                state = actual;
+                state_known = true;
+            }
+        }
         if (web._log && !state_poll)
         {
-            if (action == "toggle" || action.length() == 0)
+            const bool toggle_action = (action == "toggle" || action.length() == 0);
+            if (toggle_action)
                 web._log->info(F("WEB"), F("Sockets toggle ok: id: %u name: %s action: toggle state: %s"),
-                               (unsigned)id, name, state ? "on" : "off");
+                               (unsigned)id, name.c_str(), state ? "on" : "off");
             else
-                web._log->info(F("WEB"), F("Sockets toggle ok: id: %u name: %s action: %s"),
-                               (unsigned)id, name, action.c_str());
+                web._log->info(F("WEB"), F("Sockets toggle ok: id: %u name: %s action: %s state: %s"),
+                               (unsigned)id, name.c_str(), action.c_str(),
+                               state_known ? (state ? "on" : "off") : "?");
         }
-        web.sendText_(request, 200, "text/plain", state_poll ? (state ? "on" : "off") : "OK", set_cookie);
+        if (state_known)
+            web.sendText_(request, 200, "text/plain", state ? "on" : "off", set_cookie);
+        else
+            web.sendText_(request, 200, "text/plain", "OK", set_cookie);
     }
 
 void SocketsHandler::handleSocketsPortsOptions(WebInterface &web, AsyncWebServerRequest *request) {
@@ -686,9 +719,8 @@ void SocketsHandler::handleSocketsPortsOptions(WebInterface &web, AsyncWebServer
                                        : web.globalUsedPortsJson_(PortIO::PinType::DInput);
         const String ruse = stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
                                        : web.globalUsedPortsJson_(PortIO::PinType::Relay);
-        const auto *pcache = stack_view && web._stack_cache ? web._stack_cache->portsCache(node_id) : nullptr;
-        const bool ready = !stack_view || (pcache && pcache->has_data);
-        const bool pending = stack_view && pcache && pcache->pending;
+        const bool ready = !stack_view;
+        const bool pending = false;
         String body;
         body.reserve(djson.length() + rjson.length() + duse.length() + ruse.length() + 128);
         body += "{\"ready\":";
@@ -720,9 +752,15 @@ void SocketsHandler::handleSocketsEnable(WebInterface &web, AsyncWebServerReques
             return;
         if (!web.requireWebAclController_(request, &set_cookie, UsersRegistry::AclController::Sockets))
             return;
-        const uint32_t node_id = web.parseStackNodeIdParam_(request);
-        if (web.isStackSocketsView_(node_id))
+        const uint32_t requested_node_id = requestedStackNodeId_(web, request);
+        const uint32_t node_id = requested_node_id ? requested_node_id : web.parseStackNodeIdParam_(request);
+        if (requested_node_id != 0)
         {
+            if (!web.isStackSocketsView_(node_id))
+            {
+                web.sendText_(request, 409, "text/plain", "Stack offline", set_cookie);
+                return;
+            }
             web.handleStackSocketsEnable_(request, node_id, set_cookie);
             return;
         }

@@ -55,6 +55,9 @@ bool Display::begin()
     }
     _err = Error::Ok;
     _ready = true;
+    memset(_last_hw_line0, 0, sizeof(_last_hw_line0));
+    memset(_last_hw_line1, 0, sizeof(_last_hw_line1));
+    _custom_chars_ready = false;
     _line0 = F("      FCPLC     ");
     _line1 = F("Denisov Fnd Ltd.");
     return true;
@@ -78,6 +81,8 @@ void Display::clear()
     if (!lk.locked())
         return;
     _lcd.clear();
+    memset(_last_hw_line0, 0, sizeof(_last_hw_line0));
+    memset(_last_hw_line1, 0, sizeof(_last_hw_line1));
 }
 
 void Display::task()
@@ -94,26 +99,34 @@ void Display::task()
         have_rendered_slots = true;
     }
 
+    const char *target0 = have_rendered_slots ? line0 : _line0.c_str();
+    const char *target1 = have_rendered_slots ? line1 : _line1.c_str();
+    const bool line0_changed = strncmp(_last_hw_line0, target0, 16) != 0;
+    const bool line1_changed = strncmp(_last_hw_line1, target1, 16) != 0;
+    if (_custom_chars_ready && !line0_changed && !line1_changed)
+        return;
+
     I2CManager::ScopedBusLock lk(_i2c, _bus_num);
     if (!lk.locked())
         return;
 
-    // Keep LCD backpack backlight latched ON after transient I2C glitches.
-    _lcd.backlightOn();
-    static bool custom_chars_ready = false;
-    if (!custom_chars_ready)
+    if (!_custom_chars_ready)
     {
         _lcd.createChar(kDegreeChar, kDegreeCharMap_);
-        custom_chars_ready = true;
+        _custom_chars_ready = true;
     }
-    if (have_rendered_slots)
+    if (line0_changed)
     {
-        writeLine_(0, line0);
-        writeLine_(1, line1);
-        return;
+        writeLine_(0, target0);
+        strncpy(_last_hw_line0, target0, 16);
+        _last_hw_line0[16] = '\0';
     }
-    writeLine_(0, _line0);
-    writeLine_(1, _line1);
+    if (line1_changed)
+    {
+        writeLine_(1, target1);
+        strncpy(_last_hw_line1, target1, 16);
+        _last_hw_line1[16] = '\0';
+    }
 }
 
 bool Display::setLine(uint8_t line, const String &text)
