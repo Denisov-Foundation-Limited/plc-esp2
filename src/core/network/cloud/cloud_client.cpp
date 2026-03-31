@@ -216,10 +216,8 @@ bool CloudClient::ensureScratch_() const
         return true;
     const size_t bytes = sizeof(ScratchBuffer);
     void *mem = nullptr;
-#if defined(ESP32)
     if (psramFound())
         mem = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#endif
     if (!mem)
         mem = calloc(1, bytes);
     if (!mem)

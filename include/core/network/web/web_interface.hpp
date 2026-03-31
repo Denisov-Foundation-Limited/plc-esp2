@@ -17,10 +17,8 @@
 #include <WiFi.h>
 #include <string.h>
 
-#if defined(ESP32)
 #include <ESPAsyncWebServer.h>
 #include <Update.h>
-#endif
 
 #include "boards/board_profile.hpp"
 #include "core/cli/cli_console.hpp"

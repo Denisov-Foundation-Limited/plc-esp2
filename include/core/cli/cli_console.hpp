@@ -37,6 +37,7 @@
 #include "hal/gpio/portio.hpp"
 #include "utils/configs.hpp"
 #include "utils/configs_manager_iface.hpp"
+#include "utils/logger.hpp"
 #include "utils/users_registry.hpp"
 #include "controllers/controllers.hpp"
 class CliConsole
@@ -157,6 +158,33 @@ public:
     void cmdEraseConfig_();
 
 private:
+    class LockedStream : public Stream
+    {
+    public:
+        void bind(Stream *io) { _io = io; }
+        int available() override { return _io ? _io->available() : 0; }
+        int read() override { return _io ? _io->read() : -1; }
+        int peek() override { return _io ? _io->peek() : -1; }
+        void flush() override { if (_io) _io->flush(); }
+        size_t write(uint8_t b) override
+        {
+            if (!_io)
+                return 0;
+            Logger::OutputGuard guard;
+            return _io->write(b);
+        }
+        size_t write(const uint8_t *buffer, size_t size) override
+        {
+            if (!_io)
+                return 0;
+            Logger::OutputGuard guard;
+            return _io->write(buffer, size);
+        }
+
+    private:
+        Stream *_io = nullptr;
+    };
+
     enum class Mode : uint8_t
     {
         User,
@@ -271,6 +299,8 @@ private:
     class Network *_network = nullptr;
 
     Stream *_io = nullptr;
+    Stream *_raw_io = nullptr;
+    LockedStream _locked_io;
     String _line;
     String _user_input;
     int16_t _session_user_idx = -1;

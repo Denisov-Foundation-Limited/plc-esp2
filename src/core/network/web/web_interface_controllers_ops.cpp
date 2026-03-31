@@ -512,12 +512,6 @@ String WebInterfaceControllersOps::globalUsedPortsJson_(PortIO::PinType type) co
             if (!requireWebAdmin_(request, &set_cookie))
                 return;
             _ota_set_cookie = set_cookie;
-#if !defined(ESP32)
-            _ota_ok = false;
-            _ota_error = "OTA not supported";
-            _ota_in_progress = false;
-            return;
-#else
             if (_ota_in_progress)
                 Update.abort();
             _ota_in_progress = true;
@@ -539,9 +533,7 @@ String WebInterfaceControllersOps::globalUsedPortsJson_(PortIO::PinType type) co
                 _ota_error = Update.errorString();
                 _ota_in_progress = false;
             }
-#endif
         }
-#if defined(ESP32)
         if (!_ota_ok)
             return;
         _ota_size += len;
@@ -570,7 +562,6 @@ String WebInterfaceControllersOps::globalUsedPortsJson_(PortIO::PinType type) co
             }
             _ota_in_progress = false;
         }
-#endif
     }
 
 
@@ -595,13 +586,11 @@ sendRedirect_(request, "/status", _upload_set_cookie);
             _last_status = "Firmware updated. Rebooting...";
 sendRedirect_(request, "/status", _ota_set_cookie);
         _ota_set_cookie = false;
-#if defined(ESP32)
         if (_ota_ok)
         {
             delay(500);
             ESP.restart();
         }
-#endif
     }
 
 
@@ -855,13 +844,9 @@ sendRedirect_(request, "/", set_cookie);
             return;
         if (!requireWebAdmin_(request, &set_cookie))
             return;
-#if defined(ESP32)
         sendRedirect_(request, "/", set_cookie);
         delay(100);
         ESP.restart();
-#else
-        sendRedirect_(request, "/", set_cookie);
-#endif
     }
 
 
@@ -1550,11 +1535,7 @@ String WebInterfaceControllersOps::navHtml_() const
 
     uint32_t WebInterfaceControllersOps::cloudDeviceId_() const
 {
-#if defined(ESP32)
         return (uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFFu);
-#else
-        return 0;
-#endif
     }
 
 

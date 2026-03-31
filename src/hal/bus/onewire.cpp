@@ -13,10 +13,8 @@
 #include "boards/board_profile.hpp"
 #include "hal/gpio/portio.hpp"
 
-#if defined(ESP32)
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
-#endif
 
 bool OneWireManager::beginAll()
 {
@@ -42,10 +40,8 @@ bool OneWireManager::beginAll()
         }
         _cfg[i] = c;
         _bus[i].begin(gpio);
-#if defined(ESP32)
         if (_bus_mtx_[i] == nullptr)
             _bus_mtx_[i] = (void *)xSemaphoreCreateRecursiveMutex();
-#endif
     }
     _count = ActiveBoardProfile::ONEWIRE_COUNT;
     return true;
@@ -94,7 +90,6 @@ bool OneWireManager::lockBus(uint8_t bus_idx, uint32_t timeout_ms)
         _err = Error::InvalidIndex;
         return false;
     }
-#if defined(ESP32)
     SemaphoreHandle_t mtx = (SemaphoreHandle_t)_bus_mtx_[bus_idx];
     if (mtx == nullptr)
     {
@@ -105,9 +100,6 @@ bool OneWireManager::lockBus(uint8_t bus_idx, uint32_t timeout_ms)
     }
     if (xSemaphoreTakeRecursive(mtx, pdMS_TO_TICKS(timeout_ms)) != pdTRUE)
         return false;
-#else
-    (void)timeout_ms;
-#endif
     return true;
 }
 
@@ -115,12 +107,10 @@ void OneWireManager::unlockBus(uint8_t bus_idx)
 {
     if (bus_idx >= _count)
         return;
-#if defined(ESP32)
     SemaphoreHandle_t mtx = (SemaphoreHandle_t)_bus_mtx_[bus_idx];
     if (mtx == nullptr)
         return;
     xSemaphoreGiveRecursive(mtx);
-#endif
 }
 
 bool OneWireManager::lockBusById(OwBusType bus_id, uint32_t timeout_ms)

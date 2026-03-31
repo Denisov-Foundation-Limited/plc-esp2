@@ -11,11 +11,9 @@
 
 #include "hal/dht22.hpp"
 #include <Arduino.h>
-#if defined(ESP32)
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
 static portMUX_TYPE s_dht22_timing_mux = portMUX_INITIALIZER_UNLOCKED;
-#endif
 
 DHT22::DHT22(uint8_t pin)
     : _pin(pin)
@@ -93,10 +91,8 @@ bool DHT22::readRaw_(uint8_t data[5])
     pinMode(_pin, INPUT_PULLUP);
 
     bool timing_ok = true;
-#if defined(ESP32)
     // DHT22 bit timing is microsecond-sensitive; avoid preemption during capture.
     portENTER_CRITICAL(&s_dht22_timing_mux);
-#endif
     if (!expectPulse_(LOW) || !expectPulse_(HIGH))
         timing_ok = false;
     for (uint8_t i = 0; timing_ok && i < 40; ++i)
@@ -113,9 +109,7 @@ bool DHT22::readRaw_(uint8_t data[5])
         if (high > low)
             data[i / 8] |= 1;
     }
-#if defined(ESP32)
     portEXIT_CRITICAL(&s_dht22_timing_mux);
-#endif
     if (!timing_ok)
         return fail_(Error::Timeout);
 

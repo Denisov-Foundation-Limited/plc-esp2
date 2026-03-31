@@ -93,7 +93,15 @@ void SecurityController::task(){
             SensorConfig &cfg = _cfg[i];
             SensorState &st = _state[i];
             if (!cfg.enabled)
+            {
+                st.active = false;
                 continue;
+            }
+            if (cfg.port == kInvalidPort)
+            {
+                st.active = false;
+                continue;
+            }
             const bool triggered = sampleTriggered_(cfg, st, now);
             st.active = triggered;
             if (!_armed)
@@ -769,6 +777,8 @@ bool SecurityController::fillPrearmItems(JsonArray &arr, String *plain_out ){
         SensorState &st = _state[i];
         if (!cfg.enabled)
             continue;
+        if (cfg.port == kInvalidPort)
+            continue;
         if (!sampleTriggered_(cfg, st, now))
             continue;
         JsonObject o = arr.add<JsonObject>();
@@ -800,6 +810,8 @@ size_t SecurityController::prearmTriggeredCount(){
     {
         const SensorConfig &cfg = _cfg[i];
         if (!cfg.enabled)
+            continue;
+        if (cfg.port == kInvalidPort)
             continue;
         if (sampleTriggered_(cfg, _state[i], now))
             ++count;
@@ -1558,19 +1570,9 @@ void SecurityController::setSensorPortDebounce_(uint8_t port, bool enabled){
 
 bool SecurityController::readRaw_(const SecurityController::SensorConfig &cfg, bool &out){
     if (cfg.port == kInvalidPort)
-    {
-        _logs.warn(F("SECURITY"),
-                   F("gpio read failed: id: %u port: invalid type: %s"),
-                   (unsigned)cfg.id, typeName_(cfg.type));
         return false;
-    }
     if (!_gpio.readDyn(cfg.port, out))
-    {
-        _logs.warn(F("SECURITY"),
-                   F("gpio read failed: id: %u port: %u type: %s"),
-                   (unsigned)cfg.id, (unsigned)cfg.port, typeName_(cfg.type));
         return false;
-    }
     return true;
 }
 
@@ -1590,13 +1592,7 @@ uint32_t SecurityController::debounceMs_(const SecurityController::SensorConfig 
 bool SecurityController::sampleTriggered_(const SecurityController::SensorConfig &cfg, SensorState &st, uint32_t now_ms){
     bool raw = st.raw;
     if (!readRaw_(cfg, raw))
-    {
-        _logs.warn(F("SECURITY"),
-                   F("debounce gpio read failed: id: %u port: %u type: %s raw_keep: %u try: %lu"),
-                   (unsigned)cfg.id, (unsigned)cfg.port, typeName_(cfg.type), st.raw ? 1u : 0u,
-                   (unsigned long)st.debounce_try);
         return isTriggered_(cfg, st.filtered_raw);
-    }
     const bool raw_detect = isTriggered_(cfg, raw);
     if (raw != st.raw)
     {
@@ -2022,6 +2018,8 @@ bool SecurityController::hasTriggeredBeforeArm_(String &out, String *plain_out )
         SensorConfig &cfg = _cfg[i];
         SensorState &st = _state[i];
         if (!cfg.enabled)
+            continue;
+        if (cfg.port == kInvalidPort)
             continue;
         if (!sampleTriggered_(cfg, st, now))
             continue;

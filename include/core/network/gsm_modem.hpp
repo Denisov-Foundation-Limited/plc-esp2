@@ -16,10 +16,8 @@
 
 #include "hal/sim800l.hpp"
 
-#if defined(ESP32)
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
-#endif
 
 class UartManager;
 class Logger;
@@ -143,9 +141,7 @@ private:
     uint8_t _call_count = 0;
     uint8_t _timeout_streak = 0;
 
-#if defined(ESP32)
     SemaphoreHandle_t _modem_mtx = nullptr;
-#endif
 
     void enqueueOrLog_(bool ok, const __FlashStringHelper *name);
 

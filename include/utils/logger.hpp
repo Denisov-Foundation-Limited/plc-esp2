@@ -15,10 +15,8 @@
 #include <stdarg.h>
 #include <string.h>
 
-#if defined(ESP32)
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
-#endif
 
 #include "core/rtc.hpp"
 
@@ -60,6 +58,13 @@ public:
     };
 
     Logger(UartManager &uart);
+
+    class OutputGuard
+    {
+    public:
+        OutputGuard() { Logger::lockOutput_(); }
+        ~OutputGuard() { Logger::unlockOutput_(); }
+    };
 
     void begin(Stream &out);bool ready() const;void setRtc(RTC &rtc);size_t recentCount() const;bool getRecentLine(size_t idx, char *out, size_t cap) const;bool beginAuto();template <Level L>
     inline void log(const __FlashStringHelper *tag,
@@ -124,10 +129,8 @@ private:
     mutable bool _has_last_rtc = false;
     mutable Ds3231Mz::DateTime _last_rtc = {};
     mutable uint32_t _last_rtc_ms = 0;
-#if defined(ESP32)
-    SemaphoreHandle_t _lock = nullptr;
-    portMUX_TYPE _lock_init_mux = portMUX_INITIALIZER_UNLOCKED;
-#endif
+    static SemaphoreHandle_t _output_lock;
+    static portMUX_TYPE _output_lock_init_mux;
     static constexpr size_t kRecentMax = 30;
     static constexpr size_t kRecentLineSize = LOGGER_BUFFER_SIZE + 48;
     char _recent[kRecentMax][kRecentLineSize] = {};
@@ -216,4 +219,4 @@ private:
     }
 
     void storeLine_(const char *line);void buildTextLine_(char *out, size_t cap, const __FlashStringHelper *tag,
-                        const char *level, const char *msg);bool formatTimestamp_(char *out, size_t cap);void ensureLock_();void lock_();void unlock_();};
+                        const char *level, const char *msg);bool formatTimestamp_(char *out, size_t cap);static void ensureLock_();static void lockOutput_();static void unlockOutput_();void lock_();void unlock_();};

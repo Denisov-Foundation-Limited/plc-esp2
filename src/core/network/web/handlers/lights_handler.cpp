@@ -12,10 +12,7 @@
 #include "core/network/web/handlers/lights_handler.hpp"
 
 #include <atomic>
-
-#if defined(ESP32)
 #include <esp_heap_caps.h>
-#endif
 
 #include "core/network/web/web_interface.hpp"
 

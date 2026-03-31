@@ -114,12 +114,8 @@ private:
     template <typename T>
     static void tuneTlsClientBuffers_(T &client)
     {
-#if defined(ESP32)
         if constexpr (HasSetBufferSizes_<T>::value)
             client.setBufferSizes(2048, 512);
-#else
-        (void)client;
-#endif
     }
 
     Logger &_logs;

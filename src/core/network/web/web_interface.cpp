@@ -140,10 +140,8 @@ bool WebInterface::ensureScratch_() const
         return true;
     const size_t bytes = sizeof(ScratchBuffer);
     void *mem = nullptr;
-#if defined(ESP32)
     if (psramFound())
         mem = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#endif
     if (!mem)
         mem = calloc(1, bytes);
     if (!mem)
@@ -2393,13 +2391,7 @@ String WebInterface::genApiKey_()
 
 uint32_t WebInterface::rand32_()
 {
-#if defined(ESP32)
         return esp_random();
-#else
-        uint32_t r = (uint32_t)random(0x7FFFFFFF);
-        r = (r << 1) ^ (uint32_t)micros();
-        return r;
-#endif
     }
 
 

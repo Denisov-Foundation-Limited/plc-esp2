@@ -17,12 +17,9 @@
 
 #include "boards/board_profile.hpp"
 #include "core/network/tftp_client.hpp"
-
-#if defined(ESP32)
 #include "mbedtls/sha256.h"
 #include <HTTPClient.h>
 #include <Update.h>
-#endif
 
 CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
            Configs &configs, Extender &ext,
@@ -57,7 +54,9 @@ CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftes
 }
 void CliConsole::begin(Stream &io)
 {
-    _io = &io;
+    _raw_io = &io;
+    _locked_io.bind(_raw_io);
+    _io = &_locked_io;
     _state = State::NeedUser;
     _mode = Mode::Enable;
     _line = "";
@@ -605,13 +604,9 @@ void CliConsole::cmdWifiRestart_()
 }
 void CliConsole::cmdRestart_()
 {
-#if defined(ESP32)
     _io->println(F("Restarting..."));
     _io->flush();
     ESP.restart();
-#else
-    _io->println(F("Restart not supported"));
-#endif
 }
 void CliConsole::cmdWriteConfig_()
 {
@@ -2241,18 +2236,12 @@ void CliConsole::sha256_(const char *input, uint8_t out[32])
 {
     if (!input)
         return;
-#if defined(ESP32)
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
     mbedtls_sha256_starts_ret(&ctx, 0);
     mbedtls_sha256_update_ret(&ctx, (const unsigned char *)input, strlen(input));
     mbedtls_sha256_finish_ret(&ctx, out);
     mbedtls_sha256_free(&ctx);
-#else
-    (void)input;
-    for (uint8_t i = 0; i < 32; ++i)
-        out[i] = 0;
-#endif
 }
 bool CliConsole::isAdminUser_(const String &user) const
 {
