@@ -388,6 +388,7 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
       });
     }
     refreshLightSelects();
+    bindLightHandlers();
     if (lightsUnit === 'stack') {
       loadLightsList();
     }
@@ -505,8 +506,7 @@ const char kWebInterfaceLightsHtml[] PROGMEM = R"HTML(
         el.dataset.busy = '1';
         el.disabled = true;
         try {
-          const action = el.checked ? 'on' : 'off';
-          let body = 'id=' + encodeURIComponent(id) + '&action=' + action;
+          let body = 'id=' + encodeURIComponent(id) + '&action=toggle';
           if (lightsUnit === 'stack' && lightsNodeId) {
             body += '&unit=stack';
             body += '&node_id=' + encodeURIComponent(String(lightsNodeId));

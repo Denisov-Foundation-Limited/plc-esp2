@@ -22,12 +22,12 @@
 namespace
 {
 constexpr uint32_t kWsConnectWatchdogMs = 15000u;
-constexpr uint32_t kWsAuthWatchdogMs = 8000u;
-constexpr uint32_t kWsIdleWatchdogMs = 45000u;
+constexpr uint32_t kWsAuthWatchdogMs = 15000u;
+constexpr uint32_t kWsIdleWatchdogMs = 90000u;
 constexpr uint32_t kWsRestartCooldownMs = 2000u;
-constexpr uint32_t kWsHeartbeatPingMs = 15000u;
-constexpr uint32_t kWsHeartbeatPongTimeoutMs = 3000u;
-constexpr uint8_t kWsHeartbeatDisconnectCount = 2u;
+constexpr uint32_t kWsHeartbeatPingMs = 20000u;
+constexpr uint32_t kWsHeartbeatPongTimeoutMs = 10000u;
+constexpr uint8_t kWsHeartbeatDisconnectCount = 3u;
 
 const char *wifiStatusLabel_(wl_status_t st)
 {
@@ -254,7 +254,7 @@ bool StackSlaveClient::sendRoute(uint32_t target_node, const char *feature, cons
     uint8_t rs485_client_id = 0;
     {
         const auto guard = _lock.guard();
-        if (!_authorized || target_node == 0 || !feature || !feature[0] || !action || !action[0])
+        if (!_authorized || !feature || !feature[0] || !action || !action[0])
             return false;
         transport = _cfg.transport;
         node_id = _cfg.node_id;
@@ -275,7 +275,7 @@ bool StackSlaveClient::sendRouteBinary(uint32_t target_node, const char *feature
     uint8_t rs485_client_id = 0;
     {
         const auto guard = _lock.guard();
-        if (!_authorized || target_node == 0 || !feature || !feature[0] || !action || !action[0])
+        if (!_authorized || !feature || !feature[0] || !action || !action[0])
             return false;
         transport = _cfg.transport;
         node_id = _cfg.node_id;

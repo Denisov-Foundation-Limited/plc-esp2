@@ -270,6 +270,7 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
     }
     else
     {
+        self->control.controllers.security().clearRemoteDetects(node_id);
         self->removeStackBootstrapSync_(node_id);
     }
     DynamicJsonDocument doc(192);
@@ -560,7 +561,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
 
             control.controllers.security().setAlarmState(true);
             broadcastSecurityAlarm_(true);
-            control.controllers.security().notifyRemoteDetect(source, sensor_id, name, silent);
+            control.controllers.security().notifyRemoteDetect(node_id, source, sensor_id, name, silent);
             DynamicJsonDocument event_doc(224);
             event_doc["sensor_id"] = sensor_id;
             if (name.length())
@@ -614,7 +615,23 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             if (params["armed"].is<bool>() || params["armed"].is<int>())
             {
                 if (params["armed"].as<bool>())
-                    sec.armForcedFrom("stack", stackNodeLabel_(node_id));
+                {
+                    const String source = stackNodeLabel_(node_id);
+                    const bool armed_ok = sec.armFrom("stack", source);
+                    if (!armed_ok)
+                    {
+                        String blocked_plain;
+                        DynamicJsonDocument blocked_doc(512);
+                        JsonArray blocked_items = blocked_doc["items"].to<JsonArray>();
+                        sec.fillPrearmItems(blocked_items, &blocked_plain);
+                        DynamicJsonDocument reply_doc(512);
+                        reply_doc["ok"] = false;
+                        if (blocked_plain.length())
+                            reply_doc["details"] = blocked_plain;
+                        net.network.stackRoute().sendEvent(0, "security", "prearm_blocked", &reply_doc,
+                                                           StackRouteAdapter::Mode::Json);
+                    }
+                }
                 else
                     sec.disarmFrom("stack", stackNodeLabel_(node_id), true);
             }
@@ -624,6 +641,17 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                 sec.clearDetect();
             const char *beep = params["beep"] | "";
             (void)beep;
+            return;
+        }
+        if (action == "prearm_blocked")
+        {
+            const String source = stackNodeLabel_(node_id);
+            const String details = params["details"] | "";
+            core.logs.warn(F("SECURITY"), F("remote prearm blocked: unit: %s details: %s"),
+                           source.c_str(), details.length() ? details.c_str() : "-");
+            auto &sec = control.controllers.security();
+            if (stackMasterActive_() && sec.armed())
+                sec.disarmFrom("stack", source, true);
             return;
         }
         if (action == "rfid_result" || action == "ibutton_result")
@@ -669,7 +697,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
     {
         if (action == "summary_req")
         {
-            DynamicJsonDocument doc(768);
+            DynamicJsonDocument doc(1024);
             appendControllerSnapshotSummary_(doc.to<JsonObject>());
             net.network.stackSlaveSendResponse(route.source_node, "controllers", "summary",
                                                route.meta.request_id, &doc);
@@ -679,6 +707,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         {
             StackUnitSnapshot::State state{};
             net.network.stackIndexState(node_id, state);
+            const bool prev_security_alarm = state.security_alarm;
             state.node_id = node_id;
             state.updated_ms = millis();
             JsonVariantConst sockets_summary = params["summary"]["sockets"];
@@ -692,6 +721,8 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             JsonVariantConst ring_summary = params["summary"]["ring"];
             JsonVariantConst avr_summary = params["summary"]["avr"];
             JsonVariantConst leak_summary = params["summary"]["leak"];
+            state.security_detect_preview_count = 0;
+            memset(state.security_detect_preview, 0, sizeof(state.security_detect_preview));
             state.sockets_enabled = sockets_summary["enabled"] | 0;
             state.sockets_on = sockets_summary["on"] | 0;
             state.lights_enabled = lights_summary["enabled"] | 0;
@@ -708,6 +739,22 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.watering_active = watering_summary["active"] | 0;
             state.security_enabled = security_summary["enabled"] | false;
             state.security_sensors_enabled = security_summary["sensors_enabled"] | 0;
+            state.security_detected = security_summary["detected"] | 0;
+            JsonArrayConst security_detect_items = security_summary["detected_items"].as<JsonArrayConst>();
+            if (!security_detect_items.isNull())
+            {
+                uint8_t preview_idx = 0;
+                for (JsonObjectConst item : security_detect_items)
+                {
+                    if (preview_idx >= StackUnitSnapshot::kSecurityDetectPreviewCount)
+                        break;
+                    state.security_detect_preview[preview_idx].id = (uint8_t)(item["id"] | 0);
+                    strlcpy(state.security_detect_preview[preview_idx].name, item["name"] | "",
+                            sizeof(state.security_detect_preview[preview_idx].name));
+                    ++preview_idx;
+                }
+                state.security_detect_preview_count = preview_idx;
+            }
             state.security_armed = security_summary["armed"] | false;
             state.security_alarm = security_summary["alarm"] | false;
             state.ring_enabled = ring_summary["enabled"] | false;
@@ -718,6 +765,8 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.leak_enabled = leak_summary["enabled"] | 0;
             state.leak_alert = leak_summary["alert"] | 0;
             net.network.applyStackIndexControllerSummary(node_id, state);
+            if (!prev_security_alarm && state.security_alarm)
+                syncRemoteSecurityAlarmFromSummary_(node_id);
             return;
         }
     }
@@ -863,6 +912,19 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                 JsonObject security = summary["security"].to<JsonObject>();
                 security["enabled"] = security_summary["enabled"] | false;
                 security["sensors_enabled"] = security_summary["sensors_enabled"] | 0;
+                security["detected"] = security_summary["detected"] | 0;
+                JsonArray detected_items = security["detected_items"].to<JsonArray>();
+                JsonArrayConst src_detected_items = security_summary["detected_items"].as<JsonArrayConst>();
+                if (!src_detected_items.isNull())
+                {
+                    for (JsonObjectConst item : src_detected_items)
+                    {
+                        JsonObject dst = detected_items.add<JsonObject>();
+                        dst["id"] = item["id"] | 0;
+                        if ((item["name"] | "")[0] != '\0')
+                            dst["name"] = item["name"] | "";
+                    }
+                }
                 security["armed"] = security_summary["armed"] | false;
                 security["alarm"] = security_summary["alarm"] | false;
             }
@@ -885,6 +947,9 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                 leak["enabled"] = leak_summary["enabled"] | 0;
                 leak["alert"] = leak_summary["alert"] | 0;
             }
+            const bool prev_security_alarm = state.security_alarm;
+            state.security_detect_preview_count = 0;
+            memset(state.security_detect_preview, 0, sizeof(state.security_detect_preview));
             state.sockets_enabled = sockets_summary["enabled"] | 0;
             state.sockets_on = sockets_summary["on"] | 0;
             state.lights_enabled = lights_summary["enabled"] | 0;
@@ -901,6 +966,22 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.watering_active = watering_summary["active"] | 0;
             state.security_enabled = security_summary["enabled"] | false;
             state.security_sensors_enabled = security_summary["sensors_enabled"] | 0;
+            state.security_detected = security_summary["detected"] | 0;
+            JsonArrayConst security_detect_items = security_summary["detected_items"].as<JsonArrayConst>();
+            if (!security_detect_items.isNull())
+            {
+                uint8_t preview_idx = 0;
+                for (JsonObjectConst item : security_detect_items)
+                {
+                    if (preview_idx >= StackUnitSnapshot::kSecurityDetectPreviewCount)
+                        break;
+                    state.security_detect_preview[preview_idx].id = (uint8_t)(item["id"] | 0);
+                    strlcpy(state.security_detect_preview[preview_idx].name, item["name"] | "",
+                            sizeof(state.security_detect_preview[preview_idx].name));
+                    ++preview_idx;
+                }
+                state.security_detect_preview_count = preview_idx;
+            }
             state.security_armed = security_summary["armed"] | false;
             state.security_alarm = security_summary["alarm"] | false;
             state.ring_enabled = ring_summary["enabled"] | false;
@@ -1028,6 +1109,8 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             }
             net.network.applyStackIndexSystemState(node_id, state);
             net.network.applyStackIndexControllerSummary(node_id, state);
+            if (!prev_security_alarm && state.security_alarm)
+                syncRemoteSecurityAlarmFromSummary_(node_id);
             net.network.clearStackIndexStatePending(node_id);
             String json;
             serializeJson(doc, json);
@@ -2346,6 +2429,7 @@ void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
         SecurityController &security = control.controllers.security();
         auto guard = security.lockGuard();
         uint16_t sensors_enabled = 0;
+        const uint16_t detected = (uint16_t)security.prearmTriggeredCount();
         for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
         {
             const auto *cfg = security.configByIndex(i);
@@ -2355,6 +2439,23 @@ void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
         JsonObject security_out = summary["security"].to<JsonObject>();
         security_out["enabled"] = security.controllerEnabled();
         security_out["sensors_enabled"] = sensors_enabled;
+        security_out["detected"] = detected;
+        JsonArray detected_items = security_out["detected_items"].to<JsonArray>();
+        if (detected > 0)
+        {
+            StaticJsonDocument<512> detected_doc;
+            JsonArray detected_src = detected_doc.to<JsonArray>();
+            security.fillPrearmItems(detected_src, nullptr);
+            for (JsonObjectConst src_item : detected_src)
+            {
+                JsonObject item = detected_items.add<JsonObject>();
+                item["id"] = src_item["id"] | 0;
+                if ((src_item["name"] | "")[0] != '\0')
+                    item["name"] = src_item["name"] | "";
+                if (detected_items.size() >= StackUnitSnapshot::kSecurityDetectPreviewCount)
+                    break;
+            }
+        }
         security_out["armed"] = security.armed();
         security_out["alarm"] = security.alarmOn();
     }

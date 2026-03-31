@@ -680,7 +680,12 @@ const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
         const res = await fetch(url.toString(), { credentials: 'same-origin' });
         if (!res.ok) throw new Error('state fetch failed');
         const payload = await res.json();
-        if (!payload.pending) applySecurityState(payload);
+        if (!payload.pending) {
+          if ((new URL(window.location.href)).searchParams.get('unit') === 'stack') {
+            await loadSecurityList();
+          }
+          applySecurityState(payload);
+        }
       } catch (_) {
       } finally {
         securityPollBusy = false;

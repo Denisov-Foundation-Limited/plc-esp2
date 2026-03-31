@@ -110,7 +110,7 @@ bool StackBinaryProtocol::parseRoute(const uint8_t *data, size_t size, RouteFram
 
     out.payload = payload_len ? p : nullptr;
     out.payload_size = payload_len;
-    return out.target_node != 0;
+    return true;
 }
 
 bool StackBinaryProtocol::encodeRoute(uint32_t source_node, uint32_t target_node, const char *feature, const char *action,
@@ -118,7 +118,7 @@ bool StackBinaryProtocol::encodeRoute(uint32_t source_node, uint32_t target_node
                                       const StackTransport::RouteMeta *meta)
 {
     used = 0;
-    if (!out || !feature || !feature[0] || !action || !action[0] || target_node == 0)
+    if (!out || !feature || !feature[0] || !action || !action[0])
         return false;
 
     const size_t feature_len = strnlen(feature, kMaxNameLen + 1);

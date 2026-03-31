@@ -593,28 +593,34 @@ void SocketsHandler::handleSocketsToggle(WebInterface &web, AsyncWebServerReques
             return;
         }
         SocketController &sockets = web._controllers->sockets();
-        auto sockets_guard = sockets.lockGuard(300);
-        if (!sockets_guard.locked())
+        String name = "-";
         {
-            web.sendText_(request, 503, "text/plain", "Controller busy", set_cookie);
-            return;
+            auto sockets_guard = sockets.lockGuard(300);
+            if (!sockets_guard.locked())
+            {
+                web.sendText_(request, 503, "text/plain", "Controller busy", set_cookie);
+                return;
+            }
+            if (id == 0 || !sockets.config(id))
+            {
+                web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
+                return;
+            }
+            const SocketController::SocketConfig *cfg = sockets.config(id);
+            if (cfg && cfg->name.length())
+                name = cfg->name;
         }
-        if (id == 0 || !sockets.config(id))
-        {
-            web.sendText_(request, 400, "text/plain", "Invalid id", set_cookie);
-            return;
-        }
-        const SocketController::SocketConfig *cfg = sockets.config(id);
-        const char *name = (cfg && cfg->name.length()) ? cfg->name.c_str() : "-";
         String action = web.paramValueAny_(request, "action");
         action.trim();
         action.toLowerCase();
         bool ok = false;
         bool state = false;
+        bool state_known = false;
         const bool state_poll = (action == "state");
         if (action == "state")
         {
             ok = sockets.relayStateById(id, state, 300);
+            state_known = ok;
         }
         else if (action.length() == 0 || action == "toggle")
         {
@@ -632,20 +638,34 @@ void SocketsHandler::handleSocketsToggle(WebInterface &web, AsyncWebServerReques
         {
             if (web._log && !state_poll)
                 web._log->warn(F("WEB"), F("Sockets toggle failed: id: %u name: %s action: %s"),
-                               (unsigned)id, name, action.c_str());
+                               (unsigned)id, name.c_str(), action.c_str());
             web.sendText_(request, 400, "text/plain", "Toggle failed", set_cookie);
             return;
         }
+        if (!state_poll)
+        {
+            bool actual = false;
+            if (sockets.relayStateById(id, actual, 300))
+            {
+                state = actual;
+                state_known = true;
+            }
+        }
         if (web._log && !state_poll)
         {
-            if (action == "toggle" || action.length() == 0)
+            const bool toggle_action = (action == "toggle" || action.length() == 0);
+            if (toggle_action)
                 web._log->info(F("WEB"), F("Sockets toggle ok: id: %u name: %s action: toggle state: %s"),
-                               (unsigned)id, name, state ? "on" : "off");
+                               (unsigned)id, name.c_str(), state ? "on" : "off");
             else
-                web._log->info(F("WEB"), F("Sockets toggle ok: id: %u name: %s action: %s"),
-                               (unsigned)id, name, action.c_str());
+                web._log->info(F("WEB"), F("Sockets toggle ok: id: %u name: %s action: %s state: %s"),
+                               (unsigned)id, name.c_str(), action.c_str(),
+                               state_known ? (state ? "on" : "off") : "?");
         }
-        web.sendText_(request, 200, "text/plain", state_poll ? (state ? "on" : "off") : "OK", set_cookie);
+        if (state_known)
+            web.sendText_(request, 200, "text/plain", state ? "on" : "off", set_cookie);
+        else
+            web.sendText_(request, 200, "text/plain", "OK", set_cookie);
     }
 
 void SocketsHandler::handleSocketsPortsOptions(WebInterface &web, AsyncWebServerRequest *request) {

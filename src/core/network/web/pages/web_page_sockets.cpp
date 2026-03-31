@@ -437,6 +437,7 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
       }
     }
     refreshSocketSelects();
+    bindSocketHandlers();
     if (socketsUnit === 'stack') {
       loadSocketList();
     }
@@ -556,8 +557,7 @@ const char kWebInterfaceSocketsHtml[] PROGMEM = R"HTML(
         el.dataset.busy = '1';
         el.disabled = true;
         try {
-          const action = el.checked ? 'on' : 'off';
-          let body = 'id=' + encodeURIComponent(id) + '&action=' + action;
+          let body = 'id=' + encodeURIComponent(id) + '&action=toggle';
           if (socketsUnit === 'stack' && socketsNodeId) {
             body += '&unit=stack';
             body += '&node_id=' + encodeURIComponent(String(socketsNodeId));

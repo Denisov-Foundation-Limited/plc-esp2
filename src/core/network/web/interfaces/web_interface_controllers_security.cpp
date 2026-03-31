@@ -87,10 +87,30 @@ String WebInterfaceControllersSecurityHelper::securityDeviceSelectHtml_(const We
     }
 
 String WebInterfaceControllersSecurityHelper::stackSecurityStatusText_(const WebInterface &web, uint32_t node_id) {
-            (void)web;
-            (void)node_id;
+        if (!web.network() || node_id == 0)
             return WebUiRu::kNoDataFromSlave;
-        
+        StackUnitSnapshot::State snapshot{};
+        if (!web.network()->stackIndexState(node_id, snapshot))
+            return WebUiRu::kNoDataFromSlave;
+        String out = snapshot.security_enabled ? (snapshot.security_armed ? String("Armed") : String("Disarmed"))
+                                               : String("Disabled");
+        if (snapshot.security_alarm)
+            out += ", alarm";
+        if (snapshot.security_detected > 0)
+        {
+            out += ", detect: ";
+            out += String((unsigned)snapshot.security_detected);
+        }
+        else if (web._controllers)
+        {
+            const size_t active = web._controllers->security().remoteDetectCount(node_id);
+            if (active > 0)
+            {
+                out += ", detect: ";
+                out += String((unsigned)active);
+            }
+        }
+        return out;
     }
 
 String WebInterfaceControllersSecurityHelper::stackSecurityTitle_(const WebInterface &web, uint32_t node_id) {
@@ -119,9 +139,10 @@ bool WebInterfaceControllersSecurityHelper::isStackSecurityView_(const WebInterf
     }
 
 bool WebInterfaceControllersSecurityHelper::requestStackSecurity_(WebInterface &web, uint32_t node_id) {
-        (void)web;
-        (void)node_id;
-        return false;
+        if (!web.network() || node_id == 0)
+            return false;
+        return web.network()->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
+                                                       StackRouteAdapter::Mode::Json, true);
     }
 
 String WebInterfaceControllersSecurityHelper::listSecuritySensorsHtml_(WebInterface &web) {
@@ -176,7 +197,7 @@ String WebInterfaceControllersSecurityHelper::listSecuritySensorsHtml_(WebInterf
             if (cfg.silent)
                 items += " checked";
             items += "></td><td class=\"center\"><span class=\"status-dot ";
-            items += st.is_detect ? "status-on" : "status-off";
+            items += st.active ? "status-on" : "status-off";
             items += "\"></span></td></tr>";
         };
     
@@ -236,7 +257,7 @@ String WebInterfaceControllersSecurityHelper::listSecuritySensorsTiles_(WebInter
     
         auto appendTile = [&](const SecurityController::SensorConfig &cfg, const SecurityController::SensorState &st) {
             const bool enabled = cfg.enabled;
-            const bool detected = st.is_detect;
+            const bool detected = st.active;
             const bool is_reed = cfg.type == SecurityController::SensorType::Reed;
             const bool has_groups = web.hasGroups_();
             items += "<div class=\"tile js-group-item";
@@ -360,18 +381,62 @@ String WebInterfaceControllersSecurityHelper::listSecuritySensorsTiles_(WebInter
     }
 
 size_t WebInterfaceControllersSecurityHelper::stackSecurityVisibleCount_(const WebInterface &web, uint32_t node_id) {
-            (void)web;
-            (void)node_id;
+        if (!web._controllers || node_id == 0)
             return 0;
-        
+        return web._controllers->security().remoteDetectCount(node_id);
     }
 
 String WebInterfaceControllersSecurityHelper::listStackSecuritySensorsTiles_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
-        (void)web;
-        (void)node_id;
-        (void)offset;
-        (void)limit;
-        return WebUiRu::Security::kText9;
+        if (!web._controllers || node_id == 0)
+            return WebUiRu::Security::kText9;
+        SecurityController &sec = web._controllers->security();
+        const size_t total = sec.remoteDetectCount(node_id);
+        if (total == 0)
+            return "<div class=\"tile empty\">No active remote detections</div>";
+        String items;
+        items.reserve(8192);
+        const size_t start = offset;
+        const size_t end = (limit == 0) ? total : ((offset + limit > total) ? total : (offset + limit));
+        for (size_t i = start; i < end; ++i)
+        {
+            SecurityController::RemoteDetect item{};
+            if (!sec.remoteDetectAt(i, item, node_id))
+                continue;
+            items += "<div class=\"tile js-group-item\" data-group-id=\"0\" data-sensor-id=\"";
+            items += String((unsigned)item.sensor_id);
+            items += "\"><div class=\"sock-visual\"><span class=\"badge\">#";
+            items += String((unsigned)item.sensor_id);
+            items += "</span><svg class=\"sock-icon ";
+            items += item.silent ? "on" : "alert";
+            items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+            items += "<circle cx=\"32\" cy=\"24\" r=\"6\" fill=\"currentColor\"/>";
+            items += "<path d=\"M14 48c6-10 12-14 18-14s12 4 18 14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"4\" stroke-linecap=\"round\"/>";
+            items += "<path d=\"M8 20c6-6 12-10 18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
+            items += "<path d=\"M56 20c-6-6-12-10-18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
+            items += "</svg></div><div><div class=\"tile-head\"><strong>";
+            if (item.sensor_name.length())
+                web.appendHtmlEscaped_(items, item.sensor_name.c_str());
+            else
+                items += String(WebUiRu::Security::kNum) + String((unsigned)item.sensor_id);
+            items += "</strong></div>";
+            items += "<div class=\"status-line\"><span class=\"status-dot ";
+            items += item.silent ? "status-on" : "status-bad";
+            items += "\"></span><span class=\"status-text\">";
+            items += item.silent ? "Silent detect" : WebUiRu::Security::kText6;
+            items += "</span></div>";
+            items += "<div class=\"form-grid\">";
+            items += "<div class=\"form-row\"><label>Unit</label><input class=\"field\" type=\"text\" readonly value=\"";
+            web.appendHtmlEscaped_(items, item.unit_name.length() ? item.unit_name.c_str() : web.stackNodeIdHex_(item.node_id).c_str());
+            items += "\"></div>";
+            items += "<div class=\"form-row\"><label>Sensor</label><input class=\"field\" type=\"text\" readonly value=\"";
+            items += String((unsigned)item.sensor_id);
+            items += "\"></div>";
+            items += "<div class=\"form-row\"><label>Mode</label><input class=\"field\" type=\"text\" readonly value=\"";
+            items += item.silent ? "silent" : "alarm";
+            items += "\"></div>";
+            items += "</div></div></div>";
+        }
+        return items.length() ? items : String("<div class=\"tile empty\">No active remote detections</div>");
     }
 
 String WebInterfaceControllersSecurityHelper::securityPortOptionsJson_(const WebInterface &web) {

@@ -278,7 +278,19 @@ bool StackRouteAdapter::sendRouteJson(uint32_t target_node, const char *feature,
     }
 
     if (path == JsonPath::SlaveDirect)
-        return _slave->sendRoute(target_node, feature, action, payload, meta);
+    {
+        if (_slave->sendRoute(target_node, feature, action, payload, meta))
+            return true;
+        if (_slave && feature && strcmp(feature, kXchgFeature) != 0 &&
+            !(meta && meta->exchange_kind == StackTransport::ExchangeKind::Response))
+        {
+            String payload_text;
+            if (payload)
+                serializeJson(*payload, payload_text);
+            return queueExchangeFromSlave_(target_node, feature, action, payload_text, meta, false);
+        }
+        return false;
+    }
     if (path == JsonPath::SlaveQueue)
     {
         String payload_text;
@@ -327,7 +339,14 @@ bool StackRouteAdapter::sendRouteBinary(uint32_t target_node, const char *featur
     }
 
     if (path == BinaryPath::SlaveDirect)
-        return _slave->sendRouteBinary(target_node, feature, action, payload, payload_size, meta);
+    {
+        if (_slave->sendRouteBinary(target_node, feature, action, payload, payload_size, meta))
+            return true;
+        if (_slave && feature && strcmp(feature, kXchgFeature) != 0 &&
+            !(meta && meta->exchange_kind == StackTransport::ExchangeKind::Response))
+            return queueExchangeFromSlave_(target_node, feature, action, encodeBase64_(payload, payload_size), meta, true);
+        return false;
+    }
     if (path == BinaryPath::SlaveQueue)
         return queueExchangeFromSlave_(target_node, feature, action, encodeBase64_(payload, payload_size), meta, true);
     if (path == BinaryPath::MasterWs)
@@ -699,7 +718,7 @@ bool StackRouteAdapter::queueExchangeFromSlave_(uint32_t target_node, const char
                                                 const StackTransport::RouteMeta *meta, bool is_binary)
 {
     const auto guard = _lock.guard();
-    if (!_slave || target_node == 0 || !feature || !feature[0] || !action || !action[0])
+    if (!_slave || !feature || !feature[0] || !action || !action[0])
         return false;
 
     StackTransport::RouteMeta local_meta = meta ? *meta : StackTransport::RouteMeta{};

@@ -275,7 +275,7 @@ void AppRuntime::updateMasterLed_(bool master_active){
 }
 
 void AppRuntime::updateStackMasterMode_(){
-    const bool active = false;
+    const bool active = stackMasterActive_();
     if (_stack_master_effective != active)
     {
         _stack_master_effective = active;

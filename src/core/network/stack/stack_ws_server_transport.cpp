@@ -11,6 +11,13 @@
 
 #include "core/network/stack/stack_ws_server_transport.hpp"
 
+namespace
+{
+constexpr uint32_t kWsHeartbeatPingMs = 20000u;
+constexpr uint32_t kWsHeartbeatPongTimeoutMs = 10000u;
+constexpr uint8_t kWsHeartbeatDisconnectCount = 3u;
+}
+
 StackWsServerTransport::StackWsServerTransport()
 {
 }
@@ -32,7 +39,7 @@ bool StackWsServerTransport::begin(uint16_t port)
     _port = port;
     _server.reset(new WebSocketsServer(_port));
     _server->begin();
-    _server->enableHeartbeat(15000, 3000, 2);
+    _server->enableHeartbeat(kWsHeartbeatPingMs, kWsHeartbeatPongTimeoutMs, kWsHeartbeatDisconnectCount);
     _server->onEvent([this](uint8_t client_id, WStype_t type, uint8_t *payload, size_t len) {
         onWsEvent_(client_id, type, payload, len);
     });

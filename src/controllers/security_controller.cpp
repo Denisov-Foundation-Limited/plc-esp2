@@ -17,6 +17,8 @@
 
 namespace
 {
+constexpr uint32_t kSecurityPortDebounceMs = 1000u;
+
 bool phonesMatch_(const String &lhs, const String &rhs)
 {
     const String a = UsersRegistry::normalizePhone(lhs);
@@ -60,7 +62,14 @@ bool SecurityController::begin(){
         if (!cfg.enabled)
             continue;
         setupSensorInput_(cfg);
-        st.raw = readRaw_(cfg);
+        bool raw = idleRawState_(cfg);
+        if (readRaw_(cfg, raw))
+            st.raw = raw;
+        else
+            st.raw = idleRawState_(cfg);
+        st.filtered_raw = idleRawState_(cfg);
+        st.active = false;
+        st.raw_changed_ms = millis();
         st.is_detect = false;
     }
     _logs.info(F("SECURITY"), F("Init done"));
@@ -72,26 +81,23 @@ void SecurityController::task(){
     SensorConfig pending_detect[kSensorCount]{};
     size_t pending_detect_count = 0;
     bool notify_alarm_on = false;
+    const uint32_t now = millis();
     {
         auto guard = _lock.guard();
         if (!_controller_enabled)
             return;
         handleIButton_();
         handleRfid_();
-        if (!_armed)
-        {
-            updateBuzzer_();
-            return;
-        }
         for (size_t i = 0; i < kSensorCount; ++i)
         {
             SensorConfig &cfg = _cfg[i];
             SensorState &st = _state[i];
             if (!cfg.enabled)
                 continue;
-            const bool raw = readRaw_(cfg);
-            st.raw = raw;
-            const bool triggered = isTriggered_(cfg, raw);
+            const bool triggered = sampleTriggered_(cfg, st, now);
+            st.active = triggered;
+            if (!_armed)
+                continue;
             if (triggered && !st.is_detect)
             {
                 st.is_detect = true;
@@ -634,6 +640,9 @@ void SecurityController::setControllerEnabled(bool enabled){
     {
         disarm_(true);
         for (size_t i = 0; i < kSensorCount; ++i)
+            if (_cfg[i].enabled)
+                setSensorPortDebounce_(_cfg[i].port, false);
+        for (size_t i = 0; i < kSensorCount; ++i)
             _state[i] = SensorState{};
         _rfid_ready = false;
         reset_();
@@ -655,7 +664,14 @@ void SecurityController::setControllerEnabled(bool enabled){
         if (!cfg.enabled)
             continue;
         setupSensorInput_(cfg);
-        st.raw = readRaw_(cfg);
+        bool raw = idleRawState_(cfg);
+        if (readRaw_(cfg, raw))
+            st.raw = raw;
+        else
+            st.raw = idleRawState_(cfg);
+        st.filtered_raw = idleRawState_(cfg);
+        st.active = false;
+        st.raw_changed_ms = millis();
     }
 }
 
@@ -685,8 +701,9 @@ bool SecurityController::arm(){
         return true;
     if (!_controller_enabled)
         return false;
+    const bool was_armed = _armed;
     arm_();
-    return true;
+    return _armed && !was_armed;
 }
 
 bool SecurityController::disarm(){
@@ -703,8 +720,9 @@ bool SecurityController::armFrom(const char *src, const String &user){
         return true;
     if (!_controller_enabled)
         return false;
+    const bool was_armed = _armed;
     arm_(src, user);
-    return true;
+    return _armed && !was_armed;
 }
 
 bool SecurityController::armForcedFrom(const char *src, const String &user){
@@ -744,15 +762,14 @@ bool SecurityController::fillPrearmItems(JsonArray &arr, String *plain_out ){
     bool any = false;
     if (plain_out)
         *plain_out = "";
+    const uint32_t now = millis();
     for (size_t i = 0; i < kSensorCount; ++i)
     {
         SensorConfig &cfg = _cfg[i];
         SensorState &st = _state[i];
         if (!cfg.enabled)
             continue;
-        const bool raw = readRaw_(cfg);
-        st.raw = raw;
-        if (!isTriggered_(cfg, raw))
+        if (!sampleTriggered_(cfg, st, now))
             continue;
         JsonObject o = arr.add<JsonObject>();
         o["id"] = (unsigned)cfg.id;
@@ -775,21 +792,114 @@ bool SecurityController::fillPrearmItems(JsonArray &arr, String *plain_out ){
     return any;
 }
 
-void SecurityController::notifyRemoteDetect(const String &source, uint8_t sensor_id, const String &name, bool silent){
+size_t SecurityController::prearmTriggeredCount(){
+    auto guard = _lock.guard();
+    size_t count = 0;
+    const uint32_t now = millis();
+    for (size_t i = 0; i < kSensorCount; ++i)
+    {
+        const SensorConfig &cfg = _cfg[i];
+        if (!cfg.enabled)
+            continue;
+        if (sampleTriggered_(cfg, _state[i], now))
+            ++count;
+    }
+    return count;
+}
+
+void SecurityController::notifyRemoteDetect(uint32_t node_id, const String &source, uint8_t sensor_id, const String &name, bool silent){
     bool notify_enabled = false;
     {
         auto guard = _lock.guard();
+        const uint32_t now = millis();
+        size_t slot = kRemoteDetectCapacity;
+        size_t free_slot = kRemoteDetectCapacity;
+        uint32_t oldest_ms = UINT32_MAX;
+        size_t oldest_slot = 0;
+        for (size_t i = 0; i < kRemoteDetectCapacity; ++i)
+        {
+            auto &item = _remote_detects[i];
+            if (item.active && item.node_id == node_id && item.sensor_id == sensor_id)
+            {
+                slot = i;
+                break;
+            }
+            if (!item.active && free_slot == kRemoteDetectCapacity)
+                free_slot = i;
+            if (item.updated_ms < oldest_ms)
+            {
+                oldest_ms = item.updated_ms;
+                oldest_slot = i;
+            }
+        }
+        if (slot == kRemoteDetectCapacity)
+            slot = (free_slot != kRemoteDetectCapacity) ? free_slot : oldest_slot;
+        auto &dst = _remote_detects[slot];
+        dst.node_id = node_id;
+        dst.sensor_id = sensor_id;
+        dst.active = true;
+        dst.silent = silent;
+        dst.updated_ms = now;
+        dst.unit_name = source;
+        dst.sensor_name = name;
         notify_enabled = _notify_enabled;
     }
     if (!notify_enabled)
         return;
-    (void)source;
     SensorConfig cfg;
     cfg.id = sensor_id;
     cfg.name = name;
     cfg.silent = silent;
     notifyDetectEvent_(cfg);
     sendSmsNotify_(sensor_id, name);
+}
+
+size_t SecurityController::remoteDetectCount(uint32_t node_id) const{
+    auto guard = _lock.guard();
+    size_t count = 0;
+    for (size_t i = 0; i < kRemoteDetectCapacity; ++i)
+    {
+        const auto &item = _remote_detects[i];
+        if (!item.active)
+            continue;
+        if (node_id != 0 && item.node_id != node_id)
+            continue;
+        ++count;
+    }
+    return count;
+}
+
+bool SecurityController::remoteDetectAt(size_t idx, RemoteDetect &out, uint32_t node_id) const{
+    auto guard = _lock.guard();
+    size_t current = 0;
+    for (size_t i = 0; i < kRemoteDetectCapacity; ++i)
+    {
+        const auto &item = _remote_detects[i];
+        if (!item.active)
+            continue;
+        if (node_id != 0 && item.node_id != node_id)
+            continue;
+        if (current == idx)
+        {
+            out = item;
+            return true;
+        }
+        ++current;
+    }
+    return false;
+}
+
+void SecurityController::clearRemoteDetects(uint32_t node_id){
+    auto guard = _lock.guard();
+    for (size_t i = 0; i < kRemoteDetectCapacity; ++i)
+    {
+        auto &item = _remote_detects[i];
+        if (!item.active)
+            continue;
+        if (node_id != 0 && item.node_id != node_id)
+            continue;
+        item = RemoteDetect{};
+    }
 }
 
 void SecurityController::setAlarmState(bool on){
@@ -813,6 +923,7 @@ bool SecurityController::setEnabled(size_t id, bool enabled){
     SensorState &st = _state[idx];
     if (!enabled)
     {
+        setSensorPortDebounce_(cfg.port, false);
         const uint8_t saved_id = cfg.id;
         String saved_name = cfg.name;
         cfg = SensorConfig{};
@@ -828,7 +939,14 @@ bool SecurityController::setEnabled(size_t id, bool enabled){
     if (_controller_enabled && cfg.enabled)
     {
         setupSensorInput_(cfg);
-        st.raw = readRaw_(cfg);
+        bool raw = idleRawState_(cfg);
+        if (readRaw_(cfg, raw))
+            st.raw = raw;
+        else
+            st.raw = idleRawState_(cfg);
+        st.filtered_raw = idleRawState_(cfg);
+        st.active = false;
+        st.raw_changed_ms = millis();
     }
     _logs.info(F("SECURITY"), F("id: %u enabled: true"), (unsigned)cfg.id);
     return true;
@@ -841,12 +959,20 @@ bool SecurityController::setType(size_t id, SecurityController::SensorType type)
         return false;
     SensorConfig &cfg = _cfg[idx];
     SensorState &st = _state[idx];
+    setSensorPortDebounce_(cfg.port, false);
     cfg.type = type;
     st = SensorState{};
     if (_controller_enabled && cfg.enabled)
     {
         setupSensorInput_(cfg);
-        st.raw = readRaw_(cfg);
+        bool raw = idleRawState_(cfg);
+        if (readRaw_(cfg, raw))
+            st.raw = raw;
+        else
+            st.raw = idleRawState_(cfg);
+        st.filtered_raw = idleRawState_(cfg);
+        st.active = false;
+        st.raw_changed_ms = millis();
     }
     return true;
 }
@@ -858,12 +984,20 @@ bool SecurityController::setPort(size_t id, uint8_t port){
         return false;
     SensorConfig &cfg = _cfg[idx];
     SensorState &st = _state[idx];
+    setSensorPortDebounce_(cfg.port, false);
     cfg.port = port;
     st = SensorState{};
     if (_controller_enabled && cfg.enabled)
     {
         setupSensorInput_(cfg);
-        st.raw = readRaw_(cfg);
+        bool raw = idleRawState_(cfg);
+        if (readRaw_(cfg, raw))
+            st.raw = raw;
+        else
+            st.raw = idleRawState_(cfg);
+        st.filtered_raw = idleRawState_(cfg);
+        st.active = false;
+        st.raw_changed_ms = millis();
     }
     return true;
 }
@@ -1411,23 +1545,83 @@ void SecurityController::updateSiren_(){
 void SecurityController::setupSensorInput_(const SecurityController::SensorConfig &cfg){
     if (cfg.port == kInvalidPort)
         return;
-    const PortIO::PortMode mode = (cfg.type == SensorType::Reed)
-                                      ? PortIO::PortMode::InputPullUp
-                                      : PortIO::PortMode::Input;
+    const PortIO::PortMode mode = PortIO::PortMode::InputPullUp;
     _gpio.pinModeDyn(cfg.port, mode);
+    setSensorPortDebounce_(cfg.port, true);
 }
 
-bool SecurityController::readRaw_(const SecurityController::SensorConfig &cfg){
+void SecurityController::setSensorPortDebounce_(uint8_t port, bool enabled){
+    if (port == kInvalidPort)
+        return;
+    _gpio.setInputDebounceMsDyn(port, enabled ? kSecurityPortDebounceMs : 0u);
+}
+
+bool SecurityController::readRaw_(const SecurityController::SensorConfig &cfg, bool &out){
     if (cfg.port == kInvalidPort)
+    {
+        _logs.warn(F("SECURITY"),
+                   F("gpio read failed: id: %u port: invalid type: %s"),
+                   (unsigned)cfg.id, typeName_(cfg.type));
         return false;
-    bool raw = false;
-    if (!_gpio.readDyn(cfg.port, raw))
+    }
+    if (!_gpio.readDyn(cfg.port, out))
+    {
+        _logs.warn(F("SECURITY"),
+                   F("gpio read failed: id: %u port: %u type: %s"),
+                   (unsigned)cfg.id, (unsigned)cfg.port, typeName_(cfg.type));
         return false;
-    return raw;
+    }
+    return true;
 }
 
 bool SecurityController::isTriggered_(const SecurityController::SensorConfig &cfg, bool raw){
     return (cfg.type == SensorType::Reed) ? !raw : raw;
+}
+
+bool SecurityController::idleRawState_(const SecurityController::SensorConfig &cfg){
+    return (cfg.type == SensorType::Reed);
+}
+
+uint32_t SecurityController::debounceMs_(const SecurityController::SensorConfig &cfg){
+    (void)cfg;
+    return 1000u;
+}
+
+bool SecurityController::sampleTriggered_(const SecurityController::SensorConfig &cfg, SensorState &st, uint32_t now_ms){
+    bool raw = st.raw;
+    if (!readRaw_(cfg, raw))
+    {
+        _logs.warn(F("SECURITY"),
+                   F("debounce gpio read failed: id: %u port: %u type: %s raw_keep: %u try: %lu"),
+                   (unsigned)cfg.id, (unsigned)cfg.port, typeName_(cfg.type), st.raw ? 1u : 0u,
+                   (unsigned long)st.debounce_try);
+        return isTriggered_(cfg, st.filtered_raw);
+    }
+    const bool raw_detect = isTriggered_(cfg, raw);
+    if (raw != st.raw)
+    {
+        st.raw = raw;
+        st.raw_changed_ms = now_ms;
+        st.debounce_try = 0;
+    }
+    const bool stable_triggered = isTriggered_(cfg, st.filtered_raw);
+    const bool candidate_triggered = isTriggered_(cfg, st.raw);
+    const uint32_t try_no = ++st.debounce_try;
+    if (candidate_triggered == stable_triggered)
+        return stable_triggered;
+    if (!candidate_triggered)
+    {
+        // Clearing a confirmed detect should be fast; GPIO layer already debounced the raw input.
+        st.filtered_raw = st.raw;
+        return false;
+    }
+    const uint32_t debounce_ms = debounceMs_(cfg);
+    const uint32_t age_ms = (uint32_t)(now_ms - st.raw_changed_ms);
+    if (debounce_ms == 0 || age_ms >= debounce_ms)
+    {
+        st.filtered_raw = st.raw;
+    }
+    return isTriggered_(cfg, st.filtered_raw);
 }
 
 void SecurityController::initIButton_(){
@@ -1784,6 +1978,8 @@ void SecurityController::disarm_(bool silent, const char *src, const String &use
 }
 
 void SecurityController::applySnapshot_(bool armed, bool alarm){
+    const bool was_armed = _armed;
+    const bool was_alarm = _alarm_on;
     _armed = armed;
     _alarm_on = alarm;
     clearDetect_();
@@ -1796,9 +1992,22 @@ void SecurityController::applySnapshot_(bool armed, bool alarm){
         updateAlarmLed_();
         updateSiren_();
         writeBuzzer_(false);
+        if (armed && (!was_armed || !was_alarm))
+            startBeep_(2, kBeepShortMs, kBeepGapMs);
     }
     _dirty = false;
     _force_save = false;
+    if (armed)
+    {
+        if (alarm)
+            _logs.warn(F("SECURITY"), F("armed restored after restart, alarm: on"));
+        else
+            _logs.info(F("SECURITY"), F("armed restored after restart"));
+    }
+    else if (was_armed)
+    {
+        _logs.info(F("SECURITY"), F("disarmed restored after restart"));
+    }
 }
 
 bool SecurityController::hasTriggeredBeforeArm_(String &out, String *plain_out ){
@@ -1807,15 +2016,14 @@ bool SecurityController::hasTriggeredBeforeArm_(String &out, String *plain_out )
         *plain_out = "";
     bool any = false;
     bool local_any = false;
+    const uint32_t now = millis();
     for (size_t i = 0; i < kSensorCount; ++i)
     {
         SensorConfig &cfg = _cfg[i];
         SensorState &st = _state[i];
         if (!cfg.enabled)
             continue;
-        const bool raw = readRaw_(cfg);
-        st.raw = raw;
-        if (!isTriggered_(cfg, raw))
+        if (!sampleTriggered_(cfg, st, now))
             continue;
         _logs.warn(F("SECURITY"), F("prearm blocked sensor %u (%s)"),
                    (unsigned)cfg.id, cfg.name.length() ? cfg.name.c_str() : "-");
@@ -1888,6 +2096,8 @@ String SecurityController::escapeHtml_(const String &text){
 void SecurityController::clearDetect_(){
     for (size_t i = 0; i < kSensorCount; ++i)
         _state[i].is_detect = false;
+    for (size_t i = 0; i < kRemoteDetectCapacity; ++i)
+        _remote_detects[i] = RemoteDetect{};
 }
 
 void SecurityController::startBeep_(uint8_t count, uint16_t on_ms, uint16_t off_ms){

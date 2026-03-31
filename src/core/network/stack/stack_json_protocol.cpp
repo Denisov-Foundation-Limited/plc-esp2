@@ -131,7 +131,7 @@ bool StackJsonProtocol::parseRoute(const uint8_t *data, size_t size, RouteMessag
     out.payload_json = (*doc)["payload"].as<JsonVariantConst>();
     if (!out.payload_json.isNull())
         serializeJson(out.payload_json, out.payload);
-    return out.target_node != 0 && out.feature[0] != '\0' && out.action[0] != '\0';
+    return out.feature[0] != '\0' && out.action[0] != '\0';
 }
 
 bool StackJsonProtocol::parseRoutePayload(const String &payload, RouteMessage &out)

@@ -2301,7 +2301,7 @@ void CloudClient::fillSecurity_(JsonObject out)
         if (cfg.name.length())
             o["name"] = cfg.name;
         o["silent"] = cfg.silent;
-        o["detect"] = st.is_detect;
+        o["detect"] = st.active;
     }
     }
 }

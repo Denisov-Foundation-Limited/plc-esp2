@@ -2217,7 +2217,7 @@ int32_t WebInterface::scaled10_(float value)
                     hashAdd_(hash, cfg->silent ? 1u : 0u);
                     hashAdd_(hash, cfg->name);
                     hashAdd_(hash, st->raw ? 1u : 0u);
-                    hashAdd_(hash, st->is_detect ? 1u : 0u);
+                    hashAdd_(hash, st->active ? 1u : 0u);
                 }
                 for (size_t i = 0; i < SecurityController::kKeyCount; ++i)
                 {

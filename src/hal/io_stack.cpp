@@ -54,7 +54,9 @@ void IoStack::initImages()
             continue;
         if (has(p.caps, Cap::Input))
         {
-            const bool v = _portio.read(i);
+            bool v = false;
+            if (!_portio.read(i, v))
+                continue;
             _inputs[i] = v;
             _raw_inputs[i] = v;
             _last_change_ms[i] = 0;
@@ -82,7 +84,9 @@ void IoStack::scanInputs()
             continue;
         if (has(p.caps, Cap::Input))
         {
-            const bool raw = _portio.read(i);
+            bool raw = false;
+            if (!_portio.read(i, raw))
+                continue;
             auto guard = _lock.guard();
             if (raw != _raw_inputs[i])
             {

@@ -662,6 +662,9 @@ void StackUnitSnapshot::mergeControllerSummary_(State &dst, const State &src)
     dst.watering_enabled = src.watering_enabled;
     dst.watering_active = src.watering_active;
     dst.security_sensors_enabled = src.security_sensors_enabled;
+    dst.security_detected = src.security_detected;
+    dst.security_detect_preview_count = src.security_detect_preview_count;
+    memcpy(dst.security_detect_preview, src.security_detect_preview, sizeof(dst.security_detect_preview));
     dst.leak_enabled = src.leak_enabled;
     dst.leak_alert = src.leak_alert;
     dst.security_enabled = src.security_enabled;

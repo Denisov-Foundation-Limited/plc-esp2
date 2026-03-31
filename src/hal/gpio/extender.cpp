@@ -180,6 +180,8 @@ void Extender::task()
     if (!_i2c || _dev_count == 0)
         return;
 
+    maybeLogDiag_();
+
     const uint32_t now = millis();
     if ((int32_t)(now - _next_scan_ms) < 0)
         return;
@@ -452,14 +454,52 @@ void Extender::write(uint8_t dev, uint8_t pin, bool level)
 
 bool Extender::read(uint8_t dev, uint8_t pin) const
 {
+    bool out = false;
+    (void)read(dev, pin, out);
+    return out;
+}
+
+bool Extender::read(uint8_t dev, uint8_t pin, bool &out) const
+{
+    out = false;
     if (dev >= _dev_count || !_i2c)
         return false;
     const DevCfg &cfg = _devs[dev];
     I2CManager::ScopedBusLock lk(*_i2c, cfg.bus_num);
     if (!lk.locked())
+    {
+        const uint8_t bit = (uint8_t)(pin & 0x0F);
+        if (cfg.type == Type::MCP23017)
+        {
+            const uint16_t mask = (uint16_t)(1u << bit);
+            if (_mcp_cache_valid[dev] & mask)
+                out = (_mcp_cache[dev] & mask) != 0;
+        }
+        else if (cfg.type == Type::PCF8574)
+        {
+            const uint8_t mask = (uint8_t)(1u << (bit & 0x07));
+            if (_pcf_cache_valid[dev] & mask)
+                out = (_pcf_cache[dev] & mask) != 0;
+        }
         return false;
+    }
     if (!ensureDevLocked_(dev))
+    {
+        const uint8_t bit = (uint8_t)(pin & 0x0F);
+        if (cfg.type == Type::MCP23017)
+        {
+            const uint16_t mask = (uint16_t)(1u << bit);
+            if (_mcp_cache_valid[dev] & mask)
+                out = (_mcp_cache[dev] & mask) != 0;
+        }
+        else if (cfg.type == Type::PCF8574)
+        {
+            const uint8_t mask = (uint8_t)(1u << (bit & 0x07));
+            if (_pcf_cache_valid[dev] & mask)
+                out = (_pcf_cache[dev] & mask) != 0;
+        }
         return false;
+    }
     if (cfg.type == Type::MCP23017)
     {
         Mcp23017 *mcp = mcp_(dev);
@@ -468,11 +508,17 @@ bool Extender::read(uint8_t dev, uint8_t pin) const
         bool v = false;
         if (!mcp->readPin(pin, v))
         {
+            if (_log)
+                _log->warn(F("EXT"), F("Read fail: dev: %u pin: %u type: MCP23017"), dev, pin);
+            ++_diag.mcp_read_fail;
             noteRuntimeIoFailure_(dev);
             const uint8_t bit = (uint8_t)(pin & 0x0F);
             const uint16_t mask = (uint16_t)(1u << bit);
             if (_mcp_cache_valid[dev] & mask)
-                return (_mcp_cache[dev] & mask) != 0;
+            {
+                ++_diag.mcp_cache_fallback;
+                out = (_mcp_cache[dev] & mask) != 0;
+            }
             return false;
         }
         if (pin <= 15)
@@ -484,7 +530,8 @@ bool Extender::read(uint8_t dev, uint8_t pin) const
                 _mcp_cache[dev] &= (uint16_t)~mask;
             _mcp_cache_valid[dev] |= mask;
         }
-        return v;
+        out = v;
+        return true;
     }
     if (cfg.type == Type::PCF8574)
     {
@@ -494,11 +541,17 @@ bool Extender::read(uint8_t dev, uint8_t pin) const
         bool v = false;
         if (!pcf->readPin(pin, v))
         {
+            if (_log)
+                _log->warn(F("EXT"), F("Read fail: dev: %u pin: %u type: PCF8574"), dev, pin);
+            ++_diag.pcf_read_fail;
             noteRuntimeIoFailure_(dev);
             const uint8_t bit = (uint8_t)(pin & 0x07);
             const uint8_t mask = (uint8_t)(1u << bit);
             if (_pcf_cache_valid[dev] & mask)
-                return (_pcf_cache[dev] & mask) != 0;
+            {
+                ++_diag.pcf_cache_fallback;
+                out = (_pcf_cache[dev] & mask) != 0;
+            }
             return false;
         }
         if (pin <= 7)
@@ -510,7 +563,8 @@ bool Extender::read(uint8_t dev, uint8_t pin) const
                 _pcf_cache[dev] &= (uint8_t)~mask;
             _pcf_cache_valid[dev] |= mask;
         }
-        return v;
+        out = v;
+        return true;
     }
     return false;
 }
@@ -529,4 +583,28 @@ void Extender::flushAll()
         if (_pcf_inited[i] && !_pcf[i].flush())
             noteRuntimeIoFailure_(i);
     }
+}
+
+void Extender::maybeLogDiag_() const
+{
+    if (!_log)
+        return;
+    const uint32_t now = millis();
+    if ((uint32_t)(now - _diag_last_report_ms) < 60000u)
+        return;
+    _diag_last_report_ms = now;
+
+    if (_diag.mcp_read_fail == _diag_last_reported.mcp_read_fail &&
+        _diag.mcp_cache_fallback == _diag_last_reported.mcp_cache_fallback &&
+        _diag.pcf_read_fail == _diag_last_reported.pcf_read_fail &&
+        _diag.pcf_cache_fallback == _diag_last_reported.pcf_cache_fallback)
+        return;
+
+    _diag_last_reported = _diag;
+    _log->info(F("EXT"),
+               F("Diag mcp_read_fail: %lu mcp_cache_fallback: %lu pcf_read_fail: %lu pcf_cache_fallback: %lu"),
+               (unsigned long)_diag.mcp_read_fail,
+               (unsigned long)_diag.mcp_cache_fallback,
+               (unsigned long)_diag.pcf_read_fail,
+               (unsigned long)_diag.pcf_cache_fallback);
 }

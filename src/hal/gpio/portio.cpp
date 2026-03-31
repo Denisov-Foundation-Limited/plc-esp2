@@ -192,7 +192,15 @@ void PortIO::write(PortId id, bool logicalLevel)
 
 bool PortIO::read(PortId id) const
 {
+    bool out = false;
+    (void)read(id, out);
+    return out;
+}
+
+bool PortIO::read(PortId id, bool &out) const
+{
     auto guard = _lock.guard();
+    out = false;
     if (id >= PORT_COUNT)
         return false;
     const auto &p = _ports[id];
@@ -207,14 +215,17 @@ bool PortIO::read(PortId id) const
         v = (::digitalRead(p.u.esp.gpio) != 0);
         if (p.u.esp.inverted)
             v = !v;
-        return v;
+        out = v;
+        return true;
     }
     if (_ext)
     {
-        v = _ext->read(p.u.ext.dev, p.u.ext.pin);
+        if (!_ext->read(p.u.ext.dev, p.u.ext.pin, v))
+            return false;
         if (p.u.ext.inverted)
             v = !v;
-        return v;
+        out = v;
+        return true;
     }
     return false;
 }

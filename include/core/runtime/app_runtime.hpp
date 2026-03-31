@@ -233,6 +233,7 @@ private:
     void pollSecurityStatusFromMaster_();
 
     bool collectRemoteSecurityDetections_(String &out, String *plain_out);
+    void syncRemoteSecurityAlarmFromSummary_(uint32_t node_id);
 
     String stackNodeLabel_(uint32_t node_id) const;
 

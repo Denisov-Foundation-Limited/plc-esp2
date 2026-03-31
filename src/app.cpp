@@ -104,7 +104,7 @@ HardwareContext::HardwareContext(Logger &logs, UartManager &uart)
           ext(i2c, ActiveBoardProfile::EXT_DEVS, &logs),
           portio(ActiveBoardProfile::PORTS, &ext),
           io(portio),
-          gpio(io),
+          gpio(io, &logs),
           hal(ow, i2c, spi, uart, gpio, logs),
           plc(i2c, io, rtc)
 {

@@ -30,6 +30,8 @@ public:
     static constexpr size_t kThermoCount = 20;
     static constexpr size_t kTankNameLen = 24;
     static constexpr size_t kTankCount = 20;
+    static constexpr size_t kSecurityDetectNameLen = 24;
+    static constexpr size_t kSecurityDetectPreviewCount = 4;
     static constexpr uint8_t kPageSize = 8;
 
     struct SocketItem
@@ -107,6 +109,12 @@ public:
 
     struct State
     {
+        struct SecurityDetectPreview
+        {
+            uint8_t id = 0;
+            char name[kSecurityDetectNameLen] = {};
+        };
+
         uint32_t node_id = 0;
         uint32_t updated_ms = 0;
         bool has_plc = false;
@@ -132,6 +140,9 @@ public:
         uint16_t watering_enabled = 0;
         uint16_t watering_active = 0;
         uint16_t security_sensors_enabled = 0;
+        uint16_t security_detected = 0;
+        uint8_t security_detect_preview_count = 0;
+        SecurityDetectPreview security_detect_preview[kSecurityDetectPreviewCount]{};
         uint16_t leak_enabled = 0;
         uint16_t leak_alert = 0;
         bool security_enabled = false;
