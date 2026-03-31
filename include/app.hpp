@@ -35,6 +35,7 @@
 #include "hal/ds3231mz.hpp"
 #include "hal/lcd1602_i2c.hpp"
 #include "hal/lm75ad.hpp"
+#include "hal/camera.hpp"
 #include "hal/sim800l.hpp"
 #include "hal/ibutton.hpp"
 #include "hal/gpio/extender.hpp"
@@ -92,6 +93,7 @@ struct HardwareContext
     PortIO portio;
     IoStack io;
     Gpio gpio;
+    Camera camera;
 
     Hal hal;
     PlcControl plc;

@@ -34,6 +34,7 @@ class RTC;
 class GsmModem;
 class ConfigsManagerIface;
 class Network;
+class Camera;
 class CloudClient
 {
 public:
@@ -58,6 +59,7 @@ public:
     void setConfigsManager(ConfigsManagerIface *cfg);
     void setUsersRegistry(UsersRegistry *users);
     void setRulesController(RulesController *rules);
+    void setCamera(Camera *camera);
     void setTransport(CloudTransport &transport);
     void useDefaultTransport();
     void bindControllerCallbacks();
@@ -114,6 +116,20 @@ private:
         String reason;
         String data_json;
     };
+    struct CameraCloudItem
+    {
+        String latest_url;
+        String last_error;
+        uint32_t updated_ms = 0;
+        uint32_t busy_since_ms = 0;
+        bool busy = false;
+    };
+    enum class CameraCloudPhase : uint8_t
+    {
+        Idle = 0,
+        Download,
+        Upload
+    };
 
     Logger &_log;
     Controllers &_controllers;
@@ -127,6 +143,7 @@ private:
     ConfigsManagerIface *_configs = nullptr;
     UsersRegistry *_users = nullptr;
     RulesController *_rules = nullptr;
+    Camera *_camera = nullptr;
 
     Config _cfg;
     CloudWsTransport _default_transport;
@@ -149,6 +166,11 @@ private:
     uint8_t _event_count = 0;
     mutable ScratchBuffer *_scratch = nullptr;
     mutable RtosRecursiveLock _scratch_lock;
+    CameraCloudItem _camera_cloud[4] = {};
+    CameraCloudPhase _camera_cloud_phase = CameraCloudPhase::Idle;
+    uint8_t _camera_cloud_id = 0;
+    String _camera_cloud_upload_url;
+    String _camera_cloud_latest_url;
 
     void handleMessage_(const uint8_t *payload, size_t len);
 
@@ -209,6 +231,7 @@ private:
     bool handleCmdAvr_(const String &action, JsonObjectConst args);
 
     bool handleCmdLeak_(const String &action, JsonObjectConst args);
+    bool handleCmdCameras_(const String &action, JsonObjectConst args, String *error_out = nullptr);
 
     void sendAck_(const String &reply_to, bool ok, const char *error);
 
@@ -251,6 +274,7 @@ private:
     void fillSeptic_(JsonArray out);
 
     void fillWatering_(JsonArray out);
+    void fillCameras_(JsonArray out);
 
     void fillSecurity_(JsonObject out);
 
@@ -294,6 +318,10 @@ private:
 
     String stackNodeName_(uint32_t node_id) const;
     String eventSourceName_(const String &unit, uint32_t node_id) const;
+    static String normalizeCloudBasePath_(const String &path);
+    bool buildCloudPhotoUrls_(uint8_t camera_id, String &upload_url, String &latest_url, String &error_out) const;
+    void resetCameraCloudJob_();
+    void updateCameraCloud_();
 
     static ThermoController::Mode parseThermoMode_(const String &mode);
 

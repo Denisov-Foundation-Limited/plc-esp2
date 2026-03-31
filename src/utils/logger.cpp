@@ -157,6 +157,11 @@ bool Logger::beginAuto(){
     return false;
 }
 
+void Logger::setOutputObserver(OutputObserver cb, void *ctx){
+    _observer = cb;
+    _observer_ctx = ctx;
+}
+
 void Logger::ensureLock_(){
     if (_output_lock != nullptr)
         return;
@@ -260,6 +265,11 @@ bool Logger::formatTimestamp_(char *out, size_t cap){
     (void)cap;
     return false;
 #endif
+}
+
+void Logger::notifyObserver_(){
+    if (_observer)
+        _observer(_observer_ctx);
 }
 
 void Logger::lock_(){

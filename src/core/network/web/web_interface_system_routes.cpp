@@ -26,6 +26,7 @@ void WebInterfaceSystemRoutes::registerPrimary(WebInterface &web, AsyncWebServer
 void WebInterfaceSystemRoutes::registerSecondary(WebInterface &web, AsyncWebServer &server)
 {
     ControllersHandler::registerRoutes(web, server);
+    CamerasHandler::registerRoutes(web, server);
     UsersHandler::registerRoutes(web, server);
     GroupsHandler::registerRoutes(web, server);
 }

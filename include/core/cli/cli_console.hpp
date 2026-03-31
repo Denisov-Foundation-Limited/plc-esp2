@@ -13,6 +13,9 @@
 
 #include <Arduino.h>
 #include <stdint.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
 
 #include "core/rtc.hpp"
 #include "core/network/wifi_manager.hpp"
@@ -33,6 +36,7 @@
 #include "core/cli/modules/cli_cloud.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
+#include "hal/camera.hpp"
 #include "hal/gpio/extender.hpp"
 #include "hal/gpio/portio.hpp"
 #include "utils/configs.hpp"
@@ -60,13 +64,14 @@ public:
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
-               Configs &configs, Extender &ext,
+               Configs &configs, Extender &ext, Camera &camera,
                UsersRegistry &users,
                Controllers &controllers);
 
     void begin(Stream &io);
 
     void setNetwork(class Network &network);
+    void onLoggerOutput_();
 
     void loop();
 
@@ -116,6 +121,7 @@ public:
     void cmdShowCloud_();
 
     void cmdCopy_(const String &line);
+    void cmdPhoto_(const String &line);
 
     void cmdShowI2c_();
 
@@ -284,7 +290,6 @@ private:
     static bool hexToBytes_(const String &hex, uint8_t out[32]);
 
     static void bytesToHex_(const uint8_t in[32], char out[65]);
-
     PlcControl &_plc;
     WifiManager &_wifi;
     RTC &_rtc;
@@ -293,6 +298,7 @@ private:
     OneWireManager &_ow;
     Configs &_configs;
     Extender &_ext;
+    Camera &_camera;
     UsersRegistry &_users;
     Controllers &_controllers;
     ConfigsManagerIface *_configs_manager = nullptr;

@@ -39,7 +39,7 @@ WebInterface::~WebInterface()
 }
 
     WebInterface::WebInterface(AsyncWebServer &server, CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
-                 RTC &rtc, Logger &logs,
+                 RTC &rtc, Logger &logs, Camera &camera,
                  Extender &ext,
                  I2CManager &i2c, OneWireManager &ow, Controllers &controllers, RulesController &rules)
         : _server(server),
@@ -49,6 +49,7 @@ WebInterface::~WebInterface()
           _plc(&plc),
           _rtc(&rtc),
           _controllers(&controllers),
+          _camera(&camera),
           _rules(&rules),
           _ext(&ext),
           _i2c(&i2c),

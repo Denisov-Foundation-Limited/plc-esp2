@@ -18,11 +18,10 @@
 #include "boards/board_profile.hpp"
 #include "core/network/tftp_client.hpp"
 #include "mbedtls/sha256.h"
-#include <HTTPClient.h>
 #include <Update.h>
 
 CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
-           Configs &configs, Extender &ext,
+           Configs &configs, Extender &ext, Camera &camera,
            UsersRegistry &users,
            Controllers &controllers)
     : _plc(plc),
@@ -33,6 +32,7 @@ CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftes
       _ow(ow),
       _configs(configs),
       _ext(ext),
+      _camera(camera),
       _users(users),
       _controllers(controllers),
       _wifi_cli(*this),
@@ -113,6 +113,79 @@ void CliConsole::loop()
         if (_line.length() < kMaxLine)
             _line += c;
     }
+}
+void CliConsole::onLoggerOutput_()
+{
+    if (!_io || _raw_io == nullptr)
+        return;
+    Logger::OutputGuard guard;
+    _raw_io->print('\r');
+    if (_state == State::NeedUser)
+    {
+        _raw_io->print(F("login: "));
+        if (_line.length())
+            _raw_io->print(_line);
+        return;
+    }
+    if (_state == State::NeedPass)
+    {
+        _raw_io->print(F("password: "));
+        return;
+    }
+
+    switch (_mode)
+    {
+    case Mode::User:
+        _raw_io->print(F("plc> "));
+        break;
+    case Mode::Enable:
+        _raw_io->print(F("plc# "));
+        break;
+    case Mode::Config:
+        _raw_io->print(F("plc(config)# "));
+        break;
+    case Mode::ConfigWifi:
+        _raw_io->print(F("plc(config-wifi)# "));
+        break;
+    case Mode::ConfigTime:
+        _raw_io->print(F("plc(config-time)# "));
+        break;
+    case Mode::ConfigSocket:
+        _raw_io->print(F("plc(config-socket)# "));
+        break;
+    case Mode::ConfigMeteo:
+        _raw_io->print(F("plc(config-meteo)# "));
+        break;
+    case Mode::ConfigThermo:
+        _raw_io->print(F("plc(config-thermo)# "));
+        break;
+    case Mode::ConfigTank:
+        _raw_io->print(F("plc(config-tank)# "));
+        break;
+    case Mode::ConfigSeptic:
+        _raw_io->print(F("plc(config-septic)# "));
+        break;
+    case Mode::ConfigSecurity:
+        _raw_io->print(F("plc(config-security)# "));
+        break;
+    case Mode::ConfigRing:
+        _raw_io->print(F("plc(config-ring)# "));
+        break;
+    case Mode::ConfigAvr:
+        _raw_io->print(F("plc(config-avr)# "));
+        break;
+    case Mode::ConfigLeak:
+        _raw_io->print(F("plc(config-leak)# "));
+        break;
+    case Mode::ConfigWatering:
+        _raw_io->print(F("plc(config-watering)# "));
+        break;
+    case Mode::ConfigCloud:
+        _raw_io->print(F("plc(config-cloud)# "));
+        break;
+    }
+    if (_line.length())
+        _raw_io->print(_line);
 }
 bool CliConsole::setAdminPassword_(const String &pass)
 {
@@ -441,6 +514,151 @@ void CliConsole::cmdCopy_(const String &line)
     delay(500);
     ESP.restart();
 #endif
+}
+void CliConsole::cmdPhoto_(const String &line)
+{
+    auto buildCloudPhotoUrl = [this](String &out_url, String &out_err) -> bool
+    {
+        if (!_configs_manager)
+        {
+            out_err = F("Config manager missing");
+            return false;
+        }
+        if (!_configs_manager->cloudEnabled())
+        {
+            out_err = F("Cloud disabled");
+            return false;
+        }
+        const String host = _configs_manager->cloudHost();
+        const uint16_t port = _configs_manager->cloudPort();
+        if (host.length() == 0 || port == 0)
+        {
+            out_err = F("Cloud host/port not configured");
+            return false;
+        }
+
+        String base_path = _configs_manager->cloudPath();
+        if (!base_path.startsWith("/"))
+            base_path = "/" + base_path;
+        const int ws_idx = base_path.indexOf("/ws/");
+        if (ws_idx >= 0)
+            base_path = base_path.substring(0, ws_idx);
+        else if (base_path.endsWith("/ws/device"))
+            base_path = base_path.substring(0, base_path.length() - String("/ws/device").length());
+        if (!base_path.startsWith("/"))
+            base_path = "/" + base_path;
+        if (base_path.length() == 0)
+            base_path = "/";
+        if (!base_path.endsWith("/"))
+            base_path += "/";
+
+        out_url = String(_configs_manager->cloudUseSsl() ? "https://" : "http://") +
+                  host + ":" + String(port) + base_path + "api/device/photo";
+        return true;
+    };
+
+    String args = line;
+    if (args.startsWith("photo"))
+        args = args.substring(5);
+    args.trim();
+    if (args.length() == 0)
+    {
+        _io->println(F("Usage: photo get <http://...jpg>"));
+        _io->println(F("       photo upload <http://...>"));
+        _io->println(F("       photo cloud"));
+        _io->println(F("       photo status"));
+        _io->println(F("       photo clear"));
+        return;
+    }
+    if (eq_(args, "status"))
+    {
+        Camera::Snapshot snap{};
+        if (!_camera.snapshot(snap))
+        {
+            _io->println(F("Photo status unavailable"));
+            return;
+        }
+        _io->print(F("Photo: busy: "));
+        _io->print(snap.busy ? F("yes") : F("no"));
+        _io->print(F(" ok: "));
+        _io->print(snap.ok ? F("yes") : F("no"));
+        _io->print(F(" op: "));
+        _io->print(Camera::opName(snap.op));
+        _io->print(F(" size: "));
+        _io->print((unsigned)snap.size);
+        _io->print(F(" capacity: "));
+        _io->print((unsigned)snap.capacity);
+        _io->print(F(" http: "));
+        _io->print(snap.http_code);
+        _io->print(F(" err: "));
+        _io->print(Camera::errorName(snap.error));
+        if (snap.error_text.length())
+        {
+            _io->print(F(" text: "));
+            _io->print(snap.error_text);
+        }
+        if (snap.url.length())
+        {
+            _io->print(F(" url: "));
+            _io->print(snap.url);
+        }
+        _io->println();
+        return;
+    }
+    if (eq_(args, "clear"))
+    {
+        if (_camera.clear())
+            _io->println(F("Photo buffer cleared"));
+        else
+            _io->println(F("Camera busy"));
+        return;
+    }
+    if (startsWith_(args, "get "))
+    {
+        String url = args.substring(4);
+        url.trim();
+        if (_camera.startDownload(url))
+            _io->println(F("Photo download scheduled"));
+        else
+            _io->println(_camera.lastErrorText().length() ? _camera.lastErrorText() : String(F("Photo download start failed")));
+        return;
+    }
+    if (startsWith_(args, "upload "))
+    {
+        String url = args.substring(7);
+        url.trim();
+        if (_camera.startUpload(url))
+            _io->println(F("Photo upload scheduled"));
+        else
+            _io->println(_camera.lastErrorText().length() ? _camera.lastErrorText() : String(F("Photo upload start failed")));
+        return;
+    }
+    if (eq_(args, "cloud"))
+    {
+        const String api_key = _configs_manager ? _configs_manager->cloudApiKey() : String();
+        if (api_key.length() == 0)
+        {
+            _io->println(F("Cloud API key not configured"));
+            return;
+        }
+        String url;
+        String err;
+        if (!buildCloudPhotoUrl(url, err))
+        {
+            _io->println(err);
+            return;
+        }
+        if (_camera.startUpload(url, String(F("image/jpeg")), api_key))
+            _io->println(F("Photo cloud upload scheduled"));
+        else
+            _io->println(_camera.lastErrorText().length() ? _camera.lastErrorText() : String(F("Photo cloud upload start failed")));
+        return;
+    }
+    _io->println(F("Usage: photo get <http://...jpg>"));
+    _io->println(F("       photo upload <http://...>"));
+    _io->println(F("       photo cloud"));
+    _io->println(F("       photo status"));
+    _io->println(F("       photo clear"));
 }
 void CliConsole::cmdShowI2c_()
 {
@@ -878,6 +1096,11 @@ void CliConsole::showHelpTopic_(const String &topic)
     {
         _io->println(F("System commands:"));
         _io->println(F("  ftest   - start functional test task"));
+        _io->println(F("  photo get <url>"));
+        _io->println(F("  photo upload <url>"));
+        _io->println(F("  photo cloud"));
+        _io->println(F("  photo status"));
+        _io->println(F("  photo clear"));
         _io->println(F("  reload  - restart controller"));
         _io->println(F("  reset   - restart controller"));
         _io->println(F("  write   - save configuration"));
@@ -890,7 +1113,7 @@ void CliConsole::handleTab_()
 {
     if (!_io || _state != State::LoggedIn)
         return;
-    static const std::array<const char *, 70> kEnableCmds = {{
+    static const std::array<const char *, 75> kEnableCmds = {{
         "show plc",
         "show board",
         "show wifi",
@@ -934,6 +1157,11 @@ void CliConsole::handleTab_()
         "ftest",
         "copy tftp://<ip>/firmware.bin firmware",
         "copy http://<ip>/firmware.bin firmware",
+        "photo get <http://...jpg>",
+        "photo upload <http://...>",
+        "photo cloud",
+        "photo status",
+        "photo clear",
         "wifi restart",
         "reload",
         "reset",
@@ -1820,7 +2048,8 @@ bool CliConsole::enforceAclEnable_(const String &line)
         return cliAclCanControlItem_(UsersRegistry::AclController::Security, 1);
     if (startsWith_(low, "configure terminal") || startsWith_(low, "conf t"))
         return false;
-    if (low == "write" || low == "erase" || low == "reload" || low == "reset" || startsWith_(low, "copy "))
+    if (low == "write" || low == "erase" || low == "reload" || low == "reset" || startsWith_(low, "copy ") ||
+        startsWith_(low, "photo "))
         return false;
     return true;
 }

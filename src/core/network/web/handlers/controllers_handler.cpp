@@ -91,6 +91,9 @@ void ControllersHandler::handleControllers(WebInterface &web, AsyncWebServerRequ
             page.replace("%CTRL_AVR_TITLE%", WebUiRu::ControllersPage::kAvrTitle);
             page.replace("%CTRL_AVR_DESC%", WebUiRu::ControllersPage::kAvrDesc);
             page.replace("%CTRL_AVR_STATUS_LABEL%", String(WebUiRu::ControllersPage::kAvrStatusLabel) + " ");
+            page.replace("%CTRL_CAMERAS_TITLE%", "Камеры");
+            page.replace("%CTRL_CAMERAS_DESC%", "Снимки с IP-камер и локальный предпросмотр");
+            page.replace("%CTRL_CAMERAS_STATUS_LABEL%", "Камеры: ");
             page.replace("%CTRL_LEAK_TITLE%", WebUiRu::ControllersPage::kLeakTitle);
             page.replace("%CTRL_LEAK_DESC%", WebUiRu::ControllersPage::kLeakDesc);
             page.replace("%CTRL_LEAK_STATUS_LABEL%", String(WebUiRu::ControllersPage::kLeakStatusLabel) + " ");
@@ -110,6 +113,7 @@ void ControllersHandler::handleControllers(WebInterface &web, AsyncWebServerRequ
         const bool allow_security = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Security);
         const bool allow_avr = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Avr);
         const bool allow_leak = can_edit || web.webAclControllerAllowed_(UsersRegistry::AclController::Leak);
+        const bool allow_cameras = can_edit;
 
         bool show_sockets = allow_sockets;
         bool show_lights = allow_lights;
@@ -122,6 +126,7 @@ void ControllersHandler::handleControllers(WebInterface &web, AsyncWebServerRequ
         bool show_security = allow_security;
         bool show_avr = allow_avr;
         bool show_leak = allow_leak;
+        bool show_cameras = allow_cameras;
 
         if (!can_edit)
         {
@@ -140,7 +145,8 @@ void ControllersHandler::handleControllers(WebInterface &web, AsyncWebServerRequ
         }
 
         const bool any_visible = show_sockets || show_lights || show_meteo || show_thermo || show_tanks ||
-                                 show_watering || show_septic || show_ring || show_security || show_avr || show_leak;
+                                 show_watering || show_septic || show_ring || show_security || show_avr || show_leak ||
+                                 show_cameras;
         page.replace("%CONTROLLERS_EMPTY_HINT%",
                      (!can_edit && !any_visible)
                          ? (String("<p class=\"status\">") + WebUiRu::ControllersPage::kNoAclControllers + "</p>")
@@ -156,6 +162,7 @@ void ControllersHandler::handleControllers(WebInterface &web, AsyncWebServerRequ
         page.replace("%ACL_HIDE_SECURITY%", show_security ? "" : "display:none;");
         page.replace("%ACL_HIDE_AVR%", show_avr ? "" : "display:none;");
         page.replace("%ACL_HIDE_LEAK%", show_leak ? "" : "display:none;");
+        page.replace("%ACL_HIDE_CAMERAS%", show_cameras ? "" : "display:none;");
         if (web._controllers)
         {
             const bool enabled = has_config && web._controllers->sockets().controllerEnabled();
@@ -227,6 +234,7 @@ void ControllersHandler::handleControllers(WebInterface &web, AsyncWebServerRequ
         page.replace("%SECURITY_STATUS%", web._security_status);
         page.replace("%WATERING_STATUS%", web._watering_status);
         page.replace("%AVR_STATUS%", web._avr_status);
+        page.replace("%CAMERAS_STATUS%", web._camera_status.length() ? web._camera_status : String("локально"));
         page.replace("%LEAK_STATUS%", web._leak_status);
         page.replace("%CONTROLLERS_SWITCH_DISABLED%", (has_config && can_edit) ? "" : "disabled");
         page.replace("%CONTROLLERS_SWITCH_LOCK%", (has_config && can_edit) ? "0" : "1");

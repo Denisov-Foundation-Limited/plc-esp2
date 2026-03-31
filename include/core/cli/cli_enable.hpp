@@ -96,6 +96,11 @@ public:
             _c._io->println(F("    ftest           - start functional test task"));
             _c._io->println(F("    copy tftp://<ip>/firmware.bin firmware - update firmware"));
             _c._io->println(F("    copy http://<ip>/firmware.bin firmware - update firmware"));
+            _c._io->println(F("    photo get <url>    - download JPEG to PSRAM in background"));
+            _c._io->println(F("    photo upload <url> - upload current JPEG buffer"));
+            _c._io->println(F("    photo cloud        - upload current JPEG to plc-cloud"));
+            _c._io->println(F("    photo status       - show camera task and buffer state"));
+            _c._io->println(F("    photo clear        - free downloaded photo buffer"));
             _c._io->println(F("    security status - show security status"));
             _c._io->println(F("    security arm    - arm security"));
             _c._io->println(F("    security disarm - disarm security"));
@@ -260,6 +265,12 @@ public:
         if (startsWith_(cmd, "copy "))
         {
             _c.cmdCopy_(cmd);
+            _c.printPrompt_();
+            return;
+        }
+        if (startsWith_(cmd, "photo "))
+        {
+            _c.cmdPhoto_(cmd);
             _c.printPrompt_();
             return;
         }

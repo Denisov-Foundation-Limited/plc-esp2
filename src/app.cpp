@@ -25,6 +25,13 @@ void appConsoleLoopCb_(void *ctx)
     static_cast<CliConsole *>(ctx)->loop();
 }
 
+void appConsoleLogOutputCb_(void *ctx)
+{
+    if (!ctx)
+        return;
+    static_cast<CliConsole *>(ctx)->onLoggerOutput_();
+}
+
 struct AppI2cLockCtx
 {
     I2CManager *i2c = nullptr;
@@ -105,6 +112,7 @@ HardwareContext::HardwareContext(Logger &logs, UartManager &uart)
           portio(ActiveBoardProfile::PORTS, &ext),
           io(portio),
           gpio(io, &logs),
+          camera(logs),
           hal(ow, i2c, spi, uart, gpio, logs),
           plc(i2c, io, rtc)
 {
@@ -132,13 +140,13 @@ ControlContext::ControlContext(CoreContext &core, HardwareContext &hw, CommsCont
 
 UiContext::UiContext(CoreContext &core, HardwareContext &hw, CommsContext &comms, ControlContext &control)
         : console(hw.plc, comms.wifi, hw.rtc, control.ftest, hw.i2c, hw.ow,
-                  core.configs, hw.ext, control.users, control.controllers)
+                  core.configs, hw.ext, hw.camera, control.users, control.controllers)
 {
 }
 
 NetworkContext::NetworkContext(CoreContext &core, HardwareContext &hw, CommsContext &comms, ControlContext &control, UiContext &ui)
         : web(ActiveBoardProfile::WEB_PORT),
-          fw_upgrade(web, ui.console, comms.wifi, core.configs, hw.plc, hw.rtc, core.logs, hw.ext, hw.i2c, hw.ow,
+          fw_upgrade(web, ui.console, comms.wifi, core.configs, hw.plc, hw.rtc, core.logs, hw.camera, hw.ext, hw.i2c, hw.ow,
                      control.controllers, control.rules),
           network(core.logs, comms.wifi, comms.gsm, fw_upgrade, web, control.controllers, hw.plc, hw.rtc)
 {
@@ -164,6 +172,7 @@ ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContex
         comms.wifi.setIo(hw.io);
         ui.console.setConfigsManager(cfg.configs_manager);
         ui.console.setNetwork(net.network);
+        core.logs.setOutputObserver(&appConsoleLogOutputCb_, &ui.console);
 
         net.fw_upgrade.setConfigsManager(cfg.configs_manager);
         net.fw_upgrade.setGsmModem(comms.gsm);
@@ -172,6 +181,7 @@ ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContex
         net.network.cloudClient().setConfigsManager(&cfg.configs_manager);
         net.network.cloudClient().setUsersRegistry(&control.users);
         net.network.cloudClient().setRulesController(&control.rules);
+        net.network.cloudClient().setCamera(&hw.camera);
         net.network.cloudClient().bindControllerCallbacks();
         net.network.cloudClient().bindRuleCallbacks();
         net.fw_upgrade.setUsersRegistry(control.users);

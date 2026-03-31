@@ -12,6 +12,7 @@
 #include "core/network/cloud/cloud_client.hpp"
 
 #include <WiFi.h>
+#include <LittleFS.h>
 #include <stdlib.h>
 #include <string.h>
 #include "esp32-hal-psram.h"
@@ -24,6 +25,8 @@
 #include "core/network/wifi_manager.hpp"
 #include "core/rtc.hpp"
 #include "core/rules_controller.hpp"
+#include "hal/camera.hpp"
+#include "hal/camera_store.hpp"
 #include "plc/plc_control.hpp"
 #include "utils/configs_manager_iface.hpp"
 #include "utils/logger.hpp"
@@ -175,6 +178,8 @@ void CloudClient::setUsersRegistry(UsersRegistry *users)
 { _users = users; }
 void CloudClient::setRulesController(RulesController *rules)
 { _rules = rules; }
+void CloudClient::setCamera(Camera *camera)
+{ _camera = camera; }
 void CloudClient::setTransport(CloudTransport &transport)
 {
     _transport = &transport;
@@ -320,14 +325,21 @@ void CloudClient::begin(const CloudClient::Config &cfg)
 void CloudClient::loop()
 {
     if (!_enabled)
+    {
+        updateCameraCloud_();
         return;
+    }
     if (_cfg.host.length() == 0 || _cfg.port == 0)
+    {
+        updateCameraCloud_();
         return;
+    }
     if (!_wifi.isConnected())
     {
         if (isConnected())
             _transport->disconnect();
         handlePendingTimeouts_();
+        updateCameraCloud_();
         return;
     }
     const uint32_t now = millis();
@@ -335,6 +347,7 @@ void CloudClient::loop()
         (int32_t)(now - _reconnect_backoff_until_ms) < 0)
     {
         handlePendingTimeouts_();
+        updateCameraCloud_();
         return;
     }
     _transport->loop();
@@ -343,6 +356,7 @@ void CloudClient::loop()
     flushQueuedEvents_();
     if (_event_interval_ms)
         maybeSendPeriodicEvent_();
+    updateCameraCloud_();
 }
 void CloudClient::onTransportMessage_(void *ctx, const uint8_t *payload, size_t len)
 {
@@ -878,6 +892,8 @@ void CloudClient::handleCmdLocal_(const String &req_id, const String &ctrl, cons
         ok = handleCmdAvr_(action, args);
     else if (ctrl == "leak")
         ok = handleCmdLeak_(action, args);
+    else if (ctrl == "cameras")
+        ok = handleCmdCameras_(action, args, &error);
 
     sendAck_(req_id, ok, ok ? "" : error.c_str());
 }
@@ -1364,6 +1380,83 @@ bool CloudClient::handleCmdLeak_(const String &action, JsonObjectConst args)
     }
     return false;
 }
+bool CloudClient::handleCmdCameras_(const String &action, JsonObjectConst args, String *error_out)
+{
+    if (action != "snapshot")
+    {
+        if (error_out)
+            *error_out = "unsupported action";
+        return false;
+    }
+    if (!_camera)
+    {
+        if (error_out)
+            *error_out = "camera unavailable";
+        return false;
+    }
+    const uint8_t id = (uint8_t)(args["id"] | 0);
+    if (id == 0 || id > CameraStore::kCameraCount)
+    {
+        if (error_out)
+            *error_out = "bad id";
+        return false;
+    }
+    if (!isStackMaster_())
+    {
+        if (error_out)
+            *error_out = "cameras available on stack master only";
+        return false;
+    }
+
+    CameraConfigEntry cfg{};
+    if (!CameraStore::getById(LittleFS, id, cfg))
+    {
+        if (error_out)
+            *error_out = "camera config missing";
+        return false;
+    }
+    if (!cfg.enabled)
+    {
+        if (error_out)
+            *error_out = "camera disabled";
+        return false;
+    }
+
+    const String download_url = CameraStore::buildEffectiveUrl(cfg);
+    if (!download_url.length())
+    {
+        if (error_out)
+            *error_out = "empty snapshot url";
+        return false;
+    }
+
+    String upload_url;
+    String latest_url;
+    String build_error;
+    if (!buildCloudPhotoUrls_(id, upload_url, latest_url, build_error))
+    {
+        if (error_out)
+            *error_out = build_error;
+        return false;
+    }
+
+    if (!_camera->startDownload(download_url))
+    {
+        if (error_out)
+            *error_out = _camera->lastErrorText().length() ? _camera->lastErrorText() : String(F("download start failed"));
+        return false;
+    }
+
+    _camera_cloud_phase = CameraCloudPhase::Download;
+    _camera_cloud_id = id;
+    _camera_cloud_upload_url = upload_url;
+    _camera_cloud_latest_url = latest_url;
+    _camera_cloud[id - 1u].busy = true;
+    _camera_cloud[id - 1u].busy_since_ms = millis();
+    _camera_cloud[id - 1u].last_error = "";
+    _log.info(F("CLOUD"), F("Camera snapshot scheduled: id: %u"), (unsigned)id);
+    return true;
+}
 void CloudClient::sendAck_(const String &reply_to, bool ok, const char *error)
 {
     DynamicJsonDocument doc(256);
@@ -1802,6 +1895,24 @@ void CloudClient::fillAuthzInfo_(JsonObject out)
                 }
             }
         }
+
+        if (controllers["security"].is<JsonObject>())
+        {
+            JsonObject sec = controllers["security"].as<JsonObject>();
+            JsonObject cam = controllers["cameras"].to<JsonObject>();
+            cam["read"] = sec["read"] | false;
+            cam["write"] = sec["write"] | false;
+            if (sec["ids"].is<JsonArrayConst>())
+            {
+                JsonArray ids = cam["ids"].to<JsonArray>();
+                for (JsonVariantConst v : sec["ids"].as<JsonArrayConst>())
+                {
+                    const uint16_t id = (uint16_t)(v.as<unsigned>() | 0u);
+                    if (id >= 1u && id <= CameraStore::kCameraCount)
+                        ids.add(id);
+                }
+            }
+        }
     }
 }
 void CloudClient::fillControllersInfo_(JsonObject out)
@@ -1815,6 +1926,7 @@ void CloudClient::fillControllersInfo_(JsonObject out)
     fillTanks_(out.createNestedArray("tanks"));
     fillSeptic_(out.createNestedArray("septic"));
     fillWatering_(out.createNestedArray("watering"));
+    fillCameras_(out.createNestedArray("cameras"));
     fillSecurity_(out.createNestedObject("security"));
     fillRing_(out.createNestedObject("ring"));
     fillAvr_(out.createNestedObject("avr"));
@@ -2241,6 +2353,33 @@ void CloudClient::fillWatering_(JsonArray out)
         if (st.remaining_ms)
             o["remaining_ms"] = st.remaining_ms;
     }
+    }
+}
+void CloudClient::fillCameras_(JsonArray out)
+{
+    if (!isStackMaster_())
+        return;
+    CameraConfigEntry cfgs[CameraStore::kCameraCount];
+    if (!CameraStore::load(LittleFS, cfgs))
+        return;
+    for (size_t i = 0; i < CameraStore::kCameraCount; ++i)
+    {
+        const auto &cfg = cfgs[i];
+        JsonObject o = out.add<JsonObject>();
+        o["id"] = (unsigned)cfg.id;
+        o["enabled"] = cfg.enabled;
+        if (cfg.name.length())
+            o["name"] = cfg.name;
+        if (cfg.snapshot_url.length())
+            o["has_url"] = true;
+        const auto &rt = _camera_cloud[i];
+        o["busy"] = rt.busy;
+        if (rt.updated_ms)
+            o["updated_ms"] = (unsigned long)rt.updated_ms;
+        if (rt.latest_url.length())
+            o["latest_url"] = rt.latest_url;
+        if (rt.last_error.length())
+            o["last_error"] = rt.last_error;
     }
 }
 void CloudClient::fillSecurity_(JsonObject out)
@@ -2827,6 +2966,98 @@ String CloudClient::eventSourceName_(const String &unit, uint32_t node_id) const
     }
     return _plc.deviceName();
 }
+String CloudClient::normalizeCloudBasePath_(const String &path)
+{
+    String base_path = path;
+    if (!base_path.startsWith("/"))
+        base_path = "/" + base_path;
+    const int ws_idx = base_path.indexOf("/ws/");
+    if (ws_idx >= 0)
+        base_path = base_path.substring(0, ws_idx);
+    else if (base_path.endsWith("/ws/device"))
+        base_path = base_path.substring(0, base_path.length() - String("/ws/device").length());
+    if (!base_path.startsWith("/"))
+        base_path = "/" + base_path;
+    if (base_path.length() == 0)
+        base_path = "/";
+    if (!base_path.endsWith("/"))
+        base_path += "/";
+    return base_path;
+}
+bool CloudClient::buildCloudPhotoUrls_(uint8_t camera_id, String &upload_url, String &latest_url, String &error_out) const
+{
+    if (_api_key.length() == 0)
+    {
+        error_out = F("cloud api key missing");
+        return false;
+    }
+    if (_cfg.host.length() == 0 || _cfg.port == 0)
+    {
+        error_out = F("cloud host/port not configured");
+        return false;
+    }
+    const String base_path = normalizeCloudBasePath_(_cfg.path);
+    upload_url = String(_cfg.use_ssl ? "https://" : "http://") +
+                 _cfg.host + ":" + String(_cfg.port) + base_path +
+                 "api/device/photo?camera_id=" + String((unsigned)camera_id);
+    latest_url = base_path + "uploads/devices/" + String((unsigned long)deviceId_()) +
+                 "/camera_" + String((unsigned)camera_id) + "/latest.jpg";
+    return true;
+}
+void CloudClient::resetCameraCloudJob_()
+{
+    _camera_cloud_phase = CameraCloudPhase::Idle;
+    _camera_cloud_id = 0;
+    _camera_cloud_upload_url = "";
+    _camera_cloud_latest_url = "";
+}
+void CloudClient::updateCameraCloud_()
+{
+    if (_camera_cloud_phase == CameraCloudPhase::Idle || !_camera || _camera_cloud_id == 0 ||
+        _camera_cloud_id > CameraStore::kCameraCount)
+        return;
+
+    Camera::Snapshot snap{};
+    if (!_camera->snapshot(snap) || snap.busy)
+        return;
+
+    auto &entry = _camera_cloud[_camera_cloud_id - 1u];
+    if (!snap.ok || snap.error != Camera::Error::Ok)
+    {
+        entry.busy = false;
+        entry.last_error = snap.error_text.length() ? snap.error_text : String(Camera::errorName(snap.error));
+        _log.warn(F("CLOUD"), F("Camera pipeline failed: id: %u phase: %u err: %s"),
+                  (unsigned)_camera_cloud_id, (unsigned)_camera_cloud_phase, entry.last_error.c_str());
+        resetCameraCloudJob_();
+        return;
+    }
+
+    if (_camera_cloud_phase == CameraCloudPhase::Download)
+    {
+        if (!_camera->startUpload(_camera_cloud_upload_url, String(F("image/jpeg")), _api_key))
+        {
+            entry.busy = false;
+            entry.last_error = _camera->lastErrorText().length() ? _camera->lastErrorText() : String(F("upload start failed"));
+            _log.warn(F("CLOUD"), F("Camera upload start failed: id: %u text: %s"),
+                      (unsigned)_camera_cloud_id, entry.last_error.c_str());
+            resetCameraCloudJob_();
+            return;
+        }
+        _camera_cloud_phase = CameraCloudPhase::Upload;
+        return;
+    }
+
+    if (_camera_cloud_phase == CameraCloudPhase::Upload)
+    {
+        entry.busy = false;
+        entry.updated_ms = snap.finished_ms ? snap.finished_ms : millis();
+        entry.latest_url = _camera_cloud_latest_url;
+        entry.last_error = "";
+        _log.info(F("CLOUD"), F("Camera snapshot uploaded: id: %u latest: %s"),
+                  (unsigned)_camera_cloud_id, entry.latest_url.c_str());
+        resetCameraCloudJob_();
+    }
+}
 ThermoController::Mode CloudClient::parseThermoMode_(const String &mode)
 {
     String m = mode;
@@ -3026,6 +3257,8 @@ bool CloudClient::aclControllerByName_(const String &ctrl, UsersRegistry::AclCon
     else if (ctrl == "septic")
         out = UsersRegistry::AclController::Septic;
     else if (ctrl == "security")
+        out = UsersRegistry::AclController::Security;
+    else if (ctrl == "cameras")
         out = UsersRegistry::AclController::Security;
     else if (ctrl == "watering")
         out = UsersRegistry::AclController::Watering;

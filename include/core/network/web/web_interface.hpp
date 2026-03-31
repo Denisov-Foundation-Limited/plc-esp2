@@ -38,6 +38,7 @@
 #include "core/network/gsm_modem.hpp"
 #include "core/network/cloud/cloud_client.hpp"
 #include "core/display_slots.hpp"
+#include "hal/camera.hpp"
 #include "hal/gpio/extender.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
@@ -96,7 +97,7 @@ public:
     ~WebInterface();
 
     WebInterface(AsyncWebServer &server, CliConsole &cli, WifiManager &wifi, Configs &configs, PlcControl &plc,
-                 RTC &rtc, Logger &logs,
+                 RTC &rtc, Logger &logs, Camera &camera,
                  Extender &ext,
                  I2CManager &i2c, OneWireManager &ow, Controllers &controllers, RulesController &rules);
 
@@ -173,6 +174,7 @@ private:
     friend class AvrHandler;
     friend class LeakHandler;
     friend class RulesHandler;
+    friend class CamerasHandler;
     void handleAdminSave_(AsyncWebServerRequest *request);
 
 
@@ -637,6 +639,7 @@ private:
     PlcControl *_plc = nullptr;
     RTC *_rtc = nullptr;
     Controllers *_controllers = nullptr;
+    Camera *_camera = nullptr;
     RulesController *_rules = nullptr;
     GsmModem *_gsm = nullptr;
     I2CManager *_i2c = nullptr;
