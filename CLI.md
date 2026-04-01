@@ -1,51 +1,75 @@
-﻿# CLI Reference
+﻿# CLI.md
 
-Полный справочник по CLI проекта `plc-esp2`.
+# ⌨️ CLI Reference
 
-## Общая схема режимов
+Актуальный CLI-справочник для текущей структуры `plc-esp2`.
 
-- `login:` -> ввод логина
-- `password:` -> ввод пароля
-- `plc#` -> enable-режим (диагностика и управление)
-- `plc(config)#` -> корень конфигурации
-- `plc(config-<module>)#` -> контекст конкретного модуля
+Документ покрывает:
+
+- режимы CLI
+- команды `enable`
+- команды `config`
+- photo/camera сценарии
+- stack/cloud настройки
+
+Общий обзор проекта: [README.md](./README.md)
+
+## 🔐 Режимы CLI
+
+```text
+login:
+password:
+plc#
+plc(config)#
+plc(config-<module>)#
+```
+
+### Что означают prompt'ы
+
+- `login:` — ввод имени пользователя
+- `password:` — ввод пароля
+- `plc#` — enable mode
+- `plc(config)#` — корень конфигурации
+- `plc(config-wifi)#`, `plc(config-cloud)#`, ... — модульные контексты
 
 Общие команды помощи:
+
 - `help`
 - `?`
 - `help <topic>`
 
-## Login
+## 👤 Login
 
-- `login:` -> имя пользователя
-- `password:` -> пароль
-- При ошибке: `Login invalid`
+- введите логин
+- затем пароль
+- при ошибке сессия не открывается
 
-## Enable (`plc#`)
+## 🚀 Enable mode: `plc#`
 
-### Сессия и навигация
+### Сессия
 
-- `configure terminal`
-- `conf t`
 - `disable`
 - `logout`
 - `exit`
+- `configure terminal`
+- `conf t`
 
 ### Системные команды
 
-- `write`
-- `erase`
-- `reload`
-- `reset`
-- `wifi restart`
-- `ext scan`
+- `write` — сохранить конфиг
+- `erase` — удалить конфиг
+- `reload` — перезапуск
+- `reset` — перезапуск
+- `ext scan` — перескан расширителей
+- `wifi restart` — перезапуск Wi-Fi
+- `ftest` — функциональный тест
 
 ### Обновление прошивки
 
 - `copy tftp://<ip>/firmware.bin firmware`
 - `copy http://<ip>/firmware.bin firmware`
 
-### Просмотр состояния
+### `show ...`
 
 - `show plc`
 - `show board`
@@ -53,9 +77,8 @@
 - `show time`
 - `show i2c`
 - `show ow`
-- `show stack`
-- `show telegram`
 - `show cloud`
+- `show stack`
 - `show config`
 - `show ext`
 - `show port <id>`
@@ -92,25 +115,33 @@
 - `avr off`
 - `avr source <off|main|reserve>`
 - `avr clear_fault`
-- `ftest`
 
-### Stack-команды
+## 📷 Фото / камера
 
-- `stack nodes`
-- `stack trace`
-- `stack trace on`
-- `stack trace off`
-- `stack send <id> <get|set> <json>`
-- `stack socket <unit> <on|off|toggle> <id>`
-- `stack thermo <unit> <on|off|toggle> <id>`
-- `stack septic <unit> <status|get>`
-- `stack septic <unit> monitor <id> <on|off>`
-- `stack security <unit> <arm|disarm|status|clear>`
-- `stack ring <unit> <on|off>`
+Эти команды работают через `hal::Camera` и буфер JPEG в `PSRAM`.
 
-## Config Root (`plc(config)#`)
+- `photo get <url>` — скачать JPEG по ссылке
+- `photo upload <url>` — загрузить текущий JPEG на произвольный endpoint
+- `photo cloud` — загрузить текущий JPEG в `plc-cloud` по текущему cloud config
+- `photo status` — состояние фоновой camera task и буфера
+- `photo clear` — освободить текущий буфер
 
-### Глобальные параметры
+### Типовой сценарий
+
+```text
+photo get http://192.168.1.55/cgi-bin/snapshot.cgi
+photo status
+photo cloud
+```
+
+## ⚙️ Config root: `plc(config)#`
+
+### Общие команды
+
+- `exit` — назад в `plc#`
+- `end` — назад в `plc#`
+
+### Admin / EEPROM
 
 - `password <pass>`
 - `admin password <pass>`
@@ -118,7 +149,25 @@
 - `eeprom save <on|off>`
 - `eeprom load <on|off>`
 
-### Stack-настройки
+### Переход в контексты
+
+- `wifi`
+- `time`
+- `cloud`
+- `socket`
+- `meteo`
+- `thermo`
+- `tank`
+- `septic`
+- `security`
+- `ring`
+- `avr`
+- `leak`
+- `watering`
+
+## 🌐 Stack config
+
+Команды доступны из `plc(config)#`.
 
 - `stack role <master|slave>`
 - `stack master <host>`
@@ -132,30 +181,57 @@
 - `stack api_key clear`
 - `stack api_key gen`
 
-### Переход в подконтексты
+### Что это значит
 
-- `wifi`
-- `tgbot`
-- `cloud`
-- `time`
-- `socket`
-- `meteo`
-- `thermo`
-- `tank`
-- `watering`
-- `septic`
-- `security`
-- `ring`
-- `avr`
-- `leak`
+- `role` — роль узла
+- `master` — адрес мастера для slave-режима
+- `policy` — политика exchange в `StackRouteAdapter`
+- `transport` — `websocket` или `rs485`
+- `payload` — `auto/json/binary`
+- `fallback` — разрешить takeover/fallback mode
+- `fallback_host` — переключаться на другой мастер вместо локального takeover
+- `slave_controller` — публиковать узел как контроллер, а не просто модуль
+- `api_key` — ключ stack auth
 
-### Выход
+## 📡 `show stack`
 
-- `exit`
-- `end`
+`show stack` выводит:
 
-## Wi-Fi (`plc(config-wifi)#`)
+- `role`
+- `master_host`
+- `policy`
+- `transport`
+- `payload`
+- `fallback`
+- `fallback_host`
+- `controller`
+- `api_key`
 
+И runtime-диагностику:
+
+- `state`
+- `master_active`
+- `fallback_active`
+- `online`
+- `net_lock_ms`
+- `rt_lock_ms`
+- `xchg_slave_q`
+- `xchg_master_q`
+- `notify_q`
+- `retried`
+- `expired`
+- `dropped`
+- `rs485_state`
+- `rs485_tx_q`
+- `rs485_pending`
+- `rs485_timeouts`
+- `rs485_tx_drop`
+- `rs485_pend_drop`
+- `rs485_lock_ms`
+
+## 📶 Wi-Fi: `plc(config-wifi)#`
+
+- `mode <sta|ap|sta_ap>`
 - `ssid <value>`
 - `password <value>`
 - `ap on|off`
@@ -163,55 +239,11 @@
 - `ap_password <value>`
 - `restart`
 - `show`
-- `exit`
-- `end`
-- `help`
 
-## Telegram (`plc(config-tgbot)#`)
-
-### Базовые параметры
-
-- `token <value>`
-- `chat <id>`
-- `insecure on|off`
-- `send <text>`
-- `poll`
-- `show`
-
-### Пользователи
-
-- `user list`
-- `user enable <id> <on|off>`
-- `user username <id> <value|clear>`
-- `user tg_username <id> <value|clear>`
-- `user tg_chat <id> <chat_id|0>`
-- `user is_admin <id> <on|off>`
-- `user tg_notify <id> <on|off>`
-- `user tg_quick <id> <on|off>`
-- `user webpass <id> <password|clear>`
-- `user acl <id> <all|none>`
-
-### Allowlist
-
-- `allow list`
-- `allow add <username> [chat_id] [admin] [notify] [off]`
-- `allow del <username>`
-- `allow clear`
-
-### Медиа-команды (сборки с поддержкой файлов)
-
-- `snapdoc <http(s)://url> [filename] [caption] [chat_id]`
-- `snapphoto <http(s)://url> [filename] [caption] [chat_id]`
-
-### Выход
-
-- `exit`
-- `end`
-- `help`
-
-## Cloud (`plc(config-cloud)#`)
+## ☁️ Cloud: `plc(config-cloud)#`
 
 - `enable on|off`
+- `transport ws|http`
 - `host <value>`
 - `port <num>`
 - `path <value>`
@@ -221,54 +253,42 @@
 - `api_key <value>`
 - `api_key clear`
 - `show`
-- `exit`
-- `end`
-- `help`
 
-## Time (`plc(config-time)#`)
+## 🕒 Time: `plc(config-time)#`
 
 - `date <YYYY-MM-DD>`
 - `time <HH:MM:SS>`
 - `set <YYYY-MM-DD> <HH:MM:SS>`
 - `show`
-- `exit`
-- `end`
-- `help`
 
-## Socket (`plc(config-socket)#`)
-
-- `show`
-- `show <id>`
-- `enable <id>`
-- `disable <id>`
-- `name <id> <value>`
-- `button <id> <port|none>`
-- `relay <id> <port|none>`
-- `exit`
-- `end`
-- `help`
-
-## Meteo (`plc(config-meteo)#`)
+## 🔌 Socket: `plc(config-socket)#`
 
 - `show`
 - `show <id>`
 - `enable <id>`
 - `disable <id>`
 - `name <id> <text>`
+- `button <id> <port|none>`
+- `relay <id> <port|none>`
+
+## 🌡️ Meteo: `plc(config-meteo)#`
+
+- `show`
+- `show <id>`
+- `name <id> <text>`
+- `enable <id>`
+- `disable <id>`
 - `type <id> <none|ds18b20|dht22>`
 - `addr <id> <hex|none>`
 - `pin <id> <pin|none>`
-- `exit`
-- `end`
-- `help`
 
-## Thermo (`plc(config-thermo)#`)
+## 🌡️ Thermo: `plc(config-thermo)#`
 
 - `show`
 - `show <id>`
+- `name <id> <text>`
 - `enable <id>`
 - `disable <id>`
-- `name <id> <text>`
 - `mode <id> <off|heat|cool|auto>`
 - `sensor <id> <sensor|none>`
 - `target <id> <temp>`
@@ -276,11 +296,8 @@
 - `heat <id> <port|none>`
 - `cool <id> <port|none>`
 - `button <id> <port|none>`
-- `exit`
-- `end`
-- `help`
 
-## Tank (`plc(config-tank)#`)
+## 🛢️ Tank: `plc(config-tank)#`
 
 - `show`
 - `show <id>`
@@ -294,11 +311,84 @@
 - `valve <id> <port|none>`
 - `pump <id> <port|none>`
 - `alarm <id> <port|none>`
-- `exit`
-- `end`
-- `help`
 
-## Watering (`plc(config-watering)#`)
+## 🚽 Septic: `plc(config-septic)#`
+
+- `show`
+- `show <id>`
+- `enable <id>`
+- `disable <id>`
+- `name <id> <text>`
+- `warn <id> <port|none>`
+- `alarm <id> <port|none>`
+- `relay_warn <id> <port|none>`
+- `relay_alarm <id> <port|none>`
+
+## 🛡️ Security: `plc(config-security)#`
+
+- `show`
+- `show <id>`
+- `enable <id>`
+- `disable <id>`
+- `type <id> <pir|reed>`
+- `port <id> <port|none>`
+- `name <id> <text>`
+- `silent <id> <on|off>`
+- `siren <port|none>`
+
+## 🔔 Ring: `plc(config-ring)#`
+
+- `show`
+- `enable|disable`
+- `button <port|none>`
+- `relay <port|none>`
+- `duration <ms>`
+
+## ⚡ AVR: `plc(config-avr)#`
+
+- `show`
+- `enable|disable`
+- `mode <auto|manual>`
+- `source <off|main|reserve>`
+- `prefer_main <on|off>`
+- `auto_return <on|off>`
+- `main_ok <port|none>`
+- `reserve_ok <port|none>`
+- `relay_main <port|none>`
+- `relay_reserve <port|none>`
+- `fb_main <port|none>`
+- `fb_reserve <port|none>`
+- `debounce <ms>`
+- `loss_delay <ms>`
+- `return_delay <ms>`
+- `break <ms>`
+- `warmup <ms>`
+- `timeout <ms>`
+- `main_ok_al <on|off>`
+- `reserve_ok_al <on|off>`
+- `fb_main_al <on|off>`
+- `fb_reserve_al <on|off>`
+- `relay_main_inv <on|off>`
+- `relay_reserve_inv <on|off>`
+- `clear_fault`
+
+## 💧 Leak: `plc(config-leak)#`
+
+- `show`
+- `show <id>`
+- `enable|disable`
+- `zone enable <id>`
+- `zone disable <id>`
+- `power <id> <on|off>`
+- `sensor <id> <port|none>`
+- `valve <id> <port|none>`
+- `alarm <id> <port|none>`
+- `active_low <id> <on|off>`
+- `open_on_power <id> <on|off>`
+- `name <id> <text>`
+- `ack <id|all>`
+
+## 🌿 Watering: `plc(config-watering)#`
 
 - `show`
 - `show <id>`
@@ -317,130 +407,10 @@
 - `duration3 <id> <min>`
 - `resume <id> <on|off>`
 - `resume_level <id> <low|mid|full>`
-- `exit`
-- `end`
-- `help`
 
-## Septic (`plc(config-septic)#`)
+## 📝 Практические замечания
 
-- `show`
-- `show <id>`
-- `enable <id>`
-- `disable <id>`
-- `name <id> <text>`
-- `warning <id> <port|none>`
-- `alarm <id> <port|none>`
-- `relay_warn <id> <port|none>`
-- `relay_alarm <id> <port|none>`
-- `monitor <id> <on|off>`
-- `exit`
-- `end`
-- `help`
-
-## Security (`plc(config-security)#`)
-
-### Датчики и сирена
-
-- `show`
-- `show <id>`
-- `enable <id>`
-- `disable <id>`
-- `type <id> <pir|reed>`
-- `port <id> <port|none>`
-- `name <id> <text>`
-- `silent <id> <on|off>`
-- `siren <port|none>`
-
-### Ключи
-
-- `keys list`
-- `key add <hex16> [name]`
-- `key name <hex16> <text>`
-- `key del <hex16>`
-- `key clear`
-
-### Телефоны
-
-- `phones list`
-- `phone set <id> <num|none> [name]`
-- `phone name <id> <text>`
-- `phone enable <id> <on|off>`
-- `phone notify <id> <on|off>`
-- `phone call <id> <on|off>`
-- `phone clear`
-
-### Выход
-
-- `exit`
-- `end`
-- `help`
-
-## Ring (`plc(config-ring)#`)
-
-- `show`
-- `on`
-- `off`
-- `enable`
-- `disable`
-- `button <port|none>`
-- `relay <port|none>`
-- `exit`
-- `end`
-- `help`
-
-## AVR (`plc(config-avr)#`)
-
-- `show`
-- `enable`
-- `disable`
-- `mode <auto|manual>`
-- `source <off|main|reserve>`
-- `prefer_main <on|off>`
-- `auto_return <on|off>`
-- `main_ok <port|none>`
-- `reserve_ok <port|none>`
-- `relay_main <port|none>`
-- `relay_reserve <port|none>`
-- `fb_main <port|none>`
-- `fb_reserve <port|none>`
-- `main_ok_al <on|off>`
-- `reserve_ok_al <on|off>`
-- `fb_main_al <on|off>`
-- `fb_reserve_al <on|off>`
-- `relay_main_inv <on|off>`
-- `relay_reserve_inv <on|off>`
-- `debounce <ms>`
-- `loss_delay <ms>`
-- `return_delay <ms>`
-- `break <ms>`
-- `warmup <ms>`
-- `timeout <ms>`
-- `clear_fault`
-- `exit`
-- `end`
-- `help`
-
-## Leak (`plc(config-leak)#`)
-
-- `show`
-- `show <id>`
-- `enable`
-- `disable`
-- `zone enable <id>`
-- `zone disable <id>`
-- `power <id> <on|off>`
-- `sensor <id> <port|none>`
-- `valve <id> <port|none>`
-- `alarm <id> <port|none>`
-- `active_low <id> <on|off>`
-- `open_on_power <id> <on|off>`
-- `name <id> <text>`
-- `ack <id|all>`
-- `exit`
-- `end`
-- `help`
-
-## Примечания
-
-- Некоторые команды доступны только при соответствующих compile-time флагах и поддержке подсистемы в текущей сборке.
-- В разных профилях плат фактическое количество элементов (`<id>`) зависит от конфигурации.
+- если забыли синтаксис, не угадывайте: `help` внутри нужного режима уже показывает актуальный набор команд
+- `photo get` ожидает прямой `http://` или `https://` JPEG endpoint
+- `photo cloud` использует текущий cloud config и API key
+- `show stack` сейчас важнее старых “trace/nodes/send” команд, которые относились к предыдущей модели stack

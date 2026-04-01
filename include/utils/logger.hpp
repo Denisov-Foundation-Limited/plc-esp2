@@ -124,6 +124,8 @@ public:
     template <typename... Args>
     inline void trace(const __FlashStringHelper *t, const __FlashStringHelper *f, Args... a) { log<Level::Trace>(t, f, a...); }
     void setOutputObserver(OutputObserver cb, void *ctx);
+    static void setInteractiveOpen(bool open);
+    static bool interactiveOpen();
 
 private:
     Stream *_out = nullptr;
@@ -136,6 +138,7 @@ private:
     void *_observer_ctx = nullptr;
     static SemaphoreHandle_t _output_lock;
     static portMUX_TYPE _output_lock_init_mux;
+    static bool _interactive_open;
     static constexpr size_t kRecentMax = 30;
     static constexpr size_t kRecentLineSize = LOGGER_BUFFER_SIZE + 48;
     char _recent[kRecentMax][kRecentLineSize] = {};
@@ -170,6 +173,12 @@ private:
     {
         char line[LOGGER_BUFFER_SIZE + 48] = {};
         buildTextLine_(line, sizeof(line), tag, levelName_(L), msg);
+        if (_interactive_open)
+        {
+            _out->print('\r');
+            _out->println();
+            _interactive_open = false;
+        }
 #if LOGGER_USE_COLOR
         _out->print(color_<L>());
 #endif
@@ -185,6 +194,12 @@ private:
     void writeJson_(const __FlashStringHelper *tag, const char *msg)
     {
         StaticJsonDocument<512> doc;
+        if (_interactive_open)
+        {
+            _out->print('\r');
+            _out->println();
+            _interactive_open = false;
+        }
 #if LOGGER_USE_TIMESTAMP
         if (_rtc)
         {

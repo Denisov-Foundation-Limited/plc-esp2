@@ -118,6 +118,8 @@ void CliConsole::onLoggerOutput_()
 {
     if (!_io || _raw_io == nullptr)
         return;
+    if ((_state == State::NeedUser || _state == State::NeedPass) && _line.length() == 0)
+        return;
     Logger::OutputGuard guard;
     _raw_io->print('\r');
     if (_state == State::NeedUser)
@@ -186,6 +188,7 @@ void CliConsole::onLoggerOutput_()
     }
     if (_line.length())
         _raw_io->print(_line);
+    Logger::setInteractiveOpen(true);
 }
 bool CliConsole::setAdminPassword_(const String &pass)
 {
@@ -2218,11 +2221,13 @@ void CliConsole::printPrompt_()
     if (_state == State::NeedUser)
     {
         _io->print(F("login: "));
+        Logger::setInteractiveOpen(true);
         return;
     }
     if (_state == State::NeedPass)
     {
         _io->print(F("password: "));
+        Logger::setInteractiveOpen(true);
         return;
     }
 
@@ -2277,6 +2282,7 @@ void CliConsole::printPrompt_()
         _io->print(F("plc(config-cloud)# "));
         break;
     }
+    Logger::setInteractiveOpen(true);
 }
 bool CliConsole::handleEscape_(char c)
 {

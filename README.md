@@ -1,274 +1,303 @@
 ﻿# plc-esp2
 
-Программируемый логический контроллер для микроконтроллеров ESP (семейство ESP32).
+Прошивка PLC для ESP32/ESP32-S3 с локальным управлением, RTOS-runtime, stack-сетью master/slave, облаком и локальной камерой/snapshot pipeline.
 
-`plc-esp2` — прошивка для автоматизации с локальным и распределённым управлением:
-- локальное управление (`CLI`, `Web UI`, `LCD`),
-- распределённая работа по Stack (`master/slave`),
-- интеграции (`Telegram`, `Cloud`, `GSM`),
-- набор прикладных контроллеров (розетки, метео, термо, баки, септик, охрана, полив, звонок, АВР, протечки).
+## 🧭 Документация
 
-## 🗺️ Карта документации
+- Стек и маршрутизация: [STACK.md](./STACK.md)
+- CLI и конфигурация: [CLI.md](./CLI.md)
+- Профили плат: `include/boards/`
+- Конфиги и runtime-применение: `include/utils/`, `src/utils/`
 
-- Подробно про стек, протокол, кэши и синхронизацию: [STACK.md](./STACK.md)
-- Полный справочник по CLI-командам: [CLI.md](./CLI.md)
-- Окружение сборки: `platformio.ini`, `build.ps1`
-- Профили плат и аппаратные маппинги: `include/boards/*`
+## ✨ Что умеет проект
 
-## 🛠️ Build Profile (fcplc)
+- Локальные интерфейсы: `Web`, `CLI`, `Display`
+- Контроллеры: `Sockets`, `Lights`, `Meteo`, `Thermo`, `Tanks`, `Septic`, `Security`, `Watering`, `Ring`, `AVR`, `Leak`
+- Stack-сеть: `master/slave`, `websocket` или `rs485`, `json/binary`, fallback-режим
+- Cloud: device session, события, команды, загрузка фото
+- Камеры: локальный список камер на мастере, snapshot в `PSRAM`, upload в `plc-cloud`
 
-- Платформа PlatformIO: `espressif32@6.13.0`
-- Framework: `arduino`
-- Плата: `4d_systems_esp32s3_gen4_r8n16`
-- Включено: `board_build.psram = enabled`
-- Ключевые `build_flags`:
-  - `TASK_BINDER_RTOS_DEBUG=0`
-  - `TASK_BINDER_PLC_SCAN_TICK_MS=5`
-
-## 🧩 System Overview
+## 🧱 Архитектура проекта
 
 ```mermaid
 flowchart TD
-  UI[Пользовательские интерфейсы\nWeb UI / CLI / LCD / Telegram]
-  APP[Ядро приложения\nApp / Configs / Rules / StackRuntime]
-  RTOS[RTOS workers\nTaskBinder + FreeRTOS tasks]
-  NET[Сеть\nWi-Fi / GSM / Cloud / Stack]
-  CTRL[Контроллеры\nSockets/Lights/Meteo/Thermo/Tanks/Septic/Security/Watering/AVR/Leak/Ring]
-  IO[I/O\nExtender / Display / PLC]
+  UI[Web UI / CLI / Display]
+  RUNTIME[AppRuntime]
+  CTRL[Controllers]
+  HAL[HAL / GPIO / I2C / Extender / Camera]
+  NET[Wi-Fi / GSM / Cloud / Stack]
+  TASKS[TaskBinder / FreeRTOS]
 
-  UI --> APP
-  APP --> RTOS
-  APP --> NET
-  APP --> CTRL
-  RTOS --> NET
-  RTOS --> CTRL
-  RTOS --> IO
-  NET --> CTRL
+  UI --> RUNTIME
+  RUNTIME --> CTRL
+  RUNTIME --> HAL
+  RUNTIME --> NET
+  TASKS --> RUNTIME
+  TASKS --> CTRL
+  TASKS --> HAL
+  TASKS --> NET
 ```
 
-## ⚙️ Архитектура runtime
+### 🔄 Runtime
+
+Текущая оркестрация собрана вокруг `AppRuntime`, а не вокруг старого монолитного `App::loop()`.
+
+- `AppRuntime::init()` поднимает HAL, сети, контроллеры, display/layout, stack bindings
+- `TaskBinder` разносит блокирующие и сервисные части по RTOS-задачам
+- основной loop больше не выполняет всю логику напрямую, а работает через фазы:
+  - `PreNetwork`
+  - `PostNetwork`
+
+### 🧵 RTOS-задачи
+
+Типовой набор задач в текущей архитектуре:
+
+- `network_loop`
+- `console_loop`
+- `wifi`
+- `gsm`
+- `cloud`
+- `telegram`
+- `meteo_history`
+- `control_loop`
+- `plc_scan`
+- `extender`
+- `display`
+- `plc`
+- `stack_evt`
+
+Идея простая:
+
+- быстрый контроль и GPIO не должны страдать от сетевых операций
+- post-network работа stack выполняется отдельно
+- тяжёлые операции камеры/облака не должны жить в critical path контроллеров
+
+## 🌐 Stack: текущая модель
+
+Старый стек с `StackMaster/StackNode/StackCache/StackSlaveHandler` больше не является актуальной моделью проекта. Текущая подсистема собрана так:
+
+- `StackTransport` — базовый транспорт
+- `StackMasterServer` — сервер мастера
+- `StackMasterRouter` — маршрутизация, auth, отправка route/notify
+- `StackSlaveClient` — клиент слейва
+- `StackRouteAdapter` — единый верхний слой обмена `request/event/response/notify`
+- `StackDeviceRegistry` — онлайн-реестр узлов
+- `StackUnitSnapshot` — текущий индекс/снимок состояния узлов
+
+```mermaid
+flowchart LR
+  MASTER[Master runtime]
+  MWS[StackMasterServer]
+  ROUTER[StackMasterRouter]
+  ADAPTER[StackRouteAdapter]
+  REG[StackDeviceRegistry]
+  SNAP[StackUnitSnapshot]
+  SLAVE[StackSlaveClient]
+
+  MASTER --> ADAPTER
+  ADAPTER --> MWS
+  MWS --> ROUTER
+  ROUTER --> REG
+  ROUTER --> SNAP
+  SLAVE <--> ADAPTER
+```
+
+### Stack-конфигурация
+
+Сейчас поддерживаются:
+
+- роль: `master | slave`
+- transport: `websocket | rs485`
+- payload: `auto | json | binary`
+- exchange policy: `auto | direct | poll`
+- fallback:
+  - `fallback on|off`
+  - `fallback_host <host>`
+- признак узла:
+  - `slave_controller on|off`
+
+Подробности и актуальные схемы: [STACK.md](./STACK.md)
+
+## ☁️ Cloud
+
+Cloud-слой разделён на два уровня:
+
+- `CloudClient` — сессия, протокол, очередь событий, команды
+- `CloudTransport` — доставка (`ws` / placeholder `http`)
 
 ```mermaid
 flowchart TD
-  START[App::begin] --> INIT[HAL + RTC + EEPROM + Network + Controllers]
-  INIT --> BIND[TaskBinder::bindAll + bindStack]
-  BIND --> LOOP[App::loop]
+  CTRL[Controllers / Runtime events]
+  CLOUD[CloudClient]
+  TRANSPORT[CloudTransport]
+  WS[CloudWsTransport]
+  PLCCLOUD[plc-cloud]
 
-  LOOP --> PRE[runStackPre stack]
-  PRE --> LOOP
-
-  RTOSNET[RTOS\nstack_loop / console_loop / wifi / telegram / gsm / cloud / meteo_history] --> SIG[notifyStackPostNetwork]
-  SIG --> STACKEVT[RTOS\nstack_evt post/flush]
-  STACKEVT --> LOOP
-  RTOSCTRL[RTOS\ncontrol_loop] --> LOOP
-  RTOSIO[RTOS\nextender / display / plc / plc_scan] --> LOOP
+  CTRL --> CLOUD
+  CLOUD --> TRANSPORT
+  TRANSPORT --> WS
+  WS <--> PLCCLOUD
 ```
 
-### 🔄 Runtime после внедрения RTOS
+Что важно:
 
-- `App::loop()` теперь в основном оркестрирует фазы, а не выполняет весь тяжёлый runtime сам.
-- В отдельные FreeRTOS-задачи вынесены:
-  - `stack_loop`
-  - `console_loop`
-  - `wifi`
-  - `telegram`
-  - `gsm`
-  - `cloud`
-  - `meteo_history`
-  - `stack_evt` (`taskPost/taskFlush`)
-  - `control_loop` для контроллеров
-- В отдельные RTOS-задачи также вынесены:
-  - `extender`
-  - `display`
-  - `plc`
-  - `plc_scan`
-- `TaskManager` полностью удалён из runtime.
-- Основной `App::loop()` сейчас выполняет только `runStackPre(stack)` (плюс опциональные GPIO-метрики по compile-time флагу).
-- `notifyStackPostNetwork()` теперь вызывается из RTOS-задачи `stack_loop`; защита pending в `stack_evt` реализована через `std::atomic`.
+- контроллеры не шлют в сеть напрямую
+- локальные и stack-события попадают в очередь `CloudClient`
+- transport можно менять без переписывания бизнес-логики
 
-### 📝 Логирование в многозадачном runtime
+## 📷 Камеры и фото
 
-- После выноса части подсистем в FreeRTOS лог считается многопоточным.
-- `Logger` сериализует вывод через mutex и пишет строку логa одним вызовом, чтобы уменьшить риск разрыва строк в UART.
-- Если в логах всё ещё появляются артефакты, проверять нужно не только `Logger`, но и прямые `Serial.print`/`printf` в стороннем коде.
+На текущей структуре список камер хранится локально на мастере, а не в облаке:
 
-### 🔌 Надёжность I2C/extender (последние изменения)
+- `Camera` — фоновая загрузка/выгрузка JPEG
+- `CameraStore` — локальный конфиг камер (`/cameras.json`)
+- локальный web мастера показывает камеры и умеет сделать snapshot
+- cloud получает уже готовый JPEG
 
-- В `I2CManager` добавлено мягкое восстановление шины при `probeAddress`-ошибке (clock pulses + STOP), а также timeout на `Wire`.
-- На старте `App` логируется карта I2C-проб (`mcp0/mcp1/lcd/eeprom/rtc`) для быстрой диагностики.
-- `RTC` и `Display` усилены проверками доступности I2C-устройства; при runtime-сбое `RTC` повторно инициируется при следующем обращении.
-- `Extender` теперь при runtime I/O-ошибках помечается как missing и уходит в fast-rescan (ускоренный повторный поиск).
-- В `PortIO` включено отложенное применение выходов:
-  - до завершения восстановления состояний физические выходы не включаются;
-  - после `restoreFromStorage()` выполняются `applyOutputs()` и `setOutputsEnabled(true)`.
-## ✨ Основные возможности
+### Поток локального snapshot
 
-- Автоматизация 🧠:
-  - `Sockets`, `Lights`, `Meteo`, `Thermo`, `Tanks`, `Septic`, `Security`, `Ring`, `Watering`, `AVR`, `Leak`
-- Stack 🌐:
-  - роли `master/slave`, fallback-режим, синхронизация кэшей по фичам
-- GSM 📞:
-  - входящие вызовы, SMS/дозвон уведомления, статус регистрации/оператора/сигнала
-- Web UI 🖥️:
-  - ACL, локальный и stack-режимы страниц, быстрые действия и формы настройки
-  - Admin (`/admin`): RTC, buzzer и флаги EEPROM (`Сохранять`, `Загружать`)
-- CLI ⌨️:
-  - иерархические контексты конфигурации, диагностика, управление контроллерами и стеком
+```mermaid
+sequenceDiagram
+  participant WEB as Local Web / CLI
+  participant STORE as CameraStore
+  participant CAM as Camera
+  participant FS as LittleFS
 
-## 📁 Структура проекта
+  WEB->>STORE: load config
+  WEB->>CAM: startDownload(snapshot_url)
+  CAM->>CAM: download JPEG to PSRAM
+  CAM->>FS: save latest.jpg
+  WEB->>FS: GET /cameras/image?id=...
+```
 
-- `src/app.cpp` — оркестрация приложения, init, главный цикл
-- `include/core/task_binder.hpp` — регистрация задач и интервалы выполнения
-- `src/core/network/*` — сетевой слой (`Wi-Fi`, `GSM`, `Cloud`, `Stack`)
-- `src/controllers/*` — логика контроллеров
-- `include/core/network/web/*`, `src/core/network/web/*` — страницы/обработчики/роуты Web
-- `include/boards/*` — профили плат, порты, шины, аппаратные ограничения
-- `include/utils/*`, `src/utils/*` — конфиги, реестры, вспомогательные утилиты
+### Поток отправки фото в облако
 
-## 🔀 Режимы Stack
+```mermaid
+sequenceDiagram
+  participant UI as CLI / Local Web / Cloud command
+  participant CAM as Camera
+  participant CLOUD as Cloud config
+  participant API as plc-cloud /api/device/photo
 
-Устройство может работать как:
-- `master` — агрегирует данные slave-узлов в `StackCache`, отдаёт их в Web/Display/Telegram;
-- `slave` — исполняет команды master и возвращает `Ack/Err`;
-- `fallback` — (опционально) переключение роли при потере связи с master.
+  UI->>CAM: startDownload(snapshot_url)
+  CAM->>CAM: JPEG in PSRAM
+  UI->>CAM: startUpload(cloud_url, X-Api-Key)
+  CAM->>API: POST image/jpeg
+  API-->>CAM: url / latest_url
+```
 
-Детали протокола и диаграммы обмена см. в [STACK.md](./STACK.md).
+### 🌍 Схема с IP-камерой
 
-## ☁️ Архитектура Cloud
+```mermaid
+sequenceDiagram
+  participant CLOUD as plc-cloud
+  participant PLC as PLC master
+  participant CAM as IP-камера 192.168.1.55
+  participant PSRAM as PSRAM buffer
+  participant STORE as /uploads/devices/<device_id>/
+  participant WEB as Cloud Web UI
+  participant TG as Telegram bot
+  participant USER as Mobile user
 
-- `CloudClient` отвечает за протокол, сессию, обработку `hello/get/cmd/result/error` и интеграцию с контроллерами/Stack.
-- `CloudTransport` — абстракция транспорта облака; `CloudClient` работает только через события подключения и входящие текстовые сообщения.
-- Текущая рабочая реализация транспорта: `CloudWsTransport` поверх `WebSocketsClient`.
-- `CloudHttpTransport` уже встроен в конфиг/CLI/Web как selectable transport, но пока остаётся placeholder до появления device-side HTTP endpoints в `plc-cloud`.
-- Контроллеры публикуют доменные события в `CloudClient` через очередь `event`, а не выполняют сетевую отправку сами.
-- Локальные и stack-события отправляются единообразно как `type: "event"`; для stack-master используется scoped event с `unit: "stack"` и `node_id`.
-- В `payload.data` cloud-события теперь добавляется `source_name`: локально это имя текущего PLC, для stack-событий — имя слейва.
-- Прямые Telegram-уведомления из контроллеров убраны; cloud-события дальше обрабатываются на стороне `plc-cloud`.
-- Локальные GSM/SMS/Call-сценарии безопасности остаются в прошивке и не зависят от облачного транспорта.
-- `proto.json` остаётся источником правды для формата JSON-сообщений и не должен зависеть от выбранного транспорта.
-- Очередь cloud events увеличена до `64`; для `sockets.state` и `lights.state` включено coalescing по `source + id`, чтобы серия переключений не забивала очередь дубликатами.
-- В логах прошивки cloud-отправка доменных событий видна как `Notify send: ...`; `periodic` в эти логи специально не попадает.
-- Stack transport больше не считает `write()` успешным по умолчанию: при перегрузе/неполной записи появляются `STACK Master tx busy/short write` и `STACK Unit tx busy/short write`.
+  CLOUD->>PLC: команда получить фото
+  PLC->>CAM: HTTP GET /cgi-bin/snapshot.cgi
+  CAM-->>PLC: JPEG
+  PLC->>PSRAM: сохранить JPEG
+  PLC->>CLOUD: HTTP POST /api/device/photo
+  CLOUD->>STORE: latest.jpg + archive
+  CLOUD->>WEB: latest.jpg в web-интерфейсе
+  CLOUD->>TG: sendPhoto(latest.jpg)
+  TG->>USER: фото в чат
+```
 
-### 🚀 Что это даёт
-
-- Переключение `WebSocket` -> `HTTP` должно происходить заменой транспорта, а не переписыванием `CloudClient`.
-- Transport-слой отвечает только за доставку и события `Connected/Disconnected/Error`.
-- Protocol/business logic остаётся в одном месте, что упрощает поддержку совместимости с облаком.
-- Telegram/browser notifications для cloud-сценариев строятся из `event/last_event` уже в `plc-cloud`, а не в контроллерах прошивки.
-- Transport можно переключить:
-  - в CLI: `config -> cloud -> transport ws|http`
-  - в Web: страница `/cloud`, поле `Транспорт`
-- На текущем этапе рабочий transport: `ws`; `http` сохранится в конфиге и переключит рантайм, но без серверной HTTP-части реальное cloud-session соединение не поднимет.
-
-## ⌨️ CLI (кратко)
-
-Подсказка: `help`, `?`, `help <topic>`.
-Подробный справочник всех команд: [CLI.md](./CLI.md).
-
-### ▶️ Enable (`plc#`)
-
-- Диагностика 🔎:
-  - `show board`, `show plc`, `show wifi`, `show time`, `show i2c`, `show ow`, `show ports`, `show config`
-- Состояние контроллеров 🎛️:
-  - `show sockets|meteo|thermo|tanks|watering|septic|security`
-  - `show <controller> <id>`
-- Управление 🎮:
-  - `socket on|off|toggle <id>`
-  - `security status|arm|disarm`
-  - `stack nodes`
-  - `stack send <id> <get|set> <json>`
-  - `stack socket <unit> <on|off|toggle> <id>`
-  - `stack thermo <unit> <on|off|toggle> <id>`
-  - `stack security <unit> <arm|disarm|status|clear>`
-- Система 🛠️:
-  - `write`, `erase`, `wifi restart`, `reload`, `reset`, `ext scan`, `show ext`
-- Обновление ⬆️:
-  - `copy tftp://<ip>/firmware.bin firmware`
-  - `copy http://<ip>/firmware.bin firmware`
-
-### ⚙️ Config (`plc(config)#`)
-
-- Глобально 🌍:
-  - `password <pass>` / `admin password <pass>`
-  - `stack role <master|slave>`
-  - `stack master <host>`
-  - `stack policy <auto|direct|poll>`
-  - `stack transport <websocket|rs485>`
-  - `stack payload <auto|json|binary>`
-  - `stack fallback <on|off>`
-  - `stack fallback_host <host>`
-  - `stack slave_controller <on|off>`
-  - `stack api_key <value|clear|gen>`
-- Контексты 🧱:
-  - `wifi`, `tgbot`, `cloud`, `time`
-  - `socket`, `meteo`, `thermo`, `tank`, `watering`, `septic`, `security`
-
-### 📌 Примеры контекстов
-
-- `plc(config-wifi)#`: `mode <sta|ap|sta_ap>`, `ssid`, `password`, `ap on|off`, `ap_ssid`, `ap_password`, `restart`, `show`
-- `plc(config-cloud)#`: `enable`, `transport ws|http`, `host`, `port`, `path`, `ssl`, `reconnect`, `event`, `api_key`, `show`
-- `plc(config-security)#`: `show`, `enable/disable <id>`, `type <id> <pir|reed>`, `port <id>`, `name <id>`, `silent <id>`, `siren <port|none>`, `keys ...`
-
-## 🖼️ Скриншоты
-
-Telegram 🤖:
-
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg1.png" width="300" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg2.png" width="300" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg3.png" width="300" />
-
-Web 🖥️:
-
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web1.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web2.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web3.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web4.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web5.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web6.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web7.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web8.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web9.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web10.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web11.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web12.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web13.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web14.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web15.png" width="700" />
-
-Аппаратная часть 🔧:
-
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/board2.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/ext.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/fan.png" width="700" />
-
-## 📜 Пример логов запуска
+Типовой практический сценарий:
 
 ```text
-[1329][INFO][TANK] controller: enabled
-[1373][INFO][APP] Configs loaded: /startup-config.json (2492 bytes)
-[1374][INFO][WIFI] Mode: STA (SSID: Denisov_VPN)
-[1374][INFO][APP] Initializing HAL
-[1374][INFO][HAL] I2C init
-[1375][INFO][HAL] GPIO init
-[1390][INFO][EXT] Extender 0 detected
-[1394][INFO][HAL] SPI init
-[1394][INFO][HAL] OneWire init
-[1395][INFO][HAL] UART init
-[1395][INFO][APP] Initializing EEPROM
-[1395][INFO][APP] EEPROM used: 0 free: 65536 total: 65536
-[1395][INFO][APP] Initializing RTC
-[2000-01-02][23:06:37][INFO][APP] Initializing Display
-[2000-01-02][23:06:37][INFO][APP] Initializing PLC Control
-[2000-01-02][23:06:37][INFO][APP] Initializing Network
-[2000-01-02][23:06:37][INFO][STACK] Role: master
-[2000-01-02][23:06:37][INFO][CTRL] Sockets init
-[2000-01-02][23:06:37][INFO][CTRL] Meteo init
-[2000-01-02][23:06:37][INFO][CTRL] Thermo init
-[2000-01-02][23:06:37][INFO][CTRL] Tanks init
-[2000-01-02][23:06:37][INFO][APP] Application init [OK]
+Cloud -> Master: cameras.snapshot
+Master -> Camera: GET http://192.168.1.55/cgi-bin/snapshot.cgi
+Master -> PSRAM: JPEG buffer
+Master -> Cloud: POST /api/device/photo
+Cloud -> Storage: /uploads/devices/<device_id>/latest.jpg
 ```
 
-## Лицензия
+### Где это в коде
 
-GPLv3. См. [LICENSE](./LICENSE).
+- `include/hal/camera.hpp`
+- `src/hal/camera.cpp`
+- `include/hal/camera_store.hpp`
+- `src/hal/camera_store.cpp`
+- `src/core/network/web/handlers/cameras_handler.cpp`
+
+## 🖥️ Web
+
+Локальный web сейчас строится по схеме:
+
+- сначала регистрируются functional handlers
+- потом page callbacks
+
+Это важно: страницы нельзя регистрировать раньше обработчиков, иначе начинают ловиться не те роуты.
+
+Основные разделы:
+
+- контроллеры
+- облако
+- стек
+- правила
+- пользователи
+- камеры
+
+## ⌨️ CLI
+
+CLI разбит на режимы:
+
+- `login:`
+- `password:`
+- `plc#`
+- `plc(config)#`
+- `plc(config-<module>)#`
+
+Ключевые актуальные блоки:
+
+- `show ...`
+- `socket on|off|toggle`
+- `security arm|disarm|status`
+- `photo get/upload/cloud/status/clear`
+- `config -> stack ...`
+- `config -> cloud ...`
+
+Полный актуальный справочник: [CLI.md](./CLI.md)
+
+## 📁 Структура репозитория
+
+- `src/core/runtime/` — orchestration и runtime-фазы
+- `src/core/network/stack/` — стек и routing layer
+- `src/core/network/cloud/` — cloud client/transports
+- `src/core/network/web/` — web handlers/pages/interfaces
+- `src/controllers/` — бизнес-логика контроллеров
+- `src/hal/` — низкоуровневое железо, шины, camera, extender
+- `include/boards/` — board profiles
+
+## 🛠️ Сборка
+
+Основной профиль сейчас: `fcplc`
+
+```bash
+pio run -e fcplc
+```
+
+Для логов RTOS-метрик:
+
+- включить `TASK_BINDER_RTOS_DEBUG`
+- поднять `LOGGER_LEVEL=4`
+
+## 📌 Практические замечания
+
+- большие буферы и кэши лучше держать в `PSRAM`
+- русские web-страницы и docs нужно сохранять в `UTF-8`
+- в логах использовать `:` вместо `=`
+- для stack/cloud/web/CLI менять документацию синхронно с кодом
+
+## 📚 Смежные документы
+
+- Stack: [STACK.md](./STACK.md)
+- CLI: [CLI.md](./CLI.md)

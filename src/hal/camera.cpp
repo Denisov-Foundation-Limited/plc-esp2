@@ -484,6 +484,7 @@ void Camera::runUpload_()
         return;
     }
 
+    const uint32_t t0_ms = millis();
     HTTPClient http;
     std::unique_ptr<WiFiClientSecure> secure;
     http.setTimeout(kHttpTimeoutMs);
@@ -507,16 +508,24 @@ void Camera::runUpload_()
         completeFailure_(Error::HttpBegin, F("HTTP begin failed"));
         return;
     }
+    const uint32_t begin_done_ms = millis();
     http.addHeader(F("Content-Type"), content_type.length() ? content_type : String(F("image/jpeg")));
     if (api_key.length())
         http.addHeader(F("X-Api-Key"), api_key);
     const int code = http.sendRequest("POST", buf, size);
+    const uint32_t send_done_ms = millis();
     http.end();
     if (code < 200 || code >= 300)
     {
         completeFailure_(Error::UploadFailed, String(F("Upload failed: ")) + String(code), code);
         return;
     }
+    _logs.info(F("CAMERA"),
+               F("Upload phases: begin_ms: %lu post_ms: %lu total_ms: %lu bytes: %u"),
+               (unsigned long)(begin_done_ms - t0_ms),
+               (unsigned long)(send_done_ms - begin_done_ms),
+               (unsigned long)(send_done_ms - t0_ms),
+               (unsigned)size);
     completeSuccess_(Op::Upload, code);
 }
 

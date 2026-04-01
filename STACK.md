@@ -1,329 +1,417 @@
 ﻿# STACK.md
 
-Подробное описание Stack-подсистемы в `plc-esp2`.
+# 🌐 Stack в plc-esp2
 
-Документ покрывает:
-- роли master/slave,
-- транспорт и формат frame,
-- формат команд/ответов,
-- модель кэша и синхронизацию,
-- практическую диагностику.
+Актуальное описание stack-подсистемы на текущей ветке `develop`.
 
-Общая документация проекта: [README.md](./README.md)
+Этот документ описывает именно новую структуру проекта:
 
-## 1. Что такое Stack
+- `StackTransport`
+- `StackMasterServer`
+- `StackMasterRouter`
+- `StackSlaveClient`
+- `StackRouteAdapter`
+- `StackDeviceRegistry`
+- `StackUnitSnapshot`
 
-Stack — внутренний TCP-протокол обмена между контроллерами.
+Старые сущности вроде `StackMaster`, `StackNode`, `StackCache`, `StackSlaveHandler` и старые TCP-схемы больше не являются источником правды для текущего кода.
 
-- `Master`:
-  - принимает подключения slave-узлов,
-  - опрашивает состояние фич (`CmdGet`),
-  - отправляет команды управления (`CmdSet`),
-  - агрегирует ответы в `StackCache`,
-  - отдаёт данные в Web/Display/Telegram/alarms.
-- `Slave`:
-  - подключается к master,
-  - периодически отправляет `Hello` и `Status`,
-  - исполняет входящие `CmdGet`/`CmdSet`,
-  - возвращает `Ack`/`Err`.
+Общий обзор проекта: [README.md](./README.md)
 
-## 2. Архитектура (верхний уровень)
+## 🧭 Назначение stack
+
+Stack нужен для связи между PLC-узлами в распределённой системе:
+
+- master агрегирует доступные slave-узлы
+- slave исполняет входящие команды и отдает snapshot/state
+- web/display/rules/cloud на мастере работают не с “сырым сокетом”, а с индексом устройств и снимками состояния
+
+## 🧱 Верхнеуровневая архитектура
 
 ```mermaid
 flowchart TD
-  MASTER[Master Node\nStackMaster + StackCache + StackRuntime]
-  SLAVE_A[Slave A\nStackNode + StackSlaveHandler]
-  SLAVE_B[Slave B\nStackNode + StackSlaveHandler]
-  UI[Web / Display / Telegram]
-  RTOS[TaskBinder + FreeRTOS tasks]
+  MASTER_RT[Master runtime]
+  SLAVE_RT[Slave runtime]
+  SERVER[StackMasterServer]
+  ROUTER[StackMasterRouter]
+  ADAPTER[StackRouteAdapter]
+  REG[StackDeviceRegistry]
+  SNAP[StackUnitSnapshot]
+  CLIENT[StackSlaveClient]
+  WS[WebSocket transport]
+  RS[RS485 transport]
 
-  SLAVE_A <--> MASTER
-  SLAVE_B <--> MASTER
-  MASTER --> UI
-  MASTER --> RTOS
-  RTOS --> UI
+  MASTER_RT --> ADAPTER
+  ADAPTER --> SERVER
+  SERVER --> ROUTER
+  ROUTER --> REG
+  ROUTER --> SNAP
+  ADAPTER --> WS
+  ADAPTER --> RS
+  CLIENT --> ADAPTER
+  SLAVE_RT --> CLIENT
 ```
 
-## 3. Основные компоненты
+## 🧩 Основные компоненты
 
-### Сторона master
+### `StackTransport`
 
-- `StackMaster` (`include/core/network/stack/stack_master.hpp`)
-  - TCP сервер, таблица сессий
-  - привязка сессии к `node_id` из `Hello`
-  - `sendTo(node_id, type, payload, len)`
-- `StackCache` (`include/core/network/stack/stack_cache.hpp`)
-  - кэши фич по узлам
-  - request-функции (`request*`)
-  - обработка `Ack/Err` и обновление snapshot
+Базовый транспортный интерфейс. От него ожидается:
 
-### Сторона slave
+- connect/disconnect lifecycle
+- text/binary message delivery
+- callback-уведомления о событиях транспорта
 
-- `StackNode` (`include/core/network/stack/stack_node.hpp`)
-  - TCP клиент, reconnect, heartbeat
-- `StackSlaveHandler` (`include/core/network/stack/stack_slave_handler.hpp`)
-  - диспетчеризация `CmdGet`/`CmdSet`
-  - генерация `Ack`/`Err`
-  - remote-кэши для отображения удалённых данных на slave
+Фактические реализации:
 
-### Интеграция в App
+- websocket
+- rs485
 
-- `src/app.cpp`
-  - `pollStackCaches_()`
-  - `runStackPre(stack)` в основном loop
-  - без прямого `network.loop()/console.loop()`
-  - обработка online/offline
-  - логи синхронизации и инвентаризации
-- `include/core/task_binder.hpp`
-  - `stack_evt` task для `StackRuntime::taskPost/taskFlush`
-  - `network_loop` + `console_loop` как RTOS worker-задачи
-  - `plc_scan`, `display`, `plc`, `extender` также выполняются в RTOS-задачах
+### `StackMasterServer`
 
-## 4. Транспортный формат
+Серверная часть мастера. Поднимает серверный transport и передает сообщения в router.
 
-Кодек: `include/core/network/stack/stack_protocol.hpp`
+Отвечает за:
 
-```text
-+---------+---------+------+--------------+-------------------+---------+
-| magic   | version | type | length (LE)  | payload (0..1024) | CRC16   |
-| 1 byte  | 1 byte  | 1 b  | 2 bytes      | N bytes           | 2 bytes |
-+---------+---------+------+--------------+-------------------+---------+
+- запуск мастер-сервера
+- binding обработчиков route/notify
+- работу в роли master
+
+### `StackMasterRouter`
+
+Центральная точка мастер-маршрутизации.
+
+Отвечает за:
+
+- auth/accept узлов
+- регистрацию устройства в `StackDeviceRegistry`
+- отправку `text/binary` на нужный `node_id`
+- доставку route/event/request/response наверх
+
+### `StackSlaveClient`
+
+Клиентская часть слейва.
+
+Отвечает за:
+
+- подключение к мастеру
+- auth/hello
+- приём команд и route
+- отправку ответов, событий и notify на мастер
+
+### `StackRouteAdapter`
+
+Это текущий верхний API stack-обмена. Вокруг него сейчас строится вся прикладная логика.
+
+Он даёт:
+
+- `sendRequest(...)`
+- `sendEvent(...)`
+- `sendRoute(...)`
+- `sendResponse(...)`
+- unified route/notify handling
+- payload mode:
+  - `auto`
+  - `json`
+  - `binary`
+- exchange policy:
+  - `auto`
+  - `direct`
+  - `poll`
+
+### `StackDeviceRegistry`
+
+Реестр онлайн-узлов.
+
+Хранит:
+
+- `node_id`
+- имя
+- IP/transport diagnostics
+- caps
+- online/offline presence
+
+Используется для:
+
+- web-страницы стека
+- определения online/offline
+- именования удалённых источников
+- bootstrap/sync логики
+
+### `StackUnitSnapshot`
+
+Текущий индекс удалённых данных по узлам.
+
+Это уже не “живой сокетный кэш старого образца”, а snapshot/index слой для удалённых контроллеров:
+
+- `State`
+- `CacheState`
+- `RequestState`
+- страницы данных (`sockets/lights/meteo/thermo/tanks`)
+- bookkeeping по page requests
+
+Ключевая идея:
+
+- UI и runtime читают из snapshot/index
+- route responses обновляют snapshot
+- старые/пустые данные не считаются готовыми
+
+## 👑 Роли узла
+
+### Master
+
+Master:
+
+- принимает slave-узлы
+- ведет registry
+- ведет snapshot/index
+- опрашивает удалённые фичи
+- отдает stack-данные в web/display/rules/cloud
+
+### Slave
+
+Slave:
+
+- подключается к master
+- принимает команды/requests
+- возвращает snapshots/state/pages
+- шлёт доменные события на мастер
+
+### Fallback
+
+Поддерживается fallback-поведение:
+
+- при потере мастера slave может поднять локальный master
+- если указан `fallback_host`, slave переключается на другой мастер вместо локального takeover
+
+## 🔀 Exchange policy и payload mode
+
+CLI/Web конфиг поддерживает:
+
+### Policy
+
+- `auto`
+- `direct`
+- `poll`
+
+Практический смысл:
+
+- `direct` — упор на прямую доставку/обмен
+- `poll` — более выраженный запросный режим
+- `auto` — стандартный рекомендуемый режим
+
+### Payload mode
+
+- `auto`
+- `json`
+- `binary`
+
+Практический смысл:
+
+- `json` удобно для совместимости и трассировки
+- `binary` нужен для более компактного или типизированного обмена
+- `auto` оставляет выбор route layer/runtime
+
+## 📡 Транспорт
+
+Сейчас проект поддерживает два транспортных направления stack:
+
+- `websocket`
+- `rs485`
+
+Конфигурация выбирается через:
+
+- CLI
+- Web `/stack`
+- runtime apply через `ConfigsManager`
+
+## 🔁 Поток обмена
+
+### Route-запрос/ответ
+
+```mermaid
+sequenceDiagram
+  participant M as Master runtime
+  participant A as StackRouteAdapter
+  participant S as Slave client
+
+  M->>A: sendRequest(node_id, feature, action)
+  A->>S: route request
+  S-->>A: route response
+  A-->>M: callback / snapshot update
 ```
 
-- `magic = 0xA5`
-- `version = 1`
-- `kMaxPayload = 1024`
-- CRC16 считается по `[header + payload]`
+### Event от slave на master
 
-## 5. Типы сообщений
+```mermaid
+sequenceDiagram
+  participant SL as Slave controller
+  participant A as StackRouteAdapter
+  participant MR as Master runtime
 
-`StackMsgType`:
-- `Hello`
-- `Features`
-- `Status`
-- `CmdSet`
-- `CmdGet`
-- `Ack`
-- `Err`
-
-В рабочем контуре обычно используются: `Hello`, `Status`, `CmdGet`, `CmdSet`, `Ack`, `Err`.
-
-## 6. Идентификация узла (`Hello`)
-
-`StackHello` содержит:
-- `node_id`, `proto_ver`, `fw_ver`, `caps`, `name`
-
-Master по `Hello` связывает TCP-сессию с `node_id`.
-При конфликте одинаковых `node_id` для разных сессий мастер закрывает старую/конфликтную сессию и логирует конфликт узла.
-
-## 7. JSON-оболочка команд (payload)
-
-### Запрос (`CmdGet` / `CmdSet`)
-
-```json
-{
-  "cmd_id": 123,
-  "feature": 14,
-  "action": "get",
-  "params": {"id": 1},
-  "api_key": "optional"
-}
+  SL->>A: sendEvent(0, feature, action, payload)
+  A->>MR: route event callback
+  MR->>MR: update runtime / alarms / cloud
 ```
 
-### Успех (`Ack`)
+## 🗂️ Snapshot-индекс
 
-```json
-{
-  "cmd_id": 123,
-  "ok": true,
-  "feature": 14,
-  "action": "get",
-  "data": {}
-}
+`StackUnitSnapshot` сейчас хранит не всё подряд, а наборы, реально нужные runtime/UI:
+
+- system state
+- summary state
+- sockets page
+- lights page
+- meteo page
+- thermo page
+- tanks page
+
+И для каждого узла ведёт:
+
+- есть ли данные
+- свежесть данных
+- pending request
+- pending page request
+- offset/limit bookkeeping
+
+### Почему это важно
+
+Это решает старые проблемы:
+
+- UI не должен считать stale-cache за актуальное состояние
+- page request bookkeeping нельзя перетирать временными snapshot-объектами
+- partial updates можно применять аккуратно, не ломая всё состояние узла
+
+## 🧠 Интеграция с `AppRuntime`
+
+`AppRuntime` сейчас использует stack так:
+
+- `pollStackCaches_()` — фоновые запросы к stack-feature страницам
+- bootstrap sync новых узлов
+- display remote slot rendering
+- cloud stack events
+- alarms/summaries по удалённым узлам
+
+```mermaid
+flowchart TD
+  NET[Network / Stack route callbacks]
+  SNAP[StackUnitSnapshot]
+  RUNTIME[AppRuntime]
+  WEB[Web]
+  DISP[Display]
+  CLOUD[Cloud]
+
+  NET --> SNAP
+  SNAP --> RUNTIME
+  RUNTIME --> WEB
+  RUNTIME --> DISP
+  RUNTIME --> CLOUD
 ```
 
-### Ошибка (`Err`)
+## 📄 Пагинация
 
-```json
-{
-  "cmd_id": 123,
-  "ok": false,
-  "feature": 14,
-  "action": "get",
-  "error": "auth"
-}
-```
+Для тяжёлых stack-данных используется page-based sync:
 
-## 8. Последовательность обмена
+- sockets
+- lights
+- meteo
+- thermo
+- tanks
+
+Это важно, чтобы:
+
+- не раздувать payload
+- не устраивать burst-запросы
+- не ронять parse/latency на больших наборах
+
+### Типовой page-поток
 
 ```mermaid
 sequenceDiagram
   participant M as Master
   participant S as Slave
+  participant X as StackUnitSnapshot
 
-  S->>M: Hello
-  S->>M: Status (периодически)
-  M->>S: CmdGet(feature, action, params)
-  S-->>M: Ack(data) или Err(error)
-  M->>M: Обновление StackCache
-  M->>S: CmdSet(feature, action, params)
-  S-->>M: Ack/Err
+  M->>S: request page offset: 0 limit: N
+  S-->>M: items 0..N
+  M->>X: apply page
+  M->>S: request next page
+  S-->>M: items N..end
+  M->>X: finalize
 ```
 
-## 8.1. Runtime-исполнение stack после переноса на RTOS
+## 🔔 Stack и Cloud
 
-```mermaid
-flowchart TD
-  LOOP[App::loop]
-  PRE[runStackPre stack]
-  NET[RTOS network_loop]
-  SIG[notifyStackPostNetwork in network_loop]
-  EVT[RTOS stack_evt]
-  POST[StackRuntime taskPost]
-  FLUSH[StackRuntime taskFlush]
+Stack-события теперь могут публиковаться в cloud через master.
 
-  LOOP --> PRE
-  PRE --> LOOP
-  NET --> SIG
-  SIG --> EVT
-  EVT --> POST
-  POST --> FLUSH
-```
+Важно:
 
-Ключевые правила:
-- `taskPre` остаётся синхронным и вызывается из основного loop.
-- `network.loop()` и `console.loop()` больше не вызываются из `App::loop()`; они живут в RTOS (`network_loop`/`console_loop`).
-- `plc_scan.tick()` выполняется в отдельной RTOS-задаче (`plc_scan`) с интервалом `TASK_BINDER_PLC_SCAN_TICK_MS`.
-- `taskPost/taskFlush` выполняются в отдельной RTOS-задаче `stack_evt`.
-- Для `stack_evt` используется очередь и pending-защита:
-  - новое событие не ставится, пока предыдущее ещё не обработано.
-- pending-флаг сделан атомарным (`std::atomic`), чтобы исключить гонку между producer/consumer.
-- Такая схема убирает влияние тяжёлых post-network путей на latency локального управления.
-## 9. Модель кэша на master
+- master шлёт cloud event с `unit: "stack"` и `node_id`
+- в `payload.data` прокидывается `source_name`
+- контроллеры не шлют в cloud напрямую, это делает runtime/cloud layer
 
-Типовые поля кэша фичи:
-- `pending`
-- `has_data`
-- `last_ok`
-- `last_error`
-- `updated_ms`
-- `item_count`
-- `items[]`
+## 🧪 Диагностика
 
-Ключевые правила:
-- кэш обновляется только через обработку ответов (`Ack/Err`),
-- `pending` — состояние запроса, а не признак валидности данных,
-- UI должен различать `pending/stale/ready`.
+### `show stack`
 
-## 10. Фоновый polling
+CLI показывает:
 
-`App::pollStackCaches_()` работает в round-robin, чтобы не создавать burst-запросы.
+- `role`
+- `master_host`
+- `policy`
+- `transport`
+- `payload`
+- `fallback`
+- `fallback_host`
+- `controller`
+- `api_key`
+- runtime diagnostics:
+  - `state`
+  - `master_active`
+  - `fallback_active`
+  - `online`
+  - exchange queue/load counters
+  - rs485 counters/state
 
-```mermaid
-flowchart TD
-  T0[tick 0] --> N0F0[node0 feature0]
-  T1[tick 1] --> N1F1[node1 feature1]
-  T2[tick 2] --> N2F2[node2 feature2]
-  T3[tick 3] --> N0F3[node0 feature3]
-```
+### Что смотреть при проблемах
 
-За тик отправляется один запрос одной фичи.
+1. online/offline узла
+2. registry и имя `node_id`
+3. свежесть `StackUnitSnapshot`
+4. page request stuck / stale data
+5. `retried/expired/dropped`
+6. `network_lock_held_ms` / `rt_lock_held_ms`
+7. `rs485_*` counters при транспортных проблемах
 
-После переноса на RTOS важно:
-- не вызывать `pollStackCaches_()` из нескольких потоков;
-- не дублировать `taskPost/taskFlush` одновременно из loop и RTOS worker;
-- не слать лишние `stack_evt` notify без pending-флага.
-- не выносить читателей общего stack/remote-cache в отдельные RTOS-задачи без синхронизации или snapshot-модели.
+## ⚠️ Частые ошибки
 
-## 11. Тяжёлые фичи и постраничная синхронизация
-
-Для больших наборов данных (`Ports`, `TempSensors`) используется page-based pull (`offset/limit`), а не burst multipart.
-
-```mermaid
-sequenceDiagram
-  participant M as Master
-  participant S as Slave
-  M->>S: CmdGet Ports {offset:0, limit:N, brief:true}
-  S-->>M: Ack {ports[], next_offset, done:false}
-  M->>S: CmdGet Ports {offset:next_offset, limit:N}
-  S-->>M: Ack {ports[], next_offset, done:true}
-  M->>M: finalize cache snapshot
-```
-
-Плюсы:
-- стабильный размер payload,
-- меньше ошибок parse,
-- устойчивое наполнение селекторов GPIO в вебе.
-
-## 12. Аутентификация
-
-- Master может автоматически добавлять `api_key` в `CmdGet/CmdSet`.
-- Slave проверяет ключ (если настроен).
-- При несоответствии возвращается `Err("auth")`.
-
-## 13. Диагностика (чеклист)
-
-Если stack ведёт себя нестабильно, проверяй в порядке:
-
-1. события `Unit online` / `Unit offline`
-2. ушёл ли request и пришёл ли `Ack/Err`
-3. состояние кэша (`pending`, `has_data`, `last_ok`, `last_error`)
-4. логи sync (`Sync slave unit ...`, `Sync slave unit complete`)
-5. oversized payload (`json parse failed`)
-6. конфликты `node_id`
-7. RTOS метрики:
-   - `stack_evt exec_us / wavg_us / wmax_us`
-   - `cloud` пики во время reconnect
-   - `telegram` long-poll / reconnect пики
-
-Если локальное управление работает быстро, а `cloud/telegram` имеют большие пики, это нормально при условии, что:
-- `stack_evt` остаётся коротким;
-- `control_loop` не деградирует по latency.
-
-Текущее безопасное состояние:
-- `control_loop` вынесен в RTOS и проверен на slave без observed fatal.
-- `display` / `plc` / `extender` / `plc_scan` работают в RTOS-задачах.
-- Стабильность обеспечивается bus-lock механизмами (`I2C/OneWire`) и pending-защитой stack-событий.
-
-## 14. Правила для новых stack-фич
-
-- Не делать массовую отправку `CmdGet` в одном цикле.
-- Держать раздельные пути обработки `Ack set` и `Ack get`.
-- Для больших данных использовать paging.
-- Определять критерий «кэш готов» явно.
-- Не подвешивать критичный control-path на network/cloud/tg операции.
-- Если новая stack-фича добавляет тяжёлый post-processing, учитывать, что она теперь живёт в `stack_evt` RTOS task.
-- Перед выносом UI/display-потребителей в RTOS нужно отдельно решить синхронизацию чтения shared stack/remote-cache.
-- Синхронизировать изменения на всех слоях:
-  - config
-  - stack handler
-  - cache
-  - web
+- Документация/код рассинхронизированы и продолжают ссылаться на старые stack-классы
+- page bookkeeping случайно затирается временным snapshot
+- UI принимает pending/stale state за финальное состояние
+- новые stack feature меняются в runtime, но не синхронизируются с:
   - CLI
-  - docs
+  - Web
+  - README/STACK docs
 
-## 15. Карта кода
+## 🛠️ Что менять синхронно при доработке stack
 
-- Транспорт и codec:
-  - `include/core/network/stack/stack_protocol.hpp`
-- Базовые типы (`Hello`, `Status`):
-  - `include/core/network/stack/stack_types.hpp`
-- Перечень фич:
-  - `include/core/network/stack/stack_features.hpp`
-- Master сервер/сессии:
-  - `include/core/network/stack/stack_master.hpp`
-- Slave клиент:
-  - `include/core/network/stack/stack_node.hpp`
-- Обработчик команд на slave:
-  - `include/core/network/stack/stack_slave_handler.hpp`
-- Кэши и requests на master:
-  - `include/core/network/stack/stack_cache.hpp`
-- Оркестрация polling/sync:
-  - `src/app.cpp`
-  - `include/core/task_binder.hpp`
-- Ролевая интеграция stack:
-  - `src/core/network/network.cpp`
+- `ConfigsManager`
+- CLI `stack ...`
+- Web `/stack`
+- `Network`
+- `StackRouteAdapter`
+- `AppRuntime`
+- docs
 
----
+## 📁 Карта кода
 
-Назад к общему описанию: [README.md](./README.md)
+- `include/core/network/stack/stack_transport.hpp`
+- `include/core/network/stack/stack_master_server.hpp`
+- `include/core/network/stack/stack_master_router.hpp`
+- `include/core/network/stack/stack_slave_client.hpp`
+- `include/core/network/stack/stack_route_adapter.hpp`
+- `include/core/network/stack/stack_device_registry.hpp`
+- `include/core/network/stack/stack_unit_snapshot.hpp`
+- `src/core/network/stack/`
+- `include/core/runtime/app_runtime.hpp`
+- `src/core/runtime/`

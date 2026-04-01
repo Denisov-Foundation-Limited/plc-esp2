@@ -18,6 +18,7 @@ using LoggerLevel = Logger::Level;
 
 SemaphoreHandle_t Logger::_output_lock = nullptr;
 portMUX_TYPE Logger::_output_lock_init_mux = portMUX_INITIALIZER_UNLOCKED;
+bool Logger::_interactive_open = false;
 
 namespace
 {
@@ -160,6 +161,21 @@ bool Logger::beginAuto(){
 void Logger::setOutputObserver(OutputObserver cb, void *ctx){
     _observer = cb;
     _observer_ctx = ctx;
+}
+
+void Logger::setInteractiveOpen(bool open){
+    ensureLock_();
+    lockOutput_();
+    _interactive_open = open;
+    unlockOutput_();
+}
+
+bool Logger::interactiveOpen(){
+    ensureLock_();
+    lockOutput_();
+    const bool out = _interactive_open;
+    unlockOutput_();
+    return out;
 }
 
 void Logger::ensureLock_(){
