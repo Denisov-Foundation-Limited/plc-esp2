@@ -174,18 +174,28 @@ const char kWebInterfaceControllersHtml[] PROGMEM = R"HTML(
       .card { padding: 16px; }
       h1 { font-size: 20px; }
       .tile-head { flex-wrap: wrap; }
-      .grid { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .tile {
         aspect-ratio: auto;
-        min-height: 240px;
+        min-height: 132px;
+        padding: 12px;
       }
       .tile-hero {
-        top: 72%;
-        width: 104px;
-        height: 104px;
-        opacity: 0.56;
+        top: 64%;
+        width: 68px;
+        height: 68px;
+        opacity: 0.44;
       }
+      .tile-body > span:first-of-type {
+        margin-top: 8px;
+        font-size: 10px;
+        line-height: 1.3;
+      }
+      .status { font-size: 11px; }
       .tile-body > span.status { max-width: 100%; }
+    }
+    @media (max-width: 340px) {
+      .grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>

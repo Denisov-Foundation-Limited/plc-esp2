@@ -196,6 +196,8 @@ void TankHandler::handleTanksList(WebInterface &web, AsyncWebServerRequest *requ
         }
         if (stack_view)
         {
+            web.requestStackTanks_(node_id);
+            web.requestStackIndexState_(node_id);
             if (!groups_available)
             {
                 const size_t visible = web.stackTanksVisibleCount_(node_id);

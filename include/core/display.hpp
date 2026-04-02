@@ -58,6 +58,7 @@ public:
     Error lastError() const;
 
 private:
+    static constexpr uint32_t kResyncIntervalMs = 10000;
     static constexpr bool busExists_(uint8_t bus_num);
 
     I2CManager &_i2c;
@@ -70,6 +71,7 @@ private:
     char _last_hw_line0[17]{};
     char _last_hw_line1[17]{};
     bool _custom_chars_ready = false;
+    uint32_t _last_resync_ms = 0;
     DisplaySlotConfig _slots[kSlotCount]{};
     SlotProvider _slot_provider = nullptr;
     void *_slot_ctx = nullptr;

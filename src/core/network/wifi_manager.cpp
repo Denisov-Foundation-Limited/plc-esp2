@@ -91,8 +91,8 @@ bool WifiManager::restart()
 }
 void WifiManager::task()
 {
-    const bool sta_enabled = staEnabled();
-    const bool ap_enabled = apEnabled();
+    const bool sta_enabled = staActive();
+    const bool ap_enabled = apActive();
     if (ap_enabled)
     {
         const uint8_t clients = WiFi.softAPgetStationNum();
@@ -167,12 +167,22 @@ bool WifiManager::ap() const
 { return apEnabled(); }
 bool WifiManager::apEnabled() const
 { return _mode == Mode::Ap || _mode == Mode::StaAp; }
+bool WifiManager::staActive() const
+{
+    const wifi_mode_t mode = WiFi.getMode();
+    return mode == WIFI_STA || mode == WIFI_AP_STA;
+}
+bool WifiManager::apActive() const
+{
+    const wifi_mode_t mode = WiFi.getMode();
+    return mode == WIFI_AP || mode == WIFI_AP_STA;
+}
 const String &WifiManager::apSsid() const
 { return _ap_ssid; }
 const String &WifiManager::apPassword() const
 { return _ap_password; }
 bool WifiManager::isConnected() const
-{ return staEnabled() && WiFi.status() == WL_CONNECTED; }
+{ return staActive() && WiFi.status() == WL_CONNECTED; }
 const char *WifiManager::modeName(Mode mode)
 {
     switch (mode)

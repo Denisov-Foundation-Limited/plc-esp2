@@ -238,6 +238,7 @@ const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px 14px;
+      margin-top: 10px;
     }
     .form-row {
       display: grid;
@@ -313,6 +314,15 @@ const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       relay: %SEPTIC_RELAY_USED_JSON%
     };
     const septicGrid = document.getElementById('septic-grid');
+    function applySepticGroupFilter() {
+      const sel = document.getElementById('septic-group-filter');
+      if (!sel) return;
+      const v = String(sel.value || '0');
+      document.querySelectorAll('.js-group-item').forEach((el) => {
+        const g = String(el.getAttribute('data-group-id') || '0');
+        el.style.display = (v === '0' || g === v) ? '' : 'none';
+      });
+    }
     const septicPageValue = (() => {
       const url = new URL(window.location.href);
       return url.searchParams.get('page') || '1';
@@ -333,6 +343,7 @@ const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
           return;
         }
         septicGrid.innerHTML = await res.text();
+        applySepticGroupFilter();
         bindSepticHandlers();
         refreshSepticSelects();
       } catch (e) {
@@ -395,6 +406,11 @@ const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       septicForm.addEventListener('submit', () => {
         sessionStorage.setItem(reloadKey, '1');
       });
+    }
+    const septicGroupFilter = document.getElementById('septic-group-filter');
+    if (septicGroupFilter) {
+      septicGroupFilter.addEventListener('change', applySepticGroupFilter);
+      applySepticGroupFilter();
     }
     function bindSepticHandlers() {
       document.querySelectorAll('select.septic-select').forEach((el) => {
@@ -474,7 +490,7 @@ const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       }
     }
     const septicQs = new URLSearchParams(window.location.search);
-    const septicIsStackView = septicQs.get('unit') === 'stack';
+    const septicIsStackView = septicQs.get('unit') === 'stack' || !!(septicQs.get('node') || septicQs.get('node_id'));
     const septicNodeId = septicQs.get('node') || '';
     async function postSepticToggle(id, action) {
       let body = 'id=' + encodeURIComponent(String(id)) + '&action=' + encodeURIComponent(action || 'toggle');
@@ -560,9 +576,7 @@ const char kWebInterfaceSepticHtml[] PROGMEM = R"HTML(
       setTimeout(tick, 220);
     }
     refreshSepticSelects();
-    if (septicIsStackView) {
-      loadSepticList();
-    }
+    loadSepticList();
     bindSepticHandlers();
     function septicTileId(tile) {
       if (!tile) return 0;

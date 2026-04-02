@@ -20,6 +20,29 @@ const char kWebAutoRefreshScript[] PROGMEM = R"HTML(
   const endpoint = '/ui/hash';
   let lastHash = '';
   const markDirty = () => { window.__plcDirty = true; };
+  window.__plcSetupIdleReload = function(ms) {
+    const intervalMs = (typeof ms === 'number' && ms > 0) ? ms : 6000;
+    if (!window.__plcIdleReloads) {
+      window.__plcIdleReloads = {};
+    }
+    const key = String(intervalMs);
+    if (window.__plcIdleReloads[key]) {
+      return;
+    }
+    window.__plcIdleReloads[key] = setInterval(() => {
+      if (window.__plcDisableAutoRefresh) {
+        return;
+      }
+      const active = document.activeElement;
+      if (window.__plcDirty) {
+        return;
+      }
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA')) {
+        return;
+      }
+      location.replace(location.pathname + location.search);
+    }, intervalMs);
+  };
   document.addEventListener('input', markDirty, true);
   document.addEventListener('change', markDirty, true);
   async function poll() {

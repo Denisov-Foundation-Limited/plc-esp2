@@ -411,8 +411,11 @@ const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
       });
     }
     refreshWateringSelects();
-    if ((new URL(window.location.href)).searchParams.get('unit') === 'stack') {
+    {
+      const qs = (new URL(window.location.href)).searchParams;
+      if (qs.get('unit') === 'stack' || qs.get('node') || qs.get('node_id')) {
       loadWateringList();
+      }
     }
     bindWateringHandlers();
     const wateringForm = document.getElementById('watering-form');

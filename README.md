@@ -21,21 +21,51 @@
 
 ```mermaid
 flowchart TD
-  UI[Web UI / CLI / Display]
-  RUNTIME[AppRuntime]
-  CTRL[Controllers]
-  HAL[HAL / GPIO / I2C / Extender / Camera]
-  NET[Wi-Fi / GSM / Cloud / Stack]
-  TASKS[TaskBinder / FreeRTOS]
+  subgraph UI["Интерфейсы"]
+    WEB[Web]
+    CLI[CLI]
+    DISP[Display]
+  end
 
-  UI --> RUNTIME
-  RUNTIME --> CTRL
-  RUNTIME --> HAL
-  RUNTIME --> NET
-  TASKS --> RUNTIME
+  subgraph CORE["Оркестрация"]
+    APP[AppRuntime]
+    LOOP[PreNetwork / PostNetwork]
+  end
+
+  subgraph DOMAIN["Домен и сервисы"]
+    CTRL[Controllers]
+    CLOUD[Cloud / Telegram]
+    STACK[Stack]
+  end
+
+  subgraph IO["Низкий уровень"]
+    HAL[HAL / GPIO]
+    BUS[I2C / SPI / UART / OneWire]
+    EXT[Extender / Camera / RTC]
+  end
+
+  subgraph RTOS["Исполнение"]
+    TASKS[TaskBinder / FreeRTOS tasks]
+  end
+
+  WEB --> APP
+  CLI --> APP
+  DISP --> APP
+
+  APP --> LOOP
+  LOOP --> CTRL
+  LOOP --> CLOUD
+  LOOP --> STACK
+  LOOP --> HAL
+
+  HAL --> BUS
+  HAL --> EXT
+
+  TASKS --> APP
   TASKS --> CTRL
+  TASKS --> CLOUD
+  TASKS --> STACK
   TASKS --> HAL
-  TASKS --> NET
 ```
 
 ### 🔄 Runtime
@@ -301,3 +331,35 @@ pio run -e fcplc
 
 - Stack: [STACK.md](./STACK.md)
 - CLI: [CLI.md](./CLI.md)
+
+## 🖼️ Скриншоты
+
+Telegram 🤖:
+
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg1.png" width="300" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg2.png" width="300" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg3.png" width="300" />
+
+Web 🖥️:
+
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web1.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web2.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web3.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web4.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web5.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web6.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web7.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web8.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web9.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web10.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web11.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web12.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web13.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web14.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web15.png" width="700" />
+
+Аппаратная часть 🔧:
+
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/board2.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/ext.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/fan.png" width="700" />

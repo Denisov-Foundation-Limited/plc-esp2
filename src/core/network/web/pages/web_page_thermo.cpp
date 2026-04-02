@@ -637,8 +637,11 @@ const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       setTimeout(tick, 220);
     }
     refreshThermoSelects();
-    if ((new URL(window.location.href)).searchParams.get('unit') === 'stack') {
+    {
+      const qs = (new URL(window.location.href)).searchParams;
+      if (qs.get('unit') === 'stack' || qs.get('node') || qs.get('node_id')) {
       loadThermoList();
+      }
     }
     bindThermoHandlers();
     function thermoTileId(tile) {

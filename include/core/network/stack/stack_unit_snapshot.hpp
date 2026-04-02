@@ -30,6 +30,9 @@ public:
     static constexpr size_t kThermoCount = 20;
     static constexpr size_t kTankNameLen = 24;
     static constexpr size_t kTankCount = 20;
+    static constexpr size_t kSepticNameLen = 24;
+    static constexpr size_t kLeakNameLen = 24;
+    static constexpr size_t kLeakCount = 16;
     static constexpr size_t kSecurityDetectNameLen = 24;
     static constexpr size_t kSecurityDetectPreviewCount = 4;
     static constexpr uint8_t kPageSize = 8;
@@ -107,6 +110,22 @@ public:
         char name[kTankNameLen] = {};
     };
 
+    struct LeakItem
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        bool power_on = false;
+        bool sensor_active_low = true;
+        uint8_t sensor_port = 0xFF;
+        uint8_t valve_port = 0xFF;
+        uint8_t alarm_port = 0xFF;
+        bool wet = false;
+        bool alarm_latched = false;
+        bool valve_closed = false;
+        bool alarm_on = false;
+        char name[kLeakNameLen] = {};
+    };
+
     struct State
     {
         struct SecurityDetectPreview
@@ -136,7 +155,17 @@ public:
         uint16_t tanks_enabled = 0;
         uint16_t tanks_alert = 0;
         uint16_t septic_enabled = 0;
+        uint16_t septic_warning = 0;
         uint16_t septic_alert = 0;
+        bool septic_monitoring_on = false;
+        bool septic_relay_warning_on = false;
+        bool septic_relay_alarm_on = false;
+        uint8_t septic_group_id = 0;
+        uint8_t septic_warning_port = 0xFF;
+        uint8_t septic_alarm_port = 0xFF;
+        uint8_t septic_relay_warning_port = 0xFF;
+        uint8_t septic_relay_alarm_port = 0xFF;
+        char septic_name[kSepticNameLen] = {};
         uint16_t watering_enabled = 0;
         uint16_t watering_active = 0;
         uint16_t security_sensors_enabled = 0;
@@ -151,6 +180,8 @@ public:
         bool ring_enabled = false;
         bool ring_on = false;
         bool avr_enabled = false;
+        bool avr_main_ok = false;
+        bool avr_reserve_ok = false;
         bool avr_fault = false;
         uint8_t avr_active_source = 0;
     };
@@ -162,6 +193,7 @@ public:
         uint8_t meteo_count = 0;
         uint8_t thermo_count = 0;
         uint8_t tank_count = 0;
+        uint8_t leak_count = 0;
     };
 
     struct RequestState
@@ -184,6 +216,7 @@ public:
         Meteo,
         Thermo,
         Tanks,
+        Leak,
     };
 
     StackUnitSnapshot();
@@ -209,21 +242,27 @@ public:
     bool tankById(uint32_t node_id, uint8_t id, TankItem &out) const;
     bool tankAt(uint32_t node_id, uint8_t index, TankItem &out) const;
     bool tanksPage(uint32_t node_id, uint8_t offset, TankItem *out, uint8_t capacity, uint8_t &out_count) const;
+    bool leakById(uint32_t node_id, uint8_t id, LeakItem &out) const;
+    bool leakAt(uint32_t node_id, uint8_t index, LeakItem &out) const;
+    bool leaksPage(uint32_t node_id, uint8_t offset, LeakItem *out, uint8_t capacity, uint8_t &out_count) const;
     bool prepareSocketsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
     bool prepareLightsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
     bool prepareMeteoPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
     bool prepareThermoPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
     bool prepareTanksPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
+    bool prepareLeakPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms);
     void completeSocketsPageRequest(uint32_t node_id, uint16_t offset);
     void completeLightsPageRequest(uint32_t node_id, uint16_t offset);
     void completeMeteoPageRequest(uint32_t node_id, uint16_t offset);
     void completeThermoPageRequest(uint32_t node_id, uint16_t offset);
     void completeTanksPageRequest(uint32_t node_id, uint16_t offset);
+    void completeLeakPageRequest(uint32_t node_id, uint16_t offset);
     void clearSocketsPageRequest(uint32_t node_id);
     void clearLightsPageRequest(uint32_t node_id);
     void clearMeteoPageRequest(uint32_t node_id);
     void clearThermoPageRequest(uint32_t node_id);
     void clearTanksPageRequest(uint32_t node_id);
+    void clearLeakPageRequest(uint32_t node_id);
     void clearPending(uint32_t node_id);
     void applySystemState(uint32_t node_id, const State &state);
     void applyControllerSummary(uint32_t node_id, const State &state);
@@ -237,6 +276,8 @@ public:
                          const ThermoItem *items, uint8_t item_count, uint32_t updated_ms);
     void applyTanksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
                         const TankItem *items, uint8_t item_count, uint32_t updated_ms);
+    void applyLeaksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
+                        const LeakItem *items, uint8_t item_count, uint32_t updated_ms);
     void invalidate(uint32_t node_id);
 
 private:
@@ -257,11 +298,13 @@ private:
         PageRequestState meteo_request{};
         PageRequestState thermo_request{};
         PageRequestState tanks_request{};
+        PageRequestState leak_request{};
         PageCache<SocketItem, kSocketCount> sockets{};
         PageCache<SocketItem, kSocketCount> lights{};
         PageCache<MeteoItem, kMeteoCount> meteo{};
         PageCache<ThermoItem, kThermoCount> thermo{};
         PageCache<TankItem, kTankCount> tanks{};
+        PageCache<LeakItem, kLeakCount> leaks{};
     };
 
     static void copyState_(State &dst, const State &src);

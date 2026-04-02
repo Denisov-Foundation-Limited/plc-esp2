@@ -41,6 +41,11 @@ void MeteoHandler::handleMeteo(WebInterface &web, AsyncWebServerRequest *request
             return;
         const bool stack_view = web.isStackMeteoView_(node_id);
         const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
+        if (stack_view)
+        {
+            web.requestStackMeteo_(node_id);
+            web.requestStackIndexState_(node_id);
+        }
         const uint8_t page_size = 8u;
         const String page_str = web.paramValueAny_(request, "page");
         uint8_t page_idx = 0;
@@ -215,6 +220,8 @@ void MeteoHandler::handleMeteoList(WebInterface &web, AsyncWebServerRequest *req
         }
         if (stack_view)
         {
+            web.requestStackMeteo_(node_id);
+            web.requestStackIndexState_(node_id);
             if (!groups_available)
             {
                 const size_t visible = web.stackMeteoVisibleCount_(node_id);
@@ -262,7 +269,6 @@ void MeteoHandler::handleMeteoState(WebInterface &web, AsyncWebServerRequest *re
             const bool partial = has_snapshot && has_cache && snapshot.meteo_enabled > cache.meteo_count;
             if (stale || partial)
             {
-                web.requestStackMeteo_(node_id);
                 doc["pending"] = true;
             }
             else

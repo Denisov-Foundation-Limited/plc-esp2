@@ -445,8 +445,41 @@ void SepticHandler::handleSepticToggle(WebInterface &web, AsyncWebServerRequest 
 
         if (web.isStackSepticView_(node_id))
         {
-            (void)action;
-            web.sendText_(request, 200, "text/plain", "not migrated", set_cookie);
+            StackUnitSnapshot::State snapshot{};
+            if (action == "state")
+            {
+                if (!web.network() || !web.network()->stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+                {
+                    web.requestStackSeptic_(node_id);
+                    web.sendText_(request, 200, "text/plain", "pending", set_cookie);
+                    return;
+                }
+                send_state(snapshot.septic_monitoring_on,
+                           snapshot.septic_warning > 0,
+                           snapshot.septic_alert > 0,
+                           snapshot.septic_relay_warning_on,
+                           snapshot.septic_relay_alarm_on);
+                return;
+            }
+
+            DynamicJsonDocument doc(96);
+            doc["id"] = id;
+            if (action == "on")
+                doc["monitor"] = true;
+            else if (action == "off")
+                doc["monitor"] = false;
+            else if (web.network() && web.network()->stackIndexState(node_id, snapshot) && snapshot.updated_ms != 0)
+                doc["monitor"] = !snapshot.septic_monitoring_on;
+            else
+                doc["monitor"] = true;
+
+            if (!web.network() || !web.network()->stackRoute().sendEvent(node_id, "septic", "set", &doc, StackRouteAdapter::Mode::Json))
+            {
+                web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
+                return;
+            }
+            web.requestStackSeptic_(node_id);
+            web.sendText_(request, 200, "text/plain", "pending", set_cookie);
             return;
         }
 

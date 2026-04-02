@@ -311,8 +311,12 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       const url = new URL(window.location.href);
       return url.searchParams.get('page') || '1';
     })();
+    let tanksListBusy = false;
+    let tanksStackWarmup = 0;
     async function loadTanksList() {
       if (!tanksGrid) return;
+      if (tanksListBusy) return;
+      tanksListBusy = true;
       try {
         const url = new URL('/tanks/list', window.location.origin);
         const cur = new URL(window.location.href);
@@ -329,8 +333,19 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
         tanksGrid.innerHTML = await res.text();
         bindTankHandlers();
         refreshTankSelects();
+        if (tanksIsStackView) {
+          const hasTiles = !!tanksGrid.querySelector('.tile:not(.empty)');
+          if (!hasTiles && tanksStackWarmup < 6) {
+            tanksStackWarmup++;
+            setTimeout(() => loadTanksList(), 900);
+          } else if (hasTiles) {
+            tanksStackWarmup = 0;
+          }
+        }
       } catch (e) {
         tanksGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+      } finally {
+        tanksListBusy = false;
       }
     }
     function labelFor(type, val) {
@@ -477,8 +492,8 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
       }
     }
     const tanksQs = new URLSearchParams(window.location.search);
-    const tanksIsStackView = tanksQs.get('unit') === 'stack';
-    const tanksNodeId = tanksQs.get('node') || '';
+    const tanksNodeId = tanksQs.get('node') || tanksQs.get('node_id') || '';
+    const tanksIsStackView = tanksQs.get('unit') === 'stack' || !!tanksNodeId;
     async function postTankToggle(id, action) {
       let body = 'id=' + encodeURIComponent(String(id)) + '&action=' + encodeURIComponent(action || 'toggle');
       if (tanksIsStackView && tanksNodeId) {
@@ -566,6 +581,9 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     }
     bindTankHandlers();
     async function pollTankTilesState() {
+      if (tanksIsStackView && tanksGrid && !tanksGrid.querySelector('.tile:not(.empty)')) {
+        loadTanksList();
+      }
       const controls = Array.from(document.querySelectorAll('input.tank-power'));
       for (const el of controls) {
         if (!el || el.dataset.busy === '1') continue;
@@ -586,6 +604,13 @@ const char kWebInterfaceTanksHtml[] PROGMEM = R"HTML(
     }
     setTimeout(pollTankTilesState, 600);
     setInterval(pollTankTilesState, tanksIsStackView ? 2500 : 2000);
+    setInterval(() => {
+      if (!tanksIsStackView) return;
+      const active = document.activeElement;
+      if (window.__plcDirty || tanksDirty) return;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'SELECT' || active.tagName === 'TEXTAREA')) return;
+      loadTanksList();
+    }, 5000);
     const scrollKey = 'tanks_scroll_y';
     const savedScroll = sessionStorage.getItem(scrollKey);
     if (savedScroll) {

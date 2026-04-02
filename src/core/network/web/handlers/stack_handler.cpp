@@ -273,7 +273,11 @@ void StackHandler::handleOnlineSnapshot(WebInterface &web, AsyncWebServerRequest
                              has_cache &&
                              snapshot.updated_ms != 0 &&
                              cache.socket_count >= snapshot.sockets_enabled &&
-                             cache.light_count >= snapshot.lights_enabled;
+                             cache.light_count >= snapshot.lights_enabled &&
+                             cache.meteo_count >= snapshot.meteo_enabled &&
+                             cache.thermo_count >= snapshot.thermo_enabled &&
+                             cache.tank_count >= snapshot.tanks_enabled &&
+                             cache.leak_count >= snapshot.leak_enabled;
             }
             if (!first)
                 out += ",";

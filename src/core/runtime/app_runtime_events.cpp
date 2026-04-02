@@ -222,6 +222,7 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
         self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id);
         self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id);
         self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id);
+        self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Leak, node_id);
         self->core.logs.info(F("STACK"), F("Sync slave %s system info"), label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
                                                    StackRouteAdapter::Mode::Json, true);
@@ -262,6 +263,13 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
         self->core.logs.info(F("STACK"), F("Sync slave %s tanks: 0-7"),
                              label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &tanks_doc,
+                                                   StackRouteAdapter::Mode::Json, true);
+        DynamicJsonDocument leak_doc(64);
+        leak_doc["offset"] = 0;
+        leak_doc["limit"] = StackUnitSnapshot::kPageSize;
+        self->core.logs.info(F("STACK"), F("Sync slave %s leak: 0-7"),
+                             label.length() ? label.c_str() : "unknown");
+        self->net.network.stackRoute().sendRequest(node_id, "leak", "snapshot_req", &leak_doc,
                                                    StackRouteAdapter::Mode::Json, true);
         auto &sec = self->control.controllers.security();
         auto sec_guard = sec.lockGuard();
@@ -734,7 +742,24 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.tanks_enabled = tanks_summary["enabled"] | 0;
             state.tanks_alert = tanks_summary["alert"] | 0;
             state.septic_enabled = septic_summary["enabled"] | 0;
+            state.septic_warning = septic_summary["warning"] | 0;
             state.septic_alert = septic_summary["alert"] | 0;
+            state.septic_monitoring_on = septic_summary["monitor"].is<bool>() ? septic_summary["monitor"].as<bool>()
+                                                                              : (septic_summary["monitor"].as<int>() != 0);
+            state.septic_relay_warning_on =
+                septic_summary["relay_warning_on"].is<bool>() ? septic_summary["relay_warning_on"].as<bool>()
+                                                               : (septic_summary["relay_warning_on"].as<int>() != 0);
+            state.septic_relay_alarm_on =
+                septic_summary["relay_alarm_on"].is<bool>() ? septic_summary["relay_alarm_on"].as<bool>()
+                                                             : (septic_summary["relay_alarm_on"].as<int>() != 0);
+            state.septic_group_id = (uint8_t)(septic_summary["group_id"] | 0);
+            state.septic_warning_port = (uint8_t)(septic_summary["warning_port"] | SepticController::kInvalidPort);
+            state.septic_alarm_port = (uint8_t)(septic_summary["alarm_port"] | SepticController::kInvalidPort);
+            state.septic_relay_warning_port =
+                (uint8_t)(septic_summary["relay_warning_port"] | SepticController::kInvalidPort);
+            state.septic_relay_alarm_port =
+                (uint8_t)(septic_summary["relay_alarm_port"] | SepticController::kInvalidPort);
+            strlcpy(state.septic_name, septic_summary["name"] | "", sizeof(state.septic_name));
             state.watering_enabled = watering_summary["enabled"] | 0;
             state.watering_active = watering_summary["active"] | 0;
             state.security_enabled = security_summary["enabled"] | false;
@@ -760,6 +785,8 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.ring_enabled = ring_summary["enabled"] | false;
             state.ring_on = ring_summary["on"] | false;
             state.avr_enabled = avr_summary["enabled"] | false;
+            state.avr_main_ok = avr_summary["main_ok"] | false;
+            state.avr_reserve_ok = avr_summary["reserve_ok"] | false;
             state.avr_fault = avr_summary["fault"] | false;
             state.avr_active_source = (uint8_t)(avr_summary["active_source_id"] | 0);
             state.leak_enabled = leak_summary["enabled"] | 0;
@@ -899,6 +926,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             {
                 JsonObject septic = summary["septic"].to<JsonObject>();
                 septic["enabled"] = septic_summary["enabled"] | 0;
+                septic["warning"] = septic_summary["warning"] | 0;
                 septic["alert"] = septic_summary["alert"] | 0;
             }
             if (!watering_summary.isNull())
@@ -938,6 +966,8 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             {
                 JsonObject avr = summary["avr"].to<JsonObject>();
                 avr["enabled"] = avr_summary["enabled"] | false;
+                avr["main_ok"] = avr_summary["main_ok"] | false;
+                avr["reserve_ok"] = avr_summary["reserve_ok"] | false;
                 avr["fault"] = avr_summary["fault"] | false;
                 avr["active_source"] = avr_summary["active_source"] | "off";
             }
@@ -961,6 +991,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.tanks_enabled = tanks_summary["enabled"] | 0;
             state.tanks_alert = tanks_summary["alert"] | 0;
             state.septic_enabled = septic_summary["enabled"] | 0;
+            state.septic_warning = septic_summary["warning"] | 0;
             state.septic_alert = septic_summary["alert"] | 0;
             state.watering_enabled = watering_summary["enabled"] | 0;
             state.watering_active = watering_summary["active"] | 0;
@@ -987,6 +1018,8 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.ring_enabled = ring_summary["enabled"] | false;
             state.ring_on = ring_summary["on"] | false;
             state.avr_enabled = avr_summary["enabled"] | false;
+            state.avr_main_ok = avr_summary["main_ok"] | false;
+            state.avr_reserve_ok = avr_summary["reserve_ok"] | false;
             state.avr_fault = avr_summary["fault"] | false;
             state.avr_active_source = (uint8_t)(avr_summary["active_source_id"] | 0);
             state.leak_enabled = leak_summary["enabled"] | 0;
@@ -1759,6 +1792,87 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         handleTankFrame_(node_id, action, params);
         return;
     }
+    if (strcmp(route.feature, "leak") == 0)
+    {
+        if (action == "snapshot_req")
+        {
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            uint16_t limit = (uint16_t)(params["limit"] | StackUnitSnapshot::kPageSize);
+            if (limit == 0 || limit > StackUnitSnapshot::kPageSize)
+                limit = StackUnitSnapshot::kPageSize;
+            DynamicJsonDocument doc(2048);
+            appendLeakSnapshotPage_(doc.to<JsonObject>(), offset, limit);
+            net.network.stackSlaveSendResponse(route.source_node, "leak", "snapshot",
+                                               route.meta.request_id, &doc);
+            return;
+        }
+        if (action == "snapshot")
+        {
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            const uint16_t total = (uint16_t)(params["total"] | 0);
+            const uint16_t summary_total = (uint16_t)(params["summary"]["leak"]["enabled"] | 0);
+            const uint16_t alert_total = (uint16_t)(params["summary"]["leak"]["alert"] | 0);
+            uint8_t item_count = 0;
+            const JsonArrayConst leak_items = params["controllers"]["leak"].as<JsonArrayConst>();
+            memset(_stack_leak_page_items, 0, sizeof(_stack_leak_page_items));
+            if (!leak_items.isNull())
+            {
+                for (JsonObjectConst item : leak_items)
+                {
+                    if (item_count >= StackUnitSnapshot::kPageSize)
+                        break;
+                    auto &dst = _stack_leak_page_items[item_count];
+                    dst.id = (uint8_t)(item["id"] | 0);
+                    dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                             : (item["enabled"].as<int>() != 0);
+                    dst.power_on = item["power_on"].is<bool>() ? item["power_on"].as<bool>()
+                                                               : (item["power_on"].as<int>() != 0);
+                    dst.sensor_active_low = item["sensor_active_low"].is<bool>() ? item["sensor_active_low"].as<bool>()
+                                                                                 : (item["sensor_active_low"].as<int>() != 0);
+                    dst.sensor_port = (uint8_t)(item["sensor"] | LeakController::kInvalidPort);
+                    dst.valve_port = (uint8_t)(item["valve"] | LeakController::kInvalidPort);
+                    dst.alarm_port = (uint8_t)(item["alarm"] | LeakController::kInvalidPort);
+                    dst.wet = item["wet"].is<bool>() ? item["wet"].as<bool>()
+                                                     : (item["wet"].as<int>() != 0);
+                    dst.alarm_latched = item["alarm_latched"].is<bool>() ? item["alarm_latched"].as<bool>()
+                                                                         : (item["alarm_latched"].as<int>() != 0);
+                    dst.valve_closed = item["valve_closed"].is<bool>() ? item["valve_closed"].as<bool>()
+                                                                       : (item["valve_closed"].as<int>() != 0);
+                    dst.alarm_on = item["alarm_on"].is<bool>() ? item["alarm_on"].as<bool>()
+                                                               : (item["alarm_on"].as<int>() != 0);
+                    strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
+                    ++item_count;
+                }
+            }
+            net.network.completeStackPageRequest(StackUnitSnapshot::PageKind::Leak, node_id, offset);
+            net.network.updateStackIndexLeaksPage(node_id, offset, total > 0 ? total : summary_total, alert_total,
+                                                  _stack_leak_page_items, item_count, millis());
+            StackUnitSnapshot::State state{};
+            StackUnitSnapshot::CacheState cache{};
+            if (net.network.stackIndexState(node_id, state) && net.network.stackIndexCacheState(node_id, cache))
+            {
+                const uint16_t expected_total = (total > 0) ? total : summary_total;
+                const uint16_t target_total =
+                    (expected_total > StackUnitSnapshot::kLeakCount) ? (uint16_t)StackUnitSnapshot::kLeakCount
+                                                                     : expected_total;
+                if (target_total > 0 && cache.leak_count < target_total)
+                {
+                    const uint16_t next_offset = cache.leak_count;
+                    if (net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Leak, node_id, millis(),
+                                                            next_offset, 4000u))
+                    {
+                        _pending_stack_leak_page = true;
+                        _pending_stack_leak_node_id = node_id;
+                        _pending_stack_leak_offset = next_offset;
+                        _pending_stack_leak_limit = StackUnitSnapshot::kPageSize;
+                        _pending_stack_leak_log = false;
+                    }
+                }
+            }
+            return;
+        }
+        return;
+    }
     if (strcmp(route.feature, "watering") == 0)
     {
         handleWateringFrame_(node_id, action, params);
@@ -2321,6 +2435,61 @@ void AppRuntime::appendTankSnapshotPage_(JsonObject root, uint16_t offset, uint1
     root["total"] = tanks_enabled;
 }
 
+void AppRuntime::appendLeakSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const{
+    JsonObject summary = root["summary"].to<JsonObject>();
+    JsonObject leak_summary = summary["leak"].to<JsonObject>();
+    JsonObject controllers_out = root["controllers"].to<JsonObject>();
+    JsonArray leak_out = controllers_out["leak"].to<JsonArray>();
+
+    uint16_t leak_enabled = 0;
+    uint16_t leak_alert = 0;
+    uint16_t current_index = 0;
+
+    LeakController &leak = control.controllers.leak();
+    auto guard = leak.lockGuard();
+    for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+    {
+        const auto *cfg = leak.configByIndex(i);
+        const auto *st = leak.stateByIndex(i);
+        if (!cfg || !st || !cfg->enabled)
+            continue;
+
+        ++leak_enabled;
+        if (st->wet || st->alarm_latched)
+            ++leak_alert;
+
+        if (current_index < offset)
+        {
+            ++current_index;
+            continue;
+        }
+        if ((uint16_t)leak_out.size() >= limit)
+            continue;
+
+        JsonObject o = leak_out.add<JsonObject>();
+        o["id"] = cfg->id;
+        o["enabled"] = true;
+        o["power_on"] = cfg->power_on;
+        o["sensor_active_low"] = cfg->sensor_active_low;
+        o["sensor"] = cfg->sensor_port;
+        o["valve"] = cfg->valve_port;
+        o["alarm"] = cfg->alarm_port;
+        o["wet"] = st->wet;
+        o["alarm_latched"] = st->alarm_latched;
+        o["valve_closed"] = st->valve_closed;
+        o["alarm_on"] = st->alarm_on;
+        if (cfg->name.length())
+            o["name"] = sanitizeUtf8_(cfg->name);
+        ++current_index;
+    }
+
+    leak_summary["enabled"] = leak_enabled;
+    leak_summary["alert"] = leak_alert;
+    root["offset"] = offset;
+    root["limit"] = limit;
+    root["total"] = leak_enabled;
+}
+
 void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
     appendSocketSnapshotSummary_(root);
     JsonObject summary = root["summary"].to<JsonObject>();
@@ -2386,24 +2555,51 @@ void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
     tanks_out["alert"] = tanks_alert;
 
     uint16_t septic_enabled = 0;
+    uint16_t septic_warning = 0;
     uint16_t septic_alert = 0;
     {
         SepticController &septic = control.controllers.septic();
         auto guard = septic.lockGuard();
+        const SepticController::SepticConfig *summary_cfg = nullptr;
+        const SepticController::SepticState *summary_st = nullptr;
         for (size_t i = 0; i < SepticController::kSepticCount; ++i)
         {
             const auto *cfg = septic.configByIndex(i);
             const auto *st = septic.stateByIndex(i);
             if (!cfg || !st || !cfg->enabled)
                 continue;
+            if (!summary_cfg)
+            {
+                summary_cfg = cfg;
+                summary_st = st;
+            }
             ++septic_enabled;
-            if (st->warning || st->alarm)
+            if (st->warning)
+                ++septic_warning;
+            if (st->alarm)
                 ++septic_alert;
         }
+        JsonObject septic_out = summary["septic"].to<JsonObject>();
+        septic_out["enabled"] = septic_enabled;
+        septic_out["warning"] = septic_warning;
+        septic_out["alert"] = septic_alert;
+        if (summary_cfg)
+        {
+            septic_out["monitor"] = summary_cfg->monitoring_on;
+            septic_out["group_id"] = summary_cfg->group_id;
+            septic_out["warning_port"] = summary_cfg->warning_port;
+            septic_out["alarm_port"] = summary_cfg->alarm_port;
+            septic_out["relay_warning_port"] = summary_cfg->relay_warning;
+            septic_out["relay_alarm_port"] = summary_cfg->relay_alarm;
+            if (summary_cfg->name.length())
+                septic_out["name"] = summary_cfg->name;
+        }
+        if (summary_st)
+        {
+            septic_out["relay_warning_on"] = summary_st->relay_warning;
+            septic_out["relay_alarm_on"] = summary_st->relay_alarm;
+        }
     }
-    JsonObject septic_out = summary["septic"].to<JsonObject>();
-    septic_out["enabled"] = septic_enabled;
-    septic_out["alert"] = septic_alert;
 
     uint16_t watering_enabled = 0;
     uint16_t watering_active = 0;
@@ -2473,6 +2669,8 @@ void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
         auto guard = avr.lockGuard();
         JsonObject avr_out = summary["avr"].to<JsonObject>();
         avr_out["enabled"] = avr.controllerEnabled() && avr.config().enabled;
+        avr_out["main_ok"] = avr.state().main_ok;
+        avr_out["reserve_ok"] = avr.state().reserve_ok;
         avr_out["fault"] = avr.fault() != AvrController::Fault::None;
         avr_out["active_source"] = AvrController::sourceName(avr.activeSource());
         avr_out["active_source_id"] = (uint8_t)avr.activeSource();
@@ -2500,6 +2698,25 @@ void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
 }
 
 void AppRuntime::handleSepticFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
+    if (action == "set")
+    {
+        SepticController &septic = control.controllers.septic();
+        const uint8_t septic_id = (uint8_t)(params["id"] | 1);
+        bool changed = false;
+        if (params.containsKey("monitor"))
+        {
+            const bool monitor_on = params["monitor"].is<bool>() ? params["monitor"].as<bool>()
+                                                                 : (params["monitor"].as<int>() != 0);
+            changed = septic.setMonitoring(septic_id, monitor_on) || changed;
+        }
+        if (params.containsKey("enabled"))
+        {
+            const bool enabled = params["enabled"].is<bool>() ? params["enabled"].as<bool>()
+                                                              : (params["enabled"].as<int>() != 0);
+            changed = septic.setEnabled(septic_id, enabled) || changed;
+        }
+        return;
+    }
     if (action != "level")
         return;
     const String level = params["level"] | "";
@@ -2924,6 +3141,47 @@ void AppRuntime::flushPendingStackTanksPage_(){
     else
     {
         logStackSendFailDiag_(node_id, "tanks", offset, range_end);
+    }
+}
+
+void AppRuntime::flushPendingStackLeakPage_(){
+    if (!_pending_stack_leak_page)
+        return;
+    if (!stackMasterActive_())
+        return;
+    _pending_stack_leak_page = false;
+    const bool log_sync = _pending_stack_leak_log;
+    _pending_stack_leak_log = false;
+
+    const uint32_t node_id = _pending_stack_leak_node_id;
+    const uint16_t offset = _pending_stack_leak_offset;
+    uint16_t limit = _pending_stack_leak_limit;
+    if (node_id == 0)
+        return;
+    if (limit == 0)
+        limit = StackUnitSnapshot::kPageSize;
+
+    DynamicJsonDocument req(64);
+    req["offset"] = offset;
+    req["limit"] = limit;
+
+    const uint16_t range_end = (uint16_t)(offset + limit - 1u);
+    const String label = stackNodeLabel_(node_id);
+
+    const bool sent = net.network.stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
+                                                           StackRouteAdapter::Mode::Json, true);
+    if (sent)
+    {
+        if (log_sync)
+        {
+            core.logs.info(F("STACK"), F("Sync slave %s leak: %u-%u"),
+                           label.length() ? label.c_str() : "unknown",
+                           (unsigned)offset, (unsigned)range_end);
+        }
+    }
+    else
+    {
+        logStackSendFailDiag_(node_id, "leak", offset, range_end);
     }
 }
 

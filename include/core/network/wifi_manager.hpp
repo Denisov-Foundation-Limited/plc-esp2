@@ -50,6 +50,8 @@ public:
     bool staEnabled() const;
     bool ap() const;
     bool apEnabled() const;
+    bool staActive() const;
+    bool apActive() const;
     const String &apSsid() const;
     const String &apPassword() const;
     bool isConnected() const;

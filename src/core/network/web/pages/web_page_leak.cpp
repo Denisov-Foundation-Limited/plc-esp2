@@ -324,6 +324,9 @@ const char kWebInterfaceLeakHtml[] PROGMEM = R"HTML(
         location.href = '/leak?node=' + encodeURIComponent(v) + '&unit=stack';
       });
     })();
+    if (window.__plcSetupIdleReload) {
+      window.__plcSetupIdleReload(6000);
+    }
   </script>
 </body>
 </html>

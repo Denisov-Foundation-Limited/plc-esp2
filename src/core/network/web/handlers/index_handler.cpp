@@ -72,21 +72,29 @@ void IndexHandler::handleIndex(WebInterface &web, AsyncWebServerRequest *request
             return;
         const uint32_t now_ms = millis();
         const uint32_t free_heap = ESP.getFreeHeap();
+        const uint32_t node_id = web.parseStackNodeIdParam_(request);
+        const bool stack_view = isStackIndexView_(web, node_id);
+        const bool can_edit_device = web.webSessionIsAdmin_();
+        auto sendCachedOrBusy = [&]() {
+            if (canUseIndexPageCache_(now_ms, node_id, stack_view, can_edit_device))
+            {
+                web.sendHtml_(request, g_index_page_cache, set_cookie);
+                return;
+            }
+            web.sendText_(request, 503, "text/plain", "WEB busy", set_cookie);
+        };
         if (g_index_request_inflight.exchange(true, std::memory_order_acq_rel))
         {
-            web.sendText_(request, 503, "text/plain", "WEB busy", set_cookie);
+            sendCachedOrBusy();
             return;
         }
         if (free_heap < kIndexLowHeapBytes ||
             requestTooFrequentIndex_(g_last_index_request_ms, now_ms, kIndexMinIntervalMs))
         {
             g_index_request_inflight.store(false, std::memory_order_release);
-            web.sendText_(request, 503, "text/plain", "WEB busy", set_cookie);
+            sendCachedOrBusy();
             return;
         }
-        const uint32_t node_id = web.parseStackNodeIdParam_(request);
-        const bool stack_view = isStackIndexView_(web, node_id);
-        const bool can_edit_device = web.webSessionIsAdmin_();
         String page;
         if (canUseIndexPageCache_(now_ms, node_id, stack_view, can_edit_device))
         {

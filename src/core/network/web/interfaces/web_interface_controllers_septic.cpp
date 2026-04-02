@@ -30,6 +30,21 @@ void loadLocalSepticItems_(SepticController &septic, WebInterface::ScratchBuffer
         scratch.septic_st[i] = *st;
     }
 }
+
+bool waitForStackSepticState_(WebInterface &web, uint32_t node_id, uint32_t timeout_ms = 700u)
+{
+    if (!web.network() || node_id == 0)
+        return false;
+    const uint32_t started_ms = millis();
+    while ((uint32_t)(millis() - started_ms) < timeout_ms)
+    {
+        StackUnitSnapshot::State snapshot{};
+        if (web.network()->stackIndexState(node_id, snapshot) && snapshot.updated_ms != 0)
+            return true;
+        delay(25);
+    }
+    return false;
+}
 }
 
 size_t WebInterfaceControllersSepticHelper::septicLocalRenderCount_(const WebInterface &web) {
@@ -87,9 +102,18 @@ String WebInterfaceControllersSepticHelper::septicDeviceSelectHtml_(const WebInt
     }
 
 String WebInterfaceControllersSepticHelper::stackSepticStatusText_(const WebInterface &web, uint32_t node_id) {
-            (void)web;
-            (void)node_id;
-            return WebUiRu::kNoDataFromSlave;
+            if (!web.network() || node_id == 0)
+                return WebUiRu::kNoDataFromSlave;
+            StackUnitSnapshot::State snapshot{};
+            if (!web.network()->stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+                return WebUiRu::kNoDataFromSlave;
+            if (snapshot.septic_enabled == 0)
+                return WebUiRu::Septic::kDisabledStatus;
+            if (snapshot.septic_alert > 0)
+                return "ALARM";
+            if (snapshot.septic_warning > 0)
+                return "WARN";
+            return WebUiRu::kStatusOk;
     }
 
 bool WebInterfaceControllersSepticHelper::isStackSepticView_(const WebInterface &web, uint32_t node_id) {
@@ -100,23 +124,125 @@ bool WebInterfaceControllersSepticHelper::isStackSepticView_(const WebInterface 
     }
 
 bool WebInterfaceControllersSepticHelper::requestStackSeptic_(WebInterface &web, uint32_t node_id) {
-        (void)web;
-        (void)node_id;
-        return false;
+        if (!web.network() || node_id == 0)
+            return false;
+        const bool refresh = web.requestStackIndexState_(node_id);
+        const bool sent = web.network()->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
+                                                                  StackRouteAdapter::Mode::Json, true);
+        return refresh || sent;
     }
 
 size_t WebInterfaceControllersSepticHelper::stackSepticVisibleCount_(const WebInterface &web, uint32_t node_id) {
-        (void)web;
-        (void)node_id;
-        return 0;
+        StackUnitSnapshot::State snapshot{};
+        if (!web.network() || !web.network()->stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+        {
+            const_cast<WebInterface &>(web).requestStackSeptic_(node_id);
+            waitForStackSepticState_(const_cast<WebInterface &>(web), node_id);
+            if (!web.network() || !web.network()->stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+                return 0;
+        }
+        return snapshot.septic_enabled > 0 ? 1u : 0u;
     }
 
 String WebInterfaceControllersSepticHelper::listStackSepticHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
-            (void)web;
-            (void)node_id;
             (void)offset;
             (void)limit;
-            return WebUiRu::Septic::kText;
+            StackUnitSnapshot::State snapshot{};
+            if (!web.network() || !web.network()->stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+            {
+                web.requestStackSeptic_(node_id);
+                waitForStackSepticState_(web, node_id);
+                if (!web.network() || !web.network()->stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+                    return WebUiRu::kNoDataFromSlave;
+            }
+            if (snapshot.septic_enabled == 0)
+                return WebUiRu::Septic::kText;
+
+            const bool warn = snapshot.septic_warning > 0;
+            const bool alarm = snapshot.septic_alert > 0;
+            const bool relay_warn = snapshot.septic_relay_warning_on;
+            const bool relay_alarm = snapshot.septic_relay_alarm_on;
+            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Septic, 1, node_id);
+            const bool has_groups = web.hasGroups_(node_id);
+            const char *water_class = "water-low";
+            const char *water_level = "20%";
+            const char *water_label = WebUiRu::Septic::kText20;
+            if (alarm)
+            {
+                water_class = "water-alarm";
+                water_level = "100%";
+                water_label = WebUiRu::Septic::kText100;
+            }
+            else if (warn)
+            {
+                water_class = "water-warn";
+                water_level = "80%";
+                water_label = WebUiRu::Septic::kText80;
+            }
+
+            String items;
+            items.reserve(3072);
+            items += "<div class=\"tile js-group-item\" data-group-id=\"";
+            items += String((unsigned)snapshot.septic_group_id);
+            items += "\"";
+            items += web.groupVisibilityStyleAttr_(snapshot.septic_group_id, node_id);
+            items += "><div class=\"septic-visual\"><div class=\"liquid ";
+            items += water_class;
+            items += "\" style=\"height:";
+            items += water_level;
+            items += ";\"></div><div class=\"level-label\">";
+            items += water_label;
+            items += "</div></div><div><div class=\"tile-head\"><div><strong>Септик #1</strong>";
+            if (!snapshot.septic_enabled)
+                items += " <span class=\"badge\">выкл</span>";
+            items += "</div></div>";
+
+            items += String("<div class=\"form-row\"><label>") + WebUiRu::Septic::kLabelName + "</label><input class=\"field name\" type=\"text\" readonly value=\"";
+            web.appendHtmlEscaped_(items, snapshot.septic_name);
+            items += "\"></div>";
+
+            items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" disabled>";
+            items += web.groupOptionsHtml_(snapshot.septic_group_id, true, true, node_id);
+            items += "</select></div>";
+
+            items += "<div class=\"form-grid\">";
+            items += "<div class=\"form-row\"><label>Предупр.</label><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
+            if (snapshot.septic_warning_port != SepticController::kInvalidPort)
+                items += String((unsigned)snapshot.septic_warning_port);
+            items += "\" disabled></select></div>";
+            items += "<div class=\"form-row\"><label>Тревога</label><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
+            if (snapshot.septic_alarm_port != SepticController::kInvalidPort)
+                items += String((unsigned)snapshot.septic_alarm_port);
+            items += "\" disabled></select></div>";
+            items += "<div class=\"form-row\"><label>Реле предупр.</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
+            if (snapshot.septic_relay_warning_port != SepticController::kInvalidPort)
+                items += String((unsigned)snapshot.septic_relay_warning_port);
+            items += "\" disabled></select></div>";
+            items += "<div class=\"form-row\"><label>Реле тревоги</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
+            if (snapshot.septic_relay_alarm_port != SepticController::kInvalidPort)
+                items += String((unsigned)snapshot.septic_relay_alarm_port);
+            items += "\" disabled></select></div>";
+            items += "</div>";
+
+            items += "<div class=\"status-grid\"><div class=\"status-line\"><span class=\"status-dot ";
+            items += warn ? "status-on" : "status-off";
+            items += "\"></span><span>Датчик предупреждения</span></div><div class=\"status-line\"><span class=\"status-dot ";
+            items += alarm ? "status-on" : "status-off";
+            items += "\"></span><span>Датчик тревоги</span></div><div class=\"status-line\"><span class=\"status-dot ";
+            items += relay_warn ? "status-on" : "status-off";
+            items += "\"></span><span>Реле предупреждения</span></div><div class=\"status-line\"><span class=\"status-dot ";
+            items += relay_alarm ? "status-on" : "status-off";
+            items += "\"></span><span>Реле тревоги</span></div></div>";
+            items += "<div class=\"form-row\" style=\"margin-top:8px;\"><label>Мониторинг</label><label class=\"switch\"><input type=\"checkbox\" class=\"septic-monitor\" data-action=\"sep1_mon\"";
+            if (snapshot.septic_monitoring_on)
+                items += " checked";
+            if (!can_control || !snapshot.septic_enabled)
+                items += " disabled";
+            items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+            items += "<input type=\"hidden\" name=\"sep1_mon\" value=\"";
+            items += snapshot.septic_monitoring_on ? "on" : "off";
+            items += "\"></div></div>";
+            return items;
     }
 
 String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, size_t offset, size_t limit) {
@@ -177,31 +303,41 @@ String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, s
             items += "<div class=\"tile js-group-item";
             if (!cfg.enabled)
                 items += " disabled";
-                items += "\" data-group-id=\"";
-                items += String((unsigned)cfg.group_id);
-                items += "\"";
-                items += web.groupVisibilityStyleAttr_(cfg.group_id);
-                items += "><div class=\"septic-visual\"><div class=\"liquid ";
+            items += "\" data-group-id=\"";
+            items += String((unsigned)cfg.group_id);
+            items += "\"";
+            items += web.groupVisibilityStyleAttr_(cfg.group_id);
+            items += ">";
+
+            items += "<div class=\"septic-visual\">";
+            items += "<div class=\"liquid ";
             items += water_class;
             items += "\" style=\"height:";
             items += water_level;
-            items += ";\"></div><div class=\"level-label\">";
+            items += ";\"></div>";
+            items += "<div class=\"level-label\">";
             items += water_label;
-            items += WebUiRu::Septic::kNum;
+            items += "</div>";
+            items += "</div>";
+
+            items += "<div>";
+            items += "<div class=\"tile-head\"><div><strong>Септик #";
             items += String((unsigned)cfg.id);
             items += "</strong>";
             if (!cfg.enabled)
-                items += WebUiRu::Septic::kText3;
+                items += " <span class=\"badge\">выкл</span>";
+            items += "</div>";
             if (can_control)
             {
-                items += "</div><label class=\"switch\"><input type=\"checkbox\" name=\"sep";
+                items += "<label class=\"switch\"><input type=\"checkbox\" name=\"sep";
                 items += String((unsigned)cfg.id);
                 items += "_en\"";
                 if (cfg.enabled)
                     items += " checked";
                 items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
             }
-            items += "</div></div>";
+            items += "</div>";
+
             if (can_control)
             {
                 items += String("<div class=\"form-row\"><label>") + WebUiRu::Septic::kLabelName + "</label><input class=\"field name\" type=\"text\" name=\"sep";
@@ -209,6 +345,7 @@ String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, s
                 items += "_name\" value=\"";
                 web.appendHtmlEscaped_(items, cfg.name.c_str());
                 items += "\"></div>";
+
                 items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" name=\"sep";
                 items += String((unsigned)cfg.id);
                 items += "_group\"";
@@ -217,39 +354,57 @@ String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, s
                 items += ">";
                 items += web.groupOptionsHtml_(cfg.group_id, true, true);
                 items += "</select></div>";
-                items += WebUiRu::Septic::kSelectClassFieldMiniSepticSelectData;
+
+                items += "<div class=\"form-grid\">";
+
+                items += "<div class=\"form-row\"><label>Предупр.</label><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
                 if (cfg.warning_port != SepticController::kInvalidPort)
                     items += String((unsigned)cfg.warning_port);
                 items += "\" name=\"sep";
                 items += String((unsigned)cfg.id);
-                items += WebUiRu::Septic::kWarnSelectClassFieldMiniSepticSelect;
+                items += "_warn\"></select></div>";
+
+                items += "<div class=\"form-row\"><label>Тревога</label><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
                 if (cfg.alarm_port != SepticController::kInvalidPort)
                     items += String((unsigned)cfg.alarm_port);
                 items += "\" name=\"sep";
                 items += String((unsigned)cfg.id);
-                items += WebUiRu::Septic::kAlarmSelectClassFieldMiniSepticSelect;
+                items += "_alarm\"></select></div>";
+
+                items += "<div class=\"form-row\"><label>Реле предупр.</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
                 if (cfg.relay_warning != SepticController::kInvalidPort)
                     items += String((unsigned)cfg.relay_warning);
                 items += "\" name=\"sep";
                 items += String((unsigned)cfg.id);
-                items += WebUiRu::Septic::kRelayWarnSelectClassFieldMiniSeptic;
+                items += "_relay_warn\"></select></div>";
+
+                items += "<div class=\"form-row\"><label>Реле тревоги</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
                 if (cfg.relay_alarm != SepticController::kInvalidPort)
                     items += String((unsigned)cfg.relay_alarm);
                 items += "\" name=\"sep";
                 items += String((unsigned)cfg.id);
-                items += "_relay_alarm\"></select></div></div>";
+                items += "_relay_alarm\"></select></div>";
+                items += "</div>";
             }
-            items += "<div class=\"status-grid\"><div class=\"status-line\"><span class=\"status-dot ";
+
+            items += "<div class=\"status-grid\">";
+            items += "<div class=\"status-line\"><span class=\"status-dot ";
             items += warn ? "status-on" : "status-off";
-            items += WebUiRu::Septic::kSpanClassStatusDot;
+            items += "\"></span><span>Датчик предупреждения</span></div>";
+            items += "<div class=\"status-line\"><span class=\"status-dot ";
             items += alarm ? "status-on" : "status-off";
-            items += WebUiRu::Septic::kSpanClassStatusDot2;
+            items += "\"></span><span>Датчик тревоги</span></div>";
+            items += "<div class=\"status-line\"><span class=\"status-dot ";
             items += relay_warn ? "status-on" : "status-off";
-            items += WebUiRu::Septic::kSpanClassStatusDot3;
+            items += "\"></span><span>Реле предупреждения</span></div>";
+            items += "<div class=\"status-line\"><span class=\"status-dot ";
             items += relay_alarm ? "status-on" : "status-off";
+            items += "\"></span><span>Реле тревоги</span></div>";
+            items += "</div>";
+
             if (can_control)
             {
-                items += WebUiRu::Septic::kInputTypeCheckboxClassSepticMonitorData2;
+                items += "<div class=\"form-row\" style=\"margin-top:8px;\"><label>Мониторинг</label><label class=\"switch\"><input type=\"checkbox\" class=\"septic-monitor\" data-action=\"sep";
                 items += String((unsigned)cfg.id);
                 items += "_mon\"";
                 if (cfg.monitoring_on)
@@ -260,12 +415,10 @@ String WebInterfaceControllersSepticHelper::listSepticHtml_(WebInterface &web, s
                 items += String((unsigned)cfg.id);
                 items += "_mon\" value=\"";
                 items += cfg.monitoring_on ? "on" : "off";
-                items += "\"></div></div></div>";
+                items += "\"></div>";
             }
-            else
-            {
-                items += "</div></div></div>";
-            }
+
+            items += "</div></div>";
             ++rendered;
         }
         if (items.length() == 0)

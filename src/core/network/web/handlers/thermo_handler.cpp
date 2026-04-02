@@ -42,6 +42,8 @@ void ThermoHandler::handleThermo(WebInterface &web, AsyncWebServerRequest *reque
         uint8_t max_pages = 1;
         if (stack_view)
         {
+            web.requestStackThermo_(node_id);
+            web.requestStackIndexState_(node_id);
             if (!groups_available)
             {
                 const size_t visible = web.stackThermoVisibleCount_(node_id);
@@ -220,6 +222,8 @@ void ThermoHandler::handleThermoList(WebInterface &web, AsyncWebServerRequest *r
         }
         if (stack_view)
         {
+            web.requestStackThermo_(node_id);
+            web.requestStackIndexState_(node_id);
             if (!groups_available)
             {
                 const size_t visible = web.stackThermoVisibleCount_(node_id);

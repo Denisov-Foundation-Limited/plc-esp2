@@ -13,6 +13,62 @@
 
 #include "core/network/web/web_interface.hpp"
 
+namespace
+{
+bool waitForStackLeakCache_(WebInterface &web, uint32_t node_id, uint32_t timeout_ms = 700u)
+{
+    if (!web.network() || node_id == 0)
+        return false;
+    const uint32_t started_ms = millis();
+    while ((uint32_t)(millis() - started_ms) < timeout_ms)
+    {
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        if (web.network()->stackIndexState(node_id, snapshot) && web.network()->stackIndexCacheState(node_id, cache) &&
+            cache.leak_count > 0)
+            return true;
+        delay(25);
+    }
+    return false;
+}
+
+bool requestStackLeak_(WebInterface &web, uint32_t node_id)
+{
+    if (!web.network() || node_id == 0)
+        return false;
+    const uint32_t now = millis();
+    StackUnitSnapshot::State snapshot{};
+    StackUnitSnapshot::CacheState cache{};
+    const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+    const bool has_cache = web.network()->stackIndexCacheState(node_id, cache);
+    if (!has_snapshot || snapshot.updated_ms == 0 || (uint32_t)(now - snapshot.updated_ms) > 5000u ||
+        !has_cache || cache.leak_count == 0)
+    {
+        if (web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Leak, node_id, now, 0, 4000u))
+        {
+            DynamicJsonDocument req(64);
+            req["offset"] = 0;
+            req["limit"] = StackUnitSnapshot::kPageSize;
+            const bool sent = web.network()->stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
+                                                                      StackRouteAdapter::Mode::Json, true);
+            return sent;
+        }
+        return false;
+    }
+    if (snapshot.leak_enabled > cache.leak_count)
+    {
+        if (!web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Leak, node_id, now, cache.leak_count, 4000u))
+            return true;
+        DynamicJsonDocument req(64);
+        req["offset"] = cache.leak_count;
+        req["limit"] = StackUnitSnapshot::kPageSize;
+        return web.network()->stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
+                                                       StackRouteAdapter::Mode::Json, true);
+    }
+    return true;
+}
+}
+
 void LeakHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
         server.on("/leak", HTTP_POST, [&web](AsyncWebServerRequest *request) { handleLeakSave(web, request); });
         server.on("/leak", HTTP_GET, [&web](AsyncWebServerRequest *request) { handleLeak(web, request); });
@@ -38,6 +94,7 @@ void LeakHandler::handleLeak(WebInterface &web, AsyncWebServerRequest *request) 
         uint8_t max_pages = 1;
         if (stack_view)
         {
+            requestStackLeak_(web, node_id);
             max_pages = 1;
             page_idx = 0;
         }
@@ -349,9 +406,16 @@ String LeakHandler::leakDeviceSelectHtml_(WebInterface &web, uint32_t selected_n
     }
 
 String LeakHandler::stackLeakStatusText_(WebInterface &web, uint32_t node_id) {
-        (void)web;
-        (void)node_id;
-        return "not migrated";
+        if (!web.network() || node_id == 0)
+            return WebUiRu::kNoDataFromSlave;
+        StackUnitSnapshot::State snapshot{};
+        if (!web.network()->stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+            return WebUiRu::kNoDataFromSlave;
+        if (snapshot.leak_enabled == 0)
+            return WebUiRu::kStatusOk;
+        if (snapshot.leak_alert > 0)
+            return "ALARM";
+        return WebUiRu::kStatusOk;
     }
 
 bool LeakHandler::sendStackLeakSet_(WebInterface &web, uint32_t node_id, JsonArray *zones, bool ack_all) {
@@ -379,9 +443,23 @@ String LeakHandler::portValue_(uint8_t port) {
     }
 
 size_t LeakHandler::stackLeakVisibleCount_(WebInterface &web, uint32_t node_id) {
-    (void)web;
-    (void)node_id;
-    return 0;
+    StackUnitSnapshot::State snapshot{};
+    StackUnitSnapshot::CacheState cache{};
+    if (!web.network() || !web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache))
+    {
+        requestStackLeak_(web, node_id);
+        waitForStackLeakCache_(web, node_id);
+        if (!web.network() || !web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache))
+            return 0;
+    }
+    if (cache.leak_count == 0 && snapshot.leak_enabled > 0)
+    {
+        requestStackLeak_(web, node_id);
+        waitForStackLeakCache_(web, node_id);
+        web.network()->stackIndexState(node_id, snapshot);
+        web.network()->stackIndexCacheState(node_id, cache);
+    }
+    return cache.leak_count;
     }
 
 size_t LeakHandler::localLeakVisibleCount_(WebInterface &web, uint32_t node_id) {
@@ -417,7 +495,94 @@ String LeakHandler::buildRows_(WebInterface &web, uint32_t node_id, bool stack_v
     if (!web._controllers)
         return String("<div class=\"tile tile-empty\">") + WebUiRu::Common::kControllersUnavailable + "</div>";
     if (stack_view)
-        return String("<div class=\"tile tile-empty\">not migrated</div>");
+    {
+        requestStackLeak_(web, node_id);
+        waitForStackLeakCache_(web, node_id);
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        if (!web.network() || !web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache))
+            return String("<div class=\"tile tile-empty\">") + WebUiRu::kNoDataFromSlave + "</div>";
+        if (cache.leak_count == 0 && snapshot.leak_enabled > 0)
+        {
+            requestStackLeak_(web, node_id);
+            waitForStackLeakCache_(web, node_id);
+            web.network()->stackIndexState(node_id, snapshot);
+            web.network()->stackIndexCacheState(node_id, cache);
+        }
+        if (cache.leak_count == 0)
+            return String("<div class=\"tile tile-empty\">") + WebUiRu::Leak::kNoLeakZones + "</div>";
+
+        String rows;
+        rows.reserve(cache.leak_count * 900u);
+        const size_t page_limit = (limit == 0) ? SIZE_MAX : limit;
+        size_t rendered = 0;
+        size_t visible_idx = 0;
+        web.network()->forEachStackLeak(node_id, cache.leak_count, [&](uint8_t, const StackUnitSnapshot::LeakItem &item) {
+            if (rendered >= page_limit)
+                return;
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Leak, (uint16_t)item.id, node_id))
+                return;
+            if (visible_idx < offset)
+            {
+                ++visible_idx;
+                return;
+            }
+            ++visible_idx;
+            const bool alert = item.wet || item.alarm_latched;
+            rows += "<div class=\"tile";
+            rows += item.enabled ? "" : " disabled";
+            rows += alert ? " alert" : "";
+            rows += "\"><div class=\"tile-head\"><div class=\"tile-left\"><svg class=\"leak-icon\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+            rows += "<path fill=\"currentColor\" d=\"M32 8c8 12 18 24 18 34 0 9.9-8.1 18-18 18s-18-8.1-18-18c0-10 10-22 18-34z\"/>";
+            rows += "<path d=\"M32 14l14 5v11c0 9.8-5.8 18.4-14 21.8-8.2-3.4-14-12-14-21.8V19l14-5z\" fill=\"none\" stroke=\"#0b1220\" stroke-width=\"3\"/>";
+            rows += "</svg><div class=\"tile-id\">";
+            rows += WebUiRu::Leak::kLabelZonePrefix;
+            rows += String((unsigned)item.id);
+            rows += "</div></div><div class=\"badge-row\"><span class=\"badge\">";
+            rows += WebUiRu::Leak::kBadgeWater;
+            rows += item.wet ? "1" : "0";
+            rows += "</span><span class=\"badge\">";
+            rows += WebUiRu::Leak::kBadgeLatch;
+            rows += item.alarm_latched ? "1" : "0";
+            rows += "</span></div></div><div class=\"tile-grid\">";
+            rows += "<div class=\"field-row full\"><label class=\"field-label\">";
+            rows += WebUiRu::Leak::kLabelName;
+            rows += "</label><input type=\"text\" readonly value=\"";
+            if (item.name[0])
+                web.appendHtmlEscaped_(rows, item.name);
+            else
+            {
+                String fallback = String(WebUiRu::Leak::kLabelZonePrefix) + String((unsigned)item.id);
+                web.appendHtmlEscaped_(rows, fallback.c_str());
+            }
+            rows += "\"></div>";
+            rows += "<div class=\"field-row\"><label class=\"field-label\">";
+            rows += WebUiRu::Leak::kLabelSensor;
+            rows += "</label><input type=\"text\" readonly value=\"";
+            rows += item.sensor_port == LeakController::kInvalidPort ? "-" : String((unsigned)item.sensor_port);
+            rows += "\"></div>";
+            rows += "<div class=\"field-row\"><label class=\"field-label\">";
+            rows += WebUiRu::Leak::kLabelValve;
+            rows += "</label><input type=\"text\" readonly value=\"";
+            rows += item.valve_port == LeakController::kInvalidPort ? "-" : String((unsigned)item.valve_port);
+            rows += "\"></div>";
+            rows += "<div class=\"field-row\"><label class=\"field-label\">";
+            rows += WebUiRu::Leak::kLabelAlarm;
+            rows += "</label><input type=\"text\" readonly value=\"";
+            rows += item.alarm_port == LeakController::kInvalidPort ? "-" : String((unsigned)item.alarm_port);
+            rows += "\"></div>";
+            rows += "<div class=\"field-row\"><label class=\"field-label\">";
+            rows += WebUiRu::Leak::kTogglePower;
+            rows += "</label><input type=\"text\" readonly value=\"";
+            rows += item.power_on ? "on" : "off";
+            rows += "\"></div>";
+            rows += "<div class=\"field-row\"><label class=\"field-label\">State</label><input type=\"text\" readonly value=\"";
+            rows += alert ? "alarm" : "dry";
+            rows += "\"></div></div></div>";
+            ++rendered;
+        });
+        return rows.length() ? rows : String("<div class=\"tile tile-empty\">") + WebUiRu::Leak::kNoLeakZones + "</div>";
+    }
     LeakController &leak = web._controllers->leak();
     auto leak_guard = leak.lockGuard();
     String rows;

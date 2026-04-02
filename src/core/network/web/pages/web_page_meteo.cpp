@@ -159,7 +159,7 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     .name { width: 100%; }
     .grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: 1fr;
       gap: 14px;
       margin-top: 10px;
     }
@@ -285,6 +285,17 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       margin: 8px 0 10px;
       flex-wrap: wrap;
     }
+    @media (min-width: 1100px) {
+      .wrap { max-width: 1500px; }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .tile { grid-template-columns: 180px minmax(0, 1fr); align-items: stretch; }
+      .sensor-visual { min-height: 180px; height: 100%; }
+      .form-grid { grid-template-columns: 1fr; }
+    }
+    @media (min-width: 1680px) {
+      .wrap { max-width: 1980px; }
+      .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
     @media (max-width: 720px) {
       .wrap { margin: 20px auto; }
       .card { padding: 16px; }
@@ -326,12 +337,25 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     const sensorOptions = %SENSOR_JSON%;
     const sensorUsed = %SENSOR_USED_JSON%;
     const meteoGrid = document.getElementById('meteo-grid');
+    let meteoListBusy = false;
+    const meteoWarmupKey = 'meteo_stack_warmup';
+    function applyMeteoGroupFilter() {
+      const sel = document.getElementById('meteo-group-filter');
+      if (!sel) return;
+      const v = String(sel.value || '0');
+      document.querySelectorAll('.js-group-item').forEach((el) => {
+        const g = String(el.getAttribute('data-group-id') || '0');
+        el.style.display = (v === '0' || g === v) ? '' : 'none';
+      });
+    }
     const meteoPageValue = (() => {
       const url = new URL(window.location.href);
       return url.searchParams.get('page') || '1';
     })();
     async function loadMeteoList() {
       if (!meteoGrid) return;
+      if (meteoListBusy) return;
+      meteoListBusy = true;
       try {
         const url = new URL('/meteo/list', window.location.origin);
         const cur = new URL(window.location.href);
@@ -346,10 +370,22 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
           return;
         }
         meteoGrid.innerHTML = await res.text();
+        applyMeteoGroupFilter();
         bindMeteoHandlers();
         refreshMeteoPins();
+        if (meteoIsStackView && meteoGrid.querySelector('.tile.empty')) {
+          const n = parseInt(sessionStorage.getItem(meteoWarmupKey) || '0', 10);
+          if (n < 6) {
+            sessionStorage.setItem(meteoWarmupKey, String(n + 1));
+            setTimeout(() => loadMeteoList(), 900);
+          }
+        } else {
+          sessionStorage.removeItem(meteoWarmupKey);
+        }
       } catch (e) {
         meteoGrid.innerHTML = '<div class="tile empty">WEB busy</div>';
+      } finally {
+        meteoListBusy = false;
       }
     }
 
@@ -395,6 +431,18 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     if (meteoForm) {
       meteoForm.addEventListener('input', () => { meteoDirty = true; });
       meteoForm.addEventListener('change', () => { meteoDirty = true; });
+    }
+    const meteoGroupFilter = document.getElementById('meteo-group-filter');
+    if (meteoGroupFilter) {
+      meteoGroupFilter.addEventListener('change', applyMeteoGroupFilter);
+      applyMeteoGroupFilter();
+    }
+    function meteoEditingNow() {
+      if (meteoDirty) return true;
+      const active = document.activeElement;
+      if (!active) return false;
+      const tag = active.tagName || '';
+      return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
     }
     const reloadKey = 'meteo_reload';
     if (sessionStorage.getItem(reloadKey)) {
@@ -473,7 +521,8 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     }
 
     function updateRow(row) {
-      const stackView = (new URLSearchParams(window.location.search)).get('unit') === 'stack';
+      const qs = new URLSearchParams(window.location.search);
+      const stackView = qs.get('unit') === 'stack' || !!(qs.get('node') || qs.get('node_id'));
       const type = row.querySelector('select.meteo-type');
       const pinCell = row.querySelector('.pin-cell');
       const addrCell = row.querySelector('.addr-cell');
@@ -578,7 +627,7 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     setInterval(pollRemoteSources, 3000);
 
     const meteoQs = new URLSearchParams(window.location.search);
-    const meteoIsStackView = meteoQs.get('unit') === 'stack';
+    const meteoIsStackView = meteoQs.get('unit') === 'stack' || !!(meteoQs.get('node') || meteoQs.get('node_id'));
     const meteoNodeId = meteoQs.get('node') || '';
     function formatMeteoValue(v) {
       if (typeof v !== 'number' || Number.isNaN(v)) return '--';
@@ -606,7 +655,7 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
       }
       const temp = tile.querySelector('.sensor-temp-value');
       if (temp) {
-        temp.textContent = (item.has_temp ? formatMeteoValue(item.temp) : '--') + ' °C';
+        temp.textContent = item.has_temp ? formatMeteoValue(item.temp) : '--';
       }
       const hum = tile.querySelector('.sensor-hum-value');
       if (hum) {
@@ -634,8 +683,15 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
         const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
         if (!res.ok) return;
         const data = await res.json();
+        if (meteoIsStackView && data && data.pending) {
+          loadMeteoList();
+          return;
+        }
         const map = new Map();
         const list = Array.isArray(data.items) ? data.items : [];
+        if (meteoIsStackView && list.length && meteoGrid && meteoGrid.querySelector('.tile.empty')) {
+          loadMeteoList();
+        }
         list.forEach((it) => map.set(String(it.id), it));
         tiles.forEach((tile) => {
           const id = tile.dataset.sensorId || '';
@@ -646,8 +702,14 @@ const char kWebInterfaceMeteoHtml[] PROGMEM = R"HTML(
     }
     setTimeout(pollMeteoStates, 500);
     setInterval(pollMeteoStates, 2000);
+    setInterval(() => {
+      if (meteoEditingNow()) return;
+      loadMeteoList();
+    }, meteoIsStackView ? 5000 : 7000);
     refreshMeteoPins();
     if (meteoIsStackView) {
+      const n = parseInt(sessionStorage.getItem(meteoWarmupKey) || '0', 10);
+      if (n >= 6) sessionStorage.removeItem(meteoWarmupKey);
       loadMeteoList();
     }
     bindMeteoHandlers();

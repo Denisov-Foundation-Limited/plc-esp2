@@ -265,6 +265,39 @@ bool StackUnitSnapshot::tanksPage(uint32_t node_id, uint8_t offset, TankItem *ou
     return entry && copyPage_<TankItem, kTankCount>(entry->tanks.items, entry->cache.tank_count, offset, out, capacity, out_count);
 }
 
+bool StackUnitSnapshot::leakById(uint32_t node_id, uint8_t id, LeakItem &out) const
+{
+    if (node_id == 0 || id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyItemById_<LeakItem, kLeakCount>(entry->leaks.items, entry->cache.leak_count, id, out);
+}
+
+bool StackUnitSnapshot::leakAt(uint32_t node_id, uint8_t index, LeakItem &out) const
+{
+    if (node_id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyItemAt_<LeakItem, kLeakCount>(entry->leaks.items, entry->cache.leak_count, index, out);
+}
+
+bool StackUnitSnapshot::leaksPage(uint32_t node_id, uint8_t offset, LeakItem *out, uint8_t capacity, uint8_t &out_count) const
+{
+    if (node_id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyPage_<LeakItem, kLeakCount>(entry->leaks.items, entry->cache.leak_count, offset, out, capacity, out_count);
+}
+
 bool StackUnitSnapshot::prepareSocketsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
 {
     return preparePageRequest_(node_id, PageKind::Sockets, now_ms, offset, pending_ms);
@@ -288,6 +321,11 @@ bool StackUnitSnapshot::prepareThermoPageRequest(uint32_t node_id, uint32_t now_
 bool StackUnitSnapshot::prepareTanksPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
 {
     return preparePageRequest_(node_id, PageKind::Tanks, now_ms, offset, pending_ms);
+}
+
+bool StackUnitSnapshot::prepareLeakPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
+{
+    return preparePageRequest_(node_id, PageKind::Leak, now_ms, offset, pending_ms);
 }
 
 void StackUnitSnapshot::completeSocketsPageRequest(uint32_t node_id, uint16_t offset)
@@ -315,6 +353,11 @@ void StackUnitSnapshot::completeTanksPageRequest(uint32_t node_id, uint16_t offs
     completePageRequest_(node_id, PageKind::Tanks, offset);
 }
 
+void StackUnitSnapshot::completeLeakPageRequest(uint32_t node_id, uint16_t offset)
+{
+    completePageRequest_(node_id, PageKind::Leak, offset);
+}
+
 void StackUnitSnapshot::clearSocketsPageRequest(uint32_t node_id)
 {
     clearPageRequest_(node_id, PageKind::Sockets);
@@ -338,6 +381,11 @@ void StackUnitSnapshot::clearThermoPageRequest(uint32_t node_id)
 void StackUnitSnapshot::clearTanksPageRequest(uint32_t node_id)
 {
     clearPageRequest_(node_id, PageKind::Tanks);
+}
+
+void StackUnitSnapshot::clearLeakPageRequest(uint32_t node_id)
+{
+    clearPageRequest_(node_id, PageKind::Leak);
 }
 
 void StackUnitSnapshot::clearPending(uint32_t node_id)
@@ -479,6 +527,25 @@ void StackUnitSnapshot::applyTanksPage(uint32_t node_id, uint16_t offset, uint16
     entry->state.tanks_enabled = enabled_total;
     entry->state.tanks_alert = alert_total;
     entry->cache.tank_count = applyPage_(entry->tanks, offset, items, item_count);
+}
+
+void StackUnitSnapshot::applyLeaksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
+                                       const LeakItem *items, uint8_t item_count, uint32_t updated_ms)
+{
+    if (node_id == 0)
+        return;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return;
+    Entry *entry = allocEntry_(node_id);
+    if (!entry)
+        return;
+    entry->used = true;
+    entry->state.node_id = node_id;
+    entry->state.updated_ms = updated_ms ? updated_ms : millis();
+    entry->state.leak_enabled = enabled_total;
+    entry->state.leak_alert = alert_total;
+    entry->cache.leak_count = applyPage_(entry->leaks, offset, items, item_count);
 }
 
 void StackUnitSnapshot::invalidate(uint32_t node_id)
@@ -656,7 +723,17 @@ void StackUnitSnapshot::mergeControllerSummary_(State &dst, const State &src)
     dst.tanks_enabled = src.tanks_enabled;
     dst.tanks_alert = src.tanks_alert;
     dst.septic_enabled = src.septic_enabled;
+    dst.septic_warning = src.septic_warning;
     dst.septic_alert = src.septic_alert;
+    dst.septic_monitoring_on = src.septic_monitoring_on;
+    dst.septic_relay_warning_on = src.septic_relay_warning_on;
+    dst.septic_relay_alarm_on = src.septic_relay_alarm_on;
+    dst.septic_group_id = src.septic_group_id;
+    dst.septic_warning_port = src.septic_warning_port;
+    dst.septic_alarm_port = src.septic_alarm_port;
+    dst.septic_relay_warning_port = src.septic_relay_warning_port;
+    dst.septic_relay_alarm_port = src.septic_relay_alarm_port;
+    memcpy(dst.septic_name, src.septic_name, sizeof(dst.septic_name));
     dst.watering_enabled = src.watering_enabled;
     dst.watering_active = src.watering_active;
     dst.security_sensors_enabled = src.security_sensors_enabled;
@@ -671,6 +748,8 @@ void StackUnitSnapshot::mergeControllerSummary_(State &dst, const State &src)
     dst.ring_enabled = src.ring_enabled;
     dst.ring_on = src.ring_on;
     dst.avr_enabled = src.avr_enabled;
+    dst.avr_main_ok = src.avr_main_ok;
+    dst.avr_reserve_ok = src.avr_reserve_ok;
     dst.avr_fault = src.avr_fault;
     dst.avr_active_source = src.avr_active_source;
 }
@@ -693,8 +772,10 @@ StackUnitSnapshot::PageRequestState &StackUnitSnapshot::pageRequestState_(Entry 
         case PageKind::Thermo:
             return entry.thermo_request;
         case PageKind::Tanks:
-        default:
             return entry.tanks_request;
+        case PageKind::Leak:
+        default:
+            return entry.leak_request;
     }
 }
 
@@ -711,8 +792,10 @@ const StackUnitSnapshot::PageRequestState &StackUnitSnapshot::pageRequestState_(
         case PageKind::Thermo:
             return entry.thermo_request;
         case PageKind::Tanks:
-        default:
             return entry.tanks_request;
+        case PageKind::Leak:
+        default:
+            return entry.leak_request;
     }
 }
 

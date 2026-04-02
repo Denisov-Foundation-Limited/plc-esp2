@@ -58,6 +58,7 @@ bool Display::begin()
     memset(_last_hw_line0, 0, sizeof(_last_hw_line0));
     memset(_last_hw_line1, 0, sizeof(_last_hw_line1));
     _custom_chars_ready = false;
+    _last_resync_ms = millis();
     _line0 = F("      FCPLC     ");
     _line1 = F("Denisov Fnd Ltd.");
     return true;
@@ -101,19 +102,31 @@ void Display::task()
 
     const char *target0 = have_rendered_slots ? line0 : _line0.c_str();
     const char *target1 = have_rendered_slots ? line1 : _line1.c_str();
-    const bool line0_changed = strncmp(_last_hw_line0, target0, 16) != 0;
-    const bool line1_changed = strncmp(_last_hw_line1, target1, 16) != 0;
-    if (_custom_chars_ready && !line0_changed && !line1_changed)
+    bool line0_changed = strncmp(_last_hw_line0, target0, 16) != 0;
+    bool line1_changed = strncmp(_last_hw_line1, target1, 16) != 0;
+    const uint32_t now = millis();
+    const bool need_resync = _custom_chars_ready && (uint32_t)(now - _last_resync_ms) >= kResyncIntervalMs;
+    if (_custom_chars_ready && !line0_changed && !line1_changed && !need_resync)
         return;
 
     I2CManager::ScopedBusLock lk(_i2c, _bus_num);
     if (!lk.locked())
         return;
 
+    if (need_resync)
+    {
+        _lcd.resync();
+        _custom_chars_ready = false;
+        line0_changed = true;
+        line1_changed = true;
+        _last_resync_ms = now;
+    }
     if (!_custom_chars_ready)
     {
         _lcd.createChar(kDegreeChar, kDegreeCharMap_);
         _custom_chars_ready = true;
+        line0_changed = true;
+        line1_changed = true;
     }
     if (line0_changed)
     {

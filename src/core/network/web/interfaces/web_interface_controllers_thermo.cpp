@@ -28,6 +28,23 @@ bool stackThermoRequestState_(const WebInterface &web, uint32_t node_id, StackUn
     return web.network() && node_id != 0 && web.network()->stackIndexRequestState(node_id, out);
 }
 
+bool waitForStackThermoCache_(WebInterface &web, uint32_t node_id, uint32_t timeout_ms = 700u)
+{
+    if (!web.network() || node_id == 0)
+        return false;
+    const uint32_t started_ms = millis();
+    while ((uint32_t)(millis() - started_ms) < timeout_ms)
+    {
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        if (web.network()->stackIndexState(node_id, snapshot) && web.network()->stackIndexCacheState(node_id, cache) &&
+            cache.thermo_count > 0)
+            return true;
+        delay(25);
+    }
+    return false;
+}
+
 bool requestNextStackThermoPage_(WebInterface &web, uint32_t node_id, uint16_t offset, uint16_t limit)
 {
     if (!web.network() || node_id == 0 || limit == 0)
@@ -196,8 +213,11 @@ bool WebInterfaceControllersThermoHelper::requestStackThermo_(WebInterface &web,
         const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
         const bool has_cache = web.network()->stackIndexCacheState(node_id, cache);
         const bool has_request = web.network()->stackIndexRequestState(node_id, request);
+        if (has_request && request.pending && (uint32_t)(now - request.started_ms) < 1500u)
+            return true;
         if (!has_snapshot || snapshot.updated_ms == 0 ||
-            (uint32_t)(now - snapshot.updated_ms) > 5000u)
+            (uint32_t)(now - snapshot.updated_ms) > 5000u ||
+            !has_cache || cache.thermo_count == 0)
         {
             const bool refresh = web.requestStackIndexState_(node_id);
             DynamicJsonDocument req(64);
@@ -207,8 +227,6 @@ bool WebInterfaceControllersThermoHelper::requestStackThermo_(WebInterface &web,
                                                                             StackRouteAdapter::Mode::Json, true);
             return refresh || thermo_req;
         }
-        if (has_request && request.pending && (uint32_t)(now - request.started_ms) < 1500u)
-            return true;
         if (has_cache && snapshot.thermo_enabled > cache.thermo_count)
         {
             if (!web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id, now,
@@ -223,7 +241,19 @@ size_t WebInterfaceControllersThermoHelper::stackThermoVisibleCount_(const WebIn
             StackUnitSnapshot::State snapshot{};
             StackUnitSnapshot::CacheState cache{};
             if (!stackThermoState_(web, node_id, snapshot) || !stackThermoCacheState_(web, node_id, cache))
+            {
+                const_cast<WebInterface &>(web).requestStackThermo_(node_id);
+                waitForStackThermoCache_(const_cast<WebInterface &>(web), node_id);
+            }
+            if (!stackThermoState_(web, node_id, snapshot) || !stackThermoCacheState_(web, node_id, cache))
                 return 0;
+            if (cache.thermo_count == 0 && snapshot.thermo_enabled > 0)
+            {
+                const_cast<WebInterface &>(web).requestStackThermo_(node_id);
+                waitForStackThermoCache_(const_cast<WebInterface &>(web), node_id);
+                stackThermoState_(web, node_id, snapshot);
+                stackThermoCacheState_(web, node_id, cache);
+            }
             if (cache.thermo_count == 0)
                 return 0;
             const bool can_view_disabled = web.webSessionIsAdmin_();
@@ -243,7 +273,19 @@ String WebInterfaceControllersThermoHelper::listStackThermoHtml_(WebInterface &w
         StackUnitSnapshot::State snapshot{};
         StackUnitSnapshot::CacheState cache{};
         if (!stackThermoState_(web, node_id, snapshot) || !stackThermoCacheState_(web, node_id, cache))
+        {
+            web.requestStackThermo_(node_id);
+            waitForStackThermoCache_(web, node_id);
+        }
+        if (!stackThermoState_(web, node_id, snapshot) || !stackThermoCacheState_(web, node_id, cache))
             return "<div class=\"tile empty\"><strong>Thermo unavailable</strong></div>";
+        if (cache.thermo_count == 0 && snapshot.thermo_enabled > 0)
+        {
+            web.requestStackThermo_(node_id);
+            waitForStackThermoCache_(web, node_id);
+            stackThermoState_(web, node_id, snapshot);
+            stackThermoCacheState_(web, node_id, cache);
+        }
         if (cache.thermo_count == 0)
             return "<div class=\"tile empty\"><strong>Thermo empty</strong></div>";
         auto scratch_guard = web.scratchLockGuard_();

@@ -1250,16 +1250,16 @@ sendRedirect_(request, "/", set_cookie);
 
     String WebInterfaceControllersOps::wifiIp_() const
 {
-        if (_wifi.staEnabled() && _wifi.apEnabled())
+        if (_wifi.staActive() && _wifi.apActive())
         {
             const bool sta_connected = WiFi.status() == WL_CONNECTED;
             const String sta_ip = sta_connected ? WiFi.localIP().toString() : String("disconnected");
             const String ap_ip = WiFi.softAPIP().toString();
             return String("STA: ") + sta_ip + " | AP: " + ap_ip;
         }
-        if (_wifi.apEnabled())
+        if (_wifi.apActive())
             return WiFi.softAPIP().toString();
-        if (_wifi.staEnabled() && WiFi.status() == WL_CONNECTED)
+        if (_wifi.staActive() && WiFi.status() == WL_CONNECTED)
             return WiFi.localIP().toString();
         return "disconnected";
     }

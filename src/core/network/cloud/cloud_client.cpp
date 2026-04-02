@@ -2777,6 +2777,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
 
             JsonObject septic = out.createNestedObject("septic");
             septic["enabled_count"] = snapshot.septic_enabled;
+            septic["warning_count"] = snapshot.septic_warning;
             septic["alert_count"] = snapshot.septic_alert;
             has_any = has_any || (snapshot.septic_enabled > 0);
 
@@ -2799,6 +2800,8 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
 
             JsonObject avr = out.createNestedObject("avr");
             avr["enabled"] = snapshot.avr_enabled;
+            avr["main_ok"] = snapshot.avr_main_ok;
+            avr["reserve_ok"] = snapshot.avr_reserve_ok;
             avr["fault"] = snapshot.avr_fault;
             avr["active_source_id"] = snapshot.avr_active_source;
             avr["active_source"] = snapshot.avr_active_source == (uint8_t)AvrController::Source::Main
@@ -2863,6 +2866,30 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             req["offset"] = cache.thermo_count;
             req["limit"] = StackUnitSnapshot::kPageSize;
             _network->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
+                                               StackRouteAdapter::Mode::Json, true);
+        }
+    }
+    if (snapshot.tanks_enabled > 0 && cache.tank_count < snapshot.tanks_enabled)
+    {
+        if (_network->prepareStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id, now, cache.tank_count,
+                                             4000u))
+        {
+            DynamicJsonDocument req(64);
+            req["offset"] = cache.tank_count;
+            req["limit"] = StackUnitSnapshot::kPageSize;
+            _network->stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &req,
+                                               StackRouteAdapter::Mode::Json, true);
+        }
+    }
+    if (snapshot.leak_enabled > 0 && cache.leak_count < snapshot.leak_enabled)
+    {
+        if (_network->prepareStackPageRequest(StackUnitSnapshot::PageKind::Leak, node_id, now, cache.leak_count,
+                                             4000u))
+        {
+            DynamicJsonDocument req(64);
+            req["offset"] = cache.leak_count;
+            req["limit"] = StackUnitSnapshot::kPageSize;
+            _network->stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
                                                StackRouteAdapter::Mode::Json, true);
         }
     }
@@ -2934,9 +2961,9 @@ uint32_t CloudClient::deviceId_() const
 }
 String CloudClient::localIp_() const
 {
-    if (_wifi.staEnabled() && WiFi.status() == WL_CONNECTED)
+    if (_wifi.staActive() && WiFi.status() == WL_CONNECTED)
         return WiFi.localIP().toString();
-    if (_wifi.apEnabled())
+    if (_wifi.apActive())
         return WiFi.softAPIP().toString();
     return String();
 }

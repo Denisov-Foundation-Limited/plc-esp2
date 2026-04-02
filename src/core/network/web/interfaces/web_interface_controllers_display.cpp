@@ -135,6 +135,57 @@ void forEachDisplayStackDevice_(const WebInterface &web, Fn &&fn)
         fn(device);
     }
 }
+
+bool waitForDisplayStackMeteoCache_(WebInterface &web, uint32_t node_id, uint32_t timeout_ms = 700u)
+{
+    if (!web.network() || node_id == 0)
+        return false;
+    const uint32_t started_ms = millis();
+    while ((uint32_t)(millis() - started_ms) < timeout_ms)
+    {
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        if (web.network()->stackIndexState(node_id, snapshot) && web.network()->stackIndexCacheState(node_id, cache) &&
+            cache.meteo_count > 0)
+            return true;
+        delay(25);
+    }
+    return false;
+}
+
+bool waitForDisplayStackThermoCache_(WebInterface &web, uint32_t node_id, uint32_t timeout_ms = 700u)
+{
+    if (!web.network() || node_id == 0)
+        return false;
+    const uint32_t started_ms = millis();
+    while ((uint32_t)(millis() - started_ms) < timeout_ms)
+    {
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        if (web.network()->stackIndexState(node_id, snapshot) && web.network()->stackIndexCacheState(node_id, cache) &&
+            cache.thermo_count > 0)
+            return true;
+        delay(25);
+    }
+    return false;
+}
+
+bool waitForDisplayStackTankCache_(WebInterface &web, uint32_t node_id, uint32_t timeout_ms = 700u)
+{
+    if (!web.network() || node_id == 0)
+        return false;
+    const uint32_t started_ms = millis();
+    while ((uint32_t)(millis() - started_ms) < timeout_ms)
+    {
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        if (web.network()->stackIndexState(node_id, snapshot) && web.network()->stackIndexCacheState(node_id, cache) &&
+            cache.tank_count > 0)
+            return true;
+        delay(25);
+    }
+    return false;
+}
 }
 
 String WebInterfaceControllersDisplayHelper::displaySlotsHtml_(const WebInterface &web) {
@@ -433,7 +484,51 @@ String WebInterfaceControllersDisplayHelper::displayMeteoOptionsJson_(const WebI
         append_node("0", local);
     
         forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
-            append_node(String((unsigned long)device.node_id), "[]");
+                const uint32_t node_id = device.node_id;
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache) ||
+                    snapshot.updated_ms == 0)
+                {
+                    const_cast<WebInterface &>(web).requestStackMeteo_(node_id);
+                    waitForDisplayStackMeteoCache_(const_cast<WebInterface &>(web), node_id);
+                    if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache) ||
+                        snapshot.updated_ms == 0)
+                    {
+                        append_node(String((unsigned long)node_id), "[]");
+                        return;
+                    }
+                }
+                if (cache.meteo_count == 0 && snapshot.meteo_enabled > 0)
+                {
+                    const_cast<WebInterface &>(web).requestStackMeteo_(node_id);
+                    waitForDisplayStackMeteoCache_(const_cast<WebInterface &>(web), node_id);
+                    web.network()->stackIndexState(node_id, snapshot);
+                    web.network()->stackIndexCacheState(node_id, cache);
+                }
+                String list;
+                list.reserve(256);
+                list += "[";
+                bool first_item = true;
+                web.network()->forEachStackMeteo(node_id, cache.meteo_count, [&](uint8_t, const StackUnitSnapshot::MeteoItem &it) {
+                    if (!it.enabled)
+                        return;
+                    if (!first_item)
+                        list += ",";
+                    list += "{\"v\":";
+                    list += String((unsigned)it.id);
+                    list += ",\"l\":\"";
+                    if (it.name[0])
+                        web.appendJsonEscaped_(list, it.name);
+                    else
+                        list += String("Sensor #") + String((unsigned)it.id);
+                    list += "\"}";
+                    first_item = false;
+                });
+                list += "]";
+                if (snapshot.meteo_enabled > cache.meteo_count)
+                    const_cast<WebInterface &>(web).requestStackMeteo_(node_id);
+                append_node(String((unsigned long)node_id), list);
         });
         out += "}";
         return out;
@@ -488,7 +583,53 @@ String WebInterfaceControllersDisplayHelper::displayThermoOptionsJson_(const Web
         append_node("0", local);
     
         forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
-            append_node(String((unsigned long)device.node_id), "[]");
+                const uint32_t node_id = device.node_id;
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache) ||
+                    snapshot.updated_ms == 0)
+                {
+                    const_cast<WebInterface &>(web).requestStackThermo_(node_id);
+                    waitForDisplayStackThermoCache_(const_cast<WebInterface &>(web), node_id);
+                    web.network()->stackIndexState(node_id, snapshot);
+                    web.network()->stackIndexCacheState(node_id, cache);
+                }
+                if (cache.thermo_count == 0 && snapshot.thermo_enabled > 0)
+                {
+                    const_cast<WebInterface &>(web).requestStackThermo_(node_id);
+                    waitForDisplayStackThermoCache_(const_cast<WebInterface &>(web), node_id);
+                    web.network()->stackIndexState(node_id, snapshot);
+                    web.network()->stackIndexCacheState(node_id, cache);
+                }
+                if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache) ||
+                    snapshot.updated_ms == 0)
+                {
+                    append_node(String((unsigned long)node_id), "[]");
+                    return;
+                }
+                String list;
+                list.reserve(256);
+                list += "[";
+                bool first_item = true;
+                web.network()->forEachStackThermo(node_id, cache.thermo_count, [&](uint8_t, const StackUnitSnapshot::ThermoItem &it) {
+                    if (!it.enabled)
+                        return;
+                    if (!first_item)
+                        list += ",";
+                    list += "{\"v\":";
+                    list += String((unsigned)it.id);
+                    list += ",\"l\":\"";
+                    if (it.name[0])
+                        web.appendJsonEscaped_(list, it.name);
+                    else
+                        list += String("Thermo #") + String((unsigned)it.id);
+                    list += "\"}";
+                    first_item = false;
+                });
+                list += "]";
+                if (snapshot.thermo_enabled > cache.thermo_count)
+                    const_cast<WebInterface &>(web).requestStackThermo_(node_id);
+                append_node(String((unsigned long)node_id), list);
         });
         out += "}";
         return out;
@@ -543,7 +684,53 @@ String WebInterfaceControllersDisplayHelper::displayTankOptionsJson_(const WebIn
         append_node("0", local);
     
         forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
-            append_node(String((unsigned long)device.node_id), "[]");
+                const uint32_t node_id = device.node_id;
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache) ||
+                    snapshot.updated_ms == 0)
+                {
+                    const_cast<WebInterface &>(web).requestStackTanks_(node_id);
+                    waitForDisplayStackTankCache_(const_cast<WebInterface &>(web), node_id);
+                    web.network()->stackIndexState(node_id, snapshot);
+                    web.network()->stackIndexCacheState(node_id, cache);
+                }
+                if (cache.tank_count == 0 && snapshot.tanks_enabled > 0)
+                {
+                    const_cast<WebInterface &>(web).requestStackTanks_(node_id);
+                    waitForDisplayStackTankCache_(const_cast<WebInterface &>(web), node_id);
+                    web.network()->stackIndexState(node_id, snapshot);
+                    web.network()->stackIndexCacheState(node_id, cache);
+                }
+                if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache) ||
+                    snapshot.updated_ms == 0)
+                {
+                    append_node(String((unsigned long)node_id), "[]");
+                    return;
+                }
+                String list;
+                list.reserve(256);
+                list += "[";
+                bool first_item = true;
+                web.network()->forEachStackTank(node_id, cache.tank_count, [&](uint8_t, const StackUnitSnapshot::TankItem &it) {
+                    if (!it.enabled)
+                        return;
+                    if (!first_item)
+                        list += ",";
+                    list += "{\"v\":";
+                    list += String((unsigned)it.id);
+                    list += ",\"l\":\"";
+                    if (it.name[0])
+                        web.appendJsonEscaped_(list, it.name);
+                    else
+                        list += String("Tank #") + String((unsigned)it.id);
+                    list += "\"}";
+                    first_item = false;
+                });
+                list += "]";
+                if (snapshot.tanks_enabled > cache.tank_count)
+                    const_cast<WebInterface &>(web).requestStackTanks_(node_id);
+                append_node(String((unsigned long)node_id), list);
         });
         out += "}";
         return out;
@@ -598,7 +785,13 @@ String WebInterfaceControllersDisplayHelper::displaySepticOptionsJson_(const Web
         append_node("0", local);
     
         forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
-            append_node(String((unsigned long)device.node_id), "[]");
+            StackUnitSnapshot::State snapshot{};
+            if (!web.network()->stackIndexState(device.node_id, snapshot) || snapshot.updated_ms == 0 || snapshot.septic_enabled == 0)
+            {
+                append_node(String((unsigned long)device.node_id), "[]");
+                return;
+            }
+            append_node(String((unsigned long)device.node_id), "[{\"v\":1,\"l\":\"Septic\"}]");
         });
         out += "}";
         return out;
@@ -622,7 +815,13 @@ String WebInterfaceControllersDisplayHelper::displayAvrOptionsJson_(const WebInt
         append_node("0", "[{\"v\":1,\"l\":\"AVR\"}]");
     
         forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
-            append_node(String((unsigned long)device.node_id), "[]");
+            StackUnitSnapshot::State snapshot{};
+            if (!web.network()->stackIndexState(device.node_id, snapshot) || snapshot.updated_ms == 0 || !snapshot.avr_enabled)
+            {
+                append_node(String((unsigned long)device.node_id), "[]");
+                return;
+            }
+            append_node(String((unsigned long)device.node_id), "[{\"v\":1,\"l\":\"AVR\"}]");
         });
         out += "}";
         return out;
@@ -677,7 +876,58 @@ String WebInterfaceControllersDisplayHelper::displayLeakOptionsJson_(const WebIn
         append_node("0", local);
     
         forEachDisplayStackDevice_(web, [&](const StackDeviceRegistry::DeviceInfo &device) {
-            append_node(String((unsigned long)device.node_id), "[]");
+                const uint32_t node_id = device.node_id;
+                StackUnitSnapshot::State snapshot{};
+                StackUnitSnapshot::CacheState cache{};
+                if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache) ||
+                    snapshot.updated_ms == 0)
+                {
+                    const uint32_t now = millis();
+                    if (web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Leak, node_id, now, 0, 4000u))
+                    {
+                        DynamicJsonDocument req(64);
+                        req["offset"] = 0;
+                        req["limit"] = StackUnitSnapshot::kPageSize;
+                        web.network()->stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
+                                                                StackRouteAdapter::Mode::Json, true);
+                    }
+                    append_node(String((unsigned long)node_id), "[]");
+                    return;
+                }
+                String list;
+                list.reserve(256);
+                list += "[";
+                bool first_item = true;
+                web.network()->forEachStackLeak(node_id, cache.leak_count, [&](uint8_t, const StackUnitSnapshot::LeakItem &it) {
+                    if (!it.enabled)
+                        return;
+                    if (!first_item)
+                        list += ",";
+                    list += "{\"v\":";
+                    list += String((unsigned)it.id);
+                    list += ",\"l\":\"";
+                    if (it.name[0])
+                        web.appendJsonEscaped_(list, it.name);
+                    else
+                        list += String("Leak #") + String((unsigned)it.id);
+                    list += "\"}";
+                    first_item = false;
+                });
+                list += "]";
+                if (snapshot.leak_enabled > cache.leak_count)
+                {
+                    const uint32_t now = millis();
+                    if (web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Leak, node_id, now,
+                                                               cache.leak_count, 4000u))
+                    {
+                        DynamicJsonDocument req(64);
+                        req["offset"] = cache.leak_count;
+                        req["limit"] = StackUnitSnapshot::kPageSize;
+                        web.network()->stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
+                                                                StackRouteAdapter::Mode::Json, true);
+                    }
+                }
+                append_node(String((unsigned long)node_id), list);
         });
         out += "}";
         return out;

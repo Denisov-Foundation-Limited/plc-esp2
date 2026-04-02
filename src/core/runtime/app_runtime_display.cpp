@@ -180,7 +180,49 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            memcpy(out, "ERR ", 4);
+            const bool remote_available = remote_node_available(node_id);
+            update_remote_display_state(remote_available);
+            if (!remote_available)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
+                snapshot.updated_ms == 0)
+            {
+                queueDisplayStackSnapshotPage_(node_id, "tanks", 0);
+                return false;
+            }
+            const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
+            if (age_ms > 3000u)
+                queueDisplayStackSnapshotPage_(node_id, "tanks", 0);
+            if (age_ms > kStackNodeStaleMs)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            StackUnitSnapshot::TankItem item{};
+            if (!net.network.stackIndexTankById(node_id, slot.index, item))
+            {
+                if (snapshot.tanks_enabled > cache.tank_count)
+                    queueDisplayStackSnapshotPage_(node_id, "tanks", cache.tank_count);
+                return false;
+            }
+            if (!item.enabled || !item.levels_ok)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            if (item.level_full)
+                memcpy(out, "99% ", 4);
+            else if (item.level_mid)
+                memcpy(out, "66% ", 4);
+            else if (item.level_low)
+                memcpy(out, "33% ", 4);
+            else
+                memcpy(out, "0%  ", 4);
             return true;
         }
         if (!is_slave)
@@ -512,7 +554,28 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            memcpy(out, "ERR ", 4);
+            const bool remote_available = remote_node_available(node_id);
+            update_remote_display_state(remote_available);
+            if (!remote_available)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            StackUnitSnapshot::State snapshot{};
+            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+                return false;
+            const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
+            if (age_ms > kStackNodeStaleMs || snapshot.septic_enabled == 0)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            if (snapshot.septic_alert > 0)
+                memcpy(out, "ALM ", 4);
+            else if (snapshot.septic_warning > 0)
+                memcpy(out, "WRN ", 4);
+            else
+                memcpy(out, "OK  ", 4);
             return true;
         }
         if (!is_slave)
@@ -571,7 +634,32 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            memcpy(out, "ERR ", 4);
+            const bool remote_available = remote_node_available(node_id);
+            update_remote_display_state(remote_available);
+            if (!remote_available)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            StackUnitSnapshot::State snapshot{};
+            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+                return false;
+            const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
+            if (age_ms > kStackNodeStaleMs || !snapshot.avr_enabled)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            if (slot.field == DisplaySlotField::AvrMainOk)
+                memcpy(out, snapshot.avr_main_ok ? "ON  " : "OFF ", 4);
+            else if (slot.field == DisplaySlotField::AvrReserveOk)
+                memcpy(out, snapshot.avr_reserve_ok ? "ON  " : "OFF ", 4);
+            else if (snapshot.avr_active_source == (uint8_t)AvrController::Source::Main)
+                memcpy(out, "MAN ", 4);
+            else if (snapshot.avr_active_source == (uint8_t)AvrController::Source::Reserve)
+                memcpy(out, "RES ", 4);
+            else
+                memcpy(out, "OFF ", 4);
             return true;
         }
         return false;
@@ -595,7 +683,42 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
         if (is_master)
         {
-            memcpy(out, "ERR ", 4);
+            const bool remote_available = remote_node_available(node_id);
+            update_remote_display_state(remote_available);
+            if (!remote_available)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            StackUnitSnapshot::State snapshot{};
+            StackUnitSnapshot::CacheState cache{};
+            if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
+                snapshot.updated_ms == 0)
+            {
+                queueDisplayStackSnapshotPage_(node_id, "leak", 0);
+                return false;
+            }
+            const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
+            if (age_ms > 3000u)
+                queueDisplayStackSnapshotPage_(node_id, "leak", 0);
+            if (age_ms > kStackNodeStaleMs)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            StackUnitSnapshot::LeakItem item{};
+            if (!net.network.stackIndexLeakById(node_id, slot.index, item))
+            {
+                if (snapshot.leak_enabled > cache.leak_count)
+                    queueDisplayStackSnapshotPage_(node_id, "leak", cache.leak_count);
+                return false;
+            }
+            if (!item.enabled)
+                return false;
+            if (item.wet || item.alarm_latched)
+                memcpy(out, "ALRM", 4);
+            else
+                memcpy(out, "DRY ", 4);
             return true;
         }
         return false;

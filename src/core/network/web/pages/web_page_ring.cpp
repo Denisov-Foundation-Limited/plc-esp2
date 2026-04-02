@@ -272,6 +272,9 @@ const char kWebInterfaceRingHtml[] PROGMEM = R"HTML(
         window.location.href = url.toString();
       });
     }
+    if (window.__plcSetupIdleReload) {
+      window.__plcSetupIdleReload(6000);
+    }
   </script>
 </body>
 </html>

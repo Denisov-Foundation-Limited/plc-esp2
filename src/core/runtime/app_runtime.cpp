@@ -144,6 +144,7 @@ void AppRuntime::flushPending()
     flushPendingStackMeteoPage_();
     flushPendingStackThermoPage_();
     flushPendingStackTanksPage_();
+    flushPendingStackLeakPage_();
     flushPendingRfid_();
     flushPendingIButton_();
     flushPendingRingButton_();
@@ -247,6 +248,21 @@ void AppRuntime::taskFlush()
             _pending_stack_tanks_log = false;
         }
     }
+    if (_pending_display_stack_leak_page && !_pending_stack_leak_page)
+    {
+        const uint32_t node_id = _pending_display_stack_leak_node_id;
+        const uint16_t offset = _pending_display_stack_leak_offset;
+        _pending_display_stack_leak_page = false;
+        if (node_id != 0 &&
+            net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Leak, node_id, millis(), offset, 4000u))
+        {
+            _pending_stack_leak_page = true;
+            _pending_stack_leak_node_id = node_id;
+            _pending_stack_leak_offset = offset;
+            _pending_stack_leak_limit = StackUnitSnapshot::kPageSize;
+            _pending_stack_leak_log = false;
+        }
+    }
     flushPending();
 }
 
@@ -335,6 +351,14 @@ bool AppRuntime::requestStackPollFeature_(uint32_t node_id, uint8_t feature){
         return net.network.stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
                                                     StackRouteAdapter::Mode::Json, true);
     }
+    case 7:
+    {
+        DynamicJsonDocument req(64);
+        req["offset"] = 0;
+        req["limit"] = StackUnitSnapshot::kPageSize;
+        return net.network.stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
+                                                    StackRouteAdapter::Mode::Json, true);
+    }
     default: return false;
     }
 }
@@ -352,7 +376,8 @@ bool AppRuntime::bootstrapSyncCompleted_(uint32_t node_id) const{
     const bool meteo_ready = cache.meteo_count >= snapshot.meteo_enabled;
     const bool thermo_ready = cache.thermo_count >= snapshot.thermo_enabled;
     const bool tanks_ready = cache.tank_count >= snapshot.tanks_enabled;
-    return sockets_ready && lights_ready && meteo_ready && thermo_ready && tanks_ready;
+    const bool leak_ready = cache.leak_count >= snapshot.leak_enabled;
+    return sockets_ready && lights_ready && meteo_ready && thermo_ready && tanks_ready && leak_ready;
 }
 
 bool AppRuntime::shouldLogStackBootstrapSync_(uint32_t node_id) const{
@@ -420,6 +445,15 @@ bool AppRuntime::queueDisplayStackSnapshotPage_(uint32_t node_id, const char *fe
         _pending_display_stack_tanks_page = true;
         _pending_display_stack_tanks_node_id = node_id;
         _pending_display_stack_tanks_offset = offset;
+        return true;
+    }
+    if (strcmp(feature, "leak") == 0)
+    {
+        if (_pending_stack_leak_page || _pending_display_stack_leak_page)
+            return false;
+        _pending_display_stack_leak_page = true;
+        _pending_display_stack_leak_node_id = node_id;
+        _pending_display_stack_leak_offset = offset;
         return true;
     }
     return false;
@@ -508,11 +542,13 @@ void AppRuntime::startStackBootstrapSync_(uint32_t node_id){
     _stack_bootstrap_logged_meteo_node_id = 0;
     _stack_bootstrap_logged_thermo_node_id = 0;
     _stack_bootstrap_logged_tanks_node_id = 0;
+    _stack_bootstrap_logged_leak_node_id = 0;
     _stack_bootstrap_logged_sockets_offset = 0xFFFF;
     _stack_bootstrap_logged_lights_offset = 0xFFFF;
     _stack_bootstrap_logged_meteo_offset = 0xFFFF;
     _stack_bootstrap_logged_thermo_offset = 0xFFFF;
     _stack_bootstrap_logged_tanks_offset = 0xFFFF;
+    _stack_bootstrap_logged_leak_offset = 0xFFFF;
     _last_stack_poll_ms = 0; // allow first bootstrap request on the next loop tick
     STACK_BOOTSTRAP_EVT_INFO((*this), "Bootstrap sync start: %s", stackNodeLabel_(node_id).c_str());
     STACK_BOOTSTRAP_DBG((*this), "Bootstrap active: id: 0x%08lX q:%u",
@@ -539,11 +575,13 @@ void AppRuntime::stopStackBootstrapSync_(bool timeout){
     _stack_bootstrap_logged_meteo_node_id = 0;
     _stack_bootstrap_logged_thermo_node_id = 0;
     _stack_bootstrap_logged_tanks_node_id = 0;
+    _stack_bootstrap_logged_leak_node_id = 0;
     _stack_bootstrap_logged_sockets_offset = 0xFFFF;
     _stack_bootstrap_logged_lights_offset = 0xFFFF;
     _stack_bootstrap_logged_meteo_offset = 0xFFFF;
     _stack_bootstrap_logged_thermo_offset = 0xFFFF;
     _stack_bootstrap_logged_tanks_offset = 0xFFFF;
+    _stack_bootstrap_logged_leak_offset = 0xFFFF;
     if (prev_node_id != 0)
         tryStartNextStackBootstrapSync_();
 }

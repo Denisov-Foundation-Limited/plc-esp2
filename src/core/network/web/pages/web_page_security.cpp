@@ -601,8 +601,11 @@ const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
       }
     }
     refreshSecuritySelects();
-    if ((new URL(window.location.href)).searchParams.get('unit') === 'stack') {
+    {
+      const qs = (new URL(window.location.href)).searchParams;
+      if (qs.get('unit') === 'stack' || qs.get('node') || qs.get('node_id')) {
       loadSecurityList();
+      }
     }
     bindSecurityHandlers();
     const securityPage = %SECURITY_SENSORS_PAGE%;
@@ -681,7 +684,8 @@ const char kWebInterfaceSecurityHtml[] PROGMEM = R"HTML(
         if (!res.ok) throw new Error('state fetch failed');
         const payload = await res.json();
         if (!payload.pending) {
-          if ((new URL(window.location.href)).searchParams.get('unit') === 'stack') {
+          const qs = (new URL(window.location.href)).searchParams;
+          if (qs.get('unit') === 'stack' || qs.get('node') || qs.get('node_id')) {
             await loadSecurityList();
           }
           applySecurityState(payload);

@@ -240,6 +240,9 @@ const char kWebInterfaceAvrHtml[] PROGMEM = R"HTML(
         location.href = '/avr?node=' + encodeURIComponent(v) + '&unit=stack';
       });
     })();
+    if (window.__plcSetupIdleReload) {
+      window.__plcSetupIdleReload(6000);
+    }
   </script>
 </body>
 </html>
