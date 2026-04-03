@@ -192,7 +192,12 @@ String WebInterfaceControllersSepticHelper::listStackSepticHtml_(WebInterface &w
             items += water_level;
             items += ";\"></div><div class=\"level-label\">";
             items += water_label;
-            items += "</div></div><div><div class=\"tile-head\"><div><strong>Септик #1</strong>";
+            items += "</div></div><div><div class=\"tile-head\"><div><strong>";
+            if (snapshot.septic_name[0])
+                web.appendHtmlEscaped_(items, snapshot.septic_name);
+            else
+                items += "Септик #1";
+            items += "</strong>";
             if (!snapshot.septic_enabled)
                 items += " <span class=\"badge\">выкл</span>";
             items += "</div></div>";

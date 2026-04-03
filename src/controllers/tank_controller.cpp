@@ -590,15 +590,66 @@ void TankController::readLevels_(const TankController::TankConfig &cfg, TankCont
     bool low = false;
     bool mid = false;
     bool full = false;
+    const uint32_t now = millis();
     const bool ok_low = readInput_(cfg.level_low, low);
     const bool ok_mid = readInput_(cfg.level_mid, mid);
     const bool ok_full = readInput_(cfg.level_full, full);
     if (ok_low)
-        st.level_low = low;
+    {
+        if (!st.levels_initialized)
+        {
+            st.level_low = low;
+            st.level_low_candidate = low;
+            st.level_low_changed_ms = now;
+        }
+        else if (low != st.level_low_candidate)
+        {
+            st.level_low_candidate = low;
+            st.level_low_changed_ms = now;
+        }
+        else if (st.level_low != st.level_low_candidate && (uint32_t)(now - st.level_low_changed_ms) >= kLevelDebounceMs)
+        {
+            st.level_low = st.level_low_candidate;
+        }
+    }
     if (ok_mid)
-        st.level_mid = mid;
+    {
+        if (!st.levels_initialized)
+        {
+            st.level_mid = mid;
+            st.level_mid_candidate = mid;
+            st.level_mid_changed_ms = now;
+        }
+        else if (mid != st.level_mid_candidate)
+        {
+            st.level_mid_candidate = mid;
+            st.level_mid_changed_ms = now;
+        }
+        else if (st.level_mid != st.level_mid_candidate && (uint32_t)(now - st.level_mid_changed_ms) >= kLevelDebounceMs)
+        {
+            st.level_mid = st.level_mid_candidate;
+        }
+    }
     if (ok_full)
-        st.level_full = full;
+    {
+        if (!st.levels_initialized)
+        {
+            st.level_full = full;
+            st.level_full_candidate = full;
+            st.level_full_changed_ms = now;
+        }
+        else if (full != st.level_full_candidate)
+        {
+            st.level_full_candidate = full;
+            st.level_full_changed_ms = now;
+        }
+        else if (st.level_full != st.level_full_candidate && (uint32_t)(now - st.level_full_changed_ms) >= kLevelDebounceMs)
+        {
+            st.level_full = st.level_full_candidate;
+        }
+    }
+    if (ok_low && ok_mid && ok_full)
+        st.levels_initialized = true;
     st.levels_ok = ok_low && ok_mid && ok_full;
     if (!st.levels_ok)
     {
@@ -635,17 +686,20 @@ bool TankController::readInput_(uint8_t port, bool &out){
 void TankController::updateControl_(const TankController::TankConfig &cfg, TankController::TankState &st){
     const bool empty = isEmpty_(st);
     const bool full = st.level_full;
-    st.alarm_on = empty;
+    const bool impossible_combo = (!empty) &&
+                                  ((st.level_full && (!st.level_mid || !st.level_low)) ||
+                                   (st.level_mid && !st.level_low));
+    st.alarm_on = impossible_combo;
     if (st.alarm_on)
     {
-        // Safety interlock: in alarm/empty state stop all actuators.
+        // Safety interlock: invalid sensor combination stops actuators.
         st.pump_on = false;
         st.valve_on = false;
     }
     else
     {
         st.pump_on = true;
-        st.valve_on = !full;
+        st.valve_on = empty || !full;
     }
     writeRelay_(cfg.relay_pump, st.pump_on);
     writeRelay_(cfg.relay_valve, st.valve_on);

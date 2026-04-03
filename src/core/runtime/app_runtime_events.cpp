@@ -2394,7 +2394,7 @@ void AppRuntime::appendTankSnapshotPage_(JsonObject root, uint16_t offset, uint1
             continue;
 
         ++tanks_enabled;
-        if (!st->levels_ok || (!st->level_low && !st->level_mid && !st->level_full) || st->alarm_on || st->pump_on)
+        if (!st->levels_ok || st->alarm_on)
             ++tanks_alert;
 
         if (current_index < offset)
@@ -2546,7 +2546,7 @@ void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
             if (!cfg || !st || !cfg->enabled)
                 continue;
             ++tanks_enabled;
-            if (!st->levels_ok || (!st->level_low && !st->level_mid && !st->level_full) || st->alarm_on || st->pump_on)
+            if (!st->levels_ok || st->alarm_on)
                 ++tanks_alert;
         }
     }

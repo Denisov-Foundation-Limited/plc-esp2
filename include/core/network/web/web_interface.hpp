@@ -681,6 +681,7 @@ private:
     size_t _camera_preview_size = 0;
     uint8_t _camera_preview_id = 0;
     uint32_t _camera_preview_ver = 0;
+    uint32_t _camera_request_started_ms = 0;
     String _leak_status;
     String _security_status;
     String _groups_status;

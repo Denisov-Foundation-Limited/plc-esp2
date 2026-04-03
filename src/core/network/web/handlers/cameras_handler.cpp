@@ -266,9 +266,14 @@ void CamerasHandler::handleSnapshot(WebInterface &web, AsyncWebServerRequest *re
     }
     web._camera_preview_id = (uint8_t)id;
     web._camera_preview_ver = 0;
+    web._camera_request_started_ms = millis();
+    const String path = cameraImagePath_((uint8_t)id);
+    if (LittleFS.exists(path))
+        LittleFS.remove(path);
     web._camera_status = String(F("Камера #")) + String((unsigned)id) + F(": получаем фото...");
     doc["ok"] = true;
     doc["status"] = web._camera_status;
+    doc["ver"] = (unsigned long)web._camera_request_started_ms;
     sendJson_(request, doc);
 }
 
@@ -298,7 +303,8 @@ void CamerasHandler::handleTask(WebInterface &web, AsyncWebServerRequest *reques
     const int id = web.paramValueAny_(request, "id").toInt();
     Camera::Snapshot snap{};
     web._camera->snapshot(snap);
-    if (!snap.busy && snap.ok && id > 0 && (uint8_t)id == web._camera_preview_id && web._camera_preview_ver != snap.finished_ms)
+    if (!snap.busy && snap.ok && id > 0 && (uint8_t)id == web._camera_preview_id && snap.started_ms >= web._camera_request_started_ms &&
+        web._camera_preview_ver != snap.finished_ms)
     {
         const String path = cameraImagePath_((uint8_t)id);
         if (web._camera->saveToFs(LittleFS, path.c_str()))

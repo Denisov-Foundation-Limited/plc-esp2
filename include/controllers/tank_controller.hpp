@@ -46,6 +46,13 @@ public:
         bool level_low = false;
         bool level_mid = false;
         bool level_full = false;
+        bool level_low_candidate = false;
+        bool level_mid_candidate = false;
+        bool level_full_candidate = false;
+        bool levels_initialized = false;
+        uint32_t level_low_changed_ms = 0;
+        uint32_t level_mid_changed_ms = 0;
+        uint32_t level_full_changed_ms = 0;
         bool levels_ok = false;
         bool levels_ok_prev = true;
         uint32_t last_level_err_ms = 0;
@@ -76,5 +83,6 @@ private:
 
     void reset_();static bool parsePort_(JsonVariantConst v, uint8_t &out);static bool indexById_(uint8_t id, size_t &out);void setupInputs_(const TankConfig &cfg);void setupInput_(uint8_t port);bool setLevelPort_(size_t id, uint8_t port, uint8_t TankConfig::*field);bool setRelayPort_(size_t id, uint8_t port, uint8_t TankConfig::*field, uint8_t);void setupOutputs_(const TankConfig &cfg, TankState &st);void setupRelay_(uint8_t port, bool &state);void readLevels_(const TankConfig &cfg, TankState &st);bool readInput_(uint8_t port, bool &out);void updateControl_(const TankConfig &cfg, TankState &st);void logLevelChange_(const TankConfig &cfg, const TankState &prev, const TankState &curr);void logRelayChange_(const TankConfig &cfg, const TankState &prev, const TankState &curr);static bool isEmpty_(const TankState &st);void writeAllOff_(const TankConfig &cfg, TankState &st);void writeRelay_(uint8_t port, bool on);void notifyEmpty_(const TankConfig &cfg);void notifyDetectEvent_(const TankConfig &cfg, bool empty);static constexpr bool kLevelPullup = true;
     static constexpr uint32_t kLevelErrLogMs = 5000;
+    static constexpr uint32_t kLevelDebounceMs = 1000;
     static constexpr uint32_t kEmptyEventDebounceMs = 10000;
 };

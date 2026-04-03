@@ -291,6 +291,7 @@ const char kWebInterfaceCamerasHtml[] PROGMEM = R"HTML(
             setTileStatus(card, data.error || 'Не удалось запустить загрузку');
             return;
           }
+          refreshPreview(card, data.ver || Date.now());
           pollTask(card, id);
         } catch (e) {
           setBusy(card, false);

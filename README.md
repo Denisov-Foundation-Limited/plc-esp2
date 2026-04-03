@@ -339,24 +339,22 @@ Telegram 🤖:
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg1.png" width="300" />
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg2.png" width="300" />
 <img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg3.png" width="300" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/tg4.png" width="300" />
 
 Web 🖥️:
 
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web1.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web2.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web3.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web4.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web5.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web6.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web7.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web8.png" width="600" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web9.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web10.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web11.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web12.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web13.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web14.png" width="700" />
-<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/web15.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/0.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/1.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/2.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/3.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/4.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/5.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/6.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/7.png" width="600" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/8.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/9.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/10.png" width="700" />
+<img src="https://raw.githubusercontent.com/Denisov-Foundation-Limited/plc-esp2/develop/img/11.png" width="700" />
 
 Аппаратная часть 🔧:
 
