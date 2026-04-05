@@ -223,6 +223,9 @@ const char kWebInterfaceThermoHtml[] PROGMEM = R"HTML(
       display: inline-block;
       width: 10px;
       height: 10px;
+      min-width: 10px;
+      min-height: 10px;
+      flex: 0 0 10px;
       border-radius: 50%;
       box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.6);
     }

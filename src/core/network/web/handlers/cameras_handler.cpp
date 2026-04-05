@@ -25,6 +25,11 @@ String cameraImagePath_(uint8_t id)
     return String(F("/camera_")) + String((unsigned)id) + F(".jpg");
 }
 
+String cameraImageTempPath_(uint8_t id)
+{
+    return String(F("/camera_")) + String((unsigned)id) + F(".tmp");
+}
+
 void appendHtmlEscapedLocal_(String &out, const String &in)
 {
     for (size_t i = 0; i < (size_t)in.length(); ++i)
@@ -264,12 +269,14 @@ void CamerasHandler::handleSnapshot(WebInterface &web, AsyncWebServerRequest *re
         sendJson_(request, doc);
         return;
     }
+    Camera::Snapshot snap{};
+    web._camera->snapshot(snap);
     web._camera_preview_id = (uint8_t)id;
     web._camera_preview_ver = 0;
-    web._camera_request_started_ms = millis();
-    const String path = cameraImagePath_((uint8_t)id);
-    if (LittleFS.exists(path))
-        LittleFS.remove(path);
+    web._camera_request_started_ms = snap.started_ms ? snap.started_ms : millis();
+    const String tmp_path = cameraImageTempPath_((uint8_t)id);
+    if (LittleFS.exists(tmp_path))
+        LittleFS.remove(tmp_path);
     web._camera_status = String(F("Камера #")) + String((unsigned)id) + F(": получаем фото...");
     doc["ok"] = true;
     doc["status"] = web._camera_status;
@@ -303,22 +310,40 @@ void CamerasHandler::handleTask(WebInterface &web, AsyncWebServerRequest *reques
     const int id = web.paramValueAny_(request, "id").toInt();
     Camera::Snapshot snap{};
     web._camera->snapshot(snap);
+    bool preview_ready = false;
     if (!snap.busy && snap.ok && id > 0 && (uint8_t)id == web._camera_preview_id && snap.started_ms >= web._camera_request_started_ms &&
         web._camera_preview_ver != snap.finished_ms)
     {
         const String path = cameraImagePath_((uint8_t)id);
-        if (web._camera->saveToFs(LittleFS, path.c_str()))
+        const String tmp_path = cameraImageTempPath_((uint8_t)id);
+        if (LittleFS.exists(tmp_path))
+            LittleFS.remove(tmp_path);
+        if (web._camera->saveToFs(LittleFS, tmp_path.c_str()))
         {
-            web._camera_preview_ver = snap.finished_ms;
-            web._camera_status = String(F("Камера #")) + String((unsigned)id) + F(": фото обновлено");
+            if (LittleFS.exists(path))
+                LittleFS.remove(path);
+            if (LittleFS.rename(tmp_path, path))
+            {
+                web._camera_preview_ver = snap.finished_ms;
+                web._camera_status = String(F("Камера #")) + String((unsigned)id) + F(": фото обновлено");
+                preview_ready = true;
+            }
+            else
+            {
+                web._camera_status = String(F("Камера #")) + String((unsigned)id) + F(": ошибка подмены latest.jpg");
+            }
         }
         else
         {
             web._camera_status = String(F("Камера #")) + String((unsigned)id) + F(": ошибка записи latest.jpg");
         }
     }
+    else if (!snap.busy && snap.ok && id > 0 && (uint8_t)id == web._camera_preview_id && web._camera_preview_ver == snap.finished_ms && snap.finished_ms != 0)
+    {
+        preview_ready = true;
+    }
     doc["busy"] = snap.busy;
-    doc["ok"] = (!snap.busy && snap.ok && snap.error == Camera::Error::Ok);
+    doc["ok"] = (!snap.busy && snap.ok && snap.error == Camera::Error::Ok && (id <= 0 || (uint8_t)id != web._camera_preview_id || preview_ready));
     doc["size"] = (unsigned)snap.size;
     doc["http"] = snap.http_code;
     doc["ver"] = (unsigned long)web._camera_preview_ver;
@@ -342,6 +367,24 @@ void CamerasHandler::handleImage(WebInterface &web, AsyncWebServerRequest *reque
         return;
     }
     const String path = cameraImagePath_((uint8_t)id);
+    if (!LittleFS.exists(path) && web._camera && (uint8_t)id == web._camera_preview_id)
+    {
+        Camera::Snapshot snap{};
+        web._camera->snapshot(snap);
+        if (!snap.busy && snap.ok && snap.started_ms >= web._camera_request_started_ms)
+        {
+            const String tmp_path = cameraImageTempPath_((uint8_t)id);
+            if (LittleFS.exists(tmp_path))
+                LittleFS.remove(tmp_path);
+            if (web._camera->saveToFs(LittleFS, tmp_path.c_str()))
+            {
+                if (LittleFS.exists(path))
+                    LittleFS.remove(path);
+                if (LittleFS.rename(tmp_path, path))
+                    web._camera_preview_ver = snap.finished_ms;
+            }
+        }
+    }
     if (LittleFS.exists(path))
     {
         auto *response = request->beginResponse(LittleFS, path, "image/jpeg");
