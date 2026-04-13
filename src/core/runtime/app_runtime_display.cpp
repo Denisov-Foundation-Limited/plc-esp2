@@ -114,12 +114,18 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         }
     }
     const auto remote_node_available = [this](uint32_t remote_node_id) -> bool {
-        if (remote_node_id == 0 || !stackMasterActive_())
+        if (remote_node_id == 0)
             return false;
-        StackDeviceRegistry::DeviceInfo device{};
-        return net.network.stackDeviceSnapshotByNodeId(remote_node_id, device) &&
-               device.online &&
-               (uint32_t)(millis() - device.last_seen_ms) <= kStackNodeStaleMs;
+        if (stackMasterActive_())
+        {
+            StackDeviceRegistry::DeviceInfo device{};
+            return net.network.stackDeviceSnapshotByNodeId(remote_node_id, device) &&
+                   device.online &&
+                   (uint32_t)(millis() - device.last_seen_ms) <= kStackNodeStaleMs;
+        }
+        if (stackSlaveActive_())
+            return net.network.stackSlaveAuthorized();
+        return false;
     };
     const auto update_remote_display_state = [&](bool available) {
         if (slot_idx < 0)
@@ -178,7 +184,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             memcpy(out, txt, 4);
             return true;
         }
-        if (is_master)
+        if (!local)
         {
             const bool remote_available = remote_node_available(node_id);
             update_remote_display_state(remote_available);
@@ -188,47 +194,28 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
                 return true;
             }
             StackUnitSnapshot::State snapshot{};
-            StackUnitSnapshot::CacheState cache{};
-            if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
-                snapshot.updated_ms == 0)
+            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
             {
-                queueDisplayStackSnapshotPage_(node_id, "tanks", 0);
+                requestStackPollFeature_(node_id, 1);
                 return false;
             }
             const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
             if (age_ms > 3000u)
-                queueDisplayStackSnapshotPage_(node_id, "tanks", 0);
+                requestStackPollFeature_(node_id, 1);
             if (age_ms > kStackNodeStaleMs)
             {
                 memcpy(out, "ERR ", 4);
                 return true;
             }
-            StackUnitSnapshot::TankItem item{};
-            if (!net.network.stackIndexTankById(node_id, slot.index, item))
-            {
-                if (snapshot.tanks_enabled > cache.tank_count)
-                    queueDisplayStackSnapshotPage_(node_id, "tanks", cache.tank_count);
-                return false;
-            }
-            if (!item.enabled || !item.levels_ok)
+            if (!snapshot.security_enabled)
             {
                 memcpy(out, "ERR ", 4);
                 return true;
             }
-            if (item.level_full)
-                memcpy(out, "99% ", 4);
-            else if (item.level_mid)
-                memcpy(out, "66% ", 4);
-            else if (item.level_low)
-                memcpy(out, "33% ", 4);
-            else
-                memcpy(out, "0%  ", 4);
+            memcpy(out, snapshot.security_armed ? "ARM " : "DIS ", 4);
             return true;
         }
-        if (!is_slave)
-            return false;
-        memcpy(out, "ERR ", 4);
-        return true;
+        return false;
     }
     case DisplaySlotKind::Socket:
     {
@@ -245,7 +232,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             memcpy(out, txt, 4);
             return true;
         }
-        if (is_master)
+        if (!local)
         {
             const bool remote_available = remote_node_available(node_id);
             update_remote_display_state(remote_available);
@@ -283,10 +270,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             memcpy(out, txt, 4);
             return true;
         }
-        if (!is_slave)
-            return false;
-        memcpy(out, "ERR ", 4);
-        return true;
+        return false;
     }
     case DisplaySlotKind::Light:
     {
@@ -303,7 +287,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             memcpy(out, txt, 4);
             return true;
         }
-        if (is_master)
+        if (!local)
         {
             const bool remote_available = remote_node_available(node_id);
             update_remote_display_state(remote_available);
@@ -341,10 +325,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             memcpy(out, txt, 4);
             return true;
         }
-        if (!is_slave)
-            return false;
-        memcpy(out, "ERR ", 4);
-        return true;
+        return false;
     }
     case DisplaySlotKind::Meteo:
     {
@@ -381,7 +362,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
                 formatTemp3_(out, t);
             }
         }
-        else if (is_master)
+        else if (!local)
         {
             const bool remote_available = remote_node_available(node_id);
             update_remote_display_state(remote_available);
@@ -448,10 +429,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
             return true;
         }
         else
-        {
-            memcpy(out, "ERR ", 4);
-            return true;
-        }
+            return false;
         if (strlen(out) < 4)
         {
             size_t len = strlen(out);
@@ -482,7 +460,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
                 memcpy(out, "IDL ", 4);
             return true;
         }
-        if (is_master)
+        if (!local)
         {
             const bool remote_available = remote_node_available(node_id);
             update_remote_display_state(remote_available);
@@ -526,10 +504,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
                 memcpy(out, "IDL ", 4);
             return true;
         }
-        if (!is_slave)
-            return false;
-        memcpy(out, "ERR ", 4);
-        return true;
+        return false;
     }
     case DisplaySlotKind::Tank:
     {
@@ -552,7 +527,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
                 memcpy(out, "0%  ", 4);
             return true;
         }
-        if (is_master)
+        if (!local)
         {
             const bool remote_available = remote_node_available(node_id);
             update_remote_display_state(remote_available);
@@ -562,26 +537,43 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
                 return true;
             }
             StackUnitSnapshot::State snapshot{};
-            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+            StackUnitSnapshot::CacheState cache{};
+            if (!net.network.stackIndexState(node_id, snapshot) || !net.network.stackIndexCacheState(node_id, cache) ||
+                snapshot.updated_ms == 0)
+            {
+                queueDisplayStackSnapshotPage_(node_id, "tanks", 0);
                 return false;
+            }
             const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
-            if (age_ms > kStackNodeStaleMs || snapshot.septic_enabled == 0)
+            if (age_ms > 3000u)
+                queueDisplayStackSnapshotPage_(node_id, "tanks", 0);
+            if (age_ms > kStackNodeStaleMs)
             {
                 memcpy(out, "ERR ", 4);
                 return true;
             }
-            if (snapshot.septic_alert > 0)
-                memcpy(out, "ALM ", 4);
-            else if (snapshot.septic_warning > 0)
-                memcpy(out, "WRN ", 4);
+            StackUnitSnapshot::TankItem item{};
+            if (!net.network.stackIndexTankById(node_id, slot.index, item))
+            {
+                if (snapshot.tanks_enabled > cache.tank_count)
+                    queueDisplayStackSnapshotPage_(node_id, "tanks", cache.tank_count);
+                return false;
+            }
+            if (!item.enabled)
+                return false;
+            if (!item.levels_ok)
+                memcpy(out, "ERR ", 4);
+            else if (item.level_full)
+                memcpy(out, "99% ", 4);
+            else if (item.level_mid)
+                memcpy(out, "66% ", 4);
+            else if (item.level_low)
+                memcpy(out, "33% ", 4);
             else
-                memcpy(out, "OK  ", 4);
+                memcpy(out, "0%  ", 4);
             return true;
         }
-        if (!is_slave)
-            return false;
-        memcpy(out, "ERR ", 4);
-        return true;
+        return false;
     }
     case DisplaySlotKind::Septic:
     {
@@ -603,15 +595,38 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
                 memcpy(out, "OK  ", 4);
             return true;
         }
-        if (is_master)
+        if (!local)
         {
-            memcpy(out, "ERR ", 4);
+            const bool remote_available = remote_node_available(node_id);
+            update_remote_display_state(remote_available);
+            if (!remote_available)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            StackUnitSnapshot::State snapshot{};
+            if (!net.network.stackIndexState(node_id, snapshot) || snapshot.updated_ms == 0)
+            {
+                requestStackPollFeature_(node_id, 1);
+                return false;
+            }
+            const uint32_t age_ms = (uint32_t)(millis() - snapshot.updated_ms);
+            if (age_ms > 3000u)
+                requestStackPollFeature_(node_id, 1);
+            if (age_ms > kStackNodeStaleMs || snapshot.septic_enabled == 0)
+            {
+                memcpy(out, "ERR ", 4);
+                return true;
+            }
+            if (snapshot.septic_alert > 0)
+                memcpy(out, "ALM ", 4);
+            else if (snapshot.septic_warning > 0)
+                memcpy(out, "WRN ", 4);
+            else
+                memcpy(out, "OK  ", 4);
             return true;
         }
-        if (!is_slave)
-            return false;
-        memcpy(out, "ERR ", 4);
-        return true;
+        return false;
     }
     case DisplaySlotKind::Avr:
     {
@@ -632,7 +647,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
                 memcpy(out, "OFF ", 4);
             return true;
         }
-        if (is_master)
+        if (!local)
         {
             const bool remote_available = remote_node_available(node_id);
             update_remote_display_state(remote_available);
@@ -681,7 +696,7 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
                 memcpy(out, "DRY ", 4);
             return true;
         }
-        if (is_master)
+        if (!local)
         {
             const bool remote_available = remote_node_available(node_id);
             update_remote_display_state(remote_available);

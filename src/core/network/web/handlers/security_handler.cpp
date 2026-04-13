@@ -54,6 +54,19 @@ void SecurityHandler::handleSecurityState(WebInterface &web, AsyncWebServerReque
                         o["enabled"] = true;
                         o["detect"] = remote.active;
                     }
+                    if (count == 0 && snapshot.security_detected > 0)
+                    {
+                        for (uint8_t i = 0; i < snapshot.security_detect_preview_count; ++i)
+                        {
+                            const auto &preview = snapshot.security_detect_preview[i];
+                            if (preview.id == 0)
+                                continue;
+                            JsonObject o = items.add<JsonObject>();
+                            o["id"] = preview.id;
+                            o["enabled"] = true;
+                            o["detect"] = true;
+                        }
+                    }
                 }
                 doc["pending"] = false;
             }

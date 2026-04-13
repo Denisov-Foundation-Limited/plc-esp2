@@ -625,7 +625,9 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                 if (params["armed"].as<bool>())
                 {
                     const String source = stackNodeLabel_(node_id);
-                    const bool armed_ok = sec.armFrom("stack", source);
+                    const bool force = params["force"].is<bool>() ? params["force"].as<bool>()
+                                                                  : (params["force"].is<int>() && params["force"].as<int>() != 0);
+                    const bool armed_ok = force ? sec.armForcedFrom("stack", source) : sec.armFrom("stack", source);
                     if (!armed_ok)
                     {
                         String blocked_plain;
@@ -2911,7 +2913,7 @@ void AppRuntime::flushPendingStackSocketsResponse_(){
 void AppRuntime::flushPendingStackSocketsPage_(){
     if (!_pending_stack_sockets_page)
         return;
-    if (!stackMasterActive_())
+    if (!stackMasterActive_() && !(stackSlaveActive_() && net.network.stackSlaveAuthorized()))
         return;
     _pending_stack_sockets_page = false;
     const bool log_sync = _pending_stack_sockets_log;
@@ -2983,7 +2985,7 @@ void AppRuntime::flushPendingStackLightsResponse_(){
 void AppRuntime::flushPendingStackLightsPage_(){
     if (!_pending_stack_lights_page)
         return;
-    if (!stackMasterActive_())
+    if (!stackMasterActive_() && !(stackSlaveActive_() && net.network.stackSlaveAuthorized()))
         return;
     _pending_stack_lights_page = false;
     const bool log_sync = _pending_stack_lights_log;
@@ -3024,7 +3026,7 @@ void AppRuntime::flushPendingStackLightsPage_(){
 void AppRuntime::flushPendingStackMeteoPage_(){
     if (!_pending_stack_meteo_page)
         return;
-    if (!stackMasterActive_())
+    if (!stackMasterActive_() && !(stackSlaveActive_() && net.network.stackSlaveAuthorized()))
         return;
     _pending_stack_meteo_page = false;
     const bool log_sync = _pending_stack_meteo_log;
@@ -3065,7 +3067,7 @@ void AppRuntime::flushPendingStackMeteoPage_(){
 void AppRuntime::flushPendingStackThermoPage_(){
     if (!_pending_stack_thermo_page)
         return;
-    if (!stackMasterActive_())
+    if (!stackMasterActive_() && !(stackSlaveActive_() && net.network.stackSlaveAuthorized()))
         return;
     _pending_stack_thermo_page = false;
     const bool log_sync = _pending_stack_thermo_log;
@@ -3106,7 +3108,7 @@ void AppRuntime::flushPendingStackThermoPage_(){
 void AppRuntime::flushPendingStackTanksPage_(){
     if (!_pending_stack_tanks_page)
         return;
-    if (!stackMasterActive_())
+    if (!stackMasterActive_() && !(stackSlaveActive_() && net.network.stackSlaveAuthorized()))
         return;
     _pending_stack_tanks_page = false;
     const bool log_sync = _pending_stack_tanks_log;
@@ -3147,7 +3149,7 @@ void AppRuntime::flushPendingStackTanksPage_(){
 void AppRuntime::flushPendingStackLeakPage_(){
     if (!_pending_stack_leak_page)
         return;
-    if (!stackMasterActive_())
+    if (!stackMasterActive_() && !(stackSlaveActive_() && net.network.stackSlaveAuthorized()))
         return;
     _pending_stack_leak_page = false;
     const bool log_sync = _pending_stack_leak_log;

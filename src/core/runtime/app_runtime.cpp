@@ -394,13 +394,20 @@ bool AppRuntime::shouldLogStackBootstrapSync_(uint32_t node_id) const{
 }
 
 bool AppRuntime::queueDisplayStackSnapshotPage_(uint32_t node_id, const char *feature, uint16_t offset){
-    if (node_id == 0 || !feature || !stackMasterActive_())
+    if (node_id == 0 || !feature)
         return false;
-    StackDeviceRegistry::DeviceInfo device{};
-    if (!net.network.stackDeviceSnapshotByNodeId(node_id, device) || !device.online ||
-        (uint32_t)(millis() - device.last_seen_ms) > kStackNodeStaleMs)
+    const bool can_request = stackMasterActive_() ||
+                             (stackSlaveActive_() && net.network.stackSlaveAuthorized());
+    if (!can_request)
+        return false;
+    if (stackMasterActive_())
     {
-        return false;
+        StackDeviceRegistry::DeviceInfo device{};
+        if (!net.network.stackDeviceSnapshotByNodeId(node_id, device) || !device.online ||
+            (uint32_t)(millis() - device.last_seen_ms) > kStackNodeStaleMs)
+        {
+            return false;
+        }
     }
     if (strcmp(feature, "sockets") == 0)
     {

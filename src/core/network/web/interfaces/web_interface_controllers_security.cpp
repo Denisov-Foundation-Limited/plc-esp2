@@ -13,6 +13,18 @@
 
 namespace
 {
+size_t summarySecurityVisibleCount_(const StackUnitSnapshot::State &snapshot)
+{
+    if (snapshot.security_detected == 0)
+        return 0;
+    size_t count = snapshot.security_detect_preview_count;
+    if (count == 0)
+        count = 1;
+    if (snapshot.security_detected > snapshot.security_detect_preview_count)
+        ++count;
+    return count;
+}
+
 void loadLocalSecurityItems_(SecurityController &sec, WebInterface::ScratchBuffer &scratch, size_t count)
 {
     if (count == 0)
@@ -383,58 +395,120 @@ String WebInterfaceControllersSecurityHelper::listSecuritySensorsTiles_(WebInter
 size_t WebInterfaceControllersSecurityHelper::stackSecurityVisibleCount_(const WebInterface &web, uint32_t node_id) {
         if (!web._controllers || node_id == 0)
             return 0;
-        return web._controllers->security().remoteDetectCount(node_id);
+        const size_t remote_count = web._controllers->security().remoteDetectCount(node_id);
+        if (remote_count > 0)
+            return remote_count;
+        if (!web.network())
+            return 0;
+        StackUnitSnapshot::State snapshot{};
+        if (!web.network()->stackIndexState(node_id, snapshot))
+            return 0;
+        return summarySecurityVisibleCount_(snapshot);
     }
 
 String WebInterfaceControllersSecurityHelper::listStackSecuritySensorsTiles_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
-        if (!web._controllers || node_id == 0)
+        if (!web._controllers || node_id == 0 || !web.network())
             return WebUiRu::Security::kText9;
         SecurityController &sec = web._controllers->security();
         const size_t total = sec.remoteDetectCount(node_id);
-        if (total == 0)
-            return "<div class=\"tile empty\">No active remote detections</div>";
         String items;
         items.reserve(8192);
-        const size_t start = offset;
-        const size_t end = (limit == 0) ? total : ((offset + limit > total) ? total : (offset + limit));
-        for (size_t i = start; i < end; ++i)
+
+        if (total > 0)
         {
-            SecurityController::RemoteDetect item{};
-            if (!sec.remoteDetectAt(i, item, node_id))
-                continue;
-            items += "<div class=\"tile js-group-item\" data-group-id=\"0\" data-sensor-id=\"";
-            items += String((unsigned)item.sensor_id);
-            items += "\"><div class=\"sock-visual\"><span class=\"badge\">#";
-            items += String((unsigned)item.sensor_id);
-            items += "</span><svg class=\"sock-icon ";
-            items += item.silent ? "on" : "alert";
-            items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
-            items += "<circle cx=\"32\" cy=\"24\" r=\"6\" fill=\"currentColor\"/>";
-            items += "<path d=\"M14 48c6-10 12-14 18-14s12 4 18 14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"4\" stroke-linecap=\"round\"/>";
-            items += "<path d=\"M8 20c6-6 12-10 18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
-            items += "<path d=\"M56 20c-6-6-12-10-18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
-            items += "</svg></div><div><div class=\"tile-head\"><strong>";
-            if (item.sensor_name.length())
-                web.appendHtmlEscaped_(items, item.sensor_name.c_str());
-            else
-                items += String(WebUiRu::Security::kNum) + String((unsigned)item.sensor_id);
-            items += "</strong></div>";
-            items += "<div class=\"status-line\"><span class=\"status-dot ";
-            items += item.silent ? "status-on" : "status-bad";
-            items += "\"></span><span class=\"status-text\">";
-            items += item.silent ? "Silent detect" : WebUiRu::Security::kText6;
-            items += "</span></div>";
-            items += "<div class=\"form-grid\">";
-            items += "<div class=\"form-row\"><label>Unit</label><input class=\"field\" type=\"text\" readonly value=\"";
-            web.appendHtmlEscaped_(items, item.unit_name.length() ? item.unit_name.c_str() : web.stackNodeIdHex_(item.node_id).c_str());
-            items += "\"></div>";
-            items += "<div class=\"form-row\"><label>Sensor</label><input class=\"field\" type=\"text\" readonly value=\"";
-            items += String((unsigned)item.sensor_id);
-            items += "\"></div>";
-            items += "<div class=\"form-row\"><label>Mode</label><input class=\"field\" type=\"text\" readonly value=\"";
-            items += item.silent ? "silent" : "alarm";
-            items += "\"></div>";
-            items += "</div></div></div>";
+            const size_t start = offset;
+            const size_t end = (limit == 0) ? total : ((offset + limit > total) ? total : (offset + limit));
+            for (size_t i = start; i < end; ++i)
+            {
+                SecurityController::RemoteDetect item{};
+                if (!sec.remoteDetectAt(i, item, node_id))
+                    continue;
+                items += "<div class=\"tile js-group-item\" data-group-id=\"0\" data-sensor-id=\"";
+                items += String((unsigned)item.sensor_id);
+                items += "\"><div class=\"sock-visual\"><span class=\"badge\">#";
+                items += String((unsigned)item.sensor_id);
+                items += "</span><svg class=\"sock-icon ";
+                items += item.silent ? "on" : "alert";
+                items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+                items += "<circle cx=\"32\" cy=\"24\" r=\"6\" fill=\"currentColor\"/>";
+                items += "<path d=\"M14 48c6-10 12-14 18-14s12 4 18 14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"4\" stroke-linecap=\"round\"/>";
+                items += "<path d=\"M8 20c6-6 12-10 18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
+                items += "<path d=\"M56 20c-6-6-12-10-18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
+                items += "</svg></div><div><div class=\"tile-head\"><strong>";
+                if (item.sensor_name.length())
+                    web.appendHtmlEscaped_(items, item.sensor_name.c_str());
+                else
+                    items += String(WebUiRu::Security::kNum) + String((unsigned)item.sensor_id);
+                items += "</strong></div>";
+                items += "<div class=\"status-line\"><span class=\"status-dot ";
+                items += item.silent ? "status-on" : "status-bad";
+                items += "\"></span><span class=\"status-text\">";
+                items += item.silent ? "Silent detect" : WebUiRu::Security::kText6;
+                items += "</span></div>";
+                items += "<div class=\"form-grid\">";
+                items += "<div class=\"form-row\"><label>Unit</label><input class=\"field\" type=\"text\" readonly value=\"";
+                web.appendHtmlEscaped_(items,
+                                       item.unit_name.length() ? item.unit_name.c_str() : web.stackNodeIdHex_(item.node_id).c_str());
+                items += "\"></div>";
+                items += "<div class=\"form-row\"><label>Sensor</label><input class=\"field\" type=\"text\" readonly value=\"";
+                items += String((unsigned)item.sensor_id);
+                items += "\"></div>";
+                items += "<div class=\"form-row\"><label>Mode</label><input class=\"field\" type=\"text\" readonly value=\"";
+                items += item.silent ? "silent" : "alarm";
+                items += "\"></div>";
+                items += "</div></div></div>";
+            }
+        }
+        else
+        {
+            StackUnitSnapshot::State snapshot{};
+            if (!web.network()->stackIndexState(node_id, snapshot) || snapshot.security_detected == 0)
+                return "<div class=\"tile empty\">No active remote detections</div>";
+            const size_t total_summary = summarySecurityVisibleCount_(snapshot);
+            const size_t start = offset;
+            const size_t end = (limit == 0) ? total_summary : ((offset + limit > total_summary) ? total_summary : (offset + limit));
+            for (size_t i = start; i < end; ++i)
+            {
+                if (i < snapshot.security_detect_preview_count)
+                {
+                    const auto &preview = snapshot.security_detect_preview[i];
+                    items += "<div class=\"tile js-group-item\" data-group-id=\"0\" data-sensor-id=\"";
+                    items += String((unsigned)preview.id);
+                    items += "\"><div class=\"sock-visual\"><span class=\"badge\">#";
+                    items += String((unsigned)preview.id);
+                    items += "</span><svg class=\"sock-icon alert\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+                    items += "<circle cx=\"32\" cy=\"24\" r=\"6\" fill=\"currentColor\"/>";
+                    items += "<path d=\"M14 48c6-10 12-14 18-14s12 4 18 14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"4\" stroke-linecap=\"round\"/>";
+                    items += "<path d=\"M8 20c6-6 12-10 18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
+                    items += "<path d=\"M56 20c-6-6-12-10-18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
+                    items += "</svg></div><div><div class=\"tile-head\"><strong>";
+                    if (preview.name[0] != '\0')
+                        web.appendHtmlEscaped_(items, preview.name);
+                    else
+                        items += String(WebUiRu::Security::kNum) + String((unsigned)preview.id);
+                    items += "</strong></div>";
+                    items += "<div class=\"status-line\"><span class=\"status-dot status-bad\"></span><span class=\"status-text\">";
+                    items += WebUiRu::Security::kText6;
+                    items += "</span></div>";
+                    items += "<div class=\"form-grid\">";
+                    items += "<div class=\"form-row\"><label>Unit</label><input class=\"field\" type=\"text\" readonly value=\"";
+                    web.appendHtmlEscaped_(items, web.stackNodeIdHex_(node_id).c_str());
+                    items += "\"></div>";
+                    items += "<div class=\"form-row\"><label>Source</label><input class=\"field\" type=\"text\" readonly value=\"summary\"></div>";
+                    items += "</div></div></div>";
+                }
+                else
+                {
+                    const size_t more = snapshot.security_detected > snapshot.security_detect_preview_count
+                                            ? (snapshot.security_detected - snapshot.security_detect_preview_count)
+                                            : 0u;
+                    if (more == 0)
+                        continue;
+                    items += "<div class=\"tile empty\">More active sensors: ";
+                    items += String((unsigned)more);
+                    items += "</div>";
+                }
+            }
         }
         return items.length() ? items : String("<div class=\"tile empty\">No active remote detections</div>");
     }
