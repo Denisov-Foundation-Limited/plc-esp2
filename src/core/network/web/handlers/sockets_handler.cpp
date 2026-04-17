@@ -420,7 +420,7 @@ void SocketsHandler::handleSocketsSave(WebInterface &web, AsyncWebServerRequest 
                 }
                 if (!send)
                     return;
-                if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set", &doc, StackRouteAdapter::Mode::Json))
+                if (!web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "sockets", "set", &doc))
                 {
                     web._sockets_status = String("Send failed for socket ") + idx;
                     web.sendRedirect_(request, back, set_cookie);

@@ -127,8 +127,8 @@ bool WebInterfaceControllersSepticHelper::requestStackSeptic_(WebInterface &web,
         if (!web.network() || node_id == 0)
             return false;
         const bool refresh = web.requestStackIndexState_(node_id);
-        const bool sent = web.network()->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
-                                                                  StackRouteAdapter::Mode::Json, true);
+        const bool sent = web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id,
+                                                                          "controllers", "summary_req", nullptr, true);
         return refresh || sent;
     }
 

@@ -17,6 +17,7 @@
 #include "core/network/stack/stack_binary_protocol.hpp"
 #include "core/network/stack/stack_json_protocol.hpp"
 #include "core/network/stack/stack_rs485_transport.hpp"
+#include "utils/configs_manager_iface.hpp"
 #include "utils/rtos_lock.hpp"
 
 class Logger;
@@ -45,6 +46,7 @@ public:
         uint16_t fw_version = 0;
         uint32_t reconnect_ms = 3000;
         uint8_t rs485_client_id = 1;
+        ConfigsManagerIface::StackPayloadMode payload_mode = ConfigsManagerIface::StackPayloadMode::Json;
         StackRs485Transport::Config rs485;
     };
 
@@ -95,6 +97,8 @@ private:
     mutable RtosRecursiveLock _lock;
 
     void sendAuth_();
+    bool sendNotifyBinary_(const char *level, const char *feature, const char *code, const char *message,
+                           const uint8_t *payload, size_t payload_size);
     bool shouldRestartWebSocket_() const;
     void restartWebSocket_(const char *reason);
     void setDisconnectReason_(const char *reason);

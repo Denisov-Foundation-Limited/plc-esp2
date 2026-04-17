@@ -75,6 +75,17 @@ void fillWifiDiag_(char *status_out, size_t status_cap, char *ip_out, size_t ip_
         rssi_out = 0;
     }
 }
+
+String binaryTextToString_(const uint8_t *data, size_t size)
+{
+    String out;
+    if (!data || size == 0)
+        return out;
+    out.reserve(size);
+    for (size_t i = 0; i < size; ++i)
+        out += (char)data[i];
+    return out;
+}
 }
 
 StackSlaveClient::StackSlaveClient(Logger &log) : _log(log), _rs485(log)
@@ -232,6 +243,7 @@ bool StackSlaveClient::sendNotify(const char *level, const char *feature, const 
     Config::TransportKind transport = Config::TransportKind::WebSocket;
     uint32_t node_id = 0;
     uint8_t rs485_client_id = 0;
+    ConfigsManagerIface::StackPayloadMode payload_mode = ConfigsManagerIface::StackPayloadMode::Json;
     {
         const auto guard = _lock.guard();
         if (!_authorized || !feature || !feature[0] || !level || !level[0])
@@ -239,7 +251,17 @@ bool StackSlaveClient::sendNotify(const char *level, const char *feature, const 
         transport = _cfg.transport;
         node_id = _cfg.node_id;
         rs485_client_id = _cfg.rs485_client_id;
+        payload_mode = _cfg.payload_mode;
     }
+    if (payload_mode == ConfigsManagerIface::StackPayloadMode::Binary)
+    {
+        if (payload)
+            return false;
+        return sendNotifyBinary_(level, feature, code, message, nullptr, 0);
+    }
+    String payload_json;
+    if (payload)
+        serializeJson(*payload, payload_json);
     String msg = StackJsonProtocol::makeNotify(node_id, level, feature, code, message, payload);
     if (transport == Config::TransportKind::Rs485Stub)
         return _rs485.sendText(rs485_client_id, msg.c_str());
@@ -295,6 +317,17 @@ bool StackSlaveClient::sendRouteBinary(uint32_t target_node, const char *feature
 void StackSlaveClient::sendAuth_()
 {
     const auto guard = _lock.guard();
+    if (_cfg.payload_mode == ConfigsManagerIface::StackPayloadMode::Binary)
+    {
+        const size_t frame_size =
+            StackBinaryProtocol::encodedAuthSize(_cfg.device_name.c_str(), "", _cfg.api_key.c_str());
+        std::unique_ptr<uint8_t[]> frame(new uint8_t[frame_size]);
+        size_t used = 0;
+        if (frame && StackBinaryProtocol::encodeAuth(_cfg.node_id, _cfg.caps, _cfg.fw_version, _cfg.device_name.c_str(), "",
+                                                     _cfg.api_key.c_str(), frame.get(), frame_size, used))
+            _ws.sendBIN(frame.get(), used);
+        return;
+    }
     StaticJsonDocument<256> doc;
     doc["type"] = "auth";
     doc["api_key"] = _cfg.api_key;
@@ -305,6 +338,32 @@ void StackSlaveClient::sendAuth_()
     String payload;
     serializeJson(doc, payload);
     _ws.sendTXT(payload);
+}
+
+bool StackSlaveClient::sendNotifyBinary_(const char *level, const char *feature, const char *code, const char *message,
+                                         const uint8_t *payload, size_t payload_size)
+{
+    Config::TransportKind transport = Config::TransportKind::WebSocket;
+    uint32_t node_id = 0;
+    uint8_t rs485_client_id = 0;
+    {
+        const auto guard = _lock.guard();
+        transport = _cfg.transport;
+        node_id = _cfg.node_id;
+        rs485_client_id = _cfg.rs485_client_id;
+    }
+    const uint8_t *msg_bytes = message ? reinterpret_cast<const uint8_t *>(message) : nullptr;
+    const size_t msg_size = message ? strlen(message) : 0;
+    const size_t frame_size =
+        StackBinaryProtocol::encodedNotifySize(level, feature, code, msg_size, payload_size);
+    std::unique_ptr<uint8_t[]> frame(new uint8_t[frame_size]);
+    size_t used = 0;
+    if (!frame || !StackBinaryProtocol::encodeNotify(node_id, level, feature, code, msg_bytes, msg_size, payload,
+                                                     payload_size, frame.get(), frame_size, used))
+        return false;
+    if (transport == Config::TransportKind::Rs485Stub)
+        return _rs485.sendBinary(rs485_client_id, frame.get(), used);
+    return _ws.sendBIN(frame.get(), used);
 }
 
 bool StackSlaveClient::shouldRestartWebSocket_() const
@@ -539,6 +598,62 @@ void StackSlaveClient::onWsEvent_(WStype_t type, uint8_t *payload, size_t len)
             const auto guard = _lock.guard();
             _ws_last_rx_ms = millis();
         }
+        StackBinaryProtocol::NotifyFrame notify_frame;
+        if (StackBinaryProtocol::parseNotify(payload, len, notify_frame))
+        {
+            NotificationHandler cb = nullptr;
+            void *cb_ctx = nullptr;
+            StackJsonProtocol::NotifyMessage notify;
+            notify.is_binary = true;
+            notify.source_node = notify_frame.source_node;
+            strncpy(notify.level, notify_frame.level, sizeof(notify.level) - 1);
+            strncpy(notify.feature, notify_frame.feature, sizeof(notify.feature) - 1);
+            strncpy(notify.code, notify_frame.code, sizeof(notify.code) - 1);
+            notify.message = binaryTextToString_(notify_frame.message, notify_frame.message_size);
+            {
+                const auto guard = _lock.guard();
+                cb = _notify_cb;
+                cb_ctx = _notify_ctx;
+            }
+            if (cb)
+                cb(cb_ctx, notify);
+            break;
+        }
+        StackBinaryProtocol::AuthReplyFrame auth_reply;
+        if (StackBinaryProtocol::parseAuthReply(payload, len, auth_reply))
+        {
+            if (auth_reply.ok && strcmp(auth_reply.message, "authorized") == 0)
+            {
+                uint32_t connected_ms = 0;
+                {
+                    const auto guard = _lock.guard();
+                    _authorized = true;
+                    _ws_last_rx_ms = millis();
+                    connected_ms = _ws_connected_ms;
+                }
+                const uint32_t auth_ms = connected_ms ? (uint32_t)(millis() - connected_ms) : 0;
+                char wifi_status[24]{};
+                char wifi_ip[20]{};
+                long wifi_rssi = 0;
+                fillWifiDiag_(wifi_status, sizeof(wifi_status), wifi_ip, sizeof(wifi_ip), wifi_rssi);
+                _log.info(F("STACK"), F("WS slave authorized: name %s node 0x%08lX auth_ms: %lu wifi: %s ip: %s rssi: %ld"),
+                          _cfg.device_name.length() ? _cfg.device_name.c_str() : "-", (unsigned long)_cfg.node_id,
+                          (unsigned long)auth_ms, wifi_status, wifi_ip, wifi_rssi);
+            }
+            else
+            {
+                _log.warn(F("STACK"), F("WS slave auth error: name %s host %s error: %s"),
+                          _cfg.device_name.length() ? _cfg.device_name.c_str() : "-", _cfg.host.c_str(),
+                          auth_reply.message[0] ? auth_reply.message : "error");
+                {
+                    const auto guard = _lock.guard();
+                    _authorized = false;
+                }
+                setDisconnectReason_("auth_failed");
+                _ws.disconnect();
+            }
+            break;
+        }
         StackBinaryProtocol::RouteFrame route;
         BinaryRouteHandler cb = nullptr;
         void *cb_ctx = nullptr;
@@ -600,6 +715,27 @@ void StackSlaveClient::onRs485Event_(const StackTransport::Event &event)
         return;
     case StackTransport::EventType::BinaryMessage:
     {
+        StackBinaryProtocol::NotifyFrame notify_frame;
+        if (StackBinaryProtocol::parseNotify(event.data, event.size, notify_frame))
+        {
+            NotificationHandler cb = nullptr;
+            void *cb_ctx = nullptr;
+            StackJsonProtocol::NotifyMessage notify;
+            notify.is_binary = true;
+            notify.source_node = notify_frame.source_node;
+            strncpy(notify.level, notify_frame.level, sizeof(notify.level) - 1);
+            strncpy(notify.feature, notify_frame.feature, sizeof(notify.feature) - 1);
+            strncpy(notify.code, notify_frame.code, sizeof(notify.code) - 1);
+            notify.message = binaryTextToString_(notify_frame.message, notify_frame.message_size);
+            {
+                const auto guard = _lock.guard();
+                cb = _notify_cb;
+                cb_ctx = _notify_ctx;
+            }
+            if (cb)
+                cb(cb_ctx, notify);
+            return;
+        }
         StackBinaryProtocol::RouteFrame route;
         BinaryRouteHandler cb = nullptr;
         void *cb_ctx = nullptr;

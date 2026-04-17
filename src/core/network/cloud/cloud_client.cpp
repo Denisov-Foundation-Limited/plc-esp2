@@ -900,6 +900,7 @@ void CloudClient::handleCmdLocal_(const String &req_id, const String &ctrl, cons
 void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
                      const String &ctrl, const String &action, JsonObjectConst args, const ActorInfo &actor)
 {
+    const auto stack_payload_mode = _configs ? _configs->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Json;
     String ctrl_key = ctrl;
     String action_key = action;
     ctrl_key.trim();
@@ -915,41 +916,40 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
                                                  bool refresh_meteo, bool refresh_thermo) {
         if (!_network)
             return;
-        _network->stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
-                                           StackRouteAdapter::Mode::Json, true);
-        _network->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
-                                           StackRouteAdapter::Mode::Json, true);
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "system", "snapshot_req", nullptr, true);
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "controllers", "summary_req", nullptr,
+                                                   true);
         if (refresh_sockets)
         {
             DynamicJsonDocument req(64);
             req["offset"] = 0;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            _network->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
-                                               StackRouteAdapter::Mode::Json, true);
+            _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "sockets", "snapshot_req", &req,
+                                                       true);
         }
         if (refresh_lights)
         {
             DynamicJsonDocument req(64);
             req["offset"] = 0;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            _network->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
-                                               StackRouteAdapter::Mode::Json, true);
+            _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "lights", "snapshot_req", &req,
+                                                       true);
         }
         if (refresh_meteo)
         {
             DynamicJsonDocument req(64);
             req["offset"] = 0;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            _network->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
-                                               StackRouteAdapter::Mode::Json, true);
+            _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "meteo", "snapshot_req", &req,
+                                                       true);
         }
         if (refresh_thermo)
         {
             DynamicJsonDocument req(64);
             req["offset"] = 0;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            _network->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
-                                               StackRouteAdapter::Mode::Json, true);
+            _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "thermo", "snapshot_req", &req,
+                                                       true);
         }
     };
 
@@ -982,8 +982,7 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
             o["toggle"] = true;
         else
             o["state"] = (String(args["state"] | "") == "on");
-        const bool sent = _network->stackRoute().sendEvent(node_id, "sockets", "set", &params,
-                                                           StackRouteAdapter::Mode::Json);
+        const bool sent = _network->stackRoute().sendEventSelected(stack_payload_mode, node_id, "sockets", "set", &params);
         if (!sent)
         {
             sendError_(req_id, "stack route send failed");
@@ -1023,8 +1022,8 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
             o["toggle"] = true;
         else
             o["state"] = (String(args["state"] | "") == "on");
-        const bool sent = _network->stackRoute().sendEvent(node_id, "sockets", "set_lights", &params,
-                                                           StackRouteAdapter::Mode::Json);
+        const bool sent = _network->stackRoute().sendEventSelected(stack_payload_mode, node_id, "sockets", "set_lights",
+                                                                   &params);
         if (!sent)
         {
             sendError_(req_id, "stack route send failed");
@@ -1080,20 +1079,18 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
             o["src_node"] = args["src_node"];
         if (args.containsKey("src_sensor"))
             o["src_sensor"] = args["src_sensor"];
-        const bool sent = _network->stackRoute().sendEvent(node_id, "meteo", "set", &params,
-                                                           StackRouteAdapter::Mode::Json);
+        const bool sent = _network->stackRoute().sendEventSelected(stack_payload_mode, node_id, "meteo", "set", &params);
         if (!sent)
         {
             sendError_(req_id, "stack route send failed");
             return;
         }
-        _network->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
-                                           StackRouteAdapter::Mode::Json, true);
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "controllers", "summary_req", nullptr,
+                                                   true);
         DynamicJsonDocument req(64);
         req["offset"] = 0;
         req["limit"] = StackUnitSnapshot::kPageSize;
-        _network->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
-                                           StackRouteAdapter::Mode::Json, true);
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "meteo", "snapshot_req", &req, true);
         sendAck_(req_id, true, "");
         return;
     }
@@ -1155,8 +1152,7 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
             else if (args.containsKey("state"))
                 o["power_on"] = (String(args["state"] | "") == "on");
         }
-        const bool sent = _network->stackRoute().sendEvent(node_id, "thermo", "set", &params,
-                                                           StackRouteAdapter::Mode::Json);
+        const bool sent = _network->stackRoute().sendEventSelected(stack_payload_mode, node_id, "thermo", "set", &params);
         if (!sent)
         {
             sendError_(req_id, "stack route send failed");
@@ -2617,8 +2613,9 @@ bool CloudClient::fillStackCachedSystem_(JsonObject out, uint32_t node_id)
     const bool request_ready = _network->prepareStackIndexStateRequest(node_id, now, stale_ms, kStackTimeoutMs);
     if (request_ready)
     {
-        const bool sent = _network->stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
-                                                             StackRouteAdapter::Mode::Json, true);
+        const bool sent = _network->stackRoute().sendRequestSelected(
+            _configs ? _configs->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Json, node_id, "system",
+            "snapshot_req", nullptr, true);
         (void)sent;
     }
     return has_any;
@@ -2818,8 +2815,9 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
     const bool request_ready = _network->prepareStackIndexStateRequest(node_id, now, stale_ms, kStackTimeoutMs);
     if (request_ready)
     {
-        _network->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
-                                           StackRouteAdapter::Mode::Json, true);
+        _network->stackRoute().sendRequestSelected(
+            _configs ? _configs->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Json, node_id, "controllers",
+            "summary_req", nullptr, true);
     }
     if (snapshot.sockets_enabled > 0 && cache.socket_count < snapshot.sockets_enabled)
     {
@@ -2829,8 +2827,9 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             DynamicJsonDocument req(64);
             req["offset"] = cache.socket_count;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            _network->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
-                                               StackRouteAdapter::Mode::Json, true);
+            _network->stackRoute().sendRequestSelected(
+                _configs ? _configs->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Json, node_id, "sockets",
+                "snapshot_req", &req, true);
         }
     }
     if (snapshot.lights_enabled > 0 && cache.light_count < snapshot.lights_enabled)
@@ -2841,8 +2840,9 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             DynamicJsonDocument req(64);
             req["offset"] = cache.light_count;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            _network->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
-                                               StackRouteAdapter::Mode::Json, true);
+            _network->stackRoute().sendRequestSelected(
+                _configs ? _configs->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Json, node_id, "lights",
+                "snapshot_req", &req, true);
         }
     }
     if (snapshot.meteo_enabled > 0 && cache.meteo_count < snapshot.meteo_enabled)
@@ -2853,8 +2853,9 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             DynamicJsonDocument req(64);
             req["offset"] = cache.meteo_count;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            _network->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
-                                               StackRouteAdapter::Mode::Json, true);
+            _network->stackRoute().sendRequestSelected(
+                _configs ? _configs->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Json, node_id, "meteo",
+                "snapshot_req", &req, true);
         }
     }
     if (snapshot.thermo_enabled > 0 && cache.thermo_count < snapshot.thermo_enabled)
@@ -2865,8 +2866,9 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             DynamicJsonDocument req(64);
             req["offset"] = cache.thermo_count;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            _network->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
-                                               StackRouteAdapter::Mode::Json, true);
+            _network->stackRoute().sendRequestSelected(
+                _configs ? _configs->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Json, node_id, "thermo",
+                "snapshot_req", &req, true);
         }
     }
     if (snapshot.tanks_enabled > 0 && cache.tank_count < snapshot.tanks_enabled)
@@ -2877,8 +2879,9 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             DynamicJsonDocument req(64);
             req["offset"] = cache.tank_count;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            _network->stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &req,
-                                               StackRouteAdapter::Mode::Json, true);
+            _network->stackRoute().sendRequestSelected(
+                _configs ? _configs->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Json, node_id, "tanks",
+                "snapshot_req", &req, true);
         }
     }
     if (snapshot.leak_enabled > 0 && cache.leak_count < snapshot.leak_enabled)
@@ -2889,8 +2892,9 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             DynamicJsonDocument req(64);
             req["offset"] = cache.leak_count;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            _network->stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
-                                               StackRouteAdapter::Mode::Json, true);
+            _network->stackRoute().sendRequestSelected(
+                _configs ? _configs->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Json, node_id, "leak",
+                "snapshot_req", &req, true);
         }
     }
     return has_any;

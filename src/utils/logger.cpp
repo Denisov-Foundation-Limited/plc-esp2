@@ -97,6 +97,7 @@ Logger::Logger(UartManager &uart) : uart_(uart){}
 void Logger::begin(Stream &out){
     ensureLock_();
     _out = &out;
+    ensureQueue_();
 }
 
 bool Logger::ready() const{ return _out != nullptr; }
@@ -286,6 +287,63 @@ bool Logger::formatTimestamp_(char *out, size_t cap){
 void Logger::notifyObserver_(){
     if (_observer)
         _observer(_observer_ctx);
+}
+
+void Logger::ensureQueue_(){
+    if (_queue != nullptr && _task != nullptr)
+        return;
+    lockOutput_();
+    if (_queue == nullptr)
+        _queue = xQueueCreate(kQueueDepth, sizeof(QueueItem));
+    if (_task == nullptr && _queue != nullptr)
+        xTaskCreatePinnedToCore(&Logger::loggerTaskEntry_, "logger_out", 4096, this, 1, &_task, tskNO_AFFINITY);
+    unlockOutput_();
+}
+
+void Logger::enqueueLine_(const char *data, size_t len){
+    if (!_out || !data || len == 0)
+        return;
+    ensureQueue_();
+    if (_queue == nullptr)
+        return;
+
+    QueueItem item{};
+    if (len > sizeof(item.data))
+        len = sizeof(item.data);
+    memcpy(item.data, data, len);
+    item.len = (uint16_t)len;
+
+    if (xQueueSend(_queue, &item, 0) == pdPASS)
+        return;
+
+    QueueItem dropped{};
+    xQueueReceive(_queue, &dropped, 0);
+    xQueueSend(_queue, &item, 0);
+}
+
+void Logger::loggerTaskEntry_(void *ctx){
+    if (!ctx)
+        vTaskDelete(nullptr);
+    static_cast<Logger *>(ctx)->loggerTask_();
+}
+
+void Logger::loggerTask_(){
+    QueueItem item{};
+    for (;;)
+    {
+        if (_queue == nullptr)
+        {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
+        if (xQueueReceive(_queue, &item, portMAX_DELAY) != pdPASS)
+            continue;
+        if (!_out || item.len == 0)
+            continue;
+        lockOutput_();
+        _out->write(reinterpret_cast<const uint8_t *>(item.data), item.len);
+        unlockOutput_();
+    }
 }
 
 void Logger::lock_(){

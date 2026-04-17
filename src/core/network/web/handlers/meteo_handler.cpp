@@ -440,7 +440,7 @@ void MeteoHandler::handleMeteoSave(WebInterface &web, AsyncWebServerRequest *req
                 item["src_node"] = (unsigned long)src_node;
                 item["src_sensor"] = src_id;
             }
-            if (!web.network()->stackRoute().sendEvent(node_id, "meteo", "set", &doc, StackRouteAdapter::Mode::Json))
+            if (!web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "meteo", "set", &doc))
                 web._meteo_status = "Send failed";
             else
             {

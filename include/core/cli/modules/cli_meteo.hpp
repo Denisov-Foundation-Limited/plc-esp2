@@ -39,12 +39,15 @@ public:
         printIdRangeInline_();
     }
 
+    String idRangeString() const
+    {
+        return idRangeString_();
+    }
+
     void printHelpEnable()
     {
         _c._io->println(F("    show meteo       - list meteo sensors"));
-        _c._io->print(F("    show meteo <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" - sensor details"));
+        _c._io->println(String(F("    show meteo <id>")) + idRangeString_() + F(" - sensor details"));
     }
 
     void printHelpConfigLines()
@@ -57,27 +60,14 @@ public:
     {
         _c._io->println(F("  Meteo:"));
         _c._io->println(F("    show                     - list meteo sensors"));
-        _c._io->print(F("    show <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("                - sensor details"));
-        _c._io->print(F("    name <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <text>          - set sensor name"));
-        _c._io->print(F("    enable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("              - enable sensor"));
-        _c._io->print(F("    disable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("             - disable sensor"));
-        _c._io->print(F("    type <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <none|ds18b20|dht22> - set sensor type"));
-        _c._io->print(F("    addr <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <hex|none>          - set DS18B20 address"));
-        _c._io->print(F("    pin <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <pin|none>          - set DHT22 pin"));
+        const String range = idRangeString_();
+        _c._io->println(String(F("    show <id>")) + range + F("                - sensor details"));
+        _c._io->println(String(F("    name <id>")) + range + F(" <text>          - set sensor name"));
+        _c._io->println(String(F("    enable <id>")) + range + F("              - enable sensor"));
+        _c._io->println(String(F("    disable <id>")) + range + F("             - disable sensor"));
+        _c._io->println(String(F("    type <id>")) + range + F(" <none|ds18b20|dht22> - set sensor type"));
+        _c._io->println(String(F("    addr <id>")) + range + F(" <hex|none>          - set DS18B20 address"));
+        _c._io->println(String(F("    pin <id>")) + range + F(" <pin|none>          - set DHT22 pin"));
     }
 
     void showSensors()
@@ -469,9 +459,12 @@ private:
 
     void printIdRangeInline_() const
     {
-        _c._io->print(F(" (1.."));
-        _c._io->print(MeteoController::kSensorCount);
-        _c._io->print(F(")"));
+        _c._io->print(idRangeString_());
+    }
+
+    String idRangeString_() const
+    {
+        return String(F(" (1..")) + MeteoController::kSensorCount + F(")");
     }
 
     void printPadStrFixed_(const char *s, uint8_t width)

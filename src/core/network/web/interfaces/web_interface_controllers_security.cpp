@@ -153,8 +153,8 @@ bool WebInterfaceControllersSecurityHelper::isStackSecurityView_(const WebInterf
 bool WebInterfaceControllersSecurityHelper::requestStackSecurity_(WebInterface &web, uint32_t node_id) {
         if (!web.network() || node_id == 0)
             return false;
-        return web.network()->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
-                                                       StackRouteAdapter::Mode::Json, true);
+        return web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "controllers",
+                                                               "summary_req", nullptr, true);
     }
 
 String WebInterfaceControllersSecurityHelper::listSecuritySensorsHtml_(WebInterface &web) {

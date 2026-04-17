@@ -120,7 +120,6 @@ const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
             <div>
               <label>%STACK_LABEL_EXCHANGE_POLICY%</label>
               <select name="exchange_policy">
-                <option value="auto" %STACK_POLICY_AUTO_SEL%>%STACK_POLICY_AUTO_TEXT%</option>
                 <option value="direct" %STACK_POLICY_DIRECT_SEL%>%STACK_POLICY_DIRECT_TEXT%</option>
                 <option value="poll" %STACK_POLICY_POLL_SEL%>%STACK_POLICY_POLL_TEXT%</option>
               </select>
@@ -135,7 +134,6 @@ const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
             <div>
               <label>%STACK_LABEL_PAYLOAD_MODE%</label>
               <select name="payload_mode">
-                <option value="auto" %STACK_PAYLOAD_AUTO_SEL%>%STACK_PAYLOAD_AUTO_TEXT%</option>
                 <option value="json" %STACK_PAYLOAD_JSON_SEL%>%STACK_PAYLOAD_JSON_TEXT%</option>
                 <option value="binary" %STACK_PAYLOAD_BINARY_SEL%>%STACK_PAYLOAD_BINARY_TEXT%</option>
               </select>
@@ -172,12 +170,14 @@ const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
           </div>
         </form>
       </div>
-      %STACK_DIAG_BLOCK%
       %STACK_NODES_BLOCK%
+      %STACK_DIAG_BLOCK%
     </div>
   </div>
   <script>
     const roleSelect = document.querySelector('select[name="role"]');
+    const transportSelect = document.querySelector('select[name="transport"]');
+    const payloadSelect = document.querySelector('select[name="payload_mode"]');
     const masterHost = document.getElementById('master-host-field');
     const fallbackEnabled = document.getElementById('fallback-enabled-field');
     const fallbackEnabledToggle = document.getElementById('fallback-enabled');
@@ -193,9 +193,20 @@ const char kWebInterfaceStackHtml[] PROGMEM = R"HTML(
       if (fallbackHost) fallbackHost.style.display = (isSlave && fallbackOn) ? '' : 'none';
       if (apiKeyBtn) apiKeyBtn.style.display = roleSelect.value === 'master' ? '' : 'none';
     }
+    function updatePayloadMode() {
+      if (!transportSelect || !payloadSelect) return;
+      const isRs485 = transportSelect.value === 'rs485';
+      const jsonOption = payloadSelect.querySelector('option[value="json"]');
+      if (jsonOption) jsonOption.disabled = isRs485;
+      if (isRs485) payloadSelect.value = 'binary';
+    }
     if (roleSelect) {
       roleSelect.addEventListener('change', updateMasterHost);
       updateMasterHost();
+    }
+    if (transportSelect) {
+      transportSelect.addEventListener('change', updatePayloadMode);
+      updatePayloadMode();
     }
     if (fallbackEnabledToggle) {
       fallbackEnabledToggle.addEventListener('change', updateMasterHost);

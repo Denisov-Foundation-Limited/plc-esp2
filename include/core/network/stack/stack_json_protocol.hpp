@@ -55,6 +55,7 @@ public:
     struct NotifyMessage
     {
         uint32_t source_node = 0;
+        bool is_binary = false;
         char level[16] = {};
         char feature[32] = {};
         char code[32] = {};

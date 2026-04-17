@@ -17,6 +17,8 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 
 #include "core/rtc.hpp"
 
@@ -41,7 +43,7 @@
 #endif
 
 #ifndef LOGGER_USE_COLOR
-#define LOGGER_USE_COLOR 1
+#define LOGGER_USE_COLOR 0
 #endif
 
 class Logger
@@ -92,27 +94,6 @@ public:
         notifyObserver_();
     }
 
-    // ISR-safe: no ArduinoJson; minimal output
-    template <Level L>
-    inline void logISR(const __FlashStringHelper *tag,
-                       const __FlashStringHelper *msg)
-    {
-        if constexpr (!enabled<L>())
-            return;
-        if (!_out)
-            return;
-
-        char tag_buf[32] = {};
-        char msg_buf[LOGGER_BUFFER_SIZE] = {};
-        char line[LOGGER_BUFFER_SIZE + 48] = {};
-        if (tag)
-            strncpy_P(tag_buf, reinterpret_cast<const char *>(tag), sizeof(tag_buf) - 1);
-        if (msg)
-            strncpy_P(msg_buf, reinterpret_cast<const char *>(msg), sizeof(msg_buf) - 1);
-        snprintf(line, sizeof(line), "[%s][%s] %s", levelName_(L), tag_buf, msg_buf);
-        _out->println(line);
-    }
-
     template <typename... Args>
     inline void error(const __FlashStringHelper *t, const __FlashStringHelper *f, Args... a) { log<Level::Error>(t, f, a...); }
     template <typename... Args>
@@ -139,11 +120,20 @@ private:
     static SemaphoreHandle_t _output_lock;
     static portMUX_TYPE _output_lock_init_mux;
     static bool _interactive_open;
+    static constexpr size_t kQueueLineSize = LOGGER_BUFFER_SIZE + 52;
+    static constexpr size_t kQueueDepth = 64;
+    struct QueueItem
+    {
+        uint16_t len = 0;
+        char data[kQueueLineSize] = {};
+    };
     static constexpr size_t kRecentMax = 30;
     static constexpr size_t kRecentLineSize = LOGGER_BUFFER_SIZE + 48;
     char _recent[kRecentMax][kRecentLineSize] = {};
     uint8_t _recent_head = 0;
     uint8_t _recent_count = 0;
+    QueueHandle_t _queue = nullptr;
+    TaskHandle_t _task = nullptr;
 
     template <Level L>
     static constexpr bool enabled() { return (uint8_t)L <= LOGGER_LEVEL; }
@@ -174,17 +164,31 @@ private:
         char line[LOGGER_BUFFER_SIZE + 48] = {};
         buildTextLine_(line, sizeof(line), tag, levelName_(L), msg);
         if (_interactive_open)
-        {
-            _out->print('\r');
-            _out->println();
             _interactive_open = false;
+#if LOGGER_USE_COLOR
+        char framed[kQueueLineSize] = {};
+        const char *color = reinterpret_cast<const char *>(color_<L>());
+        const size_t color_len = strlen_P(color);
+        const size_t line_len = strnlen(line, sizeof(line));
+        size_t pos = 0;
+        if (color_len < sizeof(framed))
+        {
+            memcpy(framed + pos, color, color_len);
+            pos += color_len;
         }
-#if LOGGER_USE_COLOR
-        _out->print(color_<L>());
-#endif
-        _out->println(line);
-#if LOGGER_USE_COLOR
-        _out->print(F("\x1b[0m"));
+        const size_t copy_len = (pos + line_len + 4 <= sizeof(framed)) ? line_len : (sizeof(framed) - pos - 4);
+        memcpy(framed + pos, line, copy_len);
+        pos += copy_len;
+        memcpy(framed + pos, "\r\n\x1b[0m", 4);
+        pos += 4;
+        enqueueLine_(framed, pos);
+#else
+        char framed[LOGGER_BUFFER_SIZE + 52] = {};
+        const size_t line_len = strnlen(line, sizeof(line));
+        memcpy(framed, line, line_len);
+        framed[line_len] = '\r';
+        framed[line_len + 1] = '\n';
+        enqueueLine_(framed, line_len + 2);
 #endif
 
         storeLine_(line);
@@ -229,8 +233,13 @@ private:
         doc["tag"] = tag;
         doc["msg"] = msg;
 
-        serializeJson(doc, *_out);
-        _out->println();
+        char framed[kQueueLineSize] = {};
+        size_t len = serializeJson(doc, framed, sizeof(framed) - 2);
+        if (len == 0 || len > sizeof(framed) - 2)
+            len = 0;
+        framed[len] = '\r';
+        framed[len + 1] = '\n';
+        enqueueLine_(framed, len + 2);
 
         char line[LOGGER_BUFFER_SIZE] = {};
         if (serializeJson(doc, line, sizeof(line)) == 0)
@@ -239,4 +248,4 @@ private:
     }
 
     void storeLine_(const char *line);void buildTextLine_(char *out, size_t cap, const __FlashStringHelper *tag,
-                        const char *level, const char *msg);bool formatTimestamp_(char *out, size_t cap);void notifyObserver_();static void ensureLock_();static void lockOutput_();static void unlockOutput_();void lock_();void unlock_();};
+                        const char *level, const char *msg);bool formatTimestamp_(char *out, size_t cap);void notifyObserver_();static void ensureLock_();static void lockOutput_();static void unlockOutput_();void lock_();void unlock_();void ensureQueue_();void enqueueLine_(const char *data, size_t len);static void loggerTaskEntry_(void *ctx);void loggerTask_();};

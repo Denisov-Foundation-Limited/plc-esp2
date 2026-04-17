@@ -208,13 +208,18 @@ void ConfigsManager::setStackExchangePolicy(StackExchangePolicy policy){
 }
 
 void ConfigsManager::setStackTransport(StackTransportKind kind){
-    if (kind == _stack_transport)
+    const StackPayloadMode next_payload_mode =
+        (kind == StackTransportKind::Rs485) ? StackPayloadMode::Binary : _stack_payload_mode;
+    if (kind == _stack_transport && next_payload_mode == _stack_payload_mode)
         return;
     _stack_transport = kind;
+    _stack_payload_mode = next_payload_mode;
     _network.setStackConfig(*this);
 }
 
 void ConfigsManager::setStackPayloadMode(StackPayloadMode mode){
+    if (_stack_transport == StackTransportKind::Rs485)
+        mode = StackPayloadMode::Binary;
     if (mode == _stack_payload_mode)
         return;
     _stack_payload_mode = mode;
@@ -415,17 +420,13 @@ bool ConfigsManager::save(){
     s["host"] = _stack_master_host;
     if (_stack_api_key.length())
         s["api_key"] = _stack_api_key;
-    const char *policy = "auto";
-    if (_stack_exchange_policy == StackExchangePolicy::Direct)
-        policy = "direct";
-    else if (_stack_exchange_policy == StackExchangePolicy::Poll)
+    const char *policy = "direct";
+    if (_stack_exchange_policy == StackExchangePolicy::Poll)
         policy = "poll";
     s["exchange_policy"] = policy;
     s["transport"] = (_stack_transport == StackTransportKind::Rs485) ? "rs485" : "websocket";
-    const char *payload_mode = "auto";
-    if (_stack_payload_mode == StackPayloadMode::Json)
-        payload_mode = "json";
-    else if (_stack_payload_mode == StackPayloadMode::Binary)
+    const char *payload_mode = "json";
+    if (_stack_payload_mode == StackPayloadMode::Binary)
         payload_mode = "binary";
     s["payload_mode"] = payload_mode;
     s["fallback"] = _stack_fallback_enabled;
@@ -813,25 +814,25 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
         _stack_role = (role == "slave") ? StackRole::Slave : StackRole::Master;
         _stack_master_host = s["host"] | "";
         _stack_api_key = s["api_key"] | "";
-        String policy = s["exchange_policy"] | "auto";
+        String policy = s["exchange_policy"] | "direct";
         policy.toLowerCase();
         if (policy == "direct")
             _stack_exchange_policy = StackExchangePolicy::Direct;
         else if (policy == "poll")
             _stack_exchange_policy = StackExchangePolicy::Poll;
         else
-            _stack_exchange_policy = StackExchangePolicy::Auto;
+            _stack_exchange_policy = StackExchangePolicy::Direct;
         String transport = s["transport"] | "websocket";
         transport.toLowerCase();
         _stack_transport = (transport == "rs485") ? StackTransportKind::Rs485 : StackTransportKind::WebSocket;
-        String payload_mode = s["payload_mode"] | "auto";
+        String payload_mode = s["payload_mode"] | "json";
         payload_mode.toLowerCase();
-        if (payload_mode == "json")
-            _stack_payload_mode = StackPayloadMode::Json;
-        else if (payload_mode == "binary")
+        if (payload_mode == "binary")
             _stack_payload_mode = StackPayloadMode::Binary;
         else
-            _stack_payload_mode = StackPayloadMode::Auto;
+            _stack_payload_mode = StackPayloadMode::Json;
+        if (_stack_transport == StackTransportKind::Rs485)
+            _stack_payload_mode = StackPayloadMode::Binary;
         _stack_fallback_enabled = s["fallback"] | false;
         _stack_fallback_host = s["fallback_host"] | "";
         _stack_slave_controller = s["slave_controller"] | true;

@@ -99,6 +99,7 @@ private:
     bool handleRouteMessage_(const StackDeviceRegistry::DeviceInfo &device, const uint8_t *data, size_t size);
     bool handleBinaryRouteMessage_(const StackDeviceRegistry::DeviceInfo &device, const uint8_t *data, size_t size);
     bool handleNotifyMessage_(const StackDeviceRegistry::DeviceInfo &device, const uint8_t *data, size_t size);
+    bool handleBinaryNotifyMessage_(const StackDeviceRegistry::DeviceInfo &device, const uint8_t *data, size_t size);
     bool authorizeClient_(uint8_t client_id, IPAddress ip, const uint8_t *data, size_t size);
     bool isAuthorized_(uint8_t client_id) const;
     void rememberDisconnectReason_(uint8_t client_id, const char *reason);

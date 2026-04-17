@@ -19,6 +19,7 @@
 #include "core/display.hpp"
 #include "hal/ds3231mz.hpp"
 #include "core/network/stack/stack_device_registry.hpp"
+#include "core/network/stack/stack_binary_protocol.hpp"
 #include "core/network/stack/stack_unit_snapshot.hpp"
 #include "core/network/stack/stack_json_protocol.hpp"
 
@@ -126,6 +127,7 @@ private:
     static void onRingHold_(void *ctx, bool on);
 
     static void onStackRoute_(void *ctx, uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
+    static void onStackBinaryRoute_(void *ctx, uint32_t source_node, const StackBinaryProtocol::RouteFrame &route);
 
     static bool onSecurityRfidUid_(void *ctx, const String &uid);
 
@@ -158,6 +160,7 @@ private:
                                  const String &data_json);
 
     void handleStackRoute_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
+    void handleStackBinaryRoute_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route);
 
     void handleSepticFrame_(uint32_t node_id, const String &action, JsonVariantConst params);
 

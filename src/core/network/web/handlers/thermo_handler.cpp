@@ -347,7 +347,7 @@ void ThermoHandler::handleThermoSave(WebInterface &web, AsyncWebServerRequest *r
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            if (!web.network()->stackRoute().sendEvent(node_id, "thermo", "set", &doc, StackRouteAdapter::Mode::Json))
+            if (!web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "thermo", "set", &doc))
             {
                 web._thermo_status = "Send failed";
                 web.sendRedirect_(request, back, set_cookie);
@@ -745,7 +745,7 @@ void ThermoHandler::handleThermoToggle(WebInterface &web, AsyncWebServerRequest 
                 o["power_on"] = false;
             else
                 o["toggle"] = true;
-            if (!web.network()->stackRoute().sendEvent(node_id, "thermo", "set", &doc, StackRouteAdapter::Mode::Json))
+            if (!web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "thermo", "set", &doc))
             {
                 web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
                 return;

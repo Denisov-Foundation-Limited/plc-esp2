@@ -43,12 +43,15 @@ public:
         printIdRangeInline_();
     }
 
+    String idRangeString() const
+    {
+        return idRangeString_();
+    }
+
     void printHelpEnable()
     {
         _c._io->println(F("    show thermo     - list thermo devices"));
-        _c._io->print(F("    show thermo <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" - device details"));
+        _c._io->println(String(F("    show thermo <id>")) + idRangeString_() + F(" - device details"));
     }
 
     void printHelpConfigLines()
@@ -61,39 +64,18 @@ public:
     {
         _c._io->println(F("  Thermo:"));
         _c._io->println(F("    show                     - list thermo devices"));
-        _c._io->print(F("    show <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("                - device details"));
-        _c._io->print(F("    name <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <text>          - set device name"));
-        _c._io->print(F("    enable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("              - enable device"));
-        _c._io->print(F("    disable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("             - disable device"));
-        _c._io->print(F("    mode <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <off|heat|cool|auto> - set mode"));
-        _c._io->print(F("    sensor <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <sensor|none>       - set meteo sensor"));
-        _c._io->print(F("    target <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <temp>              - set target temperature"));
-        _c._io->print(F("    hyst <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <temp>               - set hysteresis"));
-        _c._io->print(F("    heat <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>         - set heat relay port"));
-        _c._io->print(F("    cool <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>         - set cool relay port"));
-        _c._io->print(F("    button <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>         - set button port"));
+        const String range = idRangeString_();
+        _c._io->println(String(F("    show <id>")) + range + F("                - device details"));
+        _c._io->println(String(F("    name <id>")) + range + F(" <text>          - set device name"));
+        _c._io->println(String(F("    enable <id>")) + range + F("              - enable device"));
+        _c._io->println(String(F("    disable <id>")) + range + F("             - disable device"));
+        _c._io->println(String(F("    mode <id>")) + range + F(" <off|heat|cool|auto> - set mode"));
+        _c._io->println(String(F("    sensor <id>")) + range + F(" <sensor|none>       - set meteo sensor"));
+        _c._io->println(String(F("    target <id>")) + range + F(" <temp>              - set target temperature"));
+        _c._io->println(String(F("    hyst <id>")) + range + F(" <temp>               - set hysteresis"));
+        _c._io->println(String(F("    heat <id>")) + range + F(" <port|none>         - set heat relay port"));
+        _c._io->println(String(F("    cool <id>")) + range + F(" <port|none>         - set cool relay port"));
+        _c._io->println(String(F("    button <id>")) + range + F(" <port|none>         - set button port"));
     }
 
     void showDevices()
@@ -521,9 +503,12 @@ private:
 
     void printIdRangeInline_() const
     {
-        _c._io->print(F(" (1.."));
-        _c._io->print(ThermoController::kDeviceCount);
-        _c._io->print(F(")"));
+        _c._io->print(idRangeString_());
+    }
+
+    String idRangeString_() const
+    {
+        return String(F(" (1..")) + ThermoController::kDeviceCount + F(")");
     }
 
     void printHeader_()

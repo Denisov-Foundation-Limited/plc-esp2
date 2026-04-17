@@ -299,14 +299,18 @@ String WebInterfaceControllersOps::listStackNodesHtml_() const
         return WebUiRu::Controllers::kText4;
     String items;
     items.reserve(1024);
+    size_t unit_index = 0;
     for (size_t i = 0; i < count; ++i)
     {
         StackDeviceRegistry::DeviceInfo device;
         if (!_web._network->stackDeviceSnapshotAt(i, device) || !device.online || device.node_id == 0)
             continue;
+        ++unit_index;
         items += "<tr data-node=\"";
         items += String((unsigned long)device.node_id);
         items += "\"><td><strong>";
+        items += String((unsigned)unit_index);
+        items += "</strong></td><td><strong>";
         if (device.name[0])
             appendHtmlEscaped_(items, device.name);
         else
@@ -733,10 +737,10 @@ sendRedirect_(request, "/", set_cookie);
         _configs_manager->setStackMasterHost(host);
 
         String policy_value =
-            request->hasParam("exchange_policy", true) ? request->getParam("exchange_policy", true)->value() : "auto";
+            request->hasParam("exchange_policy", true) ? request->getParam("exchange_policy", true)->value() : "direct";
         policy_value.trim();
         policy_value.toLowerCase();
-        ConfigsManagerIface::StackExchangePolicy policy = ConfigsManagerIface::StackExchangePolicy::Auto;
+        ConfigsManagerIface::StackExchangePolicy policy = ConfigsManagerIface::StackExchangePolicy::Direct;
         if (policy_value == "direct")
             policy = ConfigsManagerIface::StackExchangePolicy::Direct;
         else if (policy_value == "poll")
@@ -747,17 +751,19 @@ sendRedirect_(request, "/", set_cookie);
             request->hasParam("transport", true) ? request->getParam("transport", true)->value() : "websocket";
         transport_value.trim();
         transport_value.toLowerCase();
-        _configs_manager->setStackTransport(transport_value == "rs485" ? ConfigsManagerIface::StackTransportKind::Rs485
-                                                                       : ConfigsManagerIface::StackTransportKind::WebSocket);
+        const ConfigsManagerIface::StackTransportKind transport_kind =
+            (transport_value == "rs485") ? ConfigsManagerIface::StackTransportKind::Rs485
+                                         : ConfigsManagerIface::StackTransportKind::WebSocket;
+        _configs_manager->setStackTransport(transport_kind);
 
         String payload_value =
-            request->hasParam("payload_mode", true) ? request->getParam("payload_mode", true)->value() : "auto";
+            request->hasParam("payload_mode", true) ? request->getParam("payload_mode", true)->value() : "json";
         payload_value.trim();
         payload_value.toLowerCase();
-        ConfigsManagerIface::StackPayloadMode payload_mode = ConfigsManagerIface::StackPayloadMode::Auto;
-        if (payload_value == "json")
-            payload_mode = ConfigsManagerIface::StackPayloadMode::Json;
-        else if (payload_value == "binary")
+        ConfigsManagerIface::StackPayloadMode payload_mode = ConfigsManagerIface::StackPayloadMode::Json;
+        if (payload_value == "binary")
+            payload_mode = ConfigsManagerIface::StackPayloadMode::Binary;
+        if (transport_kind == ConfigsManagerIface::StackTransportKind::Rs485)
             payload_mode = ConfigsManagerIface::StackPayloadMode::Binary;
         _configs_manager->setStackPayloadMode(payload_mode);
 
@@ -1397,7 +1403,7 @@ String WebInterfaceControllersOps::navHtml_() const
 
     ConfigsManagerIface::StackExchangePolicy WebInterfaceControllersOps::stackExchangePolicy_() const
 {
-        return _configs_manager ? _configs_manager->stackExchangePolicy() : ConfigsManagerIface::StackExchangePolicy::Auto;
+        return _configs_manager ? _configs_manager->stackExchangePolicy() : ConfigsManagerIface::StackExchangePolicy::Direct;
     }
 
 
@@ -1409,9 +1415,9 @@ String WebInterfaceControllersOps::navHtml_() const
 
 
 
-    ConfigsManagerIface::StackPayloadMode WebInterfaceControllersOps::stackPayloadMode_() const
+ConfigsManagerIface::StackPayloadMode WebInterfaceControllersOps::stackPayloadMode_() const
 {
-        return _configs_manager ? _configs_manager->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Auto;
+        return _configs_manager ? _configs_manager->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Json;
     }
 
 

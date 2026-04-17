@@ -24,12 +24,15 @@ public:
     CLISecurityT(ConsoleT &console, SecurityController &security)
         : _c(console), _security(security) {}
 
+    String idRangeString() const
+    {
+        return idRangeString_();
+    }
+
     void printHelpEnable()
     {
         _c._io->println(F("    show security       - list security sensors"));
-        _c._io->print(F("    show security <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" - sensor details"));
+        _c._io->println(String(F("    show security <id>")) + idRangeString_() + F(" - sensor details"));
         _c._io->println(F("    security status     - show security status"));
         _c._io->println(F("    security arm        - arm security"));
         _c._io->println(F("    security disarm     - disarm security"));
@@ -45,27 +48,14 @@ public:
     {
         _c._io->println(F("  Security:"));
         _c._io->println(F("    show                    - list sensors"));
-        _c._io->print(F("    show <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("                - sensor details"));
-        _c._io->print(F("    enable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("              - enable sensor"));
-        _c._io->print(F("    disable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("             - disable sensor"));
-        _c._io->print(F("    type <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <pir|reed>     - set sensor type"));
-        _c._io->print(F("    port <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>   - set sensor port"));
-        _c._io->print(F("    name <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <text>        - set sensor name"));
-        _c._io->print(F("    silent <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <on|off>     - set silent flag"));
+        const String range = idRangeString_();
+        _c._io->println(String(F("    show <id>")) + range + F("                - sensor details"));
+        _c._io->println(String(F("    enable <id>")) + range + F("              - enable sensor"));
+        _c._io->println(String(F("    disable <id>")) + range + F("             - disable sensor"));
+        _c._io->println(String(F("    type <id>")) + range + F(" <pir|reed>     - set sensor type"));
+        _c._io->println(String(F("    port <id>")) + range + F(" <port|none>   - set sensor port"));
+        _c._io->println(String(F("    name <id>")) + range + F(" <text>        - set sensor name"));
+        _c._io->println(String(F("    silent <id>")) + range + F(" <on|off>     - set silent flag"));
         _c._io->println(F("    siren <port|none>      - set siren port"));
         _c._io->println(F("    keys list              - list iButton keys"));
         _c._io->println(F("    key add <hex16> [name] - add iButton key"));
@@ -789,9 +779,12 @@ private:
 
     void printIdRangeInline_() const
     {
-        _c._io->print(F(" (1.."));
-        _c._io->print(SecurityController::kSensorCount);
-        _c._io->print(F(")"));
+        _c._io->print(idRangeString_());
+    }
+
+    String idRangeString_() const
+    {
+        return String(F(" (1..")) + SecurityController::kSensorCount + F(")");
     }
 
     void printInvalidId_() const

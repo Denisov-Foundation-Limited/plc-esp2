@@ -118,6 +118,11 @@ WebInterface::~WebInterface()
     void WebInterface::setRules(RulesController &rules)
 { _rules = &rules; }
 
+    ConfigsManagerIface::StackPayloadMode WebInterface::stackPayloadMode() const
+{
+    return _controllers_ops.stackPayloadMode_();
+}
+
 
     Network *WebInterface::network() const
 { return _network; }

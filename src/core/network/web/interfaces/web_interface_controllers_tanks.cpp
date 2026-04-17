@@ -70,8 +70,8 @@ bool requestNextStackTanksPage_(WebInterface &web, uint32_t node_id, uint16_t of
     DynamicJsonDocument req(64);
     req["offset"] = offset;
     req["limit"] = limit;
-    const bool sent = web.network()->stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &req,
-                                                              StackRouteAdapter::Mode::Json, true);
+    const bool sent = web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "tanks",
+                                                                      "snapshot_req", &req, true);
     if (!sent)
         web.network()->clearStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id);
     return sent;
@@ -189,8 +189,8 @@ bool WebInterfaceControllersTanksHelper::requestStackTanks_(WebInterface &web, u
             DynamicJsonDocument req(64);
             req["offset"] = 0;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            const bool tanks_req = web.network()->stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &req,
-                                                                           StackRouteAdapter::Mode::Json, true);
+            const bool tanks_req = web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id,
+                                                                                   "tanks", "snapshot_req", &req, true);
             return refresh || tanks_req;
         }
         if (has_cache && snapshot.tanks_enabled > cache.tank_count)

@@ -275,8 +275,8 @@ void Network::maintainStackWsReadiness_()
 
 void Network::beginStack_()
 {
-    StackRouteAdapter::ExchangePolicy policy = StackRouteAdapter::ExchangePolicy::Auto;
-    StackRouteAdapter::PayloadMode payload_mode = StackRouteAdapter::PayloadMode::Auto;
+    StackRouteAdapter::ExchangePolicy policy = StackRouteAdapter::ExchangePolicy::Direct;
+    StackRouteAdapter::PayloadMode payload_mode = StackRouteAdapter::PayloadMode::Json;
     ConfigsManagerIface::StackRole role = ConfigsManagerIface::StackRole::Master;
     ConfigsManagerIface::StackTransportKind transport = ConfigsManagerIface::StackTransportKind::WebSocket;
     bool ws_deferred = false;
@@ -299,9 +299,8 @@ void Network::beginStack_()
             case ConfigsManagerIface::StackExchangePolicy::Poll:
                 policy = StackRouteAdapter::ExchangePolicy::Poll;
                 break;
-            case ConfigsManagerIface::StackExchangePolicy::Auto:
             default:
-                policy = StackRouteAdapter::ExchangePolicy::Auto;
+                policy = StackRouteAdapter::ExchangePolicy::Direct;
                 break;
             }
 
@@ -313,9 +312,8 @@ void Network::beginStack_()
             case ConfigsManagerIface::StackPayloadMode::Binary:
                 payload_mode = StackRouteAdapter::PayloadMode::Binary;
                 break;
-            case ConfigsManagerIface::StackPayloadMode::Auto:
             default:
-                payload_mode = StackRouteAdapter::PayloadMode::Auto;
+                payload_mode = StackRouteAdapter::PayloadMode::Json;
                 break;
             }
 
@@ -494,6 +492,7 @@ void Network::ensureStackSlaveStarted_()
             transport = _stack_cfg->stackTransport();
             cfg.api_key = _stack_cfg->stackApiKey();
             cfg.caps = _stack_cfg->stackSlaveController() ? kStackCapController : 0u;
+            cfg.payload_mode = _stack_cfg->stackPayloadMode();
         }
         cfg.host = (_stack_target == StackTarget::Primary) ? _stack_primary_host : _stack_fallback_host;
         cfg.port = kStackPort;
@@ -962,8 +961,31 @@ void Network::invalidateStackIndexState(uint32_t node_id)
 bool Network::stackSlaveSendResponse(uint32_t target_node, const char *feature, const char *action, uint32_t reply_to,
                                      const JsonDocument *payload)
 {
-    const StackTransport::RouteMeta meta = StackRouteAdapter::makeResponseMeta(reply_to);
-    return _stack_slave_client.sendRoute(target_node, feature, action, payload, &meta);
+    StackRouteAdapter::Mode mode = StackRouteAdapter::Mode::Json;
+    {
+        const auto guard = _stack_lock.guard();
+        if (_stack_cfg)
+        {
+            switch (_stack_cfg->stackPayloadMode())
+            {
+            case ConfigsManagerIface::StackPayloadMode::Json:
+                mode = StackRouteAdapter::Mode::Json;
+                break;
+            case ConfigsManagerIface::StackPayloadMode::Binary:
+                mode = StackRouteAdapter::Mode::Binary;
+                break;
+            default:
+                mode = StackRouteAdapter::Mode::Json;
+                break;
+            }
+        }
+    }
+    if (mode == StackRouteAdapter::Mode::Json)
+    {
+        const StackTransport::RouteMeta meta = StackRouteAdapter::makeResponseMeta(reply_to);
+        return _stack_slave_client.sendRoute(target_node, feature, action, payload, &meta);
+    }
+    return _stack_route.sendResponse(target_node, feature, action, reply_to, payload, mode);
 }
 
 bool Network::stackSlaveAuthorized() const
@@ -1059,13 +1081,14 @@ void Network::handleStackNotify_(uint32_t source_node, const StackJsonProtocol::
     }
 
     DynamicJsonDocument payload(768);
+    payload["binary"] = notify.is_binary;
     payload["level"] = notify.level;
     payload["feature"] = notify.feature;
     if (notify.code[0])
         payload["code"] = notify.code;
     if (notify.message.length())
         payload["message"] = notify.message;
-    if (notify.payload.length())
+    if (!notify.is_binary && notify.payload.length())
     {
         DynamicJsonDocument extra(384);
         if (!deserializeJson(extra, notify.payload.c_str(), notify.payload.length()))

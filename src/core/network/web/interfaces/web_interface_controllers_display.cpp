@@ -888,8 +888,8 @@ String WebInterfaceControllersDisplayHelper::displayLeakOptionsJson_(const WebIn
                         DynamicJsonDocument req(64);
                         req["offset"] = 0;
                         req["limit"] = StackUnitSnapshot::kPageSize;
-                        web.network()->stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
-                                                                StackRouteAdapter::Mode::Json, true);
+                        web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "leak",
+                                                                        "snapshot_req", &req, true);
                     }
                     append_node(String((unsigned long)node_id), "[]");
                     return;
@@ -923,8 +923,8 @@ String WebInterfaceControllersDisplayHelper::displayLeakOptionsJson_(const WebIn
                         DynamicJsonDocument req(64);
                         req["offset"] = cache.leak_count;
                         req["limit"] = StackUnitSnapshot::kPageSize;
-                        web.network()->stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
-                                                                StackRouteAdapter::Mode::Json, true);
+                        web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "leak",
+                                                                        "snapshot_req", &req, true);
                     }
                 }
                 append_node(String((unsigned long)node_id), list);

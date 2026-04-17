@@ -52,8 +52,8 @@ bool requestNextStackThermoPage_(WebInterface &web, uint32_t node_id, uint16_t o
     DynamicJsonDocument req(64);
     req["offset"] = offset;
     req["limit"] = limit;
-    const bool sent = web.network()->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
-                                                              StackRouteAdapter::Mode::Json, true);
+    const bool sent = web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "thermo",
+                                                                      "snapshot_req", &req, true);
     if (!sent)
         web.network()->clearStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id);
     return sent;
@@ -223,8 +223,8 @@ bool WebInterfaceControllersThermoHelper::requestStackThermo_(WebInterface &web,
             DynamicJsonDocument req(64);
             req["offset"] = 0;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            const bool thermo_req = web.network()->stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
-                                                                            StackRouteAdapter::Mode::Json, true);
+            const bool thermo_req = web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id,
+                                                                                    "thermo", "snapshot_req", &req, true);
             return refresh || thermo_req;
         }
         if (has_cache && snapshot.thermo_enabled > cache.thermo_count)

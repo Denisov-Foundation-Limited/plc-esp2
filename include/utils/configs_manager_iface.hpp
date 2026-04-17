@@ -35,8 +35,7 @@ public:
 
     enum class StackExchangePolicy : uint8_t
     {
-        Auto = 0,
-        Direct,
+        Direct = 0,
         Poll
     };
 
@@ -48,8 +47,7 @@ public:
 
     enum class StackPayloadMode : uint8_t
     {
-        Auto = 0,
-        Json,
+        Json = 0,
         Binary
     };
 

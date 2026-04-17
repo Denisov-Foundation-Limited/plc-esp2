@@ -28,12 +28,15 @@ public:
         printIdRangeInline_();
     }
 
+    String idRangeString() const
+    {
+        return idRangeString_();
+    }
+
     void printHelpEnable()
     {
         _c._io->println(F("    show tanks     - list tanks"));
-        _c._io->print(F("    show tank <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" - tank details"));
+        _c._io->println(String(F("    show tank <id>")) + idRangeString_() + F(" - tank details"));
     }
 
     void printHelpConfigLines()
@@ -46,39 +49,18 @@ public:
     {
         _c._io->println(F("  Tanks:"));
         _c._io->println(F("    show                     - list tanks"));
-        _c._io->print(F("    show <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("                - tank details"));
-        _c._io->print(F("    name <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <text>          - set tank name"));
-        _c._io->print(F("    enable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("              - enable tank"));
-        _c._io->print(F("    disable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("             - disable tank"));
-        _c._io->print(F("    power <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <0|1>           - power on/off"));
-        _c._io->print(F("    low <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>   - set low level input"));
-        _c._io->print(F("    mid <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>   - set mid level input"));
-        _c._io->print(F("    full <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>  - set full level input"));
-        _c._io->print(F("    valve <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none> - set valve relay"));
-        _c._io->print(F("    pump <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>  - set pump relay"));
-        _c._io->print(F("    alarm <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none> - set alarm relay"));
+        const String range = idRangeString_();
+        _c._io->println(String(F("    show <id>")) + range + F("                - tank details"));
+        _c._io->println(String(F("    name <id>")) + range + F(" <text>          - set tank name"));
+        _c._io->println(String(F("    enable <id>")) + range + F("              - enable tank"));
+        _c._io->println(String(F("    disable <id>")) + range + F("             - disable tank"));
+        _c._io->println(String(F("    power <id>")) + range + F(" <0|1>           - power on/off"));
+        _c._io->println(String(F("    low <id>")) + range + F(" <port|none>   - set low level input"));
+        _c._io->println(String(F("    mid <id>")) + range + F(" <port|none>   - set mid level input"));
+        _c._io->println(String(F("    full <id>")) + range + F(" <port|none>  - set full level input"));
+        _c._io->println(String(F("    valve <id>")) + range + F(" <port|none> - set valve relay"));
+        _c._io->println(String(F("    pump <id>")) + range + F(" <port|none>  - set pump relay"));
+        _c._io->println(String(F("    alarm <id>")) + range + F(" <port|none> - set alarm relay"));
     }
 
     void showTanks()
@@ -296,9 +278,12 @@ private:
 
     void printIdRangeInline_() const
     {
-        _c._io->print(F(" (1.."));
-        _c._io->print(TankController::kTankCount);
-        _c._io->print(F(")"));
+        _c._io->print(idRangeString_());
+    }
+
+    String idRangeString_() const
+    {
+        return String(F(" (1..")) + TankController::kTankCount + F(")");
     }
 
     void printInvalidId_() const

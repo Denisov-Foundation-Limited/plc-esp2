@@ -73,8 +73,8 @@ String stackDiagnosticsHtml_(const WebInterface &web)
 
     const Network::StackDiagnostics diag = network->stackDiagnostics();
     String html;
-    html.reserve(960);
-    html += "<div class=\"section\"><p class=\"status\">stack diagnostics</p><table><tbody>";
+    html.reserve(1120);
+    html += "<div class=\"section\"><details><summary class=\"status\" style=\"cursor:pointer; user-select:none;\">stack diagnostics</summary><table><tbody>";
     auto addRow = [&html](const char *key, const String &value) {
         html += "<tr><th>";
         html += key;
@@ -103,7 +103,7 @@ String stackDiagnosticsHtml_(const WebInterface &web)
     addRow("rs485_pend_drop", String((unsigned long)diag.rs485.pending_full_drops));
     addRow("rs485_last_tx", String((unsigned long)diag.rs485.last_tx_size));
     addRow("rs485_lock_ms", String((unsigned long)diag.rs485.lock_held_ms));
-    html += "</tbody></table></div>";
+    html += "</tbody></table></details></div>";
     return html;
 }
 }
@@ -146,14 +146,12 @@ void StackHandler::handleStack(WebInterface &web, AsyncWebServerRequest *request
             page.replace("%STACK_LABEL_ROLE%", WebUiRu::StackPage::kRole);
             page.replace("%STACK_LABEL_MASTER_HOST%", WebUiRu::StackPage::kMasterHost);
             page.replace("%STACK_LABEL_EXCHANGE_POLICY%", WebUiRu::StackPage::kExchangePolicy);
-            page.replace("%STACK_POLICY_AUTO_TEXT%", WebUiRu::StackPage::kPolicyAuto);
             page.replace("%STACK_POLICY_DIRECT_TEXT%", WebUiRu::StackPage::kPolicyDirect);
             page.replace("%STACK_POLICY_POLL_TEXT%", WebUiRu::StackPage::kPolicyPoll);
             page.replace("%STACK_LABEL_TRANSPORT%", WebUiRu::StackPage::kTransport);
             page.replace("%STACK_TRANSPORT_WS_TEXT%", WebUiRu::StackPage::kTransportWebSocket);
             page.replace("%STACK_TRANSPORT_RS485_TEXT%", WebUiRu::StackPage::kTransportRs485);
             page.replace("%STACK_LABEL_PAYLOAD_MODE%", WebUiRu::StackPage::kPayloadMode);
-            page.replace("%STACK_PAYLOAD_AUTO_TEXT%", WebUiRu::StackPage::kPayloadAuto);
             page.replace("%STACK_PAYLOAD_JSON_TEXT%", WebUiRu::StackPage::kPayloadJson);
             page.replace("%STACK_PAYLOAD_BINARY_TEXT%", WebUiRu::StackPage::kPayloadBinary);
             page.replace("%STACK_LABEL_FALLBACK_MASTER%", WebUiRu::StackPage::kFallbackMaster);
@@ -175,14 +173,12 @@ void StackHandler::handleStack(WebInterface &web, AsyncWebServerRequest *request
         page.replace("%STACK_SLAVE_LINK_TEXT%", slave_link_text);
         page.replace("%STACK_MASTER_HOST%", web.stackMasterHost_());
         const auto policy = web.stackExchangePolicy_();
-        page.replace("%STACK_POLICY_AUTO_SEL%", policy == ConfigsManagerIface::StackExchangePolicy::Auto ? "selected" : "");
         page.replace("%STACK_POLICY_DIRECT_SEL%", policy == ConfigsManagerIface::StackExchangePolicy::Direct ? "selected" : "");
         page.replace("%STACK_POLICY_POLL_SEL%", policy == ConfigsManagerIface::StackExchangePolicy::Poll ? "selected" : "");
         const auto transport = web.stackTransport_();
         page.replace("%STACK_TRANSPORT_WS_SEL%", transport == ConfigsManagerIface::StackTransportKind::WebSocket ? "selected" : "");
         page.replace("%STACK_TRANSPORT_RS485_SEL%", transport == ConfigsManagerIface::StackTransportKind::Rs485 ? "selected" : "");
         const auto payload_mode = web.stackPayloadMode_();
-        page.replace("%STACK_PAYLOAD_AUTO_SEL%", payload_mode == ConfigsManagerIface::StackPayloadMode::Auto ? "selected" : "");
         page.replace("%STACK_PAYLOAD_JSON_SEL%", payload_mode == ConfigsManagerIface::StackPayloadMode::Json ? "selected" : "");
         page.replace("%STACK_PAYLOAD_BINARY_SEL%", payload_mode == ConfigsManagerIface::StackPayloadMode::Binary ? "selected" : "");
         page.replace("%STACK_FALLBACK_ENABLED_CHECKED%", web.stackFallbackEnabled_() ? "checked" : "");

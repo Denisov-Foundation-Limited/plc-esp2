@@ -970,12 +970,12 @@ private:
             String value = cmd.substring(13);
             value.trim();
             value.toLowerCase();
-            ConfigsManagerIface::StackExchangePolicy policy = ConfigsManagerIface::StackExchangePolicy::Auto;
+            ConfigsManagerIface::StackExchangePolicy policy = ConfigsManagerIface::StackExchangePolicy::Direct;
             if (value == "direct")
                 policy = ConfigsManagerIface::StackExchangePolicy::Direct;
             else if (value == "poll")
                 policy = ConfigsManagerIface::StackExchangePolicy::Poll;
-            else if (value != "auto")
+            else
             {
                 _c._io->println(F("Invalid policy"));
                 _c.printPrompt_();
@@ -1014,12 +1014,10 @@ private:
             String value = cmd.substring(14);
             value.trim();
             value.toLowerCase();
-            ConfigsManagerIface::StackPayloadMode mode = ConfigsManagerIface::StackPayloadMode::Auto;
-            if (value == "json")
-                mode = ConfigsManagerIface::StackPayloadMode::Json;
-            else if (value == "binary" || value == "bin")
+            ConfigsManagerIface::StackPayloadMode mode = ConfigsManagerIface::StackPayloadMode::Json;
+            if (value == "binary" || value == "bin")
                 mode = ConfigsManagerIface::StackPayloadMode::Binary;
-            else if (value != "auto")
+            else if (value != "json")
             {
                 _c._io->println(F("Invalid payload"));
                 _c.printPrompt_();

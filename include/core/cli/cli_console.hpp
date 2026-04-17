@@ -290,6 +290,9 @@ private:
     static bool hexToBytes_(const String &hex, uint8_t out[32]);
 
     static void bytesToHex_(const uint8_t in[32], char out[65]);
+    size_t promptWidth_() const;
+    void clearPromptLineUnlocked_(Stream &io, size_t min_extra = 0) const;
+    void printPromptUnlocked_(Stream &io, bool set_interactive) const;
     PlcControl &_plc;
     WifiManager &_wifi;
     RTC &_rtc;

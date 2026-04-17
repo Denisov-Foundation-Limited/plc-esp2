@@ -51,9 +51,9 @@ public:
     StackRole _stack_role = StackRole::Master;
     String _stack_master_host;
     String _stack_api_key;
-    StackExchangePolicy _stack_exchange_policy = StackExchangePolicy::Auto;
+    StackExchangePolicy _stack_exchange_policy = StackExchangePolicy::Direct;
     StackTransportKind _stack_transport = StackTransportKind::WebSocket;
-    StackPayloadMode _stack_payload_mode = StackPayloadMode::Auto;
+    StackPayloadMode _stack_payload_mode = StackPayloadMode::Json;
     bool _stack_fallback_enabled = false;
     String _stack_fallback_host;
     bool _stack_slave_controller = true;

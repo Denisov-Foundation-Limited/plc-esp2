@@ -312,7 +312,7 @@ void TankHandler::handleTanksSave(WebInterface &web, AsyncWebServerRequest *requ
                 web.sendRedirect_(request, back, set_cookie);
                 return;
             }
-            if (!web.network()->stackRoute().sendEvent(node_id, "tanks", "set", &doc, StackRouteAdapter::Mode::Json))
+            if (!web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "tanks", "set", &doc))
             {
                 web._tanks_status = "Send failed";
                 web.sendRedirect_(request, back, set_cookie);
@@ -596,7 +596,7 @@ void TankHandler::handleTanksToggle(WebInterface &web, AsyncWebServerRequest *re
                 o["power_on"] = false;
             else
                 o["toggle"] = true;
-            if (!web.network()->stackRoute().sendEvent(node_id, "tanks", "set", &doc, StackRouteAdapter::Mode::Json))
+            if (!web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "tanks", "set", &doc))
             {
                 web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
                 return;

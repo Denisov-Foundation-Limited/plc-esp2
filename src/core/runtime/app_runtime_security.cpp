@@ -132,7 +132,7 @@ void AppRuntime::sendSecurityStateToNode_(uint32_t node_id, bool armed, bool for
     doc["alarm"] = armed ? sec.alarmOn() : false;
     if (force && armed)
         doc["force"] = true;
-    net.network.stackRoute().sendEvent(node_id, "security", "set", &doc, StackRouteAdapter::Mode::Json);
+    net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), node_id, "security", "set", &doc);
 }
 
 void AppRuntime::sendSecurityDetectToMaster_(uint8_t sensor_id, const String &name, bool silent){
@@ -159,7 +159,7 @@ void AppRuntime::sendSecurityDetectToMaster_(uint8_t sensor_id, const String &na
         doc["name"] = name;
     if (silent)
         doc["silent"] = true;
-    if (!net.network.stackRoute().sendEvent(0, "security", "alarm", &doc, StackRouteAdapter::Mode::Json))
+    if (!net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), 0, "security", "alarm", &doc))
     {
         core.logs.warn(F("SECURITY"), F("remote detect send failed: id: %u name: %s"),
                        (unsigned)sensor_id, name.length() ? name.c_str() : "-");
@@ -240,7 +240,7 @@ bool AppRuntime::sendRfidToMaster_(const String &uid, const String &name){
     doc["uid"] = uid;
     if (name.length())
         doc["name"] = name;
-    return net.network.stackRoute().sendEvent(0, "security", "rfid", &doc, StackRouteAdapter::Mode::Json);
+    return net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), 0, "security", "rfid", &doc);
 }
 
 bool AppRuntime::sendIButtonToMaster_(const String &serial, const String &name){
@@ -250,7 +250,7 @@ bool AppRuntime::sendIButtonToMaster_(const String &serial, const String &name){
     doc["serial"] = serial;
     if (name.length())
         doc["name"] = name;
-    return net.network.stackRoute().sendEvent(0, "security", "ibutton", &doc, StackRouteAdapter::Mode::Json);
+    return net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), 0, "security", "ibutton", &doc);
 }
 
 void AppRuntime::sendRfidResultToNode_(uint32_t node_id, const String &uid, bool matched,
@@ -265,7 +265,7 @@ void AppRuntime::sendRfidResultToNode_(uint32_t node_id, const String &uid, bool
     if (result.length())
         doc["result"] = result;
     doc["armed"] = armed;
-    net.network.stackRoute().sendEvent(node_id, "security", "rfid_result", &doc, StackRouteAdapter::Mode::Json);
+    net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), node_id, "security", "rfid_result", &doc);
 }
 
 void AppRuntime::sendIButtonResultToNode_(uint32_t node_id, const String &serial, bool matched,
@@ -280,7 +280,7 @@ void AppRuntime::sendIButtonResultToNode_(uint32_t node_id, const String &serial
     if (result.length())
         doc["result"] = result;
     doc["armed"] = armed;
-    net.network.stackRoute().sendEvent(node_id, "security", "ibutton_result", &doc, StackRouteAdapter::Mode::Json);
+    net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), node_id, "security", "ibutton_result", &doc);
 }
 
 void AppRuntime::pollSecurityStatusFromMaster_(){
@@ -291,7 +291,8 @@ void AppRuntime::pollSecurityStatusFromMaster_(){
         return;
     _last_rfid_status_ms = now;
     StaticJsonDocument<128> doc;
-    net.network.stackRoute().sendRequest(0, "security", "status_req", &doc, StackRouteAdapter::Mode::Json, false);
+    net.network.stackRoute().sendRequestSelected(cfg.configs_manager.stackPayloadMode(), 0, "security", "status_req", &doc,
+                                                 false);
 }
 
 bool AppRuntime::collectRemoteSecurityDetections_(String &out, String *plain_out){
@@ -360,8 +361,8 @@ bool AppRuntime::collectRemoteSecurityDetections_(String &out, String *plain_out
         const bool should_refresh = !have_snapshot || snapshot.updated_ms == 0 || snapshot_age_ms > kSecurityPrearmRefreshMs;
         if (should_refresh && allow_refresh)
         {
-            net.network.stackRoute().sendRequest(device.node_id, "controllers", "summary_req", nullptr,
-                                                 StackRouteAdapter::Mode::Json, true);
+            net.network.stackRoute().sendRequestSelected(cfg.configs_manager.stackPayloadMode(), device.node_id,
+                                                         "controllers", "summary_req", nullptr, true);
             _last_prearm_poll_ms = now;
         }
         if (!have_snapshot || snapshot.updated_ms == 0)
@@ -489,7 +490,7 @@ void AppRuntime::sendSecurityAlarmToNode_(uint32_t node_id, bool alarm_on){
         return;
     StaticJsonDocument<128> doc;
     doc["alarm"] = alarm_on;
-    net.network.stackRoute().sendEvent(node_id, "security", "set", &doc, StackRouteAdapter::Mode::Json);
+    net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), node_id, "security", "set", &doc);
 }
 
 void AppRuntime::sendSecurityBeepToNode_(uint32_t node_id, const char *kind){
@@ -499,7 +500,7 @@ void AppRuntime::sendSecurityBeepToNode_(uint32_t node_id, const char *kind){
         return;
     StaticJsonDocument<96> doc;
     doc["beep"] = kind ? kind : "reject";
-    net.network.stackRoute().sendEvent(node_id, "security", "set", &doc, StackRouteAdapter::Mode::Json);
+    net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), node_id, "security", "set", &doc);
 }
 
 void AppRuntime::pollSecurityPrearmWarmup_(){
@@ -526,6 +527,6 @@ void AppRuntime::sendSecurityClearToNode_(uint32_t node_id){
         return;
     StaticJsonDocument<96> doc;
     doc["clear"] = true;
-    net.network.stackRoute().sendEvent(node_id, "security", "set", &doc, StackRouteAdapter::Mode::Json);
+    net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), node_id, "security", "set", &doc);
 }
 

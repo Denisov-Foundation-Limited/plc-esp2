@@ -121,74 +121,10 @@ void CliConsole::onLoggerOutput_()
     if ((_state == State::NeedUser || _state == State::NeedPass) && _line.length() == 0)
         return;
     Logger::OutputGuard guard;
-    _raw_io->print('\r');
-    if (_state == State::NeedUser)
-    {
-        _raw_io->print(F("login: "));
-        if (_line.length())
-            _raw_io->print(_line);
-        return;
-    }
-    if (_state == State::NeedPass)
-    {
-        _raw_io->print(F("password: "));
-        return;
-    }
-
-    switch (_mode)
-    {
-    case Mode::User:
-        _raw_io->print(F("plc> "));
-        break;
-    case Mode::Enable:
-        _raw_io->print(F("plc# "));
-        break;
-    case Mode::Config:
-        _raw_io->print(F("plc(config)# "));
-        break;
-    case Mode::ConfigWifi:
-        _raw_io->print(F("plc(config-wifi)# "));
-        break;
-    case Mode::ConfigTime:
-        _raw_io->print(F("plc(config-time)# "));
-        break;
-    case Mode::ConfigSocket:
-        _raw_io->print(F("plc(config-socket)# "));
-        break;
-    case Mode::ConfigMeteo:
-        _raw_io->print(F("plc(config-meteo)# "));
-        break;
-    case Mode::ConfigThermo:
-        _raw_io->print(F("plc(config-thermo)# "));
-        break;
-    case Mode::ConfigTank:
-        _raw_io->print(F("plc(config-tank)# "));
-        break;
-    case Mode::ConfigSeptic:
-        _raw_io->print(F("plc(config-septic)# "));
-        break;
-    case Mode::ConfigSecurity:
-        _raw_io->print(F("plc(config-security)# "));
-        break;
-    case Mode::ConfigRing:
-        _raw_io->print(F("plc(config-ring)# "));
-        break;
-    case Mode::ConfigAvr:
-        _raw_io->print(F("plc(config-avr)# "));
-        break;
-    case Mode::ConfigLeak:
-        _raw_io->print(F("plc(config-leak)# "));
-        break;
-    case Mode::ConfigWatering:
-        _raw_io->print(F("plc(config-watering)# "));
-        break;
-    case Mode::ConfigCloud:
-        _raw_io->print(F("plc(config-cloud)# "));
-        break;
-    }
+    clearPromptLineUnlocked_(*_raw_io);
+    printPromptUnlocked_(*_raw_io, false);
     if (_line.length())
         _raw_io->print(_line);
-    Logger::setInteractiveOpen(true);
 }
 bool CliConsole::setAdminPassword_(const String &pass)
 {
@@ -696,10 +632,8 @@ void CliConsole::cmdShowStack_()
     _io->println(F("Stack:"));
     printKeyValue_(F("role"), _configs_manager->stackRole() == ConfigsManagerIface::StackRole::Slave ? F("slave") : F("master"), 13);
     printKeyValue_(F("master_host"), _configs_manager->stackMasterHost(), 13);
-    const __FlashStringHelper *policy = F("auto");
-    if (_configs_manager->stackExchangePolicy() == ConfigsManagerIface::StackExchangePolicy::Direct)
-        policy = F("direct");
-    else if (_configs_manager->stackExchangePolicy() == ConfigsManagerIface::StackExchangePolicy::Poll)
+    const __FlashStringHelper *policy = F("direct");
+    if (_configs_manager->stackExchangePolicy() == ConfigsManagerIface::StackExchangePolicy::Poll)
         policy = F("poll");
     printKeyValue_(F("policy"), policy, 13);
     printKeyValue_(F("transport"),
@@ -1023,7 +957,7 @@ void CliConsole::showHelpTopic_(const String &topic)
         _io->println(F("  admin password <pass>   - set admin password"));
         _io->println(F("  stack role <master|slave>"));
         _io->println(F("  stack master <host>"));
-        _io->println(F("  stack policy <auto|direct|poll>"));
+        _io->println(F("  stack policy <direct|poll>"));
         _io->println(F("  stack transport <websocket|rs485>"));
         _io->println(F("  stack payload <auto|json|binary>"));
         _io->println(F("  stack fallback <on|off>"));
@@ -1198,7 +1132,7 @@ void CliConsole::handleTab_()
         "admin password <pass>",
         "stack role <master|slave>",
         "stack master <host>",
-        "stack policy <auto|direct|poll>",
+        "stack policy <direct|poll>",
         "stack transport <websocket|rs485>",
         "stack payload <auto|json|binary>",
         "stack fallback <on|off>",
@@ -2213,76 +2147,16 @@ void CliConsole::printPrompt_()
 {
     if (!_io)
         return;
+    Stream *out = _raw_io ? _raw_io : _io;
+    if (!out)
+        return;
+    Logger::OutputGuard guard;
     if (_cmd_blank_after)
     {
-        _io->println();
+        out->println();
         _cmd_blank_after = false;
     }
-    if (_state == State::NeedUser)
-    {
-        _io->print(F("login: "));
-        Logger::setInteractiveOpen(true);
-        return;
-    }
-    if (_state == State::NeedPass)
-    {
-        _io->print(F("password: "));
-        Logger::setInteractiveOpen(true);
-        return;
-    }
-
-    switch (_mode)
-    {
-    case Mode::User:
-        _io->print(F("plc> "));
-        break;
-    case Mode::Enable:
-        _io->print(F("plc# "));
-        break;
-    case Mode::Config:
-        _io->print(F("plc(config)# "));
-        break;
-    case Mode::ConfigWifi:
-        _io->print(F("plc(config-wifi)# "));
-        break;
-    case Mode::ConfigTime:
-        _io->print(F("plc(config-time)# "));
-        break;
-    case Mode::ConfigSocket:
-        _io->print(F("plc(config-socket)# "));
-        break;
-    case Mode::ConfigMeteo:
-        _io->print(F("plc(config-meteo)# "));
-        break;
-    case Mode::ConfigThermo:
-        _io->print(F("plc(config-thermo)# "));
-        break;
-    case Mode::ConfigTank:
-        _io->print(F("plc(config-tank)# "));
-        break;
-    case Mode::ConfigSeptic:
-        _io->print(F("plc(config-septic)# "));
-        break;
-    case Mode::ConfigSecurity:
-        _io->print(F("plc(config-security)# "));
-        break;
-    case Mode::ConfigRing:
-        _io->print(F("plc(config-ring)# "));
-        break;
-    case Mode::ConfigAvr:
-        _io->print(F("plc(config-avr)# "));
-        break;
-    case Mode::ConfigLeak:
-        _io->print(F("plc(config-leak)# "));
-        break;
-    case Mode::ConfigWatering:
-        _io->print(F("plc(config-watering)# "));
-        break;
-    case Mode::ConfigCloud:
-        _io->print(F("plc(config-cloud)# "));
-        break;
-    }
-    Logger::setInteractiveOpen(true);
+    printPromptUnlocked_(*out, true);
 }
 bool CliConsole::handleEscape_(char c)
 {
@@ -2327,20 +2201,130 @@ bool CliConsole::handleEscape_(char c)
 }
 void CliConsole::redrawLine_(const String &new_line, size_t old_len)
 {
-    if (!_io)
+    Stream *out = _raw_io ? _raw_io : _io;
+    if (!out)
         return;
-    _io->print('\r');
-    printPrompt_();
-    _io->print(new_line);
-    if (old_len > new_line.length())
+    Logger::OutputGuard guard;
+    const size_t old_visible = old_len > new_line.length() ? old_len : new_line.length();
+    clearPromptLineUnlocked_(*out, old_visible);
+    printPromptUnlocked_(*out, false);
+    out->print(new_line);
+}
+
+size_t CliConsole::promptWidth_() const
+{
+    if (_state == State::NeedUser)
+        return 7;
+    if (_state == State::NeedPass)
+        return 10;
+    switch (_mode)
     {
-        const size_t extra = old_len - new_line.length();
-        for (size_t i = 0; i < extra; ++i)
-            _io->print(' ');
-        _io->print('\r');
-        printPrompt_();
-        _io->print(new_line);
+    case Mode::User:
+        return 5;
+    case Mode::Enable:
+        return 5;
+    case Mode::Config:
+        return 13;
+    case Mode::ConfigWifi:
+        return 18;
+    case Mode::ConfigTime:
+        return 18;
+    case Mode::ConfigSocket:
+        return 20;
+    case Mode::ConfigMeteo:
+        return 19;
+    case Mode::ConfigThermo:
+        return 20;
+    case Mode::ConfigTank:
+        return 18;
+    case Mode::ConfigSeptic:
+        return 20;
+    case Mode::ConfigSecurity:
+        return 22;
+    case Mode::ConfigRing:
+        return 18;
+    case Mode::ConfigAvr:
+        return 17;
+    case Mode::ConfigLeak:
+        return 18;
+    case Mode::ConfigWatering:
+        return 22;
+    case Mode::ConfigCloud:
+        return 19;
     }
+    return 5;
+}
+
+void CliConsole::clearPromptLineUnlocked_(Stream &io, size_t min_extra) const
+{
+    const size_t clear_len = promptWidth_() + kMaxLine + (min_extra > kMaxLine ? min_extra : 0) + 4;
+    io.print('\r');
+    for (size_t i = 0; i < clear_len; ++i)
+        io.print(' ');
+    io.print('\r');
+}
+
+void CliConsole::printPromptUnlocked_(Stream &io, bool set_interactive) const
+{
+    if (_state == State::NeedUser)
+        io.print(F("login: "));
+    else if (_state == State::NeedPass)
+        io.print(F("password: "));
+    else
+    {
+        switch (_mode)
+        {
+        case Mode::User:
+            io.print(F("plc> "));
+            break;
+        case Mode::Enable:
+            io.print(F("plc# "));
+            break;
+        case Mode::Config:
+            io.print(F("plc(config)# "));
+            break;
+        case Mode::ConfigWifi:
+            io.print(F("plc(config-wifi)# "));
+            break;
+        case Mode::ConfigTime:
+            io.print(F("plc(config-time)# "));
+            break;
+        case Mode::ConfigSocket:
+            io.print(F("plc(config-socket)# "));
+            break;
+        case Mode::ConfigMeteo:
+            io.print(F("plc(config-meteo)# "));
+            break;
+        case Mode::ConfigThermo:
+            io.print(F("plc(config-thermo)# "));
+            break;
+        case Mode::ConfigTank:
+            io.print(F("plc(config-tank)# "));
+            break;
+        case Mode::ConfigSeptic:
+            io.print(F("plc(config-septic)# "));
+            break;
+        case Mode::ConfigSecurity:
+            io.print(F("plc(config-security)# "));
+            break;
+        case Mode::ConfigRing:
+            io.print(F("plc(config-ring)# "));
+            break;
+        case Mode::ConfigAvr:
+            io.print(F("plc(config-avr)# "));
+            break;
+        case Mode::ConfigLeak:
+            io.print(F("plc(config-leak)# "));
+            break;
+        case Mode::ConfigWatering:
+            io.print(F("plc(config-watering)# "));
+            break;
+        case Mode::ConfigCloud:
+            io.print(F("plc(config-cloud)# "));
+            break;
+        }
+    }
+    (void)set_interactive;
 }
 void CliConsole::addHistory_(const String &line)
 {

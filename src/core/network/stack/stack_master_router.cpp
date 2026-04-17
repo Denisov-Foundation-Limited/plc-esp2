@@ -17,6 +17,24 @@
 #include "core/network/stack/stack_json_protocol.hpp"
 #include "utils/logger.hpp"
 
+namespace
+{
+void fillNotifyFromBinary_(const StackBinaryProtocol::NotifyFrame &frame, StackJsonProtocol::NotifyMessage &out)
+{
+    out = StackJsonProtocol::NotifyMessage{};
+    out.is_binary = true;
+    out.source_node = frame.source_node;
+    strncpy(out.level, frame.level, sizeof(out.level) - 1);
+    out.level[sizeof(out.level) - 1] = '\0';
+    strncpy(out.feature, frame.feature, sizeof(out.feature) - 1);
+    out.feature[sizeof(out.feature) - 1] = '\0';
+    strncpy(out.code, frame.code, sizeof(out.code) - 1);
+    out.code[sizeof(out.code) - 1] = '\0';
+    if (frame.message && frame.message_size)
+        out.message = String(reinterpret_cast<const char *>(frame.message)).substring(0, frame.message_size);
+}
+}
+
 StackMasterRouter::StackMasterRouter(Logger &log, StackTransport &transport, StackDeviceRegistry &registry)
     : _log(log), _transport(transport), _registry(registry)
 {
@@ -237,15 +255,28 @@ void StackMasterRouter::handleBinaryMessage_(const StackTransport::Event &event)
 {
     if (!isAuthorized_(event.client_id))
     {
-        _log.warn(F("STACK"), F("Reject unauth binary: id %u"), (unsigned)event.client_id);
-        rememberDisconnectReason_(event.client_id, "unauth_binary");
-        _transport.disconnectClient(event.client_id);
+        if (!authorizeClient_(event.client_id, event.ip, event.data, event.size))
+        {
+            _log.warn(F("STACK"), F("Reject unauth binary: id %u"), (unsigned)event.client_id);
+            rememberDisconnectReason_(event.client_id, "unauth_binary");
+            if (StackBinaryProtocol::detectKind(event.data, event.size) == StackBinaryProtocol::FrameKind::Auth)
+            {
+                const size_t frame_size = StackBinaryProtocol::encodedAuthReplySize("auth_failed");
+                std::unique_ptr<uint8_t[]> frame(new uint8_t[frame_size]);
+                size_t used = 0;
+                if (frame && StackBinaryProtocol::encodeAuthReply(false, "auth_failed", frame.get(), frame_size, used))
+                    _transport.sendBinary(event.client_id, frame.get(), used);
+            }
+            _transport.disconnectClient(event.client_id);
+        }
         return;
     }
 
     _registry.touchClient(event.client_id, millis());
     StackDeviceRegistry::DeviceInfo device;
     const bool have_device = _registry.snapshotByClientId(event.client_id, device);
+    if (have_device && handleBinaryNotifyMessage_(device, event.data, event.size))
+        return;
     if (have_device && handleBinaryRouteMessage_(device, event.data, event.size))
         return;
     MessageHandler message_cb = nullptr;
@@ -347,6 +378,35 @@ bool StackMasterRouter::handleNotifyMessage_(const StackDeviceRegistry::DeviceIn
     return true;
 }
 
+bool StackMasterRouter::handleBinaryNotifyMessage_(const StackDeviceRegistry::DeviceInfo &device, const uint8_t *data, size_t size)
+{
+    if (StackBinaryProtocol::detectKind(data, size) != StackBinaryProtocol::FrameKind::Notify)
+        return false;
+
+    StackBinaryProtocol::NotifyFrame frame;
+    if (!StackBinaryProtocol::parseNotify(data, size, frame))
+    {
+        _log.warn(F("STACK"), F("Binary notify parse failed: node 0x%08lX"), (unsigned long)device.node_id);
+        return true;
+    }
+
+    if (frame.source_node == 0)
+        frame.source_node = device.node_id;
+
+    StackJsonProtocol::NotifyMessage notify;
+    fillNotifyFromBinary_(frame, notify);
+    NotificationHandler notify_cb = nullptr;
+    void *notify_ctx = nullptr;
+    {
+        const auto guard = _lock.guard();
+        notify_cb = _notify_cb;
+        notify_ctx = _notify_ctx;
+    }
+    if (notify_cb)
+        notify_cb(notify_ctx, device, notify);
+    return true;
+}
+
 bool StackMasterRouter::handleBinaryRouteMessage_(const StackDeviceRegistry::DeviceInfo &device, const uint8_t *data, size_t size)
 {
     if (StackBinaryProtocol::detectKind(data, size) != StackBinaryProtocol::FrameKind::Route)
@@ -425,17 +485,35 @@ bool StackMasterRouter::authorizeClient_(uint8_t client_id, IPAddress ip, const 
 {
     if (!data || size == 0)
         return false;
-
-    if (StackJsonProtocol::detectKind(data, size) != StackJsonProtocol::MessageKind::Auth)
+    StackJsonProtocol::AuthMessage auth_msg;
+    bool binary_reply = false;
+    if (StackJsonProtocol::detectKind(data, size) == StackJsonProtocol::MessageKind::Auth)
+    {
+        if (!StackJsonProtocol::parseAuth(data, size, auth_msg))
+        {
+            _log.warn(F("STACK"), F("Auth parse failed: id %u ip %s"), (unsigned)client_id, ip.toString().c_str());
+            return false;
+        }
+    }
+    else if (StackBinaryProtocol::detectKind(data, size) == StackBinaryProtocol::FrameKind::Auth)
+    {
+        StackBinaryProtocol::AuthFrame auth_frame;
+        if (!StackBinaryProtocol::parseAuth(data, size, auth_frame))
+        {
+            _log.warn(F("STACK"), F("Binary auth parse failed: id %u ip %s"), (unsigned)client_id, ip.toString().c_str());
+            return false;
+        }
+        auth_msg.node_id = auth_frame.node_id;
+        auth_msg.caps = auth_frame.caps;
+        auth_msg.fw_version = auth_frame.fw_version;
+        strncpy(auth_msg.name, auth_frame.name, sizeof(auth_msg.name) - 1);
+        strncpy(auth_msg.ip, auth_frame.ip, sizeof(auth_msg.ip) - 1);
+        strncpy(auth_msg.api_key, auth_frame.api_key, sizeof(auth_msg.api_key) - 1);
+        binary_reply = true;
+    }
+    else
     {
         _log.warn(F("STACK"), F("Auth reject: wrong message type for client %u"), (unsigned)client_id);
-        return false;
-    }
-
-    StackJsonProtocol::AuthMessage auth_msg;
-    if (!StackJsonProtocol::parseAuth(data, size, auth_msg))
-    {
-        _log.warn(F("STACK"), F("Auth parse failed: id %u ip %s"), (unsigned)client_id, ip.toString().c_str());
         return false;
     }
 
@@ -480,8 +558,19 @@ bool StackMasterRouter::authorizeClient_(uint8_t client_id, IPAddress ip, const 
     }
     if (node_event_cb)
         node_event_cb(node_event_ctx, device.node_id, true);
-    const String reply = StackJsonProtocol::makeOk("authorized");
-    _transport.sendText(client_id, reply.c_str());
+    if (binary_reply)
+    {
+        const size_t frame_size = StackBinaryProtocol::encodedAuthReplySize("authorized");
+        std::unique_ptr<uint8_t[]> frame(new uint8_t[frame_size]);
+        size_t used = 0;
+        if (frame && StackBinaryProtocol::encodeAuthReply(true, "authorized", frame.get(), frame_size, used))
+            _transport.sendBinary(client_id, frame.get(), used);
+    }
+    else
+    {
+        const String reply = StackJsonProtocol::makeOk("authorized");
+        _transport.sendText(client_id, reply.c_str());
+    }
     return true;
 }
 

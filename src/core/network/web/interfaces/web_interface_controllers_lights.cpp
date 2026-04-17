@@ -54,8 +54,8 @@ bool requestNextStackLightsPage_(WebInterface &web, uint32_t node_id, uint16_t o
     DynamicJsonDocument req(64);
     req["offset"] = offset;
     req["limit"] = limit;
-    const bool sent = web.network()->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
-                                                              StackRouteAdapter::Mode::Json, true);
+    const bool sent = web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "lights",
+                                                                      "snapshot_req", &req, true);
     if (!sent)
         web.network()->clearStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id);
     return sent;
@@ -237,7 +237,7 @@ void WebInterfaceControllersLightsHelper::handleStackLightsToggle_(WebInterface 
             }
         }
 
-        if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set_lights", &doc, StackRouteAdapter::Mode::Json))
+        if (!web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "sockets", "set_lights", &doc))
         {
             web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
             return;
@@ -283,7 +283,7 @@ void WebInterfaceControllersLightsHelper::handleStackLightsEnable_(WebInterface 
         JsonObject o = items.add<JsonObject>();
         o["id"] = id;
         o["enabled"] = enabled;
-        if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set_lights", &doc, StackRouteAdapter::Mode::Json))
+        if (!web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "sockets", "set_lights", &doc))
         {
             web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
             return;
@@ -317,8 +317,8 @@ bool WebInterfaceControllersLightsHelper::requestStackLights_(WebInterface &web,
             DynamicJsonDocument req(64);
             req["offset"] = 0;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            const bool lights_req = web.network()->stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
-                                                                            StackRouteAdapter::Mode::Json, true);
+            const bool lights_req = web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id,
+                                                                                    "lights", "snapshot_req", &req, true);
             return refresh || lights_req;
         }
         if (has_request && request.pending && (uint32_t)(now - request.started_ms) < 1500u)
@@ -665,4 +665,3 @@ size_t WebInterface::stackLightsVisibleCount_(uint32_t node_id) const {
 String WebInterface::listStackLightsHtml_(uint32_t node_id, size_t offset, size_t limit) {
         return WebInterfaceControllersLightsHelper::listStackLightsHtml_(*this, node_id, offset, limit);
     }
-

@@ -172,7 +172,7 @@ ConfigContext::ConfigContext(CoreContext &core, HardwareContext &hw, CommsContex
         comms.wifi.setIo(hw.io);
         ui.console.setConfigsManager(cfg.configs_manager);
         ui.console.setNetwork(net.network);
-        core.logs.setOutputObserver(&appConsoleLogOutputCb_, &ui.console);
+        core.logs.setOutputObserver(nullptr, nullptr);
 
         net.fw_upgrade.setConfigsManager(cfg.configs_manager);
         net.fw_upgrade.setGsmModem(comms.gsm);

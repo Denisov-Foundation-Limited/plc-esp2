@@ -126,6 +126,7 @@ public:
     void setRules(RulesController &rules);
 
     class Network *network() const;
+    ConfigsManagerIface::StackPayloadMode stackPayloadMode() const;
     ScratchBuffer *scratchBuffer_() const;
     RtosRecursiveLock::Guard scratchLockGuard_(uint32_t timeout_ms = 0xFFFFFFFFu) const;
 

@@ -54,8 +54,8 @@ bool requestNextStackSocketsPage_(WebInterface &web, uint32_t node_id, uint16_t 
     DynamicJsonDocument req(64);
     req["offset"] = offset;
     req["limit"] = limit;
-    const bool sent = web.network()->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
-                                                              StackRouteAdapter::Mode::Json, true);
+    const bool sent = web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "sockets",
+                                                                      "snapshot_req", &req, true);
     if (!sent)
         web.network()->clearStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id);
     return sent;
@@ -546,7 +546,7 @@ void WebInterfaceControllersSocketsHelper::handleStackSocketsToggle_(WebInterfac
             }
         }
     
-        if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set", &doc, StackRouteAdapter::Mode::Json))
+        if (!web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "sockets", "set", &doc))
         {
             web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
             return;
@@ -592,7 +592,7 @@ void WebInterfaceControllersSocketsHelper::handleStackSocketsEnable_(WebInterfac
         JsonObject o = items.add<JsonObject>();
         o["id"] = id;
         o["enabled"] = enabled;
-        if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set", &doc, StackRouteAdapter::Mode::Json))
+        if (!web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "sockets", "set", &doc))
         {
             web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
             return;
@@ -626,8 +626,8 @@ bool WebInterfaceControllersSocketsHelper::requestStackSockets_(WebInterface &we
             DynamicJsonDocument req(64);
             req["offset"] = 0;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            const bool sockets_req = web.network()->stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
-                                                                             StackRouteAdapter::Mode::Json, true);
+            const bool sockets_req = web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id,
+                                                                                     "sockets", "snapshot_req", &req, true);
             return refresh || sockets_req;
         }
         if (has_request && request.pending && (uint32_t)(now - request.started_ms) < 1500u)

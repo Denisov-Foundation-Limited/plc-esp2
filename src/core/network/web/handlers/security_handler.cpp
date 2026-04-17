@@ -319,11 +319,11 @@ void SecurityHandler::handleSecuritySave(WebInterface &web, AsyncWebServerReques
             else if (action == "clear")
                 doc["clear"] = true;
             const bool sent = web.network() &&
-                              web.network()->stackRoute().sendEvent(node_id, "security", "set", &doc,
-                                                                    StackRouteAdapter::Mode::Json);
+                              web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "security",
+                                                                            "set", &doc);
             if (sent && web.network())
-                web.network()->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
-                                                        StackRouteAdapter::Mode::Json, true);
+                web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "controllers",
+                                                                "summary_req", nullptr, true);
             String back = String("/security?unit=stack&node=") + String((unsigned long)node_id);
             const String page_str = web.paramValueAny_(request, "page");
             if (page_str.length())

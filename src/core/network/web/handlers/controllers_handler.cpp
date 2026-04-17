@@ -92,7 +92,7 @@ void ControllersHandler::handleControllers(WebInterface &web, AsyncWebServerRequ
             page.replace("%CTRL_AVR_DESC%", WebUiRu::ControllersPage::kAvrDesc);
             page.replace("%CTRL_AVR_STATUS_LABEL%", String(WebUiRu::ControllersPage::kAvrStatusLabel) + " ");
             page.replace("%CTRL_CAMERAS_TITLE%", "Камеры");
-            page.replace("%CTRL_CAMERAS_DESC%", "Снимки с IP-камер и локальный предпросмотр");
+            page.replace("%CTRL_CAMERAS_DESC%", "Снимки с IP-камер");
             page.replace("%CTRL_CAMERAS_STATUS_LABEL%", "Камеры: ");
             page.replace("%CTRL_LEAK_TITLE%", WebUiRu::ControllersPage::kLeakTitle);
             page.replace("%CTRL_LEAK_DESC%", WebUiRu::ControllersPage::kLeakDesc);

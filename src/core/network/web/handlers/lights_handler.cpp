@@ -454,7 +454,8 @@ void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *r
                 }
                 if (!send)
                     return;
-                if (!web.network()->stackRoute().sendEvent(node_id, "sockets", "set_lights", &doc, StackRouteAdapter::Mode::Json))
+                if (!web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "sockets", "set_lights",
+                                                                   &doc))
                 {
                     web._lights_status = String("Send failed for light ") + idx;
                     web.sendRedirect_(request, back, set_cookie);

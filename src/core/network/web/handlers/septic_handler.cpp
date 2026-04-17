@@ -473,7 +473,8 @@ void SepticHandler::handleSepticToggle(WebInterface &web, AsyncWebServerRequest 
             else
                 doc["monitor"] = true;
 
-            if (!web.network() || !web.network()->stackRoute().sendEvent(node_id, "septic", "set", &doc, StackRouteAdapter::Mode::Json))
+            if (!web.network() ||
+                !web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "septic", "set", &doc))
             {
                 web.sendText_(request, 400, "text/plain", "Send failed", set_cookie);
                 return;

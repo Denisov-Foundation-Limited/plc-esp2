@@ -80,6 +80,7 @@ AppRuntime::AppRuntime(CoreContext &core, HardwareContext &hw, CommsContext &com
 void AppRuntime::bindCallbacks()
 {
     net.network.stackRoute().setJsonRouteHandler(&AppRuntime::onStackRoute_, this);
+    net.network.stackRoute().setBinaryRouteHandler(&AppRuntime::onStackBinaryRoute_, this);
     net.network.setStackNodeEventHandler(&AppRuntime::onStackNodeEvent_, this);
     control.controllers.thermo().setRemoteMeteoProvider(&AppRuntime::onRemoteMeteo_, this);
     control.controllers.meteo().setRemoteMeteoProvider(&AppRuntime::onRemoteMeteoProxy_, this);
@@ -303,61 +304,54 @@ void AppRuntime::updateStackMasterMode_(){
 }
 
 bool AppRuntime::requestStackPollFeature_(uint32_t node_id, uint8_t feature){
+    const auto payload_mode = cfg.configs_manager.stackPayloadMode();
     switch (feature)
     {
     case 0:
-        return net.network.stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
-                                                    StackRouteAdapter::Mode::Json, true);
+        return net.network.stackRoute().sendRequestSelected(payload_mode, node_id, "system", "snapshot_req", nullptr, true);
     case 1:
-        return net.network.stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
-                                                    StackRouteAdapter::Mode::Json, true);
+        return net.network.stackRoute().sendRequestSelected(payload_mode, node_id, "controllers", "summary_req", nullptr, true);
     case 2:
     {
         DynamicJsonDocument req(64);
         req["offset"] = 0;
         req["limit"] = StackUnitSnapshot::kPageSize;
-        return net.network.stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
-                                                    StackRouteAdapter::Mode::Json, true);
+        return net.network.stackRoute().sendRequestSelected(payload_mode, node_id, "meteo", "snapshot_req", &req, true);
     }
     case 3:
     {
         DynamicJsonDocument req(64);
         req["offset"] = 0;
         req["limit"] = StackUnitSnapshot::kPageSize;
-        return net.network.stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
-                                                    StackRouteAdapter::Mode::Json, true);
+        return net.network.stackRoute().sendRequestSelected(payload_mode, node_id, "thermo", "snapshot_req", &req, true);
     }
     case 4:
     {
         DynamicJsonDocument req(64);
         req["offset"] = 0;
         req["limit"] = StackUnitSnapshot::kPageSize;
-        return net.network.stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &req,
-                                                    StackRouteAdapter::Mode::Json, true);
+        return net.network.stackRoute().sendRequestSelected(payload_mode, node_id, "tanks", "snapshot_req", &req, true);
     }
     case 5:
     {
         DynamicJsonDocument req(64);
         req["offset"] = 0;
         req["limit"] = StackUnitSnapshot::kPageSize;
-        return net.network.stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
-                                                    StackRouteAdapter::Mode::Json, true);
+        return net.network.stackRoute().sendRequestSelected(payload_mode, node_id, "sockets", "snapshot_req", &req, true);
     }
     case 6:
     {
         DynamicJsonDocument req(64);
         req["offset"] = 0;
         req["limit"] = StackUnitSnapshot::kPageSize;
-        return net.network.stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
-                                                    StackRouteAdapter::Mode::Json, true);
+        return net.network.stackRoute().sendRequestSelected(payload_mode, node_id, "lights", "snapshot_req", &req, true);
     }
     case 7:
     {
         DynamicJsonDocument req(64);
         req["offset"] = 0;
         req["limit"] = StackUnitSnapshot::kPageSize;
-        return net.network.stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
-                                                    StackRouteAdapter::Mode::Json, true);
+        return net.network.stackRoute().sendRequestSelected(payload_mode, node_id, "leak", "snapshot_req", &req, true);
     }
     default: return false;
     }

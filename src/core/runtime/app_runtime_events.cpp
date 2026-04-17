@@ -12,9 +12,61 @@
 #include "core/runtime/app_runtime.hpp"
 
 #include "app.hpp"
+#include "core/network/stack/stack_data_binary_codec.hpp"
 
 namespace
 {
+size_t estimateBinaryRouteJsonCapacity_(const StackBinaryProtocol::RouteFrame &binary_route)
+{
+    size_t cap = (binary_route.payload_size * 10u) + 1024u;
+
+    if (strcmp(binary_route.action, "snapshot") == 0)
+    {
+        if (strcmp(binary_route.feature, "system") == 0)
+            return cap < 4096u ? 4096u : cap;
+        if (strcmp(binary_route.feature, "sockets") == 0 || strcmp(binary_route.feature, "lights") == 0)
+            return cap < 12288u ? 12288u : cap;
+        if (strcmp(binary_route.feature, "meteo") == 0 || strcmp(binary_route.feature, "thermo") == 0 ||
+            strcmp(binary_route.feature, "tanks") == 0 || strcmp(binary_route.feature, "leak") == 0)
+            return cap < 16384u ? 16384u : cap;
+    }
+
+    if (strcmp(binary_route.feature, "controllers") == 0 && strcmp(binary_route.action, "summary") == 0)
+        return cap < 4096u ? 4096u : cap;
+
+    if (strcmp(binary_route.feature, "web") == 0 && strcmp(binary_route.action, "index_state") == 0)
+        return cap < 16384u ? 16384u : cap;
+
+    return cap;
+}
+
+bool buildJsonRouteFromBinary_(const StackBinaryProtocol::RouteFrame &binary_route, StackJsonProtocol::RouteMessage &json_route)
+{
+    json_route = StackJsonProtocol::RouteMessage{};
+    json_route.source_node = binary_route.source_node;
+    json_route.target_node = binary_route.target_node;
+    json_route.meta = binary_route.meta;
+    strlcpy(json_route.feature, binary_route.feature, sizeof(json_route.feature));
+    strlcpy(json_route.action, binary_route.action, sizeof(json_route.action));
+    if (!binary_route.payload || binary_route.payload_size == 0)
+        return true;
+
+    const size_t cap = estimateBinaryRouteJsonCapacity_(binary_route);
+    auto doc = std::make_shared<DynamicJsonDocument>(cap);
+    if (!doc)
+        return false;
+    if (!StackDataBinaryCodec::decode(binary_route.feature, binary_route.action, binary_route.payload,
+                                      binary_route.payload_size, *doc))
+        return false;
+    if (doc->overflowed())
+        return false;
+
+    json_route.payload_storage = doc;
+    json_route.payload_json = doc->as<JsonVariantConst>();
+    serializeJson(json_route.payload_json, json_route.payload);
+    return true;
+}
+
 bool isValidUtf8_(const String &in)
 {
     size_t i = 0;
@@ -223,54 +275,54 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
         self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id);
         self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id);
         self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Leak, node_id);
-        self->core.logs.info(F("STACK"), F("Sync slave %s system info"), label.length() ? label.c_str() : "unknown");
-        self->net.network.stackRoute().sendRequest(node_id, "system", "snapshot_req", nullptr,
-                                                   StackRouteAdapter::Mode::Json, true);
-        self->core.logs.info(F("STACK"), F("Sync slave %s controllers"), label.length() ? label.c_str() : "unknown");
-        self->net.network.stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
-                                                   StackRouteAdapter::Mode::Json, true);
+        self->core.logs.info(F("STACK"), F("Sync %s sys"), label.length() ? label.c_str() : "unknown");
+        self->net.network.stackRoute().sendRequestSelected(self->cfg.configs_manager.stackPayloadMode(), node_id,
+                                                           "system", "snapshot_req", nullptr, true);
+        self->core.logs.info(F("STACK"), F("Sync %s ctrl"), label.length() ? label.c_str() : "unknown");
+        self->net.network.stackRoute().sendRequestSelected(self->cfg.configs_manager.stackPayloadMode(), node_id,
+                                                           "controllers", "summary_req", nullptr, true);
         DynamicJsonDocument sockets_doc(64);
         sockets_doc["offset"] = 0;
         sockets_doc["limit"] = StackUnitSnapshot::kPageSize;
-        self->core.logs.info(F("STACK"), F("Sync slave %s sockets: 0-7"),
+        self->core.logs.info(F("STACK"), F("Sync %s sock 0-7"),
                              label.length() ? label.c_str() : "unknown");
-        self->net.network.stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &sockets_doc,
-                                                   StackRouteAdapter::Mode::Json, true);
+        self->net.network.stackRoute().sendRequestSelected(self->cfg.configs_manager.stackPayloadMode(), node_id,
+                                                           "sockets", "snapshot_req", &sockets_doc, true);
         DynamicJsonDocument lights_doc(64);
         lights_doc["offset"] = 0;
         lights_doc["limit"] = StackUnitSnapshot::kPageSize;
-        self->core.logs.info(F("STACK"), F("Sync slave %s lights: 0-7"),
+        self->core.logs.info(F("STACK"), F("Sync %s light 0-7"),
                              label.length() ? label.c_str() : "unknown");
-        self->net.network.stackRoute().sendRequest(node_id, "lights", "snapshot_req", &lights_doc,
-                                                   StackRouteAdapter::Mode::Json, true);
+        self->net.network.stackRoute().sendRequestSelected(self->cfg.configs_manager.stackPayloadMode(), node_id,
+                                                           "lights", "snapshot_req", &lights_doc, true);
         DynamicJsonDocument meteo_doc(64);
         meteo_doc["offset"] = 0;
         meteo_doc["limit"] = StackUnitSnapshot::kPageSize;
-        self->core.logs.info(F("STACK"), F("Sync slave %s meteo: 0-7"),
+        self->core.logs.info(F("STACK"), F("Sync %s meteo 0-7"),
                              label.length() ? label.c_str() : "unknown");
-        self->net.network.stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &meteo_doc,
-                                                   StackRouteAdapter::Mode::Json, true);
+        self->net.network.stackRoute().sendRequestSelected(self->cfg.configs_manager.stackPayloadMode(), node_id,
+                                                           "meteo", "snapshot_req", &meteo_doc, true);
         DynamicJsonDocument thermo_doc(64);
         thermo_doc["offset"] = 0;
         thermo_doc["limit"] = StackUnitSnapshot::kPageSize;
-        self->core.logs.info(F("STACK"), F("Sync slave %s thermo: 0-7"),
+        self->core.logs.info(F("STACK"), F("Sync %s therm 0-7"),
                              label.length() ? label.c_str() : "unknown");
-        self->net.network.stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &thermo_doc,
-                                                   StackRouteAdapter::Mode::Json, true);
+        self->net.network.stackRoute().sendRequestSelected(self->cfg.configs_manager.stackPayloadMode(), node_id,
+                                                           "thermo", "snapshot_req", &thermo_doc, true);
         DynamicJsonDocument tanks_doc(64);
         tanks_doc["offset"] = 0;
         tanks_doc["limit"] = StackUnitSnapshot::kPageSize;
-        self->core.logs.info(F("STACK"), F("Sync slave %s tanks: 0-7"),
+        self->core.logs.info(F("STACK"), F("Sync %s tank 0-7"),
                              label.length() ? label.c_str() : "unknown");
-        self->net.network.stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &tanks_doc,
-                                                   StackRouteAdapter::Mode::Json, true);
+        self->net.network.stackRoute().sendRequestSelected(self->cfg.configs_manager.stackPayloadMode(), node_id,
+                                                           "tanks", "snapshot_req", &tanks_doc, true);
         DynamicJsonDocument leak_doc(64);
         leak_doc["offset"] = 0;
         leak_doc["limit"] = StackUnitSnapshot::kPageSize;
-        self->core.logs.info(F("STACK"), F("Sync slave %s leak: 0-7"),
+        self->core.logs.info(F("STACK"), F("Sync %s leak 0-7"),
                              label.length() ? label.c_str() : "unknown");
-        self->net.network.stackRoute().sendRequest(node_id, "leak", "snapshot_req", &leak_doc,
-                                                   StackRouteAdapter::Mode::Json, true);
+        self->net.network.stackRoute().sendRequestSelected(self->cfg.configs_manager.stackPayloadMode(), node_id,
+                                                           "leak", "snapshot_req", &leak_doc, true);
         auto &sec = self->control.controllers.security();
         auto sec_guard = sec.lockGuard();
         self->sendSecurityStateToNode_(node_id, sec.armed(), true);
@@ -367,6 +419,12 @@ void AppRuntime::onStackRoute_(void *ctx, uint32_t source_node, const StackJsonP
     static_cast<AppRuntime *>(ctx)->handleStackRoute_(source_node, route);
 }
 
+void AppRuntime::onStackBinaryRoute_(void *ctx, uint32_t source_node, const StackBinaryProtocol::RouteFrame &route){
+    if (!ctx || source_node == 0)
+        return;
+    static_cast<AppRuntime *>(ctx)->handleStackBinaryRoute_(source_node, route);
+}
+
 void AppRuntime::sendSepticDetectToMaster_(uint8_t septic_id, const String &name, bool is_alarm){
     if (!stackSlaveActive_())
         return;
@@ -376,7 +434,7 @@ void AppRuntime::sendSepticDetectToMaster_(uint8_t septic_id, const String &name
     doc["level"] = is_alarm ? "alarm" : "warning";
     if (name.length())
         doc["name"] = name;
-    if (!net.network.stackRoute().sendEvent(0, "septic", "level", &doc, StackRouteAdapter::Mode::Json))
+    if (!net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), 0, "septic", "level", &doc))
     {
         _pending_septic_detect = true;
         _pending_septic_id = septic_id;
@@ -393,7 +451,7 @@ void AppRuntime::sendTankEmptyToMaster_(uint8_t tank_id, const String &name){
     doc["empty"] = true;
     if (name.length())
         doc["name"] = name;
-    if (!net.network.stackRoute().sendEvent(0, "tanks", "empty", &doc, StackRouteAdapter::Mode::Json))
+    if (!net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), 0, "tanks", "empty", &doc))
     {
         _pending_tank_empty = true;
         _pending_tank_id = tank_id;
@@ -445,7 +503,8 @@ void AppRuntime::sendWateringEventToMaster_(WateringController::Event ev,
         break;
     }
     doc["event"] = event_str;
-    if (!net.network.stackRoute().sendEvent(0, "watering", "event", &doc, StackRouteAdapter::Mode::Json))
+    if (!net.network.stackRoute().sendEventSelected(this->cfg.configs_manager.stackPayloadMode(), 0, "watering", "event",
+                                                    &doc))
     {
         _pending_watering_event = true;
         _pending_watering_event_type = ev;
@@ -468,7 +527,7 @@ void AppRuntime::broadcastRingHold_(bool on){
         StackDeviceRegistry::DeviceInfo device{};
         if (!net.network.stackDeviceSnapshotAt(i, device))
             continue;
-        net.network.stackRoute().sendEvent(device.node_id, "ring", "set", &doc, StackRouteAdapter::Mode::Json);
+        net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), device.node_id, "ring", "set", &doc);
     }
 }
 
@@ -638,8 +697,8 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                         reply_doc["ok"] = false;
                         if (blocked_plain.length())
                             reply_doc["details"] = blocked_plain;
-                        net.network.stackRoute().sendEvent(0, "security", "prearm_blocked", &reply_doc,
-                                                           StackRouteAdapter::Mode::Json);
+                        net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), 0, "security",
+                                                                   "prearm_blocked", &reply_doc);
                     }
                 }
                 else
@@ -1882,6 +1941,25 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
     }
 }
 
+void AppRuntime::handleStackBinaryRoute_(uint32_t node_id, const StackBinaryProtocol::RouteFrame &route){
+    if (strcmp(route.feature, "stack_xchg") == 0 || strcmp(route.feature, "stack_notify") == 0)
+    {
+        core.logs.warn(F("STACK"), F("Reject binary control frame: node 0x%08lX feature: %s action: %s"),
+                       (unsigned long)node_id, route.feature, route.action);
+        return;
+    }
+
+    StackJsonProtocol::RouteMessage json_route{};
+    if (!buildJsonRouteFromBinary_(route, json_route))
+    {
+        core.logs.warn(F("STACK"), F("Binary payload decode failed: node 0x%08lX feature: %s action: %s size: %u"),
+                       (unsigned long)node_id, route.feature, route.action, (unsigned)route.payload_size);
+        return;
+    }
+
+    handleStackRoute_(node_id, json_route);
+}
+
 void AppRuntime::handleSocketFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
     (void)node_id;
     const bool lights = (action == "set_lights");
@@ -2934,13 +3012,13 @@ void AppRuntime::flushPendingStackSocketsPage_(){
     const uint16_t range_end = (uint16_t)(offset + limit - 1u);
     const String label = stackNodeLabel_(node_id);
 
-    const bool sent = net.network.stackRoute().sendRequest(node_id, "sockets", "snapshot_req", &req,
-                                                           StackRouteAdapter::Mode::Json, true);
+    const bool sent = net.network.stackRoute().sendRequestSelected(cfg.configs_manager.stackPayloadMode(), node_id,
+                                                                   "sockets", "snapshot_req", &req, true);
     if (sent)
     {
         if (log_sync)
         {
-            core.logs.info(F("STACK"), F("Sync slave %s sockets: %u-%u"),
+            core.logs.info(F("STACK"), F("Sync %s sock %u-%u"),
                            label.length() ? label.c_str() : "unknown",
                            (unsigned)offset, (unsigned)range_end);
         }
@@ -3006,13 +3084,13 @@ void AppRuntime::flushPendingStackLightsPage_(){
     const uint16_t range_end = (uint16_t)(offset + limit - 1u);
     const String label = stackNodeLabel_(node_id);
 
-    const bool sent = net.network.stackRoute().sendRequest(node_id, "lights", "snapshot_req", &req,
-                                                           StackRouteAdapter::Mode::Json, true);
+    const bool sent = net.network.stackRoute().sendRequestSelected(cfg.configs_manager.stackPayloadMode(), node_id,
+                                                                   "lights", "snapshot_req", &req, true);
     if (sent)
     {
         if (log_sync)
         {
-            core.logs.info(F("STACK"), F("Sync slave %s lights: %u-%u"),
+            core.logs.info(F("STACK"), F("Sync %s light %u-%u"),
                            label.length() ? label.c_str() : "unknown",
                            (unsigned)offset, (unsigned)range_end);
         }
@@ -3047,13 +3125,13 @@ void AppRuntime::flushPendingStackMeteoPage_(){
     const uint16_t range_end = (uint16_t)(offset + limit - 1u);
     const String label = stackNodeLabel_(node_id);
 
-    const bool sent = net.network.stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
-                                                           StackRouteAdapter::Mode::Json, true);
+    const bool sent = net.network.stackRoute().sendRequestSelected(cfg.configs_manager.stackPayloadMode(), node_id,
+                                                                   "meteo", "snapshot_req", &req, true);
     if (sent)
     {
         if (log_sync)
         {
-            core.logs.info(F("STACK"), F("Sync slave %s meteo: %u-%u"),
+            core.logs.info(F("STACK"), F("Sync %s meteo %u-%u"),
                            label.length() ? label.c_str() : "unknown",
                            (unsigned)offset, (unsigned)range_end);
         }
@@ -3088,13 +3166,13 @@ void AppRuntime::flushPendingStackThermoPage_(){
     const uint16_t range_end = (uint16_t)(offset + limit - 1u);
     const String label = stackNodeLabel_(node_id);
 
-    const bool sent = net.network.stackRoute().sendRequest(node_id, "thermo", "snapshot_req", &req,
-                                                           StackRouteAdapter::Mode::Json, true);
+    const bool sent = net.network.stackRoute().sendRequestSelected(cfg.configs_manager.stackPayloadMode(), node_id,
+                                                                   "thermo", "snapshot_req", &req, true);
     if (sent)
     {
         if (log_sync)
         {
-            core.logs.info(F("STACK"), F("Sync slave %s thermo: %u-%u"),
+            core.logs.info(F("STACK"), F("Sync %s therm %u-%u"),
                            label.length() ? label.c_str() : "unknown",
                            (unsigned)offset, (unsigned)range_end);
         }
@@ -3129,13 +3207,13 @@ void AppRuntime::flushPendingStackTanksPage_(){
     const uint16_t range_end = (uint16_t)(offset + limit - 1u);
     const String label = stackNodeLabel_(node_id);
 
-    const bool sent = net.network.stackRoute().sendRequest(node_id, "tanks", "snapshot_req", &req,
-                                                           StackRouteAdapter::Mode::Json, true);
+    const bool sent = net.network.stackRoute().sendRequestSelected(cfg.configs_manager.stackPayloadMode(), node_id,
+                                                                   "tanks", "snapshot_req", &req, true);
     if (sent)
     {
         if (log_sync)
         {
-            core.logs.info(F("STACK"), F("Sync slave %s tanks: %u-%u"),
+            core.logs.info(F("STACK"), F("Sync %s tank %u-%u"),
                            label.length() ? label.c_str() : "unknown",
                            (unsigned)offset, (unsigned)range_end);
         }
@@ -3170,13 +3248,13 @@ void AppRuntime::flushPendingStackLeakPage_(){
     const uint16_t range_end = (uint16_t)(offset + limit - 1u);
     const String label = stackNodeLabel_(node_id);
 
-    const bool sent = net.network.stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
-                                                           StackRouteAdapter::Mode::Json, true);
+    const bool sent = net.network.stackRoute().sendRequestSelected(cfg.configs_manager.stackPayloadMode(), node_id,
+                                                                   "leak", "snapshot_req", &req, true);
     if (sent)
     {
         if (log_sync)
         {
-            core.logs.info(F("STACK"), F("Sync slave %s leak: %u-%u"),
+            core.logs.info(F("STACK"), F("Sync %s leak %u-%u"),
                            label.length() ? label.c_str() : "unknown",
                            (unsigned)offset, (unsigned)range_end);
         }
@@ -3201,7 +3279,7 @@ bool AppRuntime::sendRingButtonToMaster_(bool pressed){
         return false;
     StaticJsonDocument<64> doc;
     doc["pressed"] = pressed;
-    return net.network.stackRoute().sendEvent(0, "ring", "button", &doc, StackRouteAdapter::Mode::Json);
+    return net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), 0, "ring", "button", &doc);
 }
 
 String AppRuntime::stackNodeLabel_(uint32_t node_id) const{

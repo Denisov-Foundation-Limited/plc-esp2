@@ -28,12 +28,15 @@ public:
         printIdRangeInline_();
     }
 
+    String idRangeString() const
+    {
+        return idRangeString_();
+    }
+
     void printHelpEnable()
     {
         _c._io->println(F("    show septic     - list septic"));
-        _c._io->print(F("    show septic <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" - septic details"));
+        _c._io->println(String(F("    show septic <id>")) + idRangeString_() + F(" - septic details"));
     }
 
     void printHelpConfigLines()
@@ -46,33 +49,16 @@ public:
     {
         _c._io->println(F("  Septic:"));
         _c._io->println(F("    show                     - list septic"));
-        _c._io->print(F("    show <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("                - septic details"));
-        _c._io->print(F("    name <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <text>          - set septic name"));
-        _c._io->print(F("    enable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("              - enable septic"));
-        _c._io->print(F("    disable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("             - disable septic"));
-        _c._io->print(F("    warning <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none> - set warning input"));
-        _c._io->print(F("    alarm <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>   - set alarm input"));
-        _c._io->print(F("    relay_warn <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none> - set warning relay"));
-        _c._io->print(F("    relay_alarm <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>- set alarm relay"));
-        _c._io->print(F("    monitor <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <on|off>     - set monitoring"));
+        const String range = idRangeString_();
+        _c._io->println(String(F("    show <id>")) + range + F("                - septic details"));
+        _c._io->println(String(F("    name <id>")) + range + F(" <text>          - set septic name"));
+        _c._io->println(String(F("    enable <id>")) + range + F("              - enable septic"));
+        _c._io->println(String(F("    disable <id>")) + range + F("             - disable septic"));
+        _c._io->println(String(F("    warning <id>")) + range + F(" <port|none> - set warning input"));
+        _c._io->println(String(F("    alarm <id>")) + range + F(" <port|none>   - set alarm input"));
+        _c._io->println(String(F("    relay_warn <id>")) + range + F(" <port|none> - set warning relay"));
+        _c._io->println(String(F("    relay_alarm <id>")) + range + F(" <port|none>- set alarm relay"));
+        _c._io->println(String(F("    monitor <id>")) + range + F(" <on|off>     - set monitoring"));
     }
 
     void showSeptic()
@@ -286,9 +272,12 @@ private:
 
     void printIdRangeInline_() const
     {
-        _c._io->print(F(" (1.."));
-        _c._io->print(SepticController::kSepticCount);
-        _c._io->print(F(")"));
+        _c._io->print(idRangeString_());
+    }
+
+    String idRangeString_() const
+    {
+        return String(F(" (1..")) + SepticController::kSepticCount + F(")");
     }
 
     void printInvalidId_() const

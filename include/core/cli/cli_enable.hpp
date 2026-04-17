@@ -53,45 +53,25 @@ public:
             _c._io->println(F("    show port <id>  - port details"));
             _c._io->println(F("    show ports      - list ports"));
             _c._io->println(F("    show sockets    - list sockets"));
-            _c._io->print(F("    show socket <id>"));
-            printSocketIdRangeInline_();
-            _c._io->println(F(" - socket details"));
+            _c._io->println(String(F("    show socket <id>")) + socketIdRangeString_() + F(" - socket details"));
             _c._io->println(F("    show meteo      - list meteo sensors"));
-            _c._io->print(F("    show meteo <id>"));
-            printMeteoIdRangeInline_();
-            _c._io->println(F(" - sensor details"));
+            _c._io->println(String(F("    show meteo <id>")) + meteoIdRangeString_() + F(" - sensor details"));
             _c._io->println(F("    show thermo     - list thermo devices"));
-            _c._io->print(F("    show thermo <id>"));
-            printThermoIdRangeInline_();
-            _c._io->println(F(" - device details"));
+            _c._io->println(String(F("    show thermo <id>")) + thermoIdRangeString_() + F(" - device details"));
             _c._io->println(F("    show tanks      - list tanks"));
-            _c._io->print(F("    show tank <id>"));
-            printTankIdRangeInline_();
-            _c._io->println(F(" - tank details"));
+            _c._io->println(String(F("    show tank <id>")) + tankIdRangeString_() + F(" - tank details"));
             _c._io->println(F("    show watering   - list watering rules"));
-            _c._io->print(F("    show watering <id>"));
-            _c._watering_cli.printIdRangeInline();
-            _c._io->println(F(" - rule details"));
+            _c._io->println(String(F("    show watering <id>")) + _c._watering_cli.idRangeString() + F(" - rule details"));
             _c._io->println(F("    show septic     - list septic"));
-            _c._io->print(F("    show septic <id>"));
-            _c._septic_cli.printIdRangeInline();
-            _c._io->println(F(" - septic details"));
+            _c._io->println(String(F("    show septic <id>")) + _c._septic_cli.idRangeString() + F(" - septic details"));
             _c._io->println(F("    show security   - list security sensors"));
-            _c._io->print(F("    show security <id>"));
-            _c._security_cli.printIdRangeInline();
-            _c._io->println(F(" - sensor details"));
+            _c._io->println(String(F("    show security <id>")) + _c._security_cli.idRangeString() + F(" - sensor details"));
             _c._io->println(F("    show ring       - ring status"));
             _c._io->println(F("    show avr        - AVR config/state"));
             _c._io->println(F("    show leak       - leak zones/state"));
-            _c._io->print(F("    socket toggle <id>"));
-            printSocketIdRangeInline_();
-            _c._io->println(F(" - toggle socket relay"));
-            _c._io->print(F("    socket on <id>"));
-            printSocketIdRangeInline_();
-            _c._io->println(F("     - relay ON"));
-            _c._io->print(F("    socket off <id>"));
-            printSocketIdRangeInline_();
-            _c._io->println(F("    - relay OFF"));
+            _c._io->println(String(F("    socket toggle <id>")) + socketIdRangeString_() + F(" - toggle socket relay"));
+            _c._io->println(String(F("    socket on <id>")) + socketIdRangeString_() + F("     - relay ON"));
+            _c._io->println(String(F("    socket off <id>")) + socketIdRangeString_() + F("    - relay OFF"));
             _c._io->println(F("  Actions:"));
             _c._io->println(F("    ftest           - start functional test task"));
             _c._io->println(F("    copy tftp://<ip>/firmware.bin firmware - update firmware"));
@@ -325,32 +305,44 @@ private:
         return id >= 1 && id <= SocketController::kSocketCount;
     }
 
+    String socketIdRangeString_() const
+    {
+        return String(F(" (1..")) + SocketController::kSocketCount + F(")");
+    }
+
     void printSocketIdRangeInline_() const
     {
-        _c._io->print(F(" (1.."));
-        _c._io->print(SocketController::kSocketCount);
-        _c._io->print(F(")"));
+        _c._io->print(socketIdRangeString_());
+    }
+
+    String meteoIdRangeString_() const
+    {
+        return String(F(" (1..")) + MeteoController::kSensorCount + F(")");
     }
 
     void printMeteoIdRangeInline_() const
     {
-        _c._io->print(F(" (1.."));
-        _c._io->print(MeteoController::kSensorCount);
-        _c._io->print(F(")"));
+        _c._io->print(meteoIdRangeString_());
+    }
+
+    String thermoIdRangeString_() const
+    {
+        return String(F(" (1..")) + ThermoController::kDeviceCount + F(")");
     }
 
     void printThermoIdRangeInline_() const
     {
-        _c._io->print(F(" (1.."));
-        _c._io->print(ThermoController::kDeviceCount);
-        _c._io->print(F(")"));
+        _c._io->print(thermoIdRangeString_());
+    }
+
+    String tankIdRangeString_() const
+    {
+        return String(F(" (1..")) + TankController::kTankCount + F(")");
     }
 
     void printTankIdRangeInline_() const
     {
-        _c._io->print(F(" (1.."));
-        _c._io->print(TankController::kTankCount);
-        _c._io->print(F(")"));
+        _c._io->print(tankIdRangeString_());
     }
 
     void printInvalidSocketId_() const

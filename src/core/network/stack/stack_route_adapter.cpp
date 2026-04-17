@@ -12,8 +12,10 @@
 #include "core/network/stack/stack_route_adapter.hpp"
 
 #include <memory>
+#include <vector>
 
 #include "core/network/stack/stack_device_registry.hpp"
+#include "core/network/stack/stack_data_binary_codec.hpp"
 #include "core/network/stack/stack_master_server.hpp"
 #include "core/network/stack/stack_rs485_server.hpp"
 #include "core/network/stack/stack_slave_client.hpp"
@@ -45,6 +47,175 @@ char b64Char_(uint8_t v)
 {
     static const char *kTable = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     return kTable[v & 0x3Fu];
+}
+
+void appendU8_(std::vector<uint8_t> &out, uint8_t v)
+{
+    out.push_back(v);
+}
+
+void appendU16_(std::vector<uint8_t> &out, uint16_t v)
+{
+    out.push_back((uint8_t)(v & 0xFFu));
+    out.push_back((uint8_t)((v >> 8) & 0xFFu));
+}
+
+void appendU32_(std::vector<uint8_t> &out, uint32_t v)
+{
+    out.push_back((uint8_t)(v & 0xFFu));
+    out.push_back((uint8_t)((v >> 8) & 0xFFu));
+    out.push_back((uint8_t)((v >> 16) & 0xFFu));
+    out.push_back((uint8_t)((v >> 24) & 0xFFu));
+}
+
+void appendBytes_(std::vector<uint8_t> &out, const uint8_t *data, size_t size)
+{
+    if (!data || size == 0)
+        return;
+    out.insert(out.end(), data, data + size);
+}
+
+bool readU8_(const uint8_t *&p, size_t &left, uint8_t &out)
+{
+    if (!p || left < 1)
+        return false;
+    out = *p++;
+    --left;
+    return true;
+}
+
+bool readU16_(const uint8_t *&p, size_t &left, uint16_t &out)
+{
+    if (!p || left < 2)
+        return false;
+    out = (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+    p += 2;
+    left -= 2;
+    return true;
+}
+
+bool readU32_(const uint8_t *&p, size_t &left, uint32_t &out)
+{
+    if (!p || left < 4)
+        return false;
+    out = (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+    p += 4;
+    left -= 4;
+    return true;
+}
+
+bool readBytes_(const uint8_t *&p, size_t &left, const uint8_t *&data, size_t size)
+{
+    if (!p || left < size)
+        return false;
+    data = p;
+    p += size;
+    left -= size;
+    return true;
+}
+
+String encodeBase64Raw_(const uint8_t *data, size_t len)
+{
+    if (!data || len == 0)
+        return String();
+    String out;
+    out.reserve(((len + 2u) / 3u) * 4u);
+    for (size_t i = 0; i < len; i += 3u)
+    {
+        const uint32_t a = data[i];
+        const uint32_t b = (i + 1u < len) ? data[i + 1u] : 0u;
+        const uint32_t c = (i + 2u < len) ? data[i + 2u] : 0u;
+        const uint32_t chunk = (a << 16) | (b << 8) | c;
+        out += b64Char_((uint8_t)((chunk >> 18) & 0x3Fu));
+        out += b64Char_((uint8_t)((chunk >> 12) & 0x3Fu));
+        out += (i + 1u < len) ? b64Char_((uint8_t)((chunk >> 6) & 0x3Fu)) : '=';
+        out += (i + 2u < len) ? b64Char_((uint8_t)(chunk & 0x3Fu)) : '=';
+    }
+    return out;
+}
+
+bool decodeBase64Raw_(const String &in, std::vector<uint8_t> &out)
+{
+    out.clear();
+    if (!in.length())
+        return true;
+    out.reserve((in.length() / 4u) * 3u);
+    uint8_t block[4] = {};
+    uint8_t block_len = 0;
+    uint8_t pad = 0;
+    for (size_t i = 0; i < in.length(); ++i)
+    {
+        const char ch = in[i];
+        if (ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t')
+            continue;
+        if (ch == '=')
+        {
+            block[block_len++] = 0;
+            ++pad;
+        }
+        else
+        {
+            const int8_t v = b64Index_(ch);
+            if (v < 0)
+                return false;
+            block[block_len++] = (uint8_t)v;
+        }
+        if (block_len != 4)
+            continue;
+        const uint32_t chunk =
+            ((uint32_t)block[0] << 18) | ((uint32_t)block[1] << 12) | ((uint32_t)block[2] << 6) | (uint32_t)block[3];
+        out.push_back((uint8_t)((chunk >> 16) & 0xFFu));
+        if (pad < 2)
+            out.push_back((uint8_t)((chunk >> 8) & 0xFFu));
+        if (pad == 0)
+            out.push_back((uint8_t)(chunk & 0xFFu));
+        block_len = 0;
+        pad = 0;
+    }
+    return block_len == 0;
+}
+
+String textFromBytes_(const uint8_t *data, size_t size)
+{
+    String out;
+    if (!data || size == 0)
+        return out;
+    out.reserve(size);
+    for (size_t i = 0; i < size; ++i)
+        out += (char)data[i];
+    return out;
+}
+
+String clampUtf8Bytes_(const char *text, size_t max_bytes)
+{
+    if (!text || !text[0] || max_bytes == 0)
+        return String();
+    const String in(text);
+    if ((size_t)in.length() <= max_bytes)
+        return in;
+
+    String out;
+    out.reserve(max_bytes);
+    size_t i = 0;
+    while (i < (size_t)in.length())
+    {
+        const uint8_t c = (uint8_t)in[i];
+        size_t need = 1;
+        if ((c & 0x80u) == 0)
+            need = 1;
+        else if ((c & 0xE0u) == 0xC0u)
+            need = 2;
+        else if ((c & 0xF0u) == 0xE0u)
+            need = 3;
+        else if ((c & 0xF8u) == 0xF0u)
+            need = 4;
+        if (out.length() + need > max_bytes || i + need > (size_t)in.length())
+            break;
+        for (size_t j = 0; j < need; ++j)
+            out += in[i + j];
+        i += need;
+    }
+    return out;
 }
 }
 
@@ -219,29 +390,15 @@ StackTransport::RouteMeta StackRouteAdapter::makeResponseMeta(uint32_t reply_to,
 bool StackRouteAdapter::sendRoute(uint32_t target_node, const char *feature, const char *action, const JsonDocument *payload,
                                   Mode mode, const StackTransport::RouteMeta *meta)
 {
-    {
-        const auto guard = _lock.guard();
-        mode = chooseMode_(feature, action, payload, mode);
-    }
+    std::vector<uint8_t> payload_binary;
+    (void)feature;
+    (void)action;
     if (mode == Mode::Json)
         return sendRouteJson(target_node, feature, action, payload, meta);
-    if (mode == Mode::Binary)
-    {
-        String payload_text;
-        if (payload)
-            serializeJson(*payload, payload_text);
-        return sendRouteBinary(target_node, feature, action,
-                               payload_text.length() ? reinterpret_cast<const uint8_t *>(payload_text.c_str()) : nullptr,
-                               payload_text.length(), meta);
-    }
-
-    String payload_text;
-    if (payload)
-        serializeJson(*payload, payload_text);
-    if (payload_text.length() > 48)
-        return sendRouteBinary(target_node, feature, action, reinterpret_cast<const uint8_t *>(payload_text.c_str()),
-                               payload_text.length(), meta);
-    return sendRouteJson(target_node, feature, action, payload, meta);
+    if (payload && !StackDataBinaryCodec::encode(feature, action, payload->as<JsonVariantConst>(), payload_binary))
+        return false;
+    return sendRouteBinary(target_node, feature, action, payload_binary.empty() ? nullptr : payload_binary.data(),
+                           payload_binary.size(), meta);
 }
 
 bool StackRouteAdapter::sendRouteJson(uint32_t target_node, const char *feature, const char *action, const JsonDocument *payload,
@@ -366,6 +523,8 @@ bool StackRouteAdapter::sendEvent(uint32_t target_node, const char *feature, con
 bool StackRouteAdapter::sendRequest(uint32_t target_node, const char *feature, const char *action, const JsonDocument *payload,
                                     Mode mode, bool expect_response, uint32_t request_id)
 {
+    if (expect_response && request_id == 0)
+        request_id = nextInternalRequestId_();
     const StackTransport::RouteMeta meta = makeRequestMeta(expect_response, request_id);
     return sendRoute(target_node, feature, action, payload, mode, &meta);
 }
@@ -379,6 +538,27 @@ bool StackRouteAdapter::sendResponse(uint32_t target_node, const char *feature, 
     return sendRoute(target_node, feature, action, payload, mode, &meta);
 }
 
+bool StackRouteAdapter::sendEventSelected(ConfigsManagerIface::StackPayloadMode payload_mode, uint32_t target_node,
+                                          const char *feature, const char *action, const JsonDocument *payload)
+{
+    return sendEvent(target_node, feature, action, payload, modeForDataPlane_(payload_mode));
+}
+
+bool StackRouteAdapter::sendRequestSelected(ConfigsManagerIface::StackPayloadMode payload_mode, uint32_t target_node,
+                                            const char *feature, const char *action, const JsonDocument *payload,
+                                            bool expect_response, uint32_t request_id)
+{
+    return sendRequest(target_node, feature, action, payload, modeForDataPlane_(payload_mode), expect_response,
+                       request_id);
+}
+
+bool StackRouteAdapter::sendResponseSelected(ConfigsManagerIface::StackPayloadMode payload_mode, uint32_t target_node,
+                                             const char *feature, const char *action, uint32_t reply_to,
+                                             const JsonDocument *payload, uint32_t request_id)
+{
+    return sendResponse(target_node, feature, action, reply_to, payload, modeForDataPlane_(payload_mode), request_id);
+}
+
 bool StackRouteAdapter::sendEventBinary(uint32_t target_node, const char *feature, const char *action, const uint8_t *payload,
                                         size_t payload_size)
 {
@@ -389,6 +569,8 @@ bool StackRouteAdapter::sendEventBinary(uint32_t target_node, const char *featur
 bool StackRouteAdapter::sendRequestBinary(uint32_t target_node, const char *feature, const char *action, const uint8_t *payload,
                                           size_t payload_size, bool expect_response, uint32_t request_id)
 {
+    if (expect_response && request_id == 0)
+        request_id = nextInternalRequestId_();
     const StackTransport::RouteMeta meta = makeRequestMeta(expect_response, request_id);
     return sendRouteBinary(target_node, feature, action, payload, payload_size, &meta);
 }
@@ -405,32 +587,37 @@ bool StackRouteAdapter::sendResponseBinary(uint32_t target_node, const char *fea
 bool StackRouteAdapter::sendNotify(const char *level, const char *feature, const char *code, const char *message,
                                    const JsonDocument *payload)
 {
+    PayloadMode payload_mode = PayloadMode::Json;
     String payload_json;
-    if (payload)
-        serializeJson(*payload, payload_json);
-
     bool direct_push = false;
     bool has_slave = false;
     bool has_notify_cb = false;
     uint32_t local_node_id = 0;
     {
         const auto guard = _lock.guard();
+        payload_mode = _payload_mode;
         direct_push = canSlavePushDirect_();
         has_slave = _slave != nullptr;
         has_notify_cb = _notify_cb != nullptr;
         local_node_id = _local_node_id;
     }
+    if (payload_mode == PayloadMode::Binary && payload)
+        return false;
+    if (payload)
+        serializeJson(*payload, payload_json);
 
     if (direct_push)
         return _slave->sendNotify(level, feature, code, message, payload);
 
     if (has_slave)
-        return queueNotification_(local_node_id, level, feature, code, message, payload ? &payload_json : nullptr);
+        return queueNotification_(local_node_id, payload_mode == PayloadMode::Binary, level, feature, code, message,
+                                  payload ? &payload_json : nullptr);
 
     if (!has_notify_cb || !feature || !feature[0] || !level || !level[0])
         return false;
 
-    return queueNotification_(local_node_id, level, feature, code, message, payload ? &payload_json : nullptr);
+    return queueNotification_(local_node_id, payload_mode == PayloadMode::Binary, level, feature, code, message,
+                              payload ? &payload_json : nullptr);
 }
 
 size_t StackRouteAdapter::exchangeHistoryCount() const
@@ -564,6 +751,10 @@ void StackRouteAdapter::handleMasterBinaryRoute_(uint32_t source_node, const Sta
     void *cb_ctx = nullptr;
     {
         const auto guard = _lock.guard();
+        if (handleExchangeRoute_(source_node, route))
+            return;
+        if (handleNotificationRoute_(source_node, route))
+            return;
         cb = _binary_cb;
         cb_ctx = _binary_ctx;
     }
@@ -594,6 +785,10 @@ void StackRouteAdapter::handleSlaveBinaryRoute_(const StackBinaryProtocol::Route
     void *cb_ctx = nullptr;
     {
         const auto guard = _lock.guard();
+        if (handleExchangeRoute_(route.source_node, route))
+            return;
+        if (handleNotificationRoute_(route.source_node, route))
+            return;
         cb = _binary_cb;
         cb_ctx = _binary_ctx;
     }
@@ -603,15 +798,29 @@ void StackRouteAdapter::handleSlaveBinaryRoute_(const StackBinaryProtocol::Route
 
 void StackRouteAdapter::handleMasterNotify_(uint32_t source_node, const StackJsonProtocol::NotifyMessage &notify)
 {
-    queueNotification_(source_node, notify.level, notify.feature, notify.code, notify.message.c_str(), &notify.payload);
+    queueNotification_(source_node, notify.is_binary, notify.level, notify.feature, notify.code, notify.message.c_str(),
+                       &notify.payload);
 }
 
 void StackRouteAdapter::handleSlaveNotify_(const StackJsonProtocol::NotifyMessage &notify)
 {
-    queueNotification_(notify.source_node, notify.level, notify.feature, notify.code, notify.message.c_str(), &notify.payload);
+    queueNotification_(notify.source_node, notify.is_binary, notify.level, notify.feature, notify.code, notify.message.c_str(),
+                       &notify.payload);
 }
 
 bool StackRouteAdapter::handleExchangeRoute_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route)
+{
+    if (strcmp(route.feature, kXchgFeature) != 0)
+        return false;
+
+    if (route.meta.exchange_kind == StackTransport::ExchangeKind::Request && strcmp(route.action, "sync") == 0)
+        return handleExchangeSyncRequest_(source_node, route);
+    if (route.meta.exchange_kind == StackTransport::ExchangeKind::Response && strcmp(route.action, "sync") == 0)
+        return handleExchangeSyncResponse_(source_node, route);
+    return true;
+}
+
+bool StackRouteAdapter::handleExchangeRoute_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route)
 {
     if (strcmp(route.feature, kXchgFeature) != 0)
         return false;
@@ -709,6 +918,198 @@ bool StackRouteAdapter::handleExchangeSyncResponse_(uint32_t source_node, const 
 
     {
         const auto guard = _lock.guard();
+        resetExchangeSync_();
+    }
+    return true;
+}
+
+bool StackRouteAdapter::handleExchangeSyncRequest_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route)
+{
+    uint32_t ack_out_upto = 0;
+    uint32_t ack_in_upto = 0;
+    const uint8_t *p = route.payload;
+    size_t left = route.payload_size;
+    uint8_t deliver_count = 0;
+    if (!readU32_(p, left, ack_out_upto) || !readU8_(p, left, deliver_count))
+        return true;
+
+    {
+        const auto guard = _lock.guard();
+        if (ack_out_upto)
+            ackSlaveOutboxUpTo_(ack_out_upto);
+    }
+
+    for (uint8_t i = 0; i < deliver_count; ++i)
+    {
+        ExchangeRecord record;
+        record = ExchangeRecord{};
+        record.used = true;
+        uint8_t flags = 0;
+        uint8_t feature_len = 0;
+        uint8_t action_len = 0;
+        uint16_t payload_len = 0;
+        if (!readU32_(p, left, record.queue_id) || !readU32_(p, left, record.source_node) ||
+            !readU32_(p, left, record.target_node) || !readU32_(p, left, record.meta.request_id) ||
+            !readU32_(p, left, record.meta.reply_to) || !readU8_(p, left, flags) || !readU8_(p, left, feature_len) ||
+            !readU8_(p, left, action_len) || !readU16_(p, left, payload_len))
+            break;
+        record.is_binary = (flags & 0x01u) != 0;
+        record.meta.expect_response = (flags & 0x02u) != 0;
+        const uint8_t kind_bits = (uint8_t)((flags >> 2) & 0x03u);
+        record.meta.exchange_kind = kind_bits == 1 ? StackTransport::ExchangeKind::Request
+                                   : kind_bits == 2 ? StackTransport::ExchangeKind::Response
+                                                    : StackTransport::ExchangeKind::Event;
+        const uint8_t *feature_data = nullptr;
+        const uint8_t *action_data = nullptr;
+        const uint8_t *payload_data = nullptr;
+        if (!readBytes_(p, left, feature_data, feature_len) || !readBytes_(p, left, action_data, action_len) ||
+            !readBytes_(p, left, payload_data, payload_len))
+            break;
+        const String feature_text = textFromBytes_(feature_data, feature_len);
+        const String action_text = textFromBytes_(action_data, action_len);
+        copyText_(record.feature, sizeof(record.feature), feature_text.c_str());
+        copyText_(record.action, sizeof(record.action), action_text.c_str());
+        if (record.is_binary)
+            record.payload = encodeBase64Raw_(payload_data, payload_len);
+        else
+            record.payload = textFromBytes_(payload_data, payload_len);
+        {
+            const auto guard = _lock.guard();
+            record.target_node = _local_node_id;
+        }
+        DeferredJsonInvoke json_invoke;
+        DeferredBinaryInvoke binary_invoke;
+        emitExchangeToSlave_(record, json_invoke, binary_invoke);
+        invokeDeferredJson_(json_invoke);
+        invokeDeferredBinary_(binary_invoke);
+        if (record.queue_id > ack_in_upto)
+            ack_in_upto = record.queue_id;
+    }
+
+    std::vector<uint8_t> resp;
+    resp.reserve(512);
+    appendU32_(resp, ack_in_upto);
+    uint8_t outbound_count = 0;
+    appendU8_(resp, 0);
+    {
+        const auto guard = _lock.guard();
+        for (size_t i = 0; i < kExchangeSlaveOutboxCap && outbound_count < 4; ++i)
+        {
+            const ExchangeRecord &slot = _exchange_slave_outbox[i];
+            if (!slot.used)
+                continue;
+            std::vector<uint8_t> payload_bytes;
+            const uint8_t *payload_ptr = nullptr;
+            size_t payload_len = 0;
+            if (slot.is_binary)
+            {
+                if (!decodeBase64Raw_(slot.payload, payload_bytes))
+                    continue;
+                payload_ptr = payload_bytes.empty() ? nullptr : payload_bytes.data();
+                payload_len = payload_bytes.size();
+            }
+            else
+            {
+                payload_ptr = slot.payload.length() ? reinterpret_cast<const uint8_t *>(slot.payload.c_str()) : nullptr;
+                payload_len = slot.payload.length();
+            }
+            const uint8_t flags = (slot.is_binary ? 0x01u : 0u) | (slot.meta.expect_response ? 0x02u : 0u) |
+                                  ((slot.meta.exchange_kind == StackTransport::ExchangeKind::Request
+                                        ? 1u
+                                        : slot.meta.exchange_kind == StackTransport::ExchangeKind::Response ? 2u : 0u)
+                                   << 2);
+            appendU32_(resp, slot.queue_id);
+            appendU32_(resp, slot.source_node);
+            appendU32_(resp, slot.target_node);
+            appendU32_(resp, slot.meta.request_id);
+            appendU32_(resp, slot.meta.reply_to);
+            appendU8_(resp, flags);
+            appendU8_(resp, (uint8_t)strlen(slot.feature));
+            appendU8_(resp, (uint8_t)strlen(slot.action));
+            appendU16_(resp, (uint16_t)payload_len);
+            appendBytes_(resp, (const uint8_t *)slot.feature, strlen(slot.feature));
+            appendBytes_(resp, (const uint8_t *)slot.action, strlen(slot.action));
+            appendBytes_(resp, payload_ptr, payload_len);
+            ++outbound_count;
+        }
+    }
+    resp[4] = outbound_count;
+    return sendResponseBinary(source_node, kXchgFeature, "sync", route.meta.request_id, resp.data(), resp.size());
+}
+
+bool StackRouteAdapter::handleExchangeSyncResponse_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route)
+{
+    {
+        const auto guard = _lock.guard();
+        if (_exchange_sync.phase != ExchangeSyncPhase::Wait || route.meta.reply_to != _exchange_sync.request_id ||
+            source_node != _exchange_sync.node_id)
+            return true;
+    }
+
+    const uint8_t *p = route.payload;
+    size_t left = route.payload_size;
+    uint32_t ack_in_upto = 0;
+    uint8_t outbound_count = 0;
+    if (!readU32_(p, left, ack_in_upto) || !readU8_(p, left, outbound_count))
+        return true;
+    {
+        const auto guard = _lock.guard();
+        if (ack_in_upto)
+            ackMasterInboxUpTo_(source_node, ack_in_upto);
+    }
+
+    uint32_t max_out_id = 0;
+    for (uint8_t i = 0; i < outbound_count; ++i)
+    {
+        ExchangeRecord record;
+        record = ExchangeRecord{};
+        record.used = true;
+        uint8_t flags = 0;
+        uint8_t feature_len = 0;
+        uint8_t action_len = 0;
+        uint16_t payload_len = 0;
+        if (!readU32_(p, left, record.queue_id) || !readU32_(p, left, record.source_node) ||
+            !readU32_(p, left, record.target_node) || !readU32_(p, left, record.meta.request_id) ||
+            !readU32_(p, left, record.meta.reply_to) || !readU8_(p, left, flags) || !readU8_(p, left, feature_len) ||
+            !readU8_(p, left, action_len) || !readU16_(p, left, payload_len))
+            break;
+        record.is_binary = (flags & 0x01u) != 0;
+        record.meta.expect_response = (flags & 0x02u) != 0;
+        const uint8_t kind_bits = (uint8_t)((flags >> 2) & 0x03u);
+        record.meta.exchange_kind = kind_bits == 1 ? StackTransport::ExchangeKind::Request
+                                   : kind_bits == 2 ? StackTransport::ExchangeKind::Response
+                                                    : StackTransport::ExchangeKind::Event;
+        const uint8_t *feature_data = nullptr;
+        const uint8_t *action_data = nullptr;
+        const uint8_t *payload_data = nullptr;
+        if (!readBytes_(p, left, feature_data, feature_len) || !readBytes_(p, left, action_data, action_len) ||
+            !readBytes_(p, left, payload_data, payload_len))
+            break;
+        const String feature_text = textFromBytes_(feature_data, feature_len);
+        const String action_text = textFromBytes_(action_data, action_len);
+        copyText_(record.feature, sizeof(record.feature), feature_text.c_str());
+        copyText_(record.action, sizeof(record.action), action_text.c_str());
+        record.source_node = source_node;
+        if (record.is_binary)
+            record.payload = encodeBase64Raw_(payload_data, payload_len);
+        else
+            record.payload = textFromBytes_(payload_data, payload_len);
+        if (record.queue_id > max_out_id)
+            max_out_id = record.queue_id;
+        DeferredJsonInvoke json_invoke;
+        DeferredBinaryInvoke binary_invoke;
+        routeOutboundExchange_(record, json_invoke, binary_invoke);
+        invokeDeferredJson_(json_invoke);
+        invokeDeferredBinary_(binary_invoke);
+    }
+
+    {
+        const auto guard = _lock.guard();
+        if (ExchangeNodeState *state = exchangeNodeState_(source_node, true))
+        {
+            if (max_out_id > state->ack_out_upto)
+                state->ack_out_upto = max_out_id;
+        }
         resetExchangeSync_();
     }
     return true;
@@ -908,9 +1309,8 @@ bool StackRouteAdapter::tryStartExchangePoll_()
         if (!registry->snapshotAt(idx, device) || !device.online || device.node_id == 0 || device.node_id == local_node_id)
             continue;
 
-        DynamicJsonDocument req(2048);
-        buildExchangeSyncRequestPayload_(device.node_id, req);
         uint32_t request_id = 0;
+        PayloadMode payload_mode = PayloadMode::Json;
         {
             const auto guard = _lock.guard();
             if (_exchange_sync.phase != ExchangeSyncPhase::Idle)
@@ -921,8 +1321,87 @@ bool StackRouteAdapter::tryStartExchangePoll_()
             _exchange_sync.deadline_ms = millis() + kExchangeSyncTimeoutMs;
             _exchange_poll_cursor = (uint8_t)((idx + 1u) % StackDeviceRegistry::kMaxDevices);
             request_id = _exchange_sync.request_id;
+            payload_mode = _payload_mode;
         }
-        if (!sendRequest(device.node_id, kXchgFeature, "sync", &req, Mode::Json, true, request_id))
+        bool sent = false;
+        if (payload_mode == PayloadMode::Binary)
+        {
+            std::vector<uint8_t> req;
+            req.reserve(512);
+            uint32_t ack_out_upto = 0;
+            {
+                const auto guard = _lock.guard();
+                if (ExchangeNodeState *state = exchangeNodeState_(device.node_id, true))
+                    ack_out_upto = state->ack_out_upto;
+            }
+            appendU32_(req, ack_out_upto);
+            uint8_t deliver_count = 0;
+            appendU8_(req, 0);
+            {
+                const auto guard = _lock.guard();
+                const uint32_t now = millis();
+                for (size_t i = 0; i < kExchangeMasterInboxCap && deliver_count < 4; ++i)
+                {
+                    ExchangeRecord &slot = _exchange_master_inbox[i];
+                    if (!slot.used || slot.target_node != device.node_id)
+                        continue;
+                    if (slot.retry_count >= kExchangeMaxRetries)
+                        continue;
+                    if (slot.delivery_count > 0 && !expiredMs_(now, slot.last_sync_ms + kExchangeRetryIntervalMs))
+                        continue;
+                    if (slot.delivery_count > 0)
+                    {
+                        ++slot.retry_count;
+                        appendExchangeHistory_(slot, ExchangeStatus::Retried);
+                        updateExchangeDiag_(ExchangeStatus::Retried, slot.is_binary);
+                    }
+                    ++slot.delivery_count;
+                    slot.last_sync_ms = now;
+                    std::vector<uint8_t> payload_bytes;
+                    const uint8_t *payload_ptr = nullptr;
+                    size_t payload_len = 0;
+                    if (slot.is_binary)
+                    {
+                        if (!decodeBase64Raw_(slot.payload, payload_bytes))
+                            continue;
+                        payload_ptr = payload_bytes.empty() ? nullptr : payload_bytes.data();
+                        payload_len = payload_bytes.size();
+                    }
+                    else
+                    {
+                        payload_ptr = slot.payload.length() ? (const uint8_t *)slot.payload.c_str() : nullptr;
+                        payload_len = slot.payload.length();
+                    }
+                    const uint8_t flags = (slot.is_binary ? 0x01u : 0u) | (slot.meta.expect_response ? 0x02u : 0u) |
+                                          ((slot.meta.exchange_kind == StackTransport::ExchangeKind::Request
+                                                ? 1u
+                                                : slot.meta.exchange_kind == StackTransport::ExchangeKind::Response ? 2u : 0u)
+                                           << 2);
+                    appendU32_(req, slot.queue_id);
+                    appendU32_(req, slot.source_node);
+                    appendU32_(req, slot.target_node);
+                    appendU32_(req, slot.meta.request_id);
+                    appendU32_(req, slot.meta.reply_to);
+                    appendU8_(req, flags);
+                    appendU8_(req, (uint8_t)strlen(slot.feature));
+                    appendU8_(req, (uint8_t)strlen(slot.action));
+                    appendU16_(req, (uint16_t)payload_len);
+                    appendBytes_(req, (const uint8_t *)slot.feature, strlen(slot.feature));
+                    appendBytes_(req, (const uint8_t *)slot.action, strlen(slot.action));
+                    appendBytes_(req, payload_ptr, payload_len);
+                    ++deliver_count;
+                }
+            }
+            req[4] = deliver_count;
+            sent = sendRequestBinary(device.node_id, kXchgFeature, "sync", req.data(), req.size(), true, request_id);
+        }
+        else
+        {
+            DynamicJsonDocument req(2048);
+            buildExchangeSyncRequestPayload_(device.node_id, req);
+            sent = sendRequest(device.node_id, kXchgFeature, "sync", &req, Mode::Json, true, request_id);
+        }
+        if (!sent)
         {
             const auto guard = _lock.guard();
             if (_exchange_sync.phase == ExchangeSyncPhase::Wait && _exchange_sync.request_id == request_id &&
@@ -1384,6 +1863,32 @@ bool StackRouteAdapter::handleNotificationRoute_(uint32_t source_node, const Sta
     return true;
 }
 
+bool StackRouteAdapter::handleNotificationRoute_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route)
+{
+    if (strcmp(route.feature, kNotifyFeature) != 0)
+        return false;
+
+    if (route.meta.exchange_kind == StackTransport::ExchangeKind::Request)
+    {
+        if (strcmp(route.action, "pull") == 0)
+            return handleNotificationPullRequest_(source_node, route);
+        if (strcmp(route.action, "ack") == 0)
+            return handleNotificationAckRequest_(source_node, route);
+        return true;
+    }
+
+    if (route.meta.exchange_kind == StackTransport::ExchangeKind::Response)
+    {
+        if (strcmp(route.action, "pull") == 0)
+            return handleNotificationPullResponse_(source_node, route);
+        if (strcmp(route.action, "ack") == 0)
+            return handleNotificationAckResponse_(source_node, route);
+        return true;
+    }
+
+    return true;
+}
+
 bool StackRouteAdapter::handleNotificationPullRequest_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route)
 {
     size_t limit = 4;
@@ -1435,6 +1940,7 @@ bool StackRouteAdapter::handleNotificationPullResponse_(uint32_t source_node, co
         {
             NotificationRecord record;
             record.used = true;
+            record.is_binary = item["binary"] | false;
             record.notification_id = item["notification_id"] | 0u;
             record.source_node = source_node;
             record.ts_ms = item["ts_ms"] | 0u;
@@ -1444,7 +1950,7 @@ bool StackRouteAdapter::handleNotificationPullResponse_(uint32_t source_node, co
             copyText_(record.feature, sizeof(record.feature), item["feature"] | "");
             copyText_(record.code, sizeof(record.code), item["code"] | "");
             record.message = item["message"] | "";
-            if (item["payload"].is<JsonVariantConst>())
+            if (!record.is_binary && item["payload"].is<JsonVariantConst>())
                 serializeJson(item["payload"], record.payload);
             if (record.notification_id > max_id)
                 max_id = record.notification_id;
@@ -1492,8 +1998,182 @@ bool StackRouteAdapter::handleNotificationAckResponse_(uint32_t source_node, con
     return true;
 }
 
-bool StackRouteAdapter::queueNotification_(uint32_t source_node, const char *level, const char *feature, const char *code,
-                                           const char *message, const String *payload_json)
+bool StackRouteAdapter::handleNotificationPullRequest_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route)
+{
+    const uint8_t *p = route.payload;
+    size_t left = route.payload_size;
+    uint16_t limit = 4;
+    if (left >= 2)
+        readU16_(p, left, limit);
+    if (limit == 0)
+        limit = 1;
+
+    std::vector<uint8_t> resp;
+    resp.reserve(512);
+    uint32_t max_id = 0;
+    appendU32_(resp, 0);
+    uint8_t item_count = 0;
+    appendU8_(resp, 0);
+    {
+        const auto guard = _lock.guard();
+        size_t emitted = 0;
+        for (uint8_t pass = 0; pass < 2 && emitted < limit; ++pass)
+        {
+            for (size_t i = 0; i < kNotifyOutboxCap && emitted < limit; ++i)
+            {
+                const NotificationRecord &slot = _notify_outbox[i];
+                if (!slot.used)
+                    continue;
+                if (pass == 0 && slot.priority < 2)
+                    continue;
+                if (pass == 1 && slot.priority >= 2)
+                    continue;
+                appendU32_(resp, slot.notification_id);
+                appendU32_(resp, slot.source_node);
+                appendU32_(resp, slot.ts_ms);
+                appendU16_(resp, slot.repeat_count);
+                appendU8_(resp, slot.priority);
+                appendU8_(resp, (uint8_t)strlen(slot.level));
+                appendU8_(resp, (uint8_t)strlen(slot.feature));
+                appendU8_(resp, (uint8_t)strlen(slot.code));
+                const String wire_message = clampUtf8Bytes_(slot.message.c_str(), StackBinaryProtocol::kNotifyMessageMax);
+                appendU16_(resp, (uint16_t)wire_message.length());
+                appendU16_(resp, 0u);
+                appendBytes_(resp, (const uint8_t *)slot.level, strlen(slot.level));
+                appendBytes_(resp, (const uint8_t *)slot.feature, strlen(slot.feature));
+                appendBytes_(resp, (const uint8_t *)slot.code, strlen(slot.code));
+                appendBytes_(resp, (const uint8_t *)wire_message.c_str(), wire_message.length());
+                if (slot.notification_id > max_id)
+                    max_id = slot.notification_id;
+                ++item_count;
+                ++emitted;
+            }
+        }
+    }
+    resp[0] = (uint8_t)(max_id & 0xFFu);
+    resp[1] = (uint8_t)((max_id >> 8) & 0xFFu);
+    resp[2] = (uint8_t)((max_id >> 16) & 0xFFu);
+    resp[3] = (uint8_t)((max_id >> 24) & 0xFFu);
+    resp[4] = item_count;
+    return sendResponseBinary(source_node, kNotifyFeature, "pull", route.meta.request_id, resp.data(), resp.size());
+}
+
+bool StackRouteAdapter::handleNotificationAckRequest_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route)
+{
+    const uint8_t *p = route.payload;
+    size_t left = route.payload_size;
+    uint32_t upto_id = 0;
+    if (left >= 4)
+        readU32_(p, left, upto_id);
+    {
+        const auto guard = _lock.guard();
+        if (upto_id)
+            ackOutboxUpTo_(upto_id);
+    }
+    uint8_t resp[4] = {};
+    resp[0] = (uint8_t)(upto_id & 0xFFu);
+    resp[1] = (uint8_t)((upto_id >> 8) & 0xFFu);
+    resp[2] = (uint8_t)((upto_id >> 16) & 0xFFu);
+    resp[3] = (uint8_t)((upto_id >> 24) & 0xFFu);
+    return sendResponseBinary(source_node, kNotifyFeature, "ack", route.meta.request_id, resp, sizeof(resp));
+}
+
+bool StackRouteAdapter::handleNotificationPullResponse_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route)
+{
+    {
+        const auto guard = _lock.guard();
+        if (_notify_sync.phase != NotifySyncPhase::PullWait || !_notify_sync.request_id ||
+            route.meta.reply_to != _notify_sync.request_id || source_node != _notify_sync.node_id)
+            return true;
+    }
+
+    const uint8_t *p = route.payload;
+    size_t left = route.payload_size;
+    uint32_t max_id = 0;
+    uint8_t item_count = 0;
+    if (!readU32_(p, left, max_id) || !readU8_(p, left, item_count))
+        return true;
+    for (uint8_t i = 0; i < item_count; ++i)
+    {
+        NotificationRecord record;
+        record.used = true;
+        record.is_binary = true;
+        uint8_t level_len = 0;
+        uint8_t feature_len = 0;
+        uint8_t code_len = 0;
+        uint16_t message_len = 0;
+        uint16_t payload_len = 0;
+        if (!readU32_(p, left, record.notification_id) || !readU32_(p, left, record.source_node) ||
+            !readU32_(p, left, record.ts_ms) || !readU16_(p, left, record.repeat_count) ||
+            !readU8_(p, left, record.priority) || !readU8_(p, left, level_len) || !readU8_(p, left, feature_len) ||
+            !readU8_(p, left, code_len) || !readU16_(p, left, message_len) || !readU16_(p, left, payload_len))
+            break;
+        const uint8_t *level_data = nullptr;
+        const uint8_t *feature_data = nullptr;
+        const uint8_t *code_data = nullptr;
+        const uint8_t *message_data = nullptr;
+        const uint8_t *payload_data = nullptr;
+        if (!readBytes_(p, left, level_data, level_len) || !readBytes_(p, left, feature_data, feature_len) ||
+            !readBytes_(p, left, code_data, code_len) || !readBytes_(p, left, message_data, message_len) ||
+            !readBytes_(p, left, payload_data, payload_len))
+            break;
+        const String level = textFromBytes_(level_data, level_len);
+        const String feature = textFromBytes_(feature_data, feature_len);
+        const String code = textFromBytes_(code_data, code_len);
+        copyText_(record.level, sizeof(record.level), level.c_str());
+        copyText_(record.feature, sizeof(record.feature), feature.c_str());
+        copyText_(record.code, sizeof(record.code), code.c_str());
+        record.message = textFromBytes_(message_data, message_len);
+        (void)payload_data;
+        (void)payload_len;
+        if (record.notification_id > max_id)
+            max_id = record.notification_id;
+        DeferredNotifyInvoke invoke;
+        emitNotification_(record, &invoke);
+        invokeDeferredNotify_(invoke);
+    }
+
+    {
+        const auto guard = _lock.guard();
+        _notify_sync.phase = NotifySyncPhase::AckWait;
+        _notify_sync.ack_upto_id = max_id;
+        _notify_sync.request_id = nextInternalRequestId_();
+        _notify_sync.deadline_ms = millis() + 1500u;
+    }
+
+    uint32_t request_id = 0;
+    {
+        const auto guard = _lock.guard();
+        request_id = _notify_sync.request_id;
+    }
+    uint8_t ack[4] = {
+        (uint8_t)(max_id & 0xFFu),
+        (uint8_t)((max_id >> 8) & 0xFFu),
+        (uint8_t)((max_id >> 16) & 0xFFu),
+        (uint8_t)((max_id >> 24) & 0xFFu),
+    };
+    if (!sendRequestBinary(source_node, kNotifyFeature, "ack", ack, sizeof(ack), true, request_id))
+    {
+        _log.warn(F("STACK"), F("Notify ack send failed: node 0x%08lX upto %lu"), (unsigned long)source_node,
+                  (unsigned long)max_id);
+        const auto guard = _lock.guard();
+        resetNotifySync_();
+    }
+    return true;
+}
+
+bool StackRouteAdapter::handleNotificationAckResponse_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route)
+{
+    const auto guard = _lock.guard();
+    if (_notify_sync.phase != NotifySyncPhase::AckWait || !_notify_sync.request_id ||
+        route.meta.reply_to != _notify_sync.request_id || source_node != _notify_sync.node_id)
+        return true;
+    resetNotifySync_();
+    return true;
+}
+
+bool StackRouteAdapter::queueNotification_(uint32_t source_node, bool is_binary, const char *level, const char *feature,
+                                           const char *code, const char *message, const String *payload_json)
 {
     DeferredNotifyInvoke notify_invoke;
     bool should_invoke = false;
@@ -1510,14 +2190,14 @@ bool StackRouteAdapter::queueNotification_(uint32_t source_node, const char *lev
         {
             NotificationRecord record;
             if (!appendOutboxNotification_(record, source_node ? source_node : _local_node_id, level, feature, code, message,
-                                           payload_json))
+                                           payload_json, is_binary))
                 return false;
             emitNotification_(record, &notify_invoke);
             should_invoke = true;
             result = true;
         }
-        else if (NotificationRecord *dup = findOutboxDuplicate_(source_node ? source_node : _local_node_id, level, feature, code,
-                                                                message, payload_json))
+        else if (NotificationRecord *dup = findOutboxDuplicate_(source_node ? source_node : _local_node_id, is_binary, level,
+                                                                feature, code, message, payload_json))
         {
             dup->ts_ms = millis();
             if (dup->repeat_count < 0xFFFFu)
@@ -1532,7 +2212,7 @@ bool StackRouteAdapter::queueNotification_(uint32_t source_node, const char *lev
                 if (slot.used)
                     continue;
                 result = appendOutboxNotification_(slot, source_node ? source_node : _local_node_id, level, feature, code, message,
-                                                   payload_json);
+                                                   payload_json, is_binary);
                 break;
             }
 
@@ -1551,7 +2231,7 @@ bool StackRouteAdapter::queueNotification_(uint32_t source_node, const char *lev
                 _log.warn(F("STACK"), F("Notify outbox full: drop oldest id %lu"),
                           (unsigned long)_notify_outbox[drop_idx].notification_id);
                 result = appendOutboxNotification_(_notify_outbox[drop_idx], source_node ? source_node : _local_node_id, level,
-                                                   feature, code, message, payload_json);
+                                                   feature, code, message, payload_json, is_binary);
             }
         }
     }
@@ -1561,10 +2241,12 @@ bool StackRouteAdapter::queueNotification_(uint32_t source_node, const char *lev
 }
 
 bool StackRouteAdapter::appendOutboxNotification_(NotificationRecord &entry, uint32_t source_node, const char *level, const char *feature,
-                                                  const char *code, const char *message, const String *payload_json)
+                                                  const char *code, const char *message, const String *payload_json,
+                                                  bool is_binary)
 {
     entry = NotificationRecord{};
     entry.used = true;
+    entry.is_binary = is_binary;
     entry.notification_id = _next_notify_id++;
     if (_next_notify_id == 0)
         _next_notify_id = 1;
@@ -1576,13 +2258,14 @@ bool StackRouteAdapter::appendOutboxNotification_(NotificationRecord &entry, uin
     copyText_(entry.feature, sizeof(entry.feature), feature);
     copyText_(entry.code, sizeof(entry.code), code ? code : "");
     if (message)
-        entry.message = message;
-    if (payload_json)
+        entry.message = clampUtf8Bytes_(message, StackBinaryProtocol::kNotifyMessageMax);
+    if (!is_binary && payload_json)
         entry.payload = *payload_json;
     return true;
 }
 
-StackRouteAdapter::NotificationRecord *StackRouteAdapter::findOutboxDuplicate_(uint32_t source_node, const char *level, const char *feature,
+StackRouteAdapter::NotificationRecord *StackRouteAdapter::findOutboxDuplicate_(uint32_t source_node, bool is_binary,
+                                                                               const char *level, const char *feature,
                                                                                const char *code, const char *message,
                                                                                const String *payload_json)
 {
@@ -1591,13 +2274,15 @@ StackRouteAdapter::NotificationRecord *StackRouteAdapter::findOutboxDuplicate_(u
         NotificationRecord &slot = _notify_outbox[i];
         if (!slot.used || slot.source_node != source_node)
             continue;
+        if (slot.is_binary != is_binary)
+            continue;
         if (strcmp(slot.level, level) != 0 || strcmp(slot.feature, feature) != 0)
             continue;
         const char *norm_code = code ? code : "";
-        const char *norm_msg = message ? message : "";
+        const String norm_msg = clampUtf8Bytes_(message ? message : "", StackBinaryProtocol::kNotifyMessageMax);
         if (strcmp(slot.code, norm_code) != 0 || slot.message != norm_msg)
             continue;
-        const String payload = payload_json ? *payload_json : String();
+        const String payload = (!is_binary && payload_json) ? *payload_json : String();
         if (slot.payload != payload)
             continue;
         return &slot;
@@ -1653,6 +2338,7 @@ bool StackRouteAdapter::buildPullResponsePayload_(DynamicJsonDocument &doc, size
             if (pass == 1 && slot.priority >= 2)
                 continue;
             JsonObject item = items.createNestedObject();
+            item["binary"] = slot.is_binary;
             item["notification_id"] = slot.notification_id;
             item["source_node"] = slot.source_node;
             item["ts_ms"] = slot.ts_ms;
@@ -1664,7 +2350,7 @@ bool StackRouteAdapter::buildPullResponsePayload_(DynamicJsonDocument &doc, size
                 item["code"] = slot.code;
             if (slot.message.length())
                 item["message"] = slot.message;
-            if (slot.payload.length())
+            if (!slot.is_binary && slot.payload.length())
             {
                 DynamicJsonDocument payload_doc(384);
                 if (!deserializeJson(payload_doc, slot.payload.c_str(), slot.payload.length()))
@@ -1723,6 +2409,7 @@ bool StackRouteAdapter::tryStartNotificationPoll_()
         DynamicJsonDocument req(128);
         req["limit"] = 4;
         uint32_t request_id = 0;
+        PayloadMode payload_mode = PayloadMode::Json;
         {
             const auto guard = _lock.guard();
             if (_notify_sync.phase != NotifySyncPhase::Idle)
@@ -1734,8 +2421,19 @@ bool StackRouteAdapter::tryStartNotificationPoll_()
             _notify_sync.deadline_ms = millis() + 1500u;
             _notify_poll_cursor = (uint8_t)((idx + 1u) % StackDeviceRegistry::kMaxDevices);
             request_id = _notify_sync.request_id;
+            payload_mode = _payload_mode;
         }
-        if (!sendRequest(device.node_id, kNotifyFeature, "pull", &req, Mode::Json, true, request_id))
+        bool sent = false;
+        if (payload_mode == PayloadMode::Binary)
+        {
+            uint8_t req_bin[2] = {4u, 0u};
+            sent = sendRequestBinary(device.node_id, kNotifyFeature, "pull", req_bin, sizeof(req_bin), true, request_id);
+        }
+        else
+        {
+            sent = sendRequest(device.node_id, kNotifyFeature, "pull", &req, Mode::Json, true, request_id);
+        }
+        if (!sent)
         {
             const auto guard = _lock.guard();
             if (_notify_sync.phase == NotifySyncPhase::PullWait && _notify_sync.request_id == request_id &&
@@ -1759,13 +2457,6 @@ bool StackRouteAdapter::hasRs485PollBackend_() const
         return false;
     if (_exchange_policy == ExchangePolicy::Poll)
         return true;
-    if (_exchange_policy == ExchangePolicy::Direct)
-        return false;
-    if (_master_rs485_active && _rs485_master)
-    {
-        const StackTransport::Caps caps = _rs485_master->caps();
-        return caps.requires_arbitration || !caps.can_push_async;
-    }
     return false;
 }
 
@@ -1776,8 +2467,6 @@ bool StackRouteAdapter::canSlavePushDirect_() const
     if (_exchange_policy == ExchangePolicy::Poll)
         return false;
     const StackTransport::Caps caps = _slave->caps();
-    if (_exchange_policy == ExchangePolicy::Direct)
-        return caps.full_duplex && caps.can_push_async && !caps.requires_arbitration;
     return caps.full_duplex && caps.can_push_async && !caps.requires_arbitration;
 }
 
@@ -1791,28 +2480,20 @@ StackRouteAdapter::RoutePlane StackRouteAdapter::classifyPlane_(const char *feat
     return RoutePlane::Data;
 }
 
+StackRouteAdapter::Mode StackRouteAdapter::modeForDataPlane_(ConfigsManagerIface::StackPayloadMode payload_mode)
+{
+    if (payload_mode == ConfigsManagerIface::StackPayloadMode::Binary)
+        return Mode::Binary;
+    return Mode::Json;
+}
+
 StackRouteAdapter::Mode StackRouteAdapter::chooseMode_(const char *feature, const char *action,
                                                        const JsonDocument *payload, Mode requested) const
 {
-    if (requested != Mode::Auto)
-        return requested;
-
-    const RoutePlane plane = classifyPlane_(feature, action);
-    if (_payload_mode == PayloadMode::Json)
-        return Mode::Json;
-    if (_payload_mode == PayloadMode::Binary && plane == RoutePlane::Data)
-        return Mode::Binary;
-
-    if (plane == RoutePlane::Control)
-        return Mode::Json;
-
-    if (_payload_mode == PayloadMode::Binary)
-        return Mode::Binary;
-
-    String payload_text;
-    if (payload)
-        serializeJson(*payload, payload_text);
-    return payload_text.length() > 48 ? Mode::Binary : Mode::Json;
+    (void)feature;
+    (void)action;
+    (void)payload;
+    return requested;
 }
 
 uint32_t StackRouteAdapter::nextInternalRequestId_()
@@ -1856,11 +2537,13 @@ void StackRouteAdapter::emitNotification_(const NotificationRecord &record, Defe
     invoke->ctx = _notify_ctx;
     invoke->source_node = record.source_node;
     invoke->notify.source_node = record.source_node;
+    invoke->notify.is_binary = record.is_binary;
     copyText_(invoke->notify.level, sizeof(invoke->notify.level), record.level);
     copyText_(invoke->notify.feature, sizeof(invoke->notify.feature), record.feature);
     copyText_(invoke->notify.code, sizeof(invoke->notify.code), record.code);
     invoke->notify.message = record.message;
-    invoke->notify.payload = record.payload;
+    if (!record.is_binary)
+        invoke->notify.payload = record.payload;
 }
 
 void StackRouteAdapter::invokeDeferredJson_(const DeferredJsonInvoke &invoke)

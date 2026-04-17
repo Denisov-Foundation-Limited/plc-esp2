@@ -39,12 +39,15 @@ public:
         printIdRangeInline_();
     }
 
+    String idRangeString() const
+    {
+        return idRangeString_();
+    }
+
     void printHelpEnable()
     {
         _c._io->println(F("    show watering  - list watering rules"));
-        _c._io->print(F("    show watering <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" - rule details"));
+        _c._io->println(String(F("    show watering <id>")) + idRangeString_() + F(" - rule details"));
     }
 
     void printHelpConfigLines()
@@ -57,54 +60,23 @@ public:
     {
         _c._io->println(F("  Watering:"));
         _c._io->println(F("    show                     - list rules"));
-        _c._io->print(F("    show <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("              - rule details"));
-        _c._io->print(F("    name <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <text>          - set rule name"));
-        _c._io->print(F("    enable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("              - enable rule"));
-        _c._io->print(F("    disable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("             - disable rule"));
-        _c._io->print(F("    status <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <on|off>       - monitor time"));
-        _c._io->print(F("    port <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>   - set GPIO port"));
-        _c._io->print(F("    tank <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <tank_id|none> - bind tank"));
-        _c._io->print(F("    days <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <mon,tue,...|all|none> - set weekdays"));
-        _c._io->print(F("    time <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <HH:MM>       - set start time slot 1"));
-        _c._io->print(F("    time2 <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <HH:MM>      - set start time slot 2"));
-        _c._io->print(F("    time3 <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <HH:MM>      - set start time slot 3"));
-        _c._io->print(F("    duration <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <min>        - set duration slot 1 (minutes)"));
-        _c._io->print(F("    duration2 <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <min>       - set duration slot 2 (minutes)"));
-        _c._io->print(F("    duration3 <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <min>       - set duration slot 3 (minutes)"));
-        _c._io->print(F("    resume <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <on|off>      - resume after refill"));
-        _c._io->print(F("    resume_level <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <low|mid|full> - resume at >= level"));
+        const String range = idRangeString_();
+        _c._io->println(String(F("    show <id>")) + range + F("              - rule details"));
+        _c._io->println(String(F("    name <id>")) + range + F(" <text>          - set rule name"));
+        _c._io->println(String(F("    enable <id>")) + range + F("              - enable rule"));
+        _c._io->println(String(F("    disable <id>")) + range + F("             - disable rule"));
+        _c._io->println(String(F("    status <id>")) + range + F(" <on|off>       - monitor time"));
+        _c._io->println(String(F("    port <id>")) + range + F(" <port|none>   - set GPIO port"));
+        _c._io->println(String(F("    tank <id>")) + range + F(" <tank_id|none> - bind tank"));
+        _c._io->println(String(F("    days <id>")) + range + F(" <mon,tue,...|all|none> - set weekdays"));
+        _c._io->println(String(F("    time <id>")) + range + F(" <HH:MM>       - set start time slot 1"));
+        _c._io->println(String(F("    time2 <id>")) + range + F(" <HH:MM>      - set start time slot 2"));
+        _c._io->println(String(F("    time3 <id>")) + range + F(" <HH:MM>      - set start time slot 3"));
+        _c._io->println(String(F("    duration <id>")) + range + F(" <min>        - set duration slot 1 (minutes)"));
+        _c._io->println(String(F("    duration2 <id>")) + range + F(" <min>       - set duration slot 2 (minutes)"));
+        _c._io->println(String(F("    duration3 <id>")) + range + F(" <min>       - set duration slot 3 (minutes)"));
+        _c._io->println(String(F("    resume <id>")) + range + F(" <on|off>      - resume after refill"));
+        _c._io->println(String(F("    resume_level <id>")) + range + F(" <low|mid|full> - resume at >= level"));
     }
 
     void showRules()
@@ -479,9 +451,12 @@ private:
 
     void printIdRangeInline_() const
     {
-        _c._io->print(F(" (1-"));
-        _c._io->print(WateringController::kRuleCount);
-        _c._io->print(F(")"));
+        _c._io->print(idRangeString_());
+    }
+
+    String idRangeString_() const
+    {
+        return String(F(" (1-")) + WateringController::kRuleCount + F(")");
     }
 
     static void formatWeekdays_(uint8_t mask, char *out, size_t cap)

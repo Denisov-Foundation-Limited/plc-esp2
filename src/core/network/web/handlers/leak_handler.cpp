@@ -49,8 +49,8 @@ bool requestStackLeak_(WebInterface &web, uint32_t node_id)
             DynamicJsonDocument req(64);
             req["offset"] = 0;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            const bool sent = web.network()->stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
-                                                                      StackRouteAdapter::Mode::Json, true);
+            const bool sent = web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "leak",
+                                                                              "snapshot_req", &req, true);
             return sent;
         }
         return false;
@@ -62,8 +62,8 @@ bool requestStackLeak_(WebInterface &web, uint32_t node_id)
         DynamicJsonDocument req(64);
         req["offset"] = cache.leak_count;
         req["limit"] = StackUnitSnapshot::kPageSize;
-        return web.network()->stackRoute().sendRequest(node_id, "leak", "snapshot_req", &req,
-                                                       StackRouteAdapter::Mode::Json, true);
+        return web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "leak", "snapshot_req",
+                                                               &req, true);
     }
     return true;
 }

@@ -96,13 +96,13 @@ void ensureStackMeteoSnapshot_(const WebInterface &web, uint32_t node_id, const 
     {
         if (!web.network()->stackIndexState(node_id, state) || !web.network()->stackIndexCacheState(node_id, state_cache))
         {
-            web.network()->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
-                                                    StackRouteAdapter::Mode::Json, true);
+            web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "controllers", "summary_req",
+                                                            nullptr, true);
             DynamicJsonDocument req(64);
             req["offset"] = 0;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            web.network()->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
-                                                    StackRouteAdapter::Mode::Json, true);
+            web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "meteo", "snapshot_req",
+                                                            &req, true);
             return;
         }
     }
@@ -111,8 +111,8 @@ void ensureStackMeteoSnapshot_(const WebInterface &web, uint32_t node_id, const 
         DynamicJsonDocument req(64);
         req["offset"] = 0;
         req["limit"] = StackUnitSnapshot::kPageSize;
-        web.network()->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
-                                                StackRouteAdapter::Mode::Json, true);
+        web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "meteo", "snapshot_req", &req,
+                                                        true);
         return;
     }
     if (ref.meteo_enabled > cache_ref.meteo_count &&
@@ -122,8 +122,8 @@ void ensureStackMeteoSnapshot_(const WebInterface &web, uint32_t node_id, const 
         DynamicJsonDocument req(64);
         req["offset"] = cache_ref.meteo_count;
         req["limit"] = StackUnitSnapshot::kPageSize;
-        if (!web.network()->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
-                                                     StackRouteAdapter::Mode::Json, true))
+        if (!web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "meteo", "snapshot_req",
+                                                             &req, true))
             web.network()->clearStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id);
     }
 }
@@ -135,8 +135,8 @@ bool requestNextStackMeteoPage_(WebInterface &web, uint32_t node_id, uint16_t of
     DynamicJsonDocument req(64);
     req["offset"] = offset;
     req["limit"] = limit;
-    const bool sent = web.network()->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
-                                                              StackRouteAdapter::Mode::Json, true);
+    const bool sent = web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "meteo",
+                                                                      "snapshot_req", &req, true);
     if (!sent)
         web.network()->clearStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id);
     return sent;
@@ -267,13 +267,13 @@ bool WebInterfaceControllersMeteoHelper::requestStackMeteo_(WebInterface &web, u
             !has_cache || cache.meteo_count == 0)
         {
             const bool refresh = web.requestStackIndexState_(node_id);
-            web.network()->stackRoute().sendRequest(node_id, "controllers", "summary_req", nullptr,
-                                                    StackRouteAdapter::Mode::Json, true);
+            web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "controllers", "summary_req",
+                                                            nullptr, true);
             DynamicJsonDocument req(64);
             req["offset"] = 0;
             req["limit"] = StackUnitSnapshot::kPageSize;
-            const bool meteo_req = web.network()->stackRoute().sendRequest(node_id, "meteo", "snapshot_req", &req,
-                                                                           StackRouteAdapter::Mode::Json, true);
+            const bool meteo_req = web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id,
+                                                                                   "meteo", "snapshot_req", &req, true);
             return refresh || meteo_req;
         }
         if (has_cache && snapshot.meteo_enabled > cache.meteo_count)

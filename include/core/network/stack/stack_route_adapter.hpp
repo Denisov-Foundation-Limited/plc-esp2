@@ -17,6 +17,7 @@
 
 #include "core/network/stack/stack_binary_protocol.hpp"
 #include "core/network/stack/stack_json_protocol.hpp"
+#include "utils/configs_manager_iface.hpp"
 #include "utils/rtos_lock.hpp"
 
 class Logger;
@@ -97,6 +98,7 @@ public:
     struct NotificationRecord
     {
         bool used = false;
+        bool is_binary = false;
         uint32_t notification_id = 0;
         uint32_t source_node = 0;
         uint32_t ts_ms = 0;
@@ -112,21 +114,18 @@ public:
     enum class Mode : uint8_t
     {
         Json = 0,
-        Binary,
-        Auto
+        Binary
     };
 
     enum class ExchangePolicy : uint8_t
     {
-        Auto = 0,
-        Direct,
+        Direct = 0,
         Poll
     };
 
     enum class PayloadMode : uint8_t
     {
-        Auto = 0,
-        Json,
+        Json = 0,
         Binary
     };
 
@@ -163,17 +162,25 @@ public:
     static StackTransport::RouteMeta makeResponseMeta(uint32_t reply_to, uint32_t request_id = 0);
 
     bool sendRoute(uint32_t target_node, const char *feature, const char *action, const JsonDocument *payload = nullptr,
-                   Mode mode = Mode::Auto, const StackTransport::RouteMeta *meta = nullptr);
+                   Mode mode = Mode::Json, const StackTransport::RouteMeta *meta = nullptr);
     bool sendRouteJson(uint32_t target_node, const char *feature, const char *action, const JsonDocument *payload = nullptr,
                        const StackTransport::RouteMeta *meta = nullptr);
     bool sendRouteBinary(uint32_t target_node, const char *feature, const char *action, const uint8_t *payload = nullptr,
                          size_t payload_size = 0, const StackTransport::RouteMeta *meta = nullptr);
     bool sendEvent(uint32_t target_node, const char *feature, const char *action, const JsonDocument *payload = nullptr,
-                   Mode mode = Mode::Auto);
+                   Mode mode = Mode::Json);
     bool sendRequest(uint32_t target_node, const char *feature, const char *action, const JsonDocument *payload = nullptr,
-                     Mode mode = Mode::Auto, bool expect_response = true, uint32_t request_id = 0);
+                     Mode mode = Mode::Json, bool expect_response = true, uint32_t request_id = 0);
     bool sendResponse(uint32_t target_node, const char *feature, const char *action, uint32_t reply_to,
-                      const JsonDocument *payload = nullptr, Mode mode = Mode::Auto, uint32_t request_id = 0);
+                      const JsonDocument *payload = nullptr, Mode mode = Mode::Json, uint32_t request_id = 0);
+    bool sendEventSelected(ConfigsManagerIface::StackPayloadMode payload_mode, uint32_t target_node,
+                           const char *feature, const char *action, const JsonDocument *payload = nullptr);
+    bool sendRequestSelected(ConfigsManagerIface::StackPayloadMode payload_mode, uint32_t target_node,
+                             const char *feature, const char *action, const JsonDocument *payload = nullptr,
+                             bool expect_response = true, uint32_t request_id = 0);
+    bool sendResponseSelected(ConfigsManagerIface::StackPayloadMode payload_mode, uint32_t target_node,
+                              const char *feature, const char *action, uint32_t reply_to,
+                              const JsonDocument *payload = nullptr, uint32_t request_id = 0);
     bool sendEventBinary(uint32_t target_node, const char *feature, const char *action, const uint8_t *payload = nullptr,
                          size_t payload_size = 0);
     bool sendRequestBinary(uint32_t target_node, const char *feature, const char *action, const uint8_t *payload = nullptr,
@@ -269,8 +276,8 @@ private:
     StackRs485Server *_rs485_master = nullptr;
     StackSlaveClient *_slave = nullptr;
     uint32_t _local_node_id = 0;
-    ExchangePolicy _exchange_policy = ExchangePolicy::Auto;
-    PayloadMode _payload_mode = PayloadMode::Auto;
+    ExchangePolicy _exchange_policy = ExchangePolicy::Direct;
+    PayloadMode _payload_mode = PayloadMode::Json;
     bool _master_ws_active = false;
     bool _master_rs485_active = false;
     bool _slave_active = false;
@@ -321,8 +328,11 @@ private:
     void handleMasterNotify_(uint32_t source_node, const StackJsonProtocol::NotifyMessage &notify);
     void handleSlaveNotify_(const StackJsonProtocol::NotifyMessage &notify);
     bool handleExchangeRoute_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
+    bool handleExchangeRoute_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route);
     bool handleExchangeSyncRequest_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
     bool handleExchangeSyncResponse_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
+    bool handleExchangeSyncRequest_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route);
+    bool handleExchangeSyncResponse_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route);
     bool queueExchangeFromSlave_(uint32_t target_node, const char *feature, const char *action, const String &payload,
                                  const StackTransport::RouteMeta *meta, bool is_binary = false);
     bool enqueueMasterInbox_(uint32_t source_node, uint32_t target_node, const char *feature, const char *action,
@@ -348,16 +358,21 @@ private:
     static String encodeBase64_(const uint8_t *data, size_t len);
     static bool decodeBase64_(const String &in, String &out);
     bool handleNotificationRoute_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
+    bool handleNotificationRoute_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route);
     bool handleNotificationPullRequest_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
     bool handleNotificationAckRequest_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
     bool handleNotificationPullResponse_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
     bool handleNotificationAckResponse_(uint32_t source_node, const StackJsonProtocol::RouteMessage &route);
-    bool queueNotification_(uint32_t source_node, const char *level, const char *feature, const char *code,
+    bool handleNotificationPullRequest_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route);
+    bool handleNotificationAckRequest_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route);
+    bool handleNotificationPullResponse_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route);
+    bool handleNotificationAckResponse_(uint32_t source_node, const StackBinaryProtocol::RouteFrame &route);
+    bool queueNotification_(uint32_t source_node, bool is_binary, const char *level, const char *feature, const char *code,
                             const char *message, const String *payload_json = nullptr);
     bool appendOutboxNotification_(NotificationRecord &entry, uint32_t source_node, const char *level, const char *feature,
-                                   const char *code, const char *message, const String *payload_json);
-    NotificationRecord *findOutboxDuplicate_(uint32_t source_node, const char *level, const char *feature, const char *code,
-                                             const char *message, const String *payload_json);
+                                   const char *code, const char *message, const String *payload_json, bool is_binary);
+    NotificationRecord *findOutboxDuplicate_(uint32_t source_node, bool is_binary, const char *level, const char *feature,
+                                             const char *code, const char *message, const String *payload_json);
     void appendHistory_(const NotificationRecord &record);
     static uint8_t notificationPriority_(const char *level);
     bool buildPullResponsePayload_(DynamicJsonDocument &doc, size_t limit, uint32_t &max_id) const;
@@ -367,6 +382,7 @@ private:
     bool hasRs485PollBackend_() const;
     bool canSlavePushDirect_() const;
     static RoutePlane classifyPlane_(const char *feature, const char *action);
+    static Mode modeForDataPlane_(ConfigsManagerIface::StackPayloadMode payload_mode);
     Mode chooseMode_(const char *feature, const char *action, const JsonDocument *payload, Mode requested) const;
     uint32_t nextInternalRequestId_();
     void resetNotifySync_();

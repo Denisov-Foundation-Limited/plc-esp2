@@ -26,9 +26,7 @@ public:
     void printHelpEnable()
     {
         _c._io->println(F("    show sockets   - list sockets"));
-        _c._io->print(F("    show socket <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" - socket details"));
+        _c._io->println(String(F("    show socket <id>")) + idRangeString_() + F(" - socket details"));
     }
 
     void printHelpConfigLines()
@@ -41,24 +39,13 @@ public:
     {
         _c._io->println(F("  Sockets:"));
         _c._io->println(F("    show                     - list sockets"));
-        _c._io->print(F("    show <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("                - socket details"));
-        _c._io->print(F("    enable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("              - enable socket"));
-        _c._io->print(F("    disable <id>"));
-        printIdRangeInline_();
-        _c._io->println(F("             - disable socket"));
-        _c._io->print(F("    name <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <value>        - set socket name"));
-        _c._io->print(F("    button <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>  - set button port"));
-        _c._io->print(F("    relay <id>"));
-        printIdRangeInline_();
-        _c._io->println(F(" <port|none>   - set relay port"));
+        const String range = idRangeString_();
+        _c._io->println(String(F("    show <id>")) + range + F("                - socket details"));
+        _c._io->println(String(F("    enable <id>")) + range + F("              - enable socket"));
+        _c._io->println(String(F("    disable <id>")) + range + F("             - disable socket"));
+        _c._io->println(String(F("    name <id>")) + range + F(" <value>        - set socket name"));
+        _c._io->println(String(F("    button <id>")) + range + F(" <port|none>  - set button port"));
+        _c._io->println(String(F("    relay <id>")) + range + F(" <port|none>   - set relay port"));
     }
 
     void showSockets()
@@ -274,6 +261,11 @@ private:
         _c._io->print(F(" (1.."));
         _c._io->print(SocketController::kSocketCount);
         _c._io->print(F(")"));
+    }
+
+    String idRangeString_() const
+    {
+        return String(F(" (1..")) + String(SocketController::kSocketCount) + F(")");
     }
 
     void printInvalidSocketId_() const
