@@ -383,126 +383,173 @@ void Controllers::rebuildGpioUsageCache_(bool used[]) const{
 
     {
         auto sockets_guard = _sockets.lockGuard();
-        for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+        if (_sockets.controllerEnabled())
         {
-            const auto *cfg = _sockets.configByIndex(i);
-            if (!cfg)
-                continue;
-            if (!cfg->enabled)
-                continue;
-            markPortUsed_(used, cfg->button_port);
-            markPortUsed_(used, cfg->relay_port);
+            for (size_t i = 0; i < SocketController::kSocketCount; ++i)
+            {
+                const auto *cfg = _sockets.configByIndex(i);
+                if (!cfg)
+                    continue;
+                if (!cfg->enabled)
+                    continue;
+                markPortUsed_(used, cfg->button_port);
+                markPortUsed_(used, cfg->relay_port);
+            }
         }
-        for (size_t i = 0; i < SocketController::kLightCount; ++i)
+        if (_sockets.lightsEnabled())
         {
-            const auto *cfg = _sockets.lightConfigByIndex(i);
-            if (!cfg)
-                continue;
-            if (!cfg->enabled)
-                continue;
-            markPortUsed_(used, cfg->button_port);
-            markPortUsed_(used, cfg->relay_port);
+            for (size_t i = 0; i < SocketController::kLightCount; ++i)
+            {
+                const auto *cfg = _sockets.lightConfigByIndex(i);
+                if (!cfg)
+                    continue;
+                if (!cfg->enabled)
+                    continue;
+                markPortUsed_(used, cfg->button_port);
+                markPortUsed_(used, cfg->relay_port);
+            }
         }
     }
     {
         auto meteo_guard = _meteo.lockGuard();
-        for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+        if (_meteo.controllerEnabled())
         {
-            const auto *cfg = _meteo.configByIndex(i);
-            if (!cfg)
-                continue;
-            if (cfg->type != MeteoController::SensorType::Dht22)
-                continue;
-            markPortUsed_(used, cfg->dht_pin);
+            for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
+            {
+                const auto *cfg = _meteo.configByIndex(i);
+                if (!cfg)
+                    continue;
+                if (!cfg->enabled)
+                    continue;
+                if (cfg->type != MeteoController::SensorType::Dht22)
+                    continue;
+                markPortUsed_(used, cfg->dht_pin);
+            }
         }
     }
     {
         auto thermo_guard = _thermo.lockGuard();
-        for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+        if (_thermo.controllerEnabled())
         {
-            const auto *cfg = _thermo.configByIndex(i);
-            if (!cfg)
-                continue;
-            markPortUsed_(used, cfg->heat_port);
-            markPortUsed_(used, cfg->cool_port);
-            markPortUsed_(used, cfg->button_port);
+            for (size_t i = 0; i < ThermoController::kDeviceCount; ++i)
+            {
+                const auto *cfg = _thermo.configByIndex(i);
+                if (!cfg)
+                    continue;
+                if (!cfg->enabled)
+                    continue;
+                markPortUsed_(used, cfg->heat_port);
+                markPortUsed_(used, cfg->cool_port);
+                markPortUsed_(used, cfg->button_port);
+            }
         }
     }
     {
         auto tanks_guard = _tanks.lockGuard();
-        for (size_t i = 0; i < TankController::kTankCount; ++i)
+        if (_tanks.controllerEnabled())
         {
-            const auto *cfg = _tanks.configByIndex(i);
-            if (!cfg)
-                continue;
-            markPortUsed_(used, cfg->level_low);
-            markPortUsed_(used, cfg->level_mid);
-            markPortUsed_(used, cfg->level_full);
-            markPortUsed_(used, cfg->relay_valve);
-            markPortUsed_(used, cfg->relay_pump);
-            markPortUsed_(used, cfg->relay_alarm);
+            for (size_t i = 0; i < TankController::kTankCount; ++i)
+            {
+                const auto *cfg = _tanks.configByIndex(i);
+                if (!cfg)
+                    continue;
+                if (!cfg->enabled)
+                    continue;
+                markPortUsed_(used, cfg->level_low);
+                markPortUsed_(used, cfg->level_mid);
+                markPortUsed_(used, cfg->level_full);
+                markPortUsed_(used, cfg->relay_valve);
+                markPortUsed_(used, cfg->relay_pump);
+                markPortUsed_(used, cfg->relay_alarm);
+            }
         }
     }
     {
         auto septic_guard = _septic.lockGuard();
-        for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+        if (_septic.controllerEnabled())
         {
-            const auto *cfg = _septic.configByIndex(i);
-            if (!cfg)
-                continue;
-            markPortUsed_(used, cfg->warning_port);
-            markPortUsed_(used, cfg->alarm_port);
-            markPortUsed_(used, cfg->relay_warning);
-            markPortUsed_(used, cfg->relay_alarm);
+            for (size_t i = 0; i < SepticController::kSepticCount; ++i)
+            {
+                const auto *cfg = _septic.configByIndex(i);
+                if (!cfg)
+                    continue;
+                if (!cfg->enabled)
+                    continue;
+                markPortUsed_(used, cfg->warning_port);
+                markPortUsed_(used, cfg->alarm_port);
+                markPortUsed_(used, cfg->relay_warning);
+                markPortUsed_(used, cfg->relay_alarm);
+            }
         }
     }
     {
         auto security_guard = _security.lockGuard();
-        if (_security.sirenPort() != SecurityController::kInvalidPort)
-            markPortUsed_(used, _security.sirenPort());
-        for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+        if (_security.controllerEnabled())
         {
-            const auto *cfg = _security.configByIndex(i);
-            if (!cfg)
-                continue;
-            markPortUsed_(used, cfg->port);
+            if (_security.sirenPort() != SecurityController::kInvalidPort)
+                markPortUsed_(used, _security.sirenPort());
+            for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+            {
+                const auto *cfg = _security.configByIndex(i);
+                if (!cfg)
+                    continue;
+                if (!cfg->enabled)
+                    continue;
+                markPortUsed_(used, cfg->port);
+            }
         }
     }
     {
         auto ring_guard = _ring.lockGuard();
-        const auto &rcfg = _ring.config();
-        markPortUsed_(used, rcfg.button_port);
-        markPortUsed_(used, rcfg.relay_port);
+        if (_ring.controllerEnabled())
+        {
+            const auto &rcfg = _ring.config();
+            markPortUsed_(used, rcfg.button_port);
+            markPortUsed_(used, rcfg.relay_port);
+        }
     }
     {
         auto avr_guard = _avr.lockGuard();
-        const auto &acfg = _avr.config();
-        markPortUsed_(used, acfg.main_ok_port);
-        markPortUsed_(used, acfg.reserve_ok_port);
-        markPortUsed_(used, acfg.feedback_main_port);
-        markPortUsed_(used, acfg.feedback_reserve_port);
-        markPortUsed_(used, acfg.relay_main_port);
-        markPortUsed_(used, acfg.relay_reserve_port);
+        if (_avr.controllerEnabled())
+        {
+            const auto &acfg = _avr.config();
+            markPortUsed_(used, acfg.main_ok_port);
+            markPortUsed_(used, acfg.reserve_ok_port);
+            markPortUsed_(used, acfg.feedback_main_port);
+            markPortUsed_(used, acfg.feedback_reserve_port);
+            markPortUsed_(used, acfg.relay_main_port);
+            markPortUsed_(used, acfg.relay_reserve_port);
+        }
     }
 
     auto leak_guard = _leak.lockGuard();
-    for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+    if (_leak.controllerEnabled())
     {
-        const auto *cfg = _leak.configByIndex(i);
-        if (!cfg)
-            continue;
-        markPortUsed_(used, cfg->sensor_port);
-        markPortUsed_(used, cfg->valve_port);
-        markPortUsed_(used, cfg->alarm_port);
+        for (size_t i = 0; i < LeakController::kZoneCount; ++i)
+        {
+            const auto *cfg = _leak.configByIndex(i);
+            if (!cfg)
+                continue;
+            if (!cfg->enabled)
+                continue;
+            markPortUsed_(used, cfg->sensor_port);
+            markPortUsed_(used, cfg->valve_port);
+            markPortUsed_(used, cfg->alarm_port);
+        }
     }
 
     auto watering_guard = _watering.lockGuard();
-    for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+    if (_watering.controllerEnabled())
     {
-        const auto *cfg = _watering.configByIndex(i);
-        if (!cfg)
-            continue;
-        markPortUsed_(used, cfg->port);
+        for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+        {
+            const auto *cfg = _watering.configByIndex(i);
+            if (!cfg)
+                continue;
+            if (!cfg->enabled)
+                continue;
+            markPortUsed_(used, cfg->port);
+        }
     }
 }
 
@@ -534,7 +581,7 @@ void Controllers::loadFromStorage_(){
     if (_storage.loadThermo(tsnap))
     {
         _thermo.applySnapshot(tsnap.power_mask, EepromStorage::kThermoMaskBytes);
-        _thermo.applyTargetSnapshot(tsnap.target_t10, EepromStorage::kThermoCount);
+        _thermo.applyTargetSnapshot(tsnap.target_c, EepromStorage::kThermoCount);
     }
     EepromStorage::TankSnapshot tanksnap;
     if (_storage.loadTanks(tanksnap))
@@ -588,7 +635,7 @@ void Controllers::saveIfNeeded_(){
     {
         EepromStorage::ThermoSnapshot tsnap;
         _thermo.buildSnapshot(tsnap.power_mask, EepromStorage::kThermoMaskBytes);
-        _thermo.buildTargetSnapshot(tsnap.target_t10, EepromStorage::kThermoCount);
+        _thermo.buildTargetSnapshot(tsnap.target_c, EepromStorage::kThermoCount);
         if (_storage.saveThermo(tsnap))
             saved = true;
     }

@@ -93,7 +93,84 @@ void AppRuntime::updateDisplayLayout_(){
             _display_slots[i] = slot;
             _display_remote_slot_online[i] = false;
             hw.display.setSlot(i, slot);
+            primeDisplayRemoteSlot_(slot);
         }
+    }
+}
+
+void AppRuntime::cancelDisplayRemoteRequest_(DisplaySlotKind kind, uint32_t node_id)
+{
+    if (node_id == 0)
+        return;
+    switch (kind)
+    {
+    case DisplaySlotKind::Socket:
+        _pending_display_stack_sockets_page = false;
+        _pending_stack_sockets_page = false;
+        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Sockets, node_id);
+        break;
+    case DisplaySlotKind::Light:
+        _pending_display_stack_lights_page = false;
+        _pending_stack_lights_page = false;
+        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Lights, node_id);
+        break;
+    case DisplaySlotKind::Meteo:
+        _pending_display_stack_meteo_page = false;
+        _pending_stack_meteo_page = false;
+        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id);
+        break;
+    case DisplaySlotKind::Thermo:
+        _pending_display_stack_thermo_page = false;
+        _pending_stack_thermo_page = false;
+        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id);
+        break;
+    case DisplaySlotKind::Tank:
+        _pending_display_stack_tanks_page = false;
+        _pending_stack_tanks_page = false;
+        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id);
+        break;
+    case DisplaySlotKind::Leak:
+        _pending_display_stack_leak_page = false;
+        _pending_stack_leak_page = false;
+        net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Leak, node_id);
+        break;
+    default:
+        break;
+    }
+}
+
+void AppRuntime::primeDisplayRemoteSlot_(const DisplaySlotConfig &slot)
+{
+    if (slot.node_id == 0)
+        return;
+    switch (slot.kind)
+    {
+    case DisplaySlotKind::Socket:
+        cancelDisplayRemoteRequest_(slot.kind, slot.node_id);
+        queueDisplayStackSnapshotPage_(slot.node_id, "sockets", 0);
+        break;
+    case DisplaySlotKind::Light:
+        cancelDisplayRemoteRequest_(slot.kind, slot.node_id);
+        queueDisplayStackSnapshotPage_(slot.node_id, "lights", 0);
+        break;
+    case DisplaySlotKind::Meteo:
+        cancelDisplayRemoteRequest_(slot.kind, slot.node_id);
+        queueDisplayStackSnapshotPage_(slot.node_id, "meteo", 0);
+        break;
+    case DisplaySlotKind::Thermo:
+        cancelDisplayRemoteRequest_(slot.kind, slot.node_id);
+        queueDisplayStackSnapshotPage_(slot.node_id, "thermo", 0);
+        break;
+    case DisplaySlotKind::Tank:
+        cancelDisplayRemoteRequest_(slot.kind, slot.node_id);
+        queueDisplayStackSnapshotPage_(slot.node_id, "tanks", 0);
+        break;
+    case DisplaySlotKind::Leak:
+        cancelDisplayRemoteRequest_(slot.kind, slot.node_id);
+        queueDisplayStackSnapshotPage_(slot.node_id, "leak", 0);
+        break;
+    default:
+        break;
     }
 }
 
@@ -133,9 +210,10 @@ bool AppRuntime::renderDisplaySlot_(const DisplaySlotConfig &slot, char out[5]){
         const bool was_online = _display_remote_slot_online[slot_idx];
         if (available && !was_online)
         {
-            core.logs.info(F("STACK"), F("Display remote slot resume: slot %u node 0x%08lX kind %u field %u index %u"),
+            const String node_label = stackNodeLabel_(node_id);
+            core.logs.info(F("STACK"), F("Display remote slot resume: slot %u node: %s kind: %u field: %u index: %u"),
                            (unsigned)(slot_idx + 1),
-                           (unsigned long)node_id,
+                           node_label.c_str(),
                            (unsigned)slot.kind,
                            (unsigned)slot.field,
                            (unsigned)slot.index);

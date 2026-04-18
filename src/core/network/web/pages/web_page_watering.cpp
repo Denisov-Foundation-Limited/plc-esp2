@@ -378,6 +378,14 @@ const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
         el.dataset.boundSelect = '1';
         el.addEventListener('change', refreshWateringSelects);
       });
+      document.querySelectorAll('input[type="checkbox"][name^="w"][name$="_en"]').forEach((el) => {
+        if (el.dataset.boundEnable === '1') return;
+        el.dataset.boundEnable = '1';
+        el.addEventListener('change', () => {
+          const tile = el.closest('.tile');
+          updateWateringEnabled(tile, el.checked);
+        });
+      });
       document.querySelectorAll('.tile').forEach((tile) => {
         updateTankDependent(tile);
         updateResumeDependent(tile);
@@ -392,6 +400,30 @@ const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
           resumeToggle.addEventListener('change', () => updateResumeDependent(tile));
         }
       });
+    }
+    function updateWateringEnabled(tile, enabled) {
+      if (!tile) return;
+      tile.classList.toggle('disabled', !enabled);
+      if (!enabled) {
+        const name = tile.querySelector('input[name$="_name"]');
+        if (name) name.value = '';
+        const status = tile.querySelector('input[name$="_status"]');
+        if (status) status.checked = false;
+        const resume = tile.querySelector('input[name$="_resume"]');
+        if (resume) resume.checked = false;
+        tile.querySelectorAll('select.watering-select').forEach((sel) => {
+          sel.value = '';
+          sel.dataset.selected = '';
+        });
+        tile.querySelectorAll('input[type="time"], input[type="number"]').forEach((input) => {
+          input.value = '';
+        });
+        tile.querySelectorAll('.weekday-item input[type="checkbox"]').forEach((input) => {
+          input.checked = false;
+        });
+        refreshWateringSelects();
+        updateTankDependent(tile);
+      }
     }
     function updateTankDependent(tile) {
       const tankSelect = tile.querySelector('select[data-type="tank"]');

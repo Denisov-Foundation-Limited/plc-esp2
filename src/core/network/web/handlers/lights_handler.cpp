@@ -574,6 +574,8 @@ void LightsHandler::handleLightsSave(WebInterface &web, AsyncWebServerRequest *r
                 web._lights_status = "Save failed";
             }
         }
+        if (ok && web._controllers)
+            web._controllers->invalidateGpioUsageCache();
         if (ok)
             web._lights_status = changed ? "Updated" : "Saved";
         web.sendRedirect_(request, redirect ? redirect : "/lights", set_cookie);
@@ -752,6 +754,7 @@ void LightsHandler::handleLightsEnable(WebInterface &web, AsyncWebServerRequest 
             web.sendText_(request, 400, "application/json", dbg, set_cookie);
             return;
         }
+        web._controllers->invalidateGpioUsageCache();
         if (!web._configs_manager)
         {
             web._lights_status = "Config manager missing";

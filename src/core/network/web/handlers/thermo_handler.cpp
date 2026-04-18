@@ -11,6 +11,8 @@
 
 #include "core/network/web/handlers/thermo_handler.hpp"
 
+#include <math.h>
+
 #include "core/network/web/web_interface.hpp"
 
 void ThermoHandler::registerRoutes(WebInterface &web, AsyncWebServer &server) {
@@ -323,7 +325,7 @@ void ThermoHandler::handleThermoSave(WebInterface &web, AsyncWebServerRequest *r
                     o["mode_id"] = (uint8_t)mode;
                 float target = 0.0f;
                 if (web.parseThermoFloat_(web.paramValue_(request, prefix + "target"), target))
-                    o["target_c"] = target;
+                    o["target_c"] = (int)lroundf(target);
                 float hyst = 0.0f;
                 if (web.parseThermoFloat_(web.paramValue_(request, prefix + "hyst"), hyst))
                     o["hyst"] = hyst;
@@ -543,13 +545,14 @@ void ThermoHandler::handleThermoSave(WebInterface &web, AsyncWebServerRequest *r
                 break;
             }
 
-            float target = cfg->target_c;
-            if (!web.parseThermoFloat_(target_str, target))
+            float target_f = (float)cfg->target_c;
+            if (!web.parseThermoFloat_(target_str, target_f))
             {
                 ok = false;
                 web._thermo_status = String("Invalid target for device ") + idx;
                 break;
             }
+            const int16_t target = (int16_t)lroundf(target_f);
 
             float hyst = cfg->hysteresis;
             if (!web.parseThermoFloat_(hyst_str, hyst))
@@ -649,6 +652,8 @@ void ThermoHandler::handleThermoSave(WebInterface &web, AsyncWebServerRequest *r
                 web._thermo_status = "Save failed";
             }
         }
+        if (ok && changed && web._controllers)
+            web._controllers->invalidateGpioUsageCache();
         if (ok)
             web._thermo_status = (changed || power_changed) ? "Updated" : "Saved";
         web.sendRedirect_(request, "/thermo", set_cookie);

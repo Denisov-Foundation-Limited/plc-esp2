@@ -116,7 +116,7 @@ void ThermoController::applyConfig(JsonArrayConst devices){
             if (raw <= 0xFFu)
                 cfg.group_id = (uint8_t)raw;
         }
-        parseFloat_(obj["target"], cfg.target_c);
+        parseTarget_(obj["target"], cfg.target_c);
         parseFloat_(obj["hyst"], cfg.hysteresis);
         if (obj["mode"].is<const char *>() || obj["mode"].is<unsigned>())
             cfg.mode = parseMode_(obj["mode"]);
@@ -248,9 +248,7 @@ void ThermoController::buildTargetSnapshot(int16_t *targets, size_t count) const
     const size_t limit = (count < kDeviceCount) ? count : kDeviceCount;
     for (size_t i = 0; i < limit; ++i)
     {
-        const float v = _cfg[i].target_c * 10.0f;
-        const float clamped = min(max(v, -32766.0f), 32766.0f);
-        targets[i] = (int16_t)lroundf(clamped);
+        targets[i] = _cfg[i].target_c;
     }
     for (size_t i = limit; i < count; ++i)
         targets[i] = kInvalidTarget;
@@ -290,7 +288,7 @@ void ThermoController::applyTargetSnapshot(const int16_t *targets, size_t count)
         const int16_t v = targets[i];
         if (v == kInvalidTarget)
             continue;
-        _cfg[i].target_c = (float)v / 10.0f;
+        _cfg[i].target_c = v;
     }
 }
 
@@ -363,7 +361,7 @@ bool ThermoController::setMode(size_t id, ThermoController::Mode mode){
     return true;
 }
 
-bool ThermoController::setTarget(size_t id, float target_c){
+bool ThermoController::setTarget(size_t id, int16_t target_c){
     auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
@@ -762,4 +760,13 @@ bool ThermoController::writeOutputs_(const ThermoController::DeviceConfig &cfg, 
         st.cool_on = false;
     }
     return changed;
+}
+bool ThermoController::parseTarget_(JsonVariantConst v, int16_t &out)
+{
+    float parsed = 0.0f;
+    if (!parseFloat_(v, parsed))
+        return false;
+    const float clamped = min(max(parsed, -32766.0f), 32766.0f);
+    out = (int16_t)lroundf(clamped);
+    return true;
 }

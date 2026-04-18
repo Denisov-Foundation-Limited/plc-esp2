@@ -349,20 +349,70 @@ String WebInterfaceControllersOps::globalUsedPortsJson_(PortIO::PinType type) co
 }
 
 
-    String WebInterfaceControllersOps::stackPortOptionsJson_(uint32_t node_id, PortIO::PinType type) const
+String WebInterfaceControllersOps::stackPortOptionsJson_(uint32_t node_id, PortIO::PinType type) const
 {
         (void)node_id;
-        (void)type;
-        return "[]";
+        String out;
+        out.reserve(128);
+        out += "[";
+        bool first = true;
+        for (uint16_t i = 0; i < PortIO::PORT_COUNT; ++i)
+        {
+            const auto &p = ActiveBoardProfile::PORTS[i];
+            if (p.caps == Cap::None || p.type != type)
+                continue;
+            if (!first)
+                out += ",";
+            out += "{\"v\":";
+            out += String((unsigned)i);
+            out += ",\"l\":\"";
+            out += String((unsigned)i);
+            out += "\"}";
+            first = false;
+        }
+        out += "]";
+        return out;
     }
 
 
 
-    String WebInterfaceControllersOps::stackUsedPortsJson_(uint32_t node_id, PortIO::PinType type) const
+String WebInterfaceControllersOps::stackUsedPortsJson_(uint32_t node_id, PortIO::PinType type) const
 {
-        (void)node_id;
-        (void)type;
-        return "[]";
+        StackUnitSnapshot::State state{};
+        if (!_web.network() || node_id == 0 || !_web.network()->stackIndexState(node_id, state) || !state.ports_state_valid)
+            return "[]";
+        const uint8_t *bits = nullptr;
+        switch (type)
+        {
+        case PortIO::PinType::Relay:
+            bits = state.relay_used_bits;
+            break;
+        case PortIO::PinType::Sensor:
+            bits = state.sensor_used_bits;
+            break;
+        case PortIO::PinType::DInput:
+        default:
+            bits = state.dinput_used_bits;
+            break;
+        }
+        String out;
+        out.reserve(128);
+        out += "[";
+        bool first = true;
+        for (uint16_t port = 0; port < PortIO::PORT_COUNT; ++port)
+        {
+            if ((bits[port >> 3] & (uint8_t)(1u << (port & 0x07u))) == 0)
+                continue;
+            const auto &p = ActiveBoardProfile::PORTS[port];
+            if (p.caps == Cap::None || p.type != type)
+                continue;
+            if (!first)
+                out += ",";
+            out += String((unsigned)port);
+            first = false;
+        }
+        out += "]";
+        return out;
     }
 
 

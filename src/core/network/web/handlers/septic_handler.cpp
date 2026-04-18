@@ -397,6 +397,8 @@ void SepticHandler::handleSepticSave(WebInterface &web, AsyncWebServerRequest *r
                 web._septic_status = "Save failed";
             }
         }
+        if (ok && changed && web._controllers)
+            web._controllers->invalidateGpioUsageCache();
         if (ok)
             web._septic_status = changed ? "Updated" : "Saved";
         web.sendRedirect_(request, "/septic", set_cookie);

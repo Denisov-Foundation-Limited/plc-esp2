@@ -346,6 +346,8 @@ void LeakHandler::handleLeakSave(WebInterface &web, AsyncWebServerRequest *reque
                 web._leak_status = WebUiRu::Leak::kSaveError;
             }
         }
+        if (saved && changed && web._controllers)
+            web._controllers->invalidateGpioUsageCache();
         if (saved)
             web._leak_status = changed ? WebUiRu::Common::kUpdated : WebUiRu::Common::kNoChanges;
         web.sendRedirect_(request, leakRedirectPath_(node_id, false), set_cookie);

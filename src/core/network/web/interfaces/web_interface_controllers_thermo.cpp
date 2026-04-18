@@ -400,7 +400,7 @@ String WebInterfaceControllersThermoHelper::listStackThermoHtml_(WebInterface &w
             items += sensor_suffix;
             items += "</span>";
             items += WebUiRu::Thermo::kText15;
-            items += String((int)(cfg.target_c + 0.5f));
+            items += String((int)cfg.target_c);
             items += "&deg;C</span></div>";
             if (show_heat)
             {
@@ -503,7 +503,7 @@ String WebInterfaceControllersThermoHelper::listStackThermoHtml_(WebInterface &w
             items += WebUiRu::Thermo::kAutoInputClassFieldTempTypeNumber;
             items += String((unsigned)cfg.id);
             items += "_target\" value=\"";
-            items += String((int)(cfg.target_c + 0.5f));
+            items += String((int)cfg.target_c);
             items += "\"";
             if (!can_control)
                 items += " disabled";
@@ -675,7 +675,7 @@ String WebInterfaceControllersThermoHelper::listThermoHtml_(WebInterface &web, s
             items += sensor_suffix;
             items += "</span>";
             items += WebUiRu::Thermo::kText15;
-            items += String((int)(cfg.target_c + 0.5f));
+            items += String((int)cfg.target_c);
             items += "&deg;C</span></div>";
             if (show_heat)
             {
@@ -778,7 +778,7 @@ String WebInterfaceControllersThermoHelper::listThermoHtml_(WebInterface &web, s
             items += WebUiRu::Thermo::kAutoInputClassFieldTempTypeNumber;
             items += String((unsigned)cfg.id);
             items += "_target\" value=\"";
-            items += String((int)(cfg.target_c + 0.5f));
+            items += String((int)cfg.target_c);
             items += "\"";
             if (!can_control)
                 items += " disabled";

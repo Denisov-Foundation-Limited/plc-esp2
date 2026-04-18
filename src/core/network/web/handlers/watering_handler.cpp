@@ -482,6 +482,8 @@ void WateringHandler::handleWateringSave(WebInterface &web, AsyncWebServerReques
                 web._watering_status = WebUiRu::Common::kSaveFailed;
             }
         }
+        if (ok && changed && web._controllers)
+            web._controllers->invalidateGpioUsageCache();
         if (ok)
             web._watering_status = changed ? WebUiRu::Common::kUpdated : WebUiRu::Common::kNoChanges;
         web.sendRedirect_(request, "/watering", set_cookie);

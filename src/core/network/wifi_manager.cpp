@@ -23,6 +23,8 @@ bool WifiManager::begin()
 {
     _last_status = (wl_status_t)0xFF;
     _last_ap_clients = 0xFF;
+    _last_sta_poll_ms = 0;
+    _last_sta_begin_ms = millis();
     initNetLed_();
 
     WiFi.persistent(false);
@@ -123,10 +125,14 @@ void WifiManager::task()
                 _log.info(F("WIFI"), F("STA IP %s"), ip.c_str());
             }
         }
+        if (st != WL_CONNECTED)
+            pollStaReconnect_(st);
     }
     else
     {
         _last_status = (wl_status_t)0xFF;
+        _last_sta_poll_ms = 0;
+        _last_sta_begin_ms = 0;
     }
     setNetLed_(ap_enabled || (sta_enabled && st == WL_CONNECTED));
 }
@@ -265,6 +271,35 @@ const char *WifiManager::statusToString_(wl_status_t st)
     default:
         return kUnknown;
     }
+}
+
+void WifiManager::pollStaReconnect_(wl_status_t st)
+{
+    if (!staActive() || _ssid.length() == 0)
+        return;
+
+    const uint32_t now = millis();
+    if (_last_sta_poll_ms != 0 && (uint32_t)(now - _last_sta_poll_ms) < kStaReconnectPollMs)
+        return;
+    _last_sta_poll_ms = now;
+
+    const bool force_begin = (_last_sta_begin_ms == 0) ||
+                             ((uint32_t)(now - _last_sta_begin_ms) >= kStaRebeginPollMs) ||
+                             st == WL_NO_SSID_AVAIL ||
+                             st == WL_CONNECT_FAILED;
+
+    if (force_begin)
+    {
+        _last_sta_begin_ms = now;
+        if (_log.ready())
+            _log.info(F("WIFI"), F("STA poll reconnect: status: %s ssid: %s"), statusToString_(st), _ssid.c_str());
+        WiFi.begin(_ssid.c_str(), _password.c_str());
+        return;
+    }
+
+    if (_log.ready())
+        _log.info(F("WIFI"), F("STA poll retry: status: %s"), statusToString_(st));
+    WiFi.reconnect();
 }
 
 void WifiManager::initNetLed_()

@@ -189,6 +189,8 @@ private:
     void updateTanksNotifyMode_();
 
     void updateDisplayLayout_();
+    void cancelDisplayRemoteRequest_(DisplaySlotKind kind, uint32_t node_id);
+    void primeDisplayRemoteSlot_(const DisplaySlotConfig &slot);
     void logStackSendFailDiag_(uint32_t node_id, const char *feature, uint16_t offset, uint16_t range_end);
 
     void flushPendingSecurityDetect_();

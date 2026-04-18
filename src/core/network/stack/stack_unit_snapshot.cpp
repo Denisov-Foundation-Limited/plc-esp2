@@ -700,12 +700,32 @@ void StackUnitSnapshot::mergeSystemState_(State &dst, const State &src)
     dst.updated_ms = src.updated_ms;
     dst.has_plc = src.has_plc;
     dst.has_rtc = src.has_rtc;
+    dst.has_wifi = src.has_wifi;
+    dst.has_gsm = src.has_gsm;
     dst.rtc_temp_ok = src.rtc_temp_ok;
     dst.board_temp = src.board_temp;
     dst.fan_on = src.fan_on;
     dst.rtc_temp = src.rtc_temp;
     memcpy(dst.rtc_date, src.rtc_date, sizeof(dst.rtc_date));
     memcpy(dst.rtc_time, src.rtc_time, sizeof(dst.rtc_time));
+    memcpy(dst.wifi_mode, src.wifi_mode, sizeof(dst.wifi_mode));
+    memcpy(dst.wifi_ssid, src.wifi_ssid, sizeof(dst.wifi_ssid));
+    memcpy(dst.wifi_ap_ssid, src.wifi_ap_ssid, sizeof(dst.wifi_ap_ssid));
+    memcpy(dst.wifi_ip, src.wifi_ip, sizeof(dst.wifi_ip));
+    memcpy(dst.wifi_mac, src.wifi_mac, sizeof(dst.wifi_mac));
+    dst.gsm_enabled = src.gsm_enabled;
+    dst.gsm_started = src.gsm_started;
+    memcpy(dst.gsm_imei, src.gsm_imei, sizeof(dst.gsm_imei));
+    memcpy(dst.gsm_imsi, src.gsm_imsi, sizeof(dst.gsm_imsi));
+    memcpy(dst.gsm_operator, src.gsm_operator, sizeof(dst.gsm_operator));
+    memcpy(dst.gsm_signal, src.gsm_signal, sizeof(dst.gsm_signal));
+    memcpy(dst.gsm_reg_status, src.gsm_reg_status, sizeof(dst.gsm_reg_status));
+    memcpy(dst.gsm_last_error, src.gsm_last_error, sizeof(dst.gsm_last_error));
+    memcpy(dst.gsm_last_urc, src.gsm_last_urc, sizeof(dst.gsm_last_urc));
+    memcpy(dst.gsm_last_call, src.gsm_last_call, sizeof(dst.gsm_last_call));
+    memcpy(dst.gsm_last_ussd, src.gsm_last_ussd, sizeof(dst.gsm_last_ussd));
+    dst.gsm_last_http_status = src.gsm_last_http_status;
+    dst.gsm_last_http_len = src.gsm_last_http_len;
 }
 
 void StackUnitSnapshot::mergeControllerSummary_(State &dst, const State &src)
@@ -752,6 +772,13 @@ void StackUnitSnapshot::mergeControllerSummary_(State &dst, const State &src)
     dst.avr_reserve_ok = src.avr_reserve_ok;
     dst.avr_fault = src.avr_fault;
     dst.avr_active_source = src.avr_active_source;
+    if (src.ports_state_valid)
+    {
+        dst.ports_state_valid = true;
+        memcpy(dst.relay_used_bits, src.relay_used_bits, sizeof(dst.relay_used_bits));
+        memcpy(dst.dinput_used_bits, src.dinput_used_bits, sizeof(dst.dinput_used_bits));
+        memcpy(dst.sensor_used_bits, src.sensor_used_bits, sizeof(dst.sensor_used_bits));
+    }
 }
 
 uint8_t StackUnitSnapshot::clampCount_(uint16_t count, size_t max_count)

@@ -549,15 +549,6 @@ bool StackMasterRouter::authorizeClient_(uint8_t client_id, IPAddress ip, const 
     _log.info(F("STACK"), F("Slave connected: id %u node 0x%08lX name %s ip %s"), (unsigned)client_id,
               (unsigned long)device.node_id, device.name[0] ? device.name : "-",
               device.ip[0] ? device.ip : ip.toString().c_str());
-    NodeEventHandler node_event_cb = nullptr;
-    void *node_event_ctx = nullptr;
-    {
-        const auto guard = _lock.guard();
-        node_event_cb = _node_event_cb;
-        node_event_ctx = _node_event_ctx;
-    }
-    if (node_event_cb)
-        node_event_cb(node_event_ctx, device.node_id, true);
     if (binary_reply)
     {
         const size_t frame_size = StackBinaryProtocol::encodedAuthReplySize("authorized");
@@ -571,6 +562,15 @@ bool StackMasterRouter::authorizeClient_(uint8_t client_id, IPAddress ip, const 
         const String reply = StackJsonProtocol::makeOk("authorized");
         _transport.sendText(client_id, reply.c_str());
     }
+    NodeEventHandler node_event_cb = nullptr;
+    void *node_event_ctx = nullptr;
+    {
+        const auto guard = _lock.guard();
+        node_event_cb = _node_event_cb;
+        node_event_ctx = _node_event_ctx;
+    }
+    if (node_event_cb)
+        node_event_cb(node_event_ctx, device.node_id, true);
     return true;
 }
 

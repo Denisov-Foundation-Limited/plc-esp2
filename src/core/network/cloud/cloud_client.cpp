@@ -1162,6 +1162,162 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
         sendAck_(req_id, true, "");
         return;
     }
+    if (ctrl_key == "tanks")
+    {
+        const uint32_t item_id = (uint32_t)(args["id"] | 0);
+        if (item_id == 0)
+        {
+            sendError_(req_id, "bad id");
+            return;
+        }
+        if (action_key != "power" && action_key != "toggle" && action_key != "set")
+        {
+            sendError_(req_id, "unsupported action");
+            return;
+        }
+        if (!_network)
+        {
+            sendError_(req_id, "stack route missing");
+            return;
+        }
+        DynamicJsonDocument params(256);
+        params["source"] = "cloud";
+        params["source_user"] = actor.resolved_user.length() ? actor.resolved_user
+                                                             : (actor.plc_username.length() ? actor.plc_username : String("cloud"));
+        JsonArray items = params["items"].to<JsonArray>();
+        JsonObject o = items.add<JsonObject>();
+        o["id"] = (unsigned)item_id;
+        if (action_key == "toggle")
+        {
+            o["toggle"] = true;
+        }
+        else
+        {
+            if (args.containsKey("enabled"))
+                o["enabled"] = args["enabled"];
+            if (args.containsKey("name"))
+                o["name"] = args["name"];
+            if (args.containsKey("group_id"))
+                o["group_id"] = args["group_id"];
+            if (args.containsKey("low"))
+                o["low"] = args["low"];
+            if (args.containsKey("mid"))
+                o["mid"] = args["mid"];
+            if (args.containsKey("full"))
+                o["full"] = args["full"];
+            if (args.containsKey("valve"))
+                o["valve"] = args["valve"];
+            if (args.containsKey("pump"))
+                o["pump"] = args["pump"];
+            if (args.containsKey("alarm"))
+                o["alarm"] = args["alarm"];
+            if (args.containsKey("power_on"))
+                o["power_on"] = args["power_on"];
+            else if (args.containsKey("state"))
+                o["power_on"] = (String(args["state"] | "") == "on");
+        }
+        const bool sent = _network->stackRoute().sendEventSelected(stack_payload_mode, node_id, "tanks", "set", &params);
+        if (!sent)
+        {
+            sendError_(req_id, "stack route send failed");
+            return;
+        }
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "controllers", "summary_req", nullptr,
+                                                   true);
+        DynamicJsonDocument req(64);
+        req["offset"] = 0;
+        req["limit"] = StackUnitSnapshot::kPageSize;
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "tanks", "snapshot_req", &req, true);
+        sendAck_(req_id, true, "");
+        return;
+    }
+    if (ctrl_key == "security")
+    {
+        if (action_key != "arm" && action_key != "disarm" && action_key != "clear")
+        {
+            sendError_(req_id, "unsupported action");
+            return;
+        }
+        if (!_network)
+        {
+            sendError_(req_id, "stack route missing");
+            return;
+        }
+        DynamicJsonDocument params(192);
+        if (action_key == "arm")
+        {
+            params["armed"] = true;
+            if (args.containsKey("force"))
+                params["force"] = args["force"];
+        }
+        else if (action_key == "disarm")
+            params["armed"] = false;
+        else if (action_key == "clear")
+            params["clear"] = true;
+        const bool sent = _network->stackRoute().sendEventSelected(stack_payload_mode, node_id, "security", "set", &params);
+        if (!sent)
+        {
+            sendError_(req_id, "stack route send failed");
+            return;
+        }
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "controllers", "summary_req", nullptr,
+                                                   true);
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "security", "status_req", nullptr,
+                                                   true);
+        sendAck_(req_id, true, "");
+        return;
+    }
+    if (ctrl_key == "septic")
+    {
+        if (action_key != "monitor")
+        {
+            sendError_(req_id, "unsupported action");
+            return;
+        }
+        if (!_network)
+        {
+            sendError_(req_id, "stack route missing");
+            return;
+        }
+        DynamicJsonDocument params(128);
+        params["id"] = (unsigned)(args["id"] | 1);
+        params["monitor"] = (String(args["state"] | "") == "on");
+        const bool sent = _network->stackRoute().sendEventSelected(stack_payload_mode, node_id, "septic", "set", &params);
+        if (!sent)
+        {
+            sendError_(req_id, "stack route send failed");
+            return;
+        }
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "controllers", "summary_req", nullptr,
+                                                   true);
+        sendAck_(req_id, true, "");
+        return;
+    }
+    if (ctrl_key == "ring")
+    {
+        if (action_key != "hold")
+        {
+            sendError_(req_id, "unsupported action");
+            return;
+        }
+        if (!_network)
+        {
+            sendError_(req_id, "stack route missing");
+            return;
+        }
+        DynamicJsonDocument params(96);
+        params["state"] = (String(args["state"] | "") == "on");
+        const bool sent = _network->stackRoute().sendEventSelected(stack_payload_mode, node_id, "ring", "set", &params);
+        if (!sent)
+        {
+            sendError_(req_id, "stack route send failed");
+            return;
+        }
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "controllers", "summary_req", nullptr,
+                                                   true);
+        sendAck_(req_id, true, "");
+        return;
+    }
     sendError_(req_id, "stack controller not migrated");
 }
 bool CloudClient::handleCmdSockets_(SocketController &s, const String &action, JsonObjectConst args, bool lights,
@@ -1247,7 +1403,7 @@ bool CloudClient::handleCmdThermo_(const String &action, JsonObjectConst args)
     if (action == "mode")
         return _controllers.thermo().setMode(id, parseThermoMode_(args["mode"] | ""));
     if (action == "target")
-        return _controllers.thermo().setTarget(id, args["target_c"] | 0.0f);
+        return _controllers.thermo().setTarget(id, (int16_t)(args["target_c"] | 0));
     return false;
 }
 bool CloudClient::handleCmdTanks_(const String &action, JsonObjectConst args)
@@ -2609,6 +2765,36 @@ bool CloudClient::fillStackCachedSystem_(JsonObject out, uint32_t node_id)
             rtc["temp_c"] = status.rtc_temp;
             has_any = true;
         }
+        if (status.has_wifi)
+        {
+            JsonObject wifi = out["wifi"].to<JsonObject>();
+            wifi["mode"] = status.wifi_mode;
+            wifi["ssid"] = status.wifi_ssid;
+            wifi["ap_ssid"] = status.wifi_ap_ssid;
+            wifi["ip"] = status.wifi_ip;
+            wifi["mac"] = status.wifi_mac;
+            has_any = true;
+        }
+        if (status.has_gsm)
+        {
+            JsonObject gsm = out["gsm"].to<JsonObject>();
+            gsm["enabled"] = status.gsm_enabled;
+            gsm["started"] = status.gsm_started;
+            gsm["imei"] = status.gsm_imei;
+            gsm["imsi"] = status.gsm_imsi;
+            gsm["operator"] = status.gsm_operator;
+            gsm["signal"] = status.gsm_signal;
+            gsm["reg_status"] = status.gsm_reg_status;
+            gsm["last_error"] = status.gsm_last_error;
+            gsm["last_urc"] = status.gsm_last_urc;
+            gsm["last_call"] = status.gsm_last_call;
+            gsm["last_ussd"] = status.gsm_last_ussd;
+            if (status.gsm_last_http_status >= 0)
+                gsm["last_http_status"] = status.gsm_last_http_status;
+            if (status.gsm_last_http_len >= 0)
+                gsm["last_http_len"] = status.gsm_last_http_len;
+            has_any = true;
+        }
     }
     const bool request_ready = _network->prepareStackIndexStateRequest(node_id, now, stale_ms, kStackTimeoutMs);
     if (request_ready)
@@ -2767,16 +2953,79 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                 has_any = has_any || (snapshot.thermo_enabled > 0);
             }
 
-            JsonObject tanks = out.createNestedObject("tanks");
-            tanks["enabled_count"] = snapshot.tanks_enabled;
-            tanks["alert_count"] = snapshot.tanks_alert;
-            has_any = has_any || (snapshot.tanks_enabled > 0);
+            if (cache.tank_count > 0)
+            {
+                JsonArray tanks = out.createNestedArray("tanks");
+                _network->forEachStackTank(node_id, cache.tank_count, [&](uint8_t, const StackUnitSnapshot::TankItem &it) {
+                    if (it.id == 0)
+                        return;
+                    JsonObject o = tanks.add<JsonObject>();
+                    o["id"] = it.id;
+                    o["group_id"] = it.group_id;
+                    o["enabled"] = it.enabled;
+                    o["power_on"] = it.power_on;
+                    if (it.level_low_port != TankController::kInvalidPort)
+                        o["low"] = it.level_low_port;
+                    if (it.level_mid_port != TankController::kInvalidPort)
+                        o["mid"] = it.level_mid_port;
+                    if (it.level_full_port != TankController::kInvalidPort)
+                        o["full"] = it.level_full_port;
+                    if (it.relay_valve_port != TankController::kInvalidPort)
+                        o["valve"] = it.relay_valve_port;
+                    if (it.relay_pump_port != TankController::kInvalidPort)
+                        o["pump"] = it.relay_pump_port;
+                    if (it.relay_alarm_port != TankController::kInvalidPort)
+                        o["alarm"] = it.relay_alarm_port;
+                    o["level_low"] = it.level_low;
+                    o["level_mid"] = it.level_mid;
+                    o["level_full"] = it.level_full;
+                    o["levels_ok"] = it.levels_ok;
+                    o["valve_on"] = it.valve_on;
+                    o["pump_on"] = it.pump_on;
+                    o["alarm_on"] = it.alarm_on;
+                    if (it.name[0])
+                        o["name"] = sanitizeUtf8_(String(it.name));
+                });
+                has_any = true;
+            }
+            else
+            {
+                JsonObject tanks = out.createNestedObject("tanks");
+                tanks["enabled_count"] = snapshot.tanks_enabled;
+                tanks["alert_count"] = snapshot.tanks_alert;
+                has_any = has_any || (snapshot.tanks_enabled > 0);
+            }
 
-            JsonObject septic = out.createNestedObject("septic");
-            septic["enabled_count"] = snapshot.septic_enabled;
-            septic["warning_count"] = snapshot.septic_warning;
-            septic["alert_count"] = snapshot.septic_alert;
-            has_any = has_any || (snapshot.septic_enabled > 0);
+            if (snapshot.septic_enabled > 0)
+            {
+                JsonArray septic = out.createNestedArray("septic");
+                JsonObject o = septic.add<JsonObject>();
+                o["id"] = 1;
+                o["enabled"] = true;
+                o["group_id"] = snapshot.septic_group_id;
+                o["monitor"] = snapshot.septic_monitoring_on;
+                if (snapshot.septic_name[0])
+                    o["name"] = sanitizeUtf8_(String(snapshot.septic_name));
+                if (snapshot.septic_warning_port != SepticController::kInvalidPort)
+                    o["warning_port"] = snapshot.septic_warning_port;
+                if (snapshot.septic_alarm_port != SepticController::kInvalidPort)
+                    o["alarm_port"] = snapshot.septic_alarm_port;
+                if (snapshot.septic_relay_warning_port != SepticController::kInvalidPort)
+                    o["relay_warning"] = snapshot.septic_relay_warning_port;
+                if (snapshot.septic_relay_alarm_port != SepticController::kInvalidPort)
+                    o["relay_alarm"] = snapshot.septic_relay_alarm_port;
+                o["warning"] = snapshot.septic_warning > 0;
+                o["alarm"] = snapshot.septic_alert > 0;
+                has_any = true;
+            }
+            else
+            {
+                JsonObject septic = out.createNestedObject("septic");
+                septic["enabled_count"] = snapshot.septic_enabled;
+                septic["warning_count"] = snapshot.septic_warning;
+                septic["alert_count"] = snapshot.septic_alert;
+                has_any = has_any || (snapshot.septic_enabled > 0);
+            }
 
             JsonObject watering = out.createNestedObject("watering");
             watering["enabled_count"] = snapshot.watering_enabled;
@@ -2788,6 +3037,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             security["armed"] = snapshot.security_armed;
             security["alarm"] = snapshot.security_alarm;
             security["sensors_enabled"] = snapshot.security_sensors_enabled;
+            security["detected_count"] = snapshot.security_detected;
             has_any = has_any || snapshot.security_enabled || (snapshot.security_sensors_enabled > 0);
 
             JsonObject ring = out.createNestedObject("ring");
@@ -2807,10 +3057,39 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                                                                                                                  : "off";
             has_any = has_any || snapshot.avr_enabled;
 
-            JsonObject leak = out.createNestedObject("leak");
-            leak["enabled_count"] = snapshot.leak_enabled;
-            leak["alert_count"] = snapshot.leak_alert;
-            has_any = has_any || (snapshot.leak_enabled > 0);
+            if (cache.leak_count > 0)
+            {
+                JsonArray leak = out.createNestedArray("leak");
+                _network->forEachStackLeak(node_id, cache.leak_count, [&](uint8_t, const StackUnitSnapshot::LeakItem &it) {
+                    if (it.id == 0)
+                        return;
+                    JsonObject o = leak.add<JsonObject>();
+                    o["id"] = it.id;
+                    o["enabled"] = it.enabled;
+                    o["power_on"] = it.power_on;
+                    o["sensor_active_low"] = it.sensor_active_low;
+                    if (it.sensor_port != LeakController::kInvalidPort)
+                        o["sensor"] = it.sensor_port;
+                    if (it.valve_port != LeakController::kInvalidPort)
+                        o["valve"] = it.valve_port;
+                    if (it.alarm_port != LeakController::kInvalidPort)
+                        o["alarm"] = it.alarm_port;
+                    if (it.name[0])
+                        o["name"] = sanitizeUtf8_(String(it.name));
+                    o["wet"] = it.wet;
+                    o["alarm_latched"] = it.alarm_latched;
+                    o["valve_closed"] = it.valve_closed;
+                    o["alarm_on"] = it.alarm_on;
+                });
+                has_any = true;
+            }
+            else
+            {
+                JsonObject leak = out.createNestedObject("leak");
+                leak["enabled_count"] = snapshot.leak_enabled;
+                leak["alert_count"] = snapshot.leak_alert;
+                has_any = has_any || (snapshot.leak_enabled > 0);
+            }
     }
     const bool request_ready = _network->prepareStackIndexStateRequest(node_id, now, stale_ms, kStackTimeoutMs);
     if (request_ready)

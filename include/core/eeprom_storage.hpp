@@ -46,7 +46,7 @@ public:
     struct ThermoSnapshot
     {
         uint8_t power_mask[kThermoMaskBytes] = {};
-        int16_t target_t10[kThermoCount] = {};
+        int16_t target_c[kThermoCount] = {};
     };
 
     struct TankSnapshot

@@ -16,6 +16,62 @@
 
 namespace
 {
+constexpr char kHexDigits_[] = "0123456789ABCDEF";
+
+void appendPortUsageHex_(String &out, const Controllers &controllers, PortIO::PinType type)
+{
+    uint8_t bits[StackUnitSnapshot::kPortMaskBytes] = {};
+    for (uint16_t port = 0; port < PortIO::PORT_COUNT; ++port)
+    {
+        if (!controllers.gpioPortUsedByType((uint8_t)port, type))
+            continue;
+        bits[port >> 3] |= (uint8_t)(1u << (port & 0x07u));
+    }
+    out.reserve(StackUnitSnapshot::kPortMaskBytes * 2u);
+    for (size_t i = 0; i < StackUnitSnapshot::kPortMaskBytes; ++i)
+    {
+        const uint8_t value = bits[i];
+        out += kHexDigits_[(value >> 4) & 0x0Fu];
+        out += kHexDigits_[value & 0x0Fu];
+    }
+}
+
+bool decodeHexNibble_(char c, uint8_t &out)
+{
+    if (c >= '0' && c <= '9')
+    {
+        out = (uint8_t)(c - '0');
+        return true;
+    }
+    if (c >= 'a' && c <= 'f')
+    {
+        out = (uint8_t)(10 + (c - 'a'));
+        return true;
+    }
+    if (c >= 'A' && c <= 'F')
+    {
+        out = (uint8_t)(10 + (c - 'A'));
+        return true;
+    }
+    return false;
+}
+
+void decodePortUsageHex_(const String &hex, uint8_t (&out)[StackUnitSnapshot::kPortMaskBytes])
+{
+    memset(out, 0, sizeof(out));
+    const size_t want_len = StackUnitSnapshot::kPortMaskBytes * 2u;
+    if ((size_t)hex.length() < want_len)
+        return;
+    for (size_t i = 0; i < StackUnitSnapshot::kPortMaskBytes; ++i)
+    {
+        uint8_t hi = 0;
+        uint8_t lo = 0;
+        if (!decodeHexNibble_(hex[(int)(i * 2u)], hi) || !decodeHexNibble_(hex[(int)(i * 2u + 1u)], lo))
+            return;
+        out[i] = (uint8_t)((hi << 4) | lo);
+    }
+}
+
 size_t estimateBinaryRouteJsonCapacity_(const StackBinaryProtocol::RouteFrame &binary_route)
 {
     size_t cap = (binary_route.payload_size * 10u) + 1024u;
@@ -702,7 +758,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     }
                 }
                 else
-                    sec.disarmFrom("stack", stackNodeLabel_(node_id), true);
+                    sec.disarmFrom("stack", stackNodeLabel_(node_id), false);
             }
             if (params["alarm"].is<bool>() || params["alarm"].is<int>())
                 sec.setAlarmState(params["alarm"].as<bool>());
@@ -731,7 +787,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
     {
         if (action == "snapshot_req")
         {
-            DynamicJsonDocument doc(320);
+            DynamicJsonDocument doc(1024);
             appendSystemSnapshot_(doc.to<JsonObject>());
             net.network.stackSlaveSendResponse(route.source_node, "system", "snapshot",
                                                route.meta.request_id, &doc);
@@ -755,6 +811,34 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.board_temp =
                 params["board_temp"].is<float>() ? params["board_temp"].as<float>() : (float)(params["board_temp"] | 0.0);
             state.fan_on = params["fan_on"].is<bool>() ? params["fan_on"].as<bool>() : ((int)(params["fan_on"] | 0) != 0);
+            JsonVariantConst wifi = params["wifi"];
+            state.has_wifi = !wifi.isNull();
+            if (state.has_wifi)
+            {
+                strlcpy(state.wifi_mode, wifi["mode"] | "", sizeof(state.wifi_mode));
+                strlcpy(state.wifi_ssid, wifi["ssid"] | "", sizeof(state.wifi_ssid));
+                strlcpy(state.wifi_ap_ssid, wifi["ap_ssid"] | "", sizeof(state.wifi_ap_ssid));
+                strlcpy(state.wifi_ip, wifi["ip"] | "", sizeof(state.wifi_ip));
+                strlcpy(state.wifi_mac, wifi["mac"] | "", sizeof(state.wifi_mac));
+            }
+            JsonVariantConst gsm = params["gsm"];
+            state.has_gsm = !gsm.isNull();
+            if (state.has_gsm)
+            {
+                state.gsm_enabled = gsm["enabled"].is<bool>() ? gsm["enabled"].as<bool>() : ((int)(gsm["enabled"] | 0) != 0);
+                state.gsm_started = gsm["started"].is<bool>() ? gsm["started"].as<bool>() : ((int)(gsm["started"] | 0) != 0);
+                strlcpy(state.gsm_imei, gsm["imei"] | "", sizeof(state.gsm_imei));
+                strlcpy(state.gsm_imsi, gsm["imsi"] | "", sizeof(state.gsm_imsi));
+                strlcpy(state.gsm_operator, gsm["operator"] | "", sizeof(state.gsm_operator));
+                strlcpy(state.gsm_signal, gsm["signal"] | "", sizeof(state.gsm_signal));
+                strlcpy(state.gsm_reg_status, gsm["reg_status"] | "", sizeof(state.gsm_reg_status));
+                strlcpy(state.gsm_last_error, gsm["last_error"] | "", sizeof(state.gsm_last_error));
+                strlcpy(state.gsm_last_urc, gsm["last_urc"] | "", sizeof(state.gsm_last_urc));
+                strlcpy(state.gsm_last_call, gsm["last_call"] | "", sizeof(state.gsm_last_call));
+                strlcpy(state.gsm_last_ussd, gsm["last_ussd"] | "", sizeof(state.gsm_last_ussd));
+                state.gsm_last_http_status = gsm["last_http_status"].is<int>() ? gsm["last_http_status"].as<int>() : (int)(gsm["last_http_status"] | -1);
+                state.gsm_last_http_len = gsm["last_http_len"].is<int>() ? gsm["last_http_len"].as<int>() : (int)(gsm["last_http_len"] | -1);
+            }
             if (state.rtc_date[0] == '\0' || state.rtc_time[0] == '\0')
                 state.has_rtc = false;
             net.network.applyStackIndexSystemState(node_id, state);
@@ -863,31 +947,16 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         if (action == "index_state_req")
         {
             DynamicJsonDocument doc(3072);
-            Ds3231Mz::DateTime dt{};
-            char date_buf[16] = {};
-            char time_buf[16] = {};
-            float rtc_temp_c = 0.0f;
-            const bool rtc_time_ok = hw.rtc.Time(dt);
-            const bool rtc_temp_ok = hw.rtc.readTemp(rtc_temp_c);
-
-            if (rtc_time_ok)
-            {
-                snprintf(date_buf, sizeof(date_buf), "%04u-%02u-%02u", (unsigned)dt.year, (unsigned)dt.month,
-                         (unsigned)dt.day);
-                snprintf(time_buf, sizeof(time_buf), "%02u:%02u:%02u", (unsigned)dt.hour, (unsigned)dt.minute,
-                         (unsigned)dt.second);
-            }
-
-            doc["device_name"] = hw.plc.deviceName();
-            doc["rtc_date"] = rtc_time_ok ? String(date_buf) : String("n/a");
-            doc["rtc_time"] = rtc_time_ok ? String(time_buf) : String("n/a");
-            doc["rtc_temp"] = rtc_temp_ok ? rtc_temp_c : 0.0f;
-            doc["rtc_temp_ok"] = rtc_temp_ok;
-            doc["board_temp"] = hw.plc.boardTemp();
-            doc["fan_on"] = hw.plc.fanStatus();
-            doc["fan_html"] = hw.plc.fanStatus()
-                                  ? "<span class=\"status-dot status-on\" title=\"enabled\"></span>"
-                                  : "<span class=\"status-dot status-off\" title=\"disabled\"></span>";
+            appendSystemSnapshot_(doc.to<JsonObject>());
+            String relay_used_hex;
+            String dinput_used_hex;
+            String sensor_used_hex;
+            appendPortUsageHex_(relay_used_hex, control.controllers, PortIO::PinType::Relay);
+            appendPortUsageHex_(dinput_used_hex, control.controllers, PortIO::PinType::DInput);
+            appendPortUsageHex_(sensor_used_hex, control.controllers, PortIO::PinType::Sensor);
+            doc["relay_used_bits"] = relay_used_hex;
+            doc["dinput_used_bits"] = dinput_used_hex;
+            doc["sensor_used_bits"] = sensor_used_hex;
             appendControllerSnapshotSummary_(doc.to<JsonObject>());
             appendSocketSnapshotItems_(doc.to<JsonObject>());
             appendLightSnapshotItems_(doc.to<JsonObject>());
@@ -922,9 +991,37 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.board_temp =
                 params["board_temp"].is<float>() ? params["board_temp"].as<float>() : (float)(params["board_temp"] | 0.0);
             state.fan_on = params["fan_on"].is<bool>() ? params["fan_on"].as<bool>() : ((int)(params["fan_on"] | 0) != 0);
+            JsonVariantConst wifi = params["wifi"];
+            state.has_wifi = !wifi.isNull();
+            if (state.has_wifi)
+            {
+                strlcpy(state.wifi_mode, wifi["mode"] | "", sizeof(state.wifi_mode));
+                strlcpy(state.wifi_ssid, wifi["ssid"] | "", sizeof(state.wifi_ssid));
+                strlcpy(state.wifi_ap_ssid, wifi["ap_ssid"] | "", sizeof(state.wifi_ap_ssid));
+                strlcpy(state.wifi_ip, wifi["ip"] | "", sizeof(state.wifi_ip));
+                strlcpy(state.wifi_mac, wifi["mac"] | "", sizeof(state.wifi_mac));
+            }
+            JsonVariantConst gsm = params["gsm"];
+            state.has_gsm = !gsm.isNull();
+            if (state.has_gsm)
+            {
+                state.gsm_enabled = gsm["enabled"].is<bool>() ? gsm["enabled"].as<bool>() : ((int)(gsm["enabled"] | 0) != 0);
+                state.gsm_started = gsm["started"].is<bool>() ? gsm["started"].as<bool>() : ((int)(gsm["started"] | 0) != 0);
+                strlcpy(state.gsm_imei, gsm["imei"] | "", sizeof(state.gsm_imei));
+                strlcpy(state.gsm_imsi, gsm["imsi"] | "", sizeof(state.gsm_imsi));
+                strlcpy(state.gsm_operator, gsm["operator"] | "", sizeof(state.gsm_operator));
+                strlcpy(state.gsm_signal, gsm["signal"] | "", sizeof(state.gsm_signal));
+                strlcpy(state.gsm_reg_status, gsm["reg_status"] | "", sizeof(state.gsm_reg_status));
+                strlcpy(state.gsm_last_error, gsm["last_error"] | "", sizeof(state.gsm_last_error));
+                strlcpy(state.gsm_last_urc, gsm["last_urc"] | "", sizeof(state.gsm_last_urc));
+                strlcpy(state.gsm_last_call, gsm["last_call"] | "", sizeof(state.gsm_last_call));
+                strlcpy(state.gsm_last_ussd, gsm["last_ussd"] | "", sizeof(state.gsm_last_ussd));
+                state.gsm_last_http_status = gsm["last_http_status"].is<int>() ? gsm["last_http_status"].as<int>() : (int)(gsm["last_http_status"] | -1);
+                state.gsm_last_http_len = gsm["last_http_len"].is<int>() ? gsm["last_http_len"].as<int>() : (int)(gsm["last_http_len"] | -1);
+            }
             if (state.rtc_date[0] == '\0' || state.rtc_time[0] == '\0')
                 state.has_rtc = false;
-            DynamicJsonDocument doc(1024);
+            DynamicJsonDocument doc(2048);
             doc["device_name"] = params["device_name"] | "";
             JsonObject system = doc["system"].to<JsonObject>();
             if (state.has_plc)
@@ -940,6 +1037,34 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                 rtc["date"] = state.rtc_date;
                 rtc["time"] = state.rtc_time;
                 rtc["temp_c"] = state.rtc_temp;
+            }
+            if (state.has_wifi)
+            {
+                JsonObject wifi_out = system["wifi"].to<JsonObject>();
+                wifi_out["mode"] = state.wifi_mode;
+                wifi_out["ssid"] = state.wifi_ssid;
+                wifi_out["ap_ssid"] = state.wifi_ap_ssid;
+                wifi_out["ip"] = state.wifi_ip;
+                wifi_out["mac"] = state.wifi_mac;
+            }
+            if (state.has_gsm)
+            {
+                JsonObject gsm_out = system["gsm"].to<JsonObject>();
+                gsm_out["enabled"] = state.gsm_enabled;
+                gsm_out["started"] = state.gsm_started;
+                gsm_out["imei"] = state.gsm_imei;
+                gsm_out["imsi"] = state.gsm_imsi;
+                gsm_out["operator"] = state.gsm_operator;
+                gsm_out["signal"] = state.gsm_signal;
+                gsm_out["reg_status"] = state.gsm_reg_status;
+                gsm_out["last_error"] = state.gsm_last_error;
+                gsm_out["last_urc"] = state.gsm_last_urc;
+                gsm_out["last_call"] = state.gsm_last_call;
+                gsm_out["last_ussd"] = state.gsm_last_ussd;
+                if (state.gsm_last_http_status >= 0)
+                    gsm_out["last_http_status"] = state.gsm_last_http_status;
+                if (state.gsm_last_http_len >= 0)
+                    gsm_out["last_http_len"] = state.gsm_last_http_len;
             }
             JsonObject summary = doc["summary"].to<JsonObject>();
             const JsonVariantConst sockets_summary = params["summary"]["sockets"];
@@ -1085,6 +1210,10 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.avr_active_source = (uint8_t)(avr_summary["active_source_id"] | 0);
             state.leak_enabled = leak_summary["enabled"] | 0;
             state.leak_alert = leak_summary["alert"] | 0;
+            state.ports_state_valid = true;
+            decodePortUsageHex_(params["relay_used_bits"] | "", state.relay_used_bits);
+            decodePortUsageHex_(params["dinput_used_bits"] | "", state.dinput_used_bits);
+            decodePortUsageHex_(params["sensor_used_bits"] | "", state.sensor_used_bits);
 
             const JsonArrayConst sockets_items = params["controllers"]["sockets"].as<JsonArrayConst>();
             uint16_t socket_total = 0;
@@ -1304,6 +1433,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             net.network.updateStackIndexSocketsPage(node_id, offset, total > 0 ? total : summary_total, on_total,
                                                     _stack_socket_page_items, item_count, millis());
             net.network.stackIndexState(node_id, state);
+            net.network.stackIndexCacheState(node_id, cache);
             const uint16_t expected_total = (total > 0) ? total : summary_total;
             const uint16_t target_total =
                 (expected_total > StackUnitSnapshot::kSocketCount) ? (uint16_t)StackUnitSnapshot::kSocketCount
@@ -1386,6 +1516,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             net.network.updateStackIndexLightsPage(node_id, offset, total > 0 ? total : summary_total, on_total,
                                                    _stack_light_page_items, item_count, millis());
             net.network.stackIndexState(node_id, state);
+            net.network.stackIndexCacheState(node_id, cache);
             const uint16_t expected_total = (total > 0) ? total : summary_total;
             const uint16_t target_total =
                 (expected_total > StackUnitSnapshot::kSocketCount) ? (uint16_t)StackUnitSnapshot::kSocketCount
@@ -1595,8 +1726,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     dst.cool_port = (uint8_t)(item["cool_port"] | ThermoController::kInvalidPort);
                     dst.button_port = (uint8_t)(item["button_port"] | ThermoController::kInvalidPort);
                     dst.mode = (uint8_t)(item["mode_id"] | 0);
-                    dst.target_c = item["target_c"].is<float>() ? item["target_c"].as<float>()
-                                                                : (float)(item["target_c"] | 0.0);
+                    dst.target_c = (int16_t)(item["target_c"] | 0);
                     dst.hysteresis = item["hyst"].is<float>() ? item["hyst"].as<float>()
                                                               : (float)(item["hyst"] | 0.0);
                     dst.power_on = item["power_on"].is<bool>() ? item["power_on"].as<bool>()
@@ -1677,8 +1807,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                 if (item.containsKey("mode_id"))
                     thermo.setMode(id, (ThermoController::Mode)(uint8_t)(item["mode_id"] | 0));
                 if (item.containsKey("target_c"))
-                    thermo.setTarget(id, item["target_c"].is<float>() ? item["target_c"].as<float>()
-                                                                      : (float)(item["target_c"] | 0.0));
+                    thermo.setTarget(id, (int16_t)(item["target_c"] | 0));
                 if (item.containsKey("hyst"))
                     thermo.setHysteresis(id, item["hyst"].is<float>() ? item["hyst"].as<float>()
                                                                       : (float)(item["hyst"] | 0.0));
@@ -2176,6 +2305,35 @@ void AppRuntime::appendSystemSnapshot_(JsonObject root) const{
     root["fan_html"] = hw.plc.fanStatus()
                            ? "<span class=\"status-dot status-on\" title=\"enabled\"></span>"
                            : "<span class=\"status-dot status-off\" title=\"disabled\"></span>";
+
+    JsonObject wifi = root["wifi"].to<JsonObject>();
+    wifi["mode"] = comms.wifi.modeName();
+    if (comms.wifi.staEnabled())
+        wifi["ssid"] = comms.wifi.ssid();
+    if (comms.wifi.apEnabled())
+        wifi["ap_ssid"] = comms.wifi.apSsid();
+    if (comms.wifi.staActive() && WiFi.status() == WL_CONNECTED)
+        wifi["ip"] = WiFi.localIP().toString();
+    else if (comms.wifi.apActive())
+        wifi["ip"] = WiFi.softAPIP().toString();
+    else
+        wifi["ip"] = String("");
+    wifi["mac"] = WiFi.macAddress();
+
+    JsonObject gsm = root["gsm"].to<JsonObject>();
+    gsm["enabled"] = comms.gsm.enabled();
+    gsm["started"] = comms.gsm.started();
+    gsm["imei"] = comms.gsm.imei();
+    gsm["imsi"] = comms.gsm.imsi();
+    gsm["operator"] = comms.gsm.operatorName();
+    gsm["signal"] = comms.gsm.signalQuality();
+    gsm["reg_status"] = comms.gsm.regStatus();
+    gsm["last_error"] = comms.gsm.lastError();
+    gsm["last_urc"] = comms.gsm.lastUrc();
+    gsm["last_call"] = comms.gsm.lastCallNumber();
+    gsm["last_ussd"] = comms.gsm.lastUssd();
+    gsm["last_http_status"] = comms.gsm.lastHttpStatus();
+    gsm["last_http_len"] = comms.gsm.lastHttpLen();
 }
 
 void AppRuntime::appendSocketSnapshotItems_(JsonObject root) const{

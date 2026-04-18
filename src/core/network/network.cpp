@@ -216,6 +216,12 @@ void Network::maintainStackWsReadiness_()
     const bool ready = stackWsNetworkReady_();
     if (!ready)
     {
+        // Do not tear down an already running WebSocket master on transient
+        // network readiness flaps during startup. This caused one-time slave
+        // disconnects right after the first successful connect/auth cycle.
+        if (role == ConfigsManagerIface::StackRole::Master && master_started)
+            return;
+
         if (!deferred && (master_started || role == ConfigsManagerIface::StackRole::Slave))
         {
             {
@@ -980,12 +986,21 @@ bool Network::stackSlaveSendResponse(uint32_t target_node, const char *feature, 
             }
         }
     }
+    bool sent = false;
     if (mode == StackRouteAdapter::Mode::Json)
     {
         const StackTransport::RouteMeta meta = StackRouteAdapter::makeResponseMeta(reply_to);
-        return _stack_slave_client.sendRoute(target_node, feature, action, payload, &meta);
+        sent = _stack_slave_client.sendRoute(target_node, feature, action, payload, &meta);
     }
-    return _stack_route.sendResponse(target_node, feature, action, reply_to, payload, mode);
+    else
+        sent = _stack_route.sendResponse(target_node, feature, action, reply_to, payload, mode);
+    if (!sent)
+    {
+        _logs.warn(F("STACK"), F("Slave send response failed: dst 0x%08lX feature: %s action: %s reply_to: %lu mode: %s"),
+                   (unsigned long)target_node, feature ? feature : "-", action ? action : "-",
+                   (unsigned long)reply_to, mode == StackRouteAdapter::Mode::Binary ? "binary" : "json");
+    }
+    return sent;
 }
 
 bool Network::stackSlaveAuthorized() const

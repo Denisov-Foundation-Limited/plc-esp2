@@ -606,6 +606,8 @@ void MeteoHandler::handleMeteoSave(WebInterface &web, AsyncWebServerRequest *req
                 web._meteo_status = "Save failed";
             }
         }
+        if (ok && changed && web._controllers)
+            web._controllers->invalidateGpioUsageCache();
         if (ok)
             web._meteo_status = changed ? "Updated" : "Saved";
         web.sendRedirect_(request, "/meteo", set_cookie);

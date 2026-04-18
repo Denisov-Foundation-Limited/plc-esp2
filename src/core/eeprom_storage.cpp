@@ -213,7 +213,7 @@ bool EepromStorage::saveThermo(const ThermoSnapshot &snap)
     const uint16_t off = base + sizeof(hdr);
     if (!_eeprom->write(off, snap.power_mask, kThermoMaskBytes))
         return false;
-    if (!_eeprom->write(off + kThermoMaskBytes, reinterpret_cast<const uint8_t *>(snap.target_t10),
+    if (!_eeprom->write(off + kThermoMaskBytes, reinterpret_cast<const uint8_t *>(snap.target_c),
                         kThermoTargetBytes))
         return false;
     _thermo_last_slot = slot;
@@ -252,7 +252,7 @@ bool EepromStorage::loadThermo(ThermoSnapshot &out)
     const uint16_t off = thermoSlotBase_(best_slot) + sizeof(best_hdr);
     if (!_eeprom->read(off, out.power_mask, kThermoMaskBytes))
         return false;
-    if (!_eeprom->read(off + kThermoMaskBytes, reinterpret_cast<uint8_t *>(out.target_t10),
+    if (!_eeprom->read(off + kThermoMaskBytes, reinterpret_cast<uint8_t *>(out.target_c),
                        kThermoTargetBytes))
         return false;
     _thermo_last_slot = best_slot;

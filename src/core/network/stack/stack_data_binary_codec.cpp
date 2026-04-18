@@ -151,12 +151,22 @@ void appendU16_(std::vector<uint8_t> &out, uint16_t v)
     out.push_back((uint8_t)((v >> 8) & 0xFFu));
 }
 
+void appendI16_(std::vector<uint8_t> &out, int16_t v)
+{
+    appendU16_(out, (uint16_t)v);
+}
+
 void appendU32_(std::vector<uint8_t> &out, uint32_t v)
 {
     out.push_back((uint8_t)(v & 0xFFu));
     out.push_back((uint8_t)((v >> 8) & 0xFFu));
     out.push_back((uint8_t)((v >> 16) & 0xFFu));
     out.push_back((uint8_t)((v >> 24) & 0xFFu));
+}
+
+void appendI32_(std::vector<uint8_t> &out, int32_t v)
+{
+    appendU32_(out, (uint32_t)v);
 }
 
 void appendFloat_(std::vector<uint8_t> &out, float v)
@@ -213,6 +223,15 @@ bool readU16_(const uint8_t *&p, size_t &left, uint16_t &out)
     return true;
 }
 
+bool readI16_(const uint8_t *&p, size_t &left, int16_t &out)
+{
+    uint16_t raw = 0;
+    if (!readU16_(p, left, raw))
+        return false;
+    out = (int16_t)raw;
+    return true;
+}
+
 bool readU32_(const uint8_t *&p, size_t &left, uint32_t &out)
 {
     if (!p || left < 4u)
@@ -220,6 +239,15 @@ bool readU32_(const uint8_t *&p, size_t &left, uint32_t &out)
     out = (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
     p += 4;
     left -= 4;
+    return true;
+}
+
+bool readI32_(const uint8_t *&p, size_t &left, int32_t &out)
+{
+    uint32_t raw = 0;
+    if (!readU32_(p, left, raw))
+        return false;
+    out = (int32_t)raw;
     return true;
 }
 
@@ -304,33 +332,128 @@ bool encodeSystemSnapshot_(JsonVariantConst value, std::vector<uint8_t> &out)
     appendFloat_(out, value["rtc_temp"].is<float>() ? value["rtc_temp"].as<float>() : (float)(value["rtc_temp"] | 0.0));
     appendFloat_(out, value["board_temp"].is<float>() ? value["board_temp"].as<float>() : (float)(value["board_temp"] | 0.0));
     appendBool_(out, value["fan_on"] | false);
+    JsonVariantConst wifi = value["wifi"];
+    appendString_(out, wifi["mode"] | "");
+    appendString_(out, wifi["ssid"] | "");
+    appendString_(out, wifi["ap_ssid"] | "");
+    appendString_(out, wifi["ip"] | "");
+    appendString_(out, wifi["mac"] | "");
+    JsonVariantConst gsm = value["gsm"];
+    appendBool_(out, gsm["enabled"] | false);
+    appendBool_(out, gsm["started"] | false);
+    appendString_(out, gsm["imei"] | "");
+    appendString_(out, gsm["imsi"] | "");
+    appendString_(out, gsm["operator"] | "");
+    appendString_(out, gsm["signal"] | "");
+    appendString_(out, gsm["reg_status"] | "");
+    appendString_(out, gsm["last_error"] | "");
+    appendString_(out, gsm["last_urc"] | "");
+    appendString_(out, gsm["last_call"] | "");
+    appendString_(out, gsm["last_ussd"] | "");
+    appendI32_(out, gsm["last_http_status"].is<int>() ? gsm["last_http_status"].as<int>() : (int32_t)(gsm["last_http_status"] | -1));
+    appendI32_(out, gsm["last_http_len"].is<int>() ? gsm["last_http_len"].as<int>() : (int32_t)(gsm["last_http_len"] | -1));
     return true;
 }
 
 bool decodeSystemSnapshot_(const uint8_t *data, size_t size, DynamicJsonDocument &out)
 {
-    const uint8_t *p = data;
-    size_t left = size;
-    String device_name;
-    String rtc_date;
-    String rtc_time;
-    bool rtc_temp_ok = false;
-    float rtc_temp = 0.0f;
-    float board_temp = 0.0f;
-    bool fan_on = false;
-    if (!readVersion_(p, left) || !readString_(p, left, device_name) || !readString_(p, left, rtc_date) ||
-        !readString_(p, left, rtc_time) || !readBool_(p, left, rtc_temp_ok) || !readFloat_(p, left, rtc_temp) ||
-        !readFloat_(p, left, board_temp) || !readBool_(p, left, fan_on) || left != 0)
-        return false;
-    out.clear();
-    out["device_name"] = device_name;
-    out["rtc_date"] = rtc_date;
-    out["rtc_time"] = rtc_time;
-    out["rtc_temp_ok"] = rtc_temp_ok;
-    out["rtc_temp"] = rtc_temp;
-    out["board_temp"] = board_temp;
-    out["fan_on"] = fan_on;
-    return true;
+    auto fill_common = [&](const String &device_name, const String &rtc_date, const String &rtc_time, bool rtc_temp_ok,
+                           float rtc_temp, float board_temp, bool fan_on) {
+        out.clear();
+        out["device_name"] = device_name;
+        out["rtc_date"] = rtc_date;
+        out["rtc_time"] = rtc_time;
+        out["rtc_temp_ok"] = rtc_temp_ok;
+        out["rtc_temp"] = rtc_temp;
+        out["board_temp"] = board_temp;
+        out["fan_on"] = fan_on;
+    };
+
+    {
+        const uint8_t *p = data;
+        size_t left = size;
+        String device_name;
+        String rtc_date;
+        String rtc_time;
+        bool rtc_temp_ok = false;
+        float rtc_temp = 0.0f;
+        float board_temp = 0.0f;
+        bool fan_on = false;
+        String wifi_mode;
+        String wifi_ssid;
+        String wifi_ap_ssid;
+        String wifi_ip;
+        String wifi_mac;
+        bool gsm_enabled = false;
+        bool gsm_started = false;
+        String gsm_imei;
+        String gsm_imsi;
+        String gsm_operator;
+        String gsm_signal;
+        String gsm_reg_status;
+        String gsm_last_error;
+        String gsm_last_urc;
+        String gsm_last_call;
+        String gsm_last_ussd;
+        int32_t gsm_last_http_status = -1;
+        int32_t gsm_last_http_len = -1;
+        if (readVersion_(p, left) && readString_(p, left, device_name) && readString_(p, left, rtc_date) &&
+            readString_(p, left, rtc_time) && readBool_(p, left, rtc_temp_ok) && readFloat_(p, left, rtc_temp) &&
+            readFloat_(p, left, board_temp) && readBool_(p, left, fan_on) &&
+            readString_(p, left, wifi_mode) && readString_(p, left, wifi_ssid) &&
+            readString_(p, left, wifi_ap_ssid) && readString_(p, left, wifi_ip) &&
+            readString_(p, left, wifi_mac) && readBool_(p, left, gsm_enabled) &&
+            readBool_(p, left, gsm_started) && readString_(p, left, gsm_imei) &&
+            readString_(p, left, gsm_imsi) && readString_(p, left, gsm_operator) &&
+            readString_(p, left, gsm_signal) && readString_(p, left, gsm_reg_status) &&
+            readString_(p, left, gsm_last_error) && readString_(p, left, gsm_last_urc) &&
+            readString_(p, left, gsm_last_call) && readString_(p, left, gsm_last_ussd) &&
+            readI32_(p, left, gsm_last_http_status) && readI32_(p, left, gsm_last_http_len) && left == 0)
+        {
+            fill_common(device_name, rtc_date, rtc_time, rtc_temp_ok, rtc_temp, board_temp, fan_on);
+            JsonObject wifi = out["wifi"].to<JsonObject>();
+            wifi["mode"] = wifi_mode;
+            wifi["ssid"] = wifi_ssid;
+            wifi["ap_ssid"] = wifi_ap_ssid;
+            wifi["ip"] = wifi_ip;
+            wifi["mac"] = wifi_mac;
+            JsonObject gsm = out["gsm"].to<JsonObject>();
+            gsm["enabled"] = gsm_enabled;
+            gsm["started"] = gsm_started;
+            gsm["imei"] = gsm_imei;
+            gsm["imsi"] = gsm_imsi;
+            gsm["operator"] = gsm_operator;
+            gsm["signal"] = gsm_signal;
+            gsm["reg_status"] = gsm_reg_status;
+            gsm["last_error"] = gsm_last_error;
+            gsm["last_urc"] = gsm_last_urc;
+            gsm["last_call"] = gsm_last_call;
+            gsm["last_ussd"] = gsm_last_ussd;
+            if (gsm_last_http_status >= 0)
+                gsm["last_http_status"] = gsm_last_http_status;
+            if (gsm_last_http_len >= 0)
+                gsm["last_http_len"] = gsm_last_http_len;
+            return true;
+        }
+    }
+
+    {
+        const uint8_t *p = data;
+        size_t left = size;
+        String device_name;
+        String rtc_date;
+        String rtc_time;
+        bool rtc_temp_ok = false;
+        float rtc_temp = 0.0f;
+        float board_temp = 0.0f;
+        bool fan_on = false;
+        if (!readVersion_(p, left) || !readString_(p, left, device_name) || !readString_(p, left, rtc_date) ||
+            !readString_(p, left, rtc_time) || !readBool_(p, left, rtc_temp_ok) || !readFloat_(p, left, rtc_temp) ||
+            !readFloat_(p, left, board_temp) || !readBool_(p, left, fan_on) || left != 0)
+            return false;
+        fill_common(device_name, rtc_date, rtc_time, rtc_temp_ok, rtc_temp, board_temp, fan_on);
+        return true;
+    }
 }
 
 bool encodeControllersSummary_(JsonVariantConst value, std::vector<uint8_t> &out)
@@ -732,7 +855,7 @@ bool encodeThermoSnapshot_(JsonVariantConst value, std::vector<uint8_t> &out)
             appendU8_(out, (uint8_t)(item["cool_port"] | 0xFF));
             appendU8_(out, (uint8_t)(item["button_port"] | 0xFF));
             appendU8_(out, (uint8_t)(item["mode_id"] | 0));
-            appendFloat_(out, item["target_c"].is<float>() ? item["target_c"].as<float>() : (float)(item["target_c"] | 0.0));
+            appendI16_(out, (int16_t)(item["target_c"] | 0));
             appendFloat_(out, item["hyst"].is<float>() ? item["hyst"].as<float>() : (float)(item["hyst"] | 0.0));
             appendString_(out, item["name"] | "");
         }
@@ -761,14 +884,30 @@ bool decodeThermoSnapshot_(const uint8_t *data, size_t size, DynamicJsonDocument
     {
         uint8_t id = 0, flags = 0, group_id = 0, sensor_id = 0, heat_port = 0, cool_port = 0, button_port = 0, mode_id = 0;
         uint32_t sensor_node_id = 0;
-        float target_c = 0.0f;
+        int16_t target_c = 0;
         float hyst = 0.0f;
         String name;
+        const uint8_t *item_p0 = p;
+        const size_t item_left0 = left;
         if (!readU8_(p, left, id) || !readU8_(p, left, flags) || !readU8_(p, left, group_id) || !readU8_(p, left, sensor_id) ||
             !readU32_(p, left, sensor_node_id) || !readU8_(p, left, heat_port) || !readU8_(p, left, cool_port) ||
-            !readU8_(p, left, button_port) || !readU8_(p, left, mode_id) || !readFloat_(p, left, target_c) ||
-            !readFloat_(p, left, hyst) || !readString_(p, left, name))
+            !readU8_(p, left, button_port) || !readU8_(p, left, mode_id))
             return false;
+        const uint8_t *value_p = p;
+        const size_t value_left = left;
+        if (!readI16_(p, left, target_c) || !readFloat_(p, left, hyst) || !readString_(p, left, name))
+        {
+            float legacy_target = 0.0f;
+            p = value_p;
+            left = value_left;
+            if (!readFloat_(p, left, legacy_target) || !readFloat_(p, left, hyst) || !readString_(p, left, name))
+            {
+                p = item_p0;
+                left = item_left0;
+                return false;
+            }
+            target_c = (int16_t)lroundf(legacy_target);
+        }
         JsonObject item = items.add<JsonObject>();
         item["id"] = id;
         item["enabled"] = (flags & kItemEnabled) != 0;
@@ -1268,7 +1407,7 @@ bool encodeThermoSet_(JsonVariantConst value, std::vector<uint8_t> &out)
             if (mask & kThermoSetMode)
                 appendU8_(out, (uint8_t)(item["mode_id"] | 0));
             if (mask & kThermoSetTarget)
-                appendFloat_(out, item["target_c"].is<float>() ? item["target_c"].as<float>() : (float)(item["target_c"] | 0.0));
+                appendI16_(out, (int16_t)(item["target_c"] | 0));
             if (mask & kThermoSetHyst)
                 appendFloat_(out, item["hyst"].is<float>() ? item["hyst"].as<float>() : (float)(item["hyst"] | 0.0));
             if (mask & kThermoSetHeatPort)
@@ -1310,6 +1449,7 @@ bool decodeThermoSet_(const uint8_t *data, size_t size, DynamicJsonDocument &out
         uint8_t u8 = 0;
         uint32_t u32 = 0;
         float fv = 0.0f;
+        int16_t i16v = 0;
         String text;
         if (mask & kThermoSetEnabled)
         {
@@ -1344,9 +1484,18 @@ bool decodeThermoSet_(const uint8_t *data, size_t size, DynamicJsonDocument &out
         }
         if (mask & kThermoSetTarget)
         {
-            if (!readFloat_(p, left, fv))
-                return false;
-            item["target_c"] = fv;
+            const uint8_t *target_p = p;
+            const size_t target_left = left;
+            if (!readI16_(p, left, i16v))
+            {
+                float legacy_target = 0.0f;
+                p = target_p;
+                left = target_left;
+                if (!readFloat_(p, left, legacy_target))
+                    return false;
+                i16v = (int16_t)lroundf(legacy_target);
+            }
+            item["target_c"] = i16v;
         }
         if (mask & kThermoSetHyst)
         {
@@ -1956,6 +2105,66 @@ bool encodeWebIndexState_(JsonVariantConst value, std::vector<uint8_t> &out)
     appendBytes_(out, sockets_part.data(), sockets_part.size());
     appendU16_(out, (uint16_t)lights_part.size());
     appendBytes_(out, lights_part.data(), lights_part.size());
+    const char *relay_bits = value["relay_used_bits"] | "";
+    const char *dinput_bits = value["dinput_used_bits"] | "";
+    const char *sensor_bits = value["sensor_used_bits"] | "";
+    for (size_t i = 0; i < StackUnitSnapshot::kPortMaskBytes; ++i)
+    {
+        auto hexByte = [](const char *s, size_t idx) -> uint8_t {
+            auto nibble = [](char c) -> uint8_t {
+                if (c >= '0' && c <= '9')
+                    return (uint8_t)(c - '0');
+                if (c >= 'a' && c <= 'f')
+                    return (uint8_t)(10 + (c - 'a'));
+                if (c >= 'A' && c <= 'F')
+                    return (uint8_t)(10 + (c - 'A'));
+                return 0;
+            };
+            const size_t off = idx * 2u;
+            if (!s || strlen(s) < off + 2u)
+                return 0;
+            return (uint8_t)((nibble(s[off]) << 4) | nibble(s[off + 1u]));
+        };
+        appendU8_(out, hexByte(relay_bits, i));
+    }
+    for (size_t i = 0; i < StackUnitSnapshot::kPortMaskBytes; ++i)
+    {
+        auto hexByte = [](const char *s, size_t idx) -> uint8_t {
+            auto nibble = [](char c) -> uint8_t {
+                if (c >= '0' && c <= '9')
+                    return (uint8_t)(c - '0');
+                if (c >= 'a' && c <= 'f')
+                    return (uint8_t)(10 + (c - 'a'));
+                if (c >= 'A' && c <= 'F')
+                    return (uint8_t)(10 + (c - 'A'));
+                return 0;
+            };
+            const size_t off = idx * 2u;
+            if (!s || strlen(s) < off + 2u)
+                return 0;
+            return (uint8_t)((nibble(s[off]) << 4) | nibble(s[off + 1u]));
+        };
+        appendU8_(out, hexByte(dinput_bits, i));
+    }
+    for (size_t i = 0; i < StackUnitSnapshot::kPortMaskBytes; ++i)
+    {
+        auto hexByte = [](const char *s, size_t idx) -> uint8_t {
+            auto nibble = [](char c) -> uint8_t {
+                if (c >= '0' && c <= '9')
+                    return (uint8_t)(c - '0');
+                if (c >= 'a' && c <= 'f')
+                    return (uint8_t)(10 + (c - 'a'));
+                if (c >= 'A' && c <= 'F')
+                    return (uint8_t)(10 + (c - 'A'));
+                return 0;
+            };
+            const size_t off = idx * 2u;
+            if (!s || strlen(s) < off + 2u)
+                return 0;
+            return (uint8_t)((nibble(s[off]) << 4) | nibble(s[off + 1u]));
+        };
+        appendU8_(out, hexByte(sensor_bits, i));
+    }
     return true;
 }
 
@@ -2005,6 +2214,27 @@ bool decodeWebIndexState_(const uint8_t *data, size_t size, DynamicJsonDocument 
             return false;
         out["summary"]["lights"] = tmp["summary"]["lights"];
         out["controllers"]["lights"] = tmp["controllers"]["lights"];
+    }
+    auto appendHexString = [&](const char *key) -> bool {
+        String hex;
+        hex.reserve(StackUnitSnapshot::kPortMaskBytes * 2u);
+        for (size_t i = 0; i < StackUnitSnapshot::kPortMaskBytes; ++i)
+        {
+            uint8_t value = 0;
+            if (!readU8_(p, left, value))
+                return false;
+            char buf[3] = {};
+            snprintf(buf, sizeof(buf), "%02X", (unsigned)value);
+            hex += buf;
+        }
+        out[key] = hex;
+        return true;
+    };
+    if (left == StackUnitSnapshot::kPortMaskBytes * 3u)
+    {
+        if (!appendHexString("relay_used_bits") || !appendHexString("dinput_used_bits") ||
+            !appendHexString("sensor_used_bits"))
+            return false;
     }
     return left == 0;
 }

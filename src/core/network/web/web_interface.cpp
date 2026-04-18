@@ -2087,7 +2087,7 @@ int32_t WebInterface::scaled10_(float value)
                     hashAdd_(hash, (uint32_t)cfg->button_port);
                     hashAdd_(hash, cfg->name);
                     hashAdd_(hash, (uint32_t)cfg->mode);
-                    hashAdd_(hash, scaled10_(cfg->target_c));
+                    hashAdd_(hash, (int32_t)cfg->target_c);
                     hashAdd_(hash, scaled10_(cfg->hysteresis));
                     hashAdd_(hash, st->power_on ? 1u : 0u);
                     hashAdd_(hash, st->heat_on ? 1u : 0u);

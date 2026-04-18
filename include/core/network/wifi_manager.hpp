@@ -63,7 +63,11 @@ public:
     const char *modeLabel() const;
 
 private:
+    static constexpr uint32_t kStaReconnectPollMs = 5000u;
+    static constexpr uint32_t kStaRebeginPollMs = 15000u;
+
     static const char *statusToString_(wl_status_t st);
+    void pollStaReconnect_(wl_status_t st);
 
     String _ssid;
     String _password;
@@ -77,6 +81,8 @@ private:
     IoStack *_io = nullptr;
     bool _net_led_initialized = false;
     bool _net_led_state = false;
+    uint32_t _last_sta_poll_ms = 0;
+    uint32_t _last_sta_begin_ms = 0;
 
     void initNetLed_();
     void setNetLed_(bool on);

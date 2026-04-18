@@ -126,6 +126,12 @@ String WebInterfaceStackOps::stackPortsStatusText_(uint32_t node_id) const
 {
     if (!hasOnlineNode_(_web, node_id))
         return WebUiRu::kNoDataFromSlave;
+    StackUnitSnapshot::State state{};
+    if (_web.network() && _web.network()->stackIndexState(node_id, state) &&
+        state.ports_state_valid &&
+        (state.updated_ms != 0) &&
+        ((uint32_t)(millis() - state.updated_ms) < 10000u))
+        return "";
     return WebUiRu::kNoDataFromSlave;
 }
 
@@ -158,14 +164,34 @@ uint32_t WebInterfaceStackOps::parseStackNodeIdParam_(AsyncWebServerRequest *req
 
 bool WebInterfaceStackOps::requestStackPorts_(uint32_t node_id)
 {
-    (void)node_id;
-    return false;
+    if (!_web.network() || node_id == 0)
+        return false;
+    const uint32_t now = millis();
+    StackUnitSnapshot::State snapshot{};
+    StackUnitSnapshot::RequestState request{};
+    if (_web.network()->stackIndexState(node_id, snapshot))
+    {
+        const bool fresh = snapshot.ports_state_valid && (snapshot.updated_ms != 0) &&
+                           ((uint32_t)(now - snapshot.updated_ms) < 5000u);
+        const bool has_request = _web.network()->stackIndexRequestState(node_id, request);
+        if (fresh || (has_request && request.pending && (uint32_t)(now - request.started_ms) < 1500u))
+            return true;
+    }
+    if (!_web.network()->prepareStackIndexStateRequest(node_id, now, 5000u, 1500u))
+        return false;
+
+    DynamicJsonDocument doc(32);
+    doc["cmd_id"] = nextStackCmdId_();
+    return _web.network()->stackRoute().sendRequestSelected(_web.stackPayloadMode(), node_id, "web", "index_state_req",
+                                                            &doc, true);
 }
 
 bool WebInterfaceStackOps::refreshStackPorts_(uint32_t node_id)
 {
-    (void)node_id;
-    return false;
+    if (!_web.network() || node_id == 0)
+        return false;
+    _web.network()->clearStackIndexStatePending(node_id);
+    return requestStackIndexState_(node_id);
 }
 
 bool WebInterfaceStackOps::requestStackExtenders_(uint32_t node_id)

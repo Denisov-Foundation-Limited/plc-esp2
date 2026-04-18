@@ -511,6 +511,8 @@ void SecurityHandler::handleSecuritySave(WebInterface &web, AsyncWebServerReques
                 web._security_status = "Save failed";
             }
         }
+        if (ok && changed && web._controllers)
+            web._controllers->invalidateGpioUsageCache();
         if (ok)
             web._security_status = changed ? "Updated" : "No changes";
         web.sendRedirect_(request, "/security", set_cookie);

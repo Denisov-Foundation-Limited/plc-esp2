@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include "core/network/stack/stack_device_registry.hpp"
+#include "hal/gpio/portio.hpp"
 #include "utils/rtos_lock.hpp"
 
 class StackUnitSnapshot
@@ -22,6 +23,19 @@ class StackUnitSnapshot
 public:
     static constexpr size_t kDateLen = 16;
     static constexpr size_t kTimeLen = 16;
+    static constexpr size_t kWifiModeLen = 16;
+    static constexpr size_t kWifiSsidLen = 33;
+    static constexpr size_t kIpLen = 20;
+    static constexpr size_t kMacLen = 18;
+    static constexpr size_t kGsmImeiLen = 24;
+    static constexpr size_t kGsmImsiLen = 24;
+    static constexpr size_t kGsmOperatorLen = 32;
+    static constexpr size_t kGsmSignalLen = 16;
+    static constexpr size_t kGsmRegStatusLen = 24;
+    static constexpr size_t kGsmErrorLen = 48;
+    static constexpr size_t kGsmUrcLen = 48;
+    static constexpr size_t kGsmCallLen = 32;
+    static constexpr size_t kGsmUssdLen = 48;
     static constexpr size_t kSocketNameLen = 24;
     static constexpr size_t kSocketCount = 72;
     static constexpr size_t kMeteoNameLen = 24;
@@ -35,6 +49,7 @@ public:
     static constexpr size_t kLeakCount = 16;
     static constexpr size_t kSecurityDetectNameLen = 24;
     static constexpr size_t kSecurityDetectPreviewCount = 4;
+    static constexpr size_t kPortMaskBytes = (PortIO::PORT_COUNT + 7u) / 8u;
     static constexpr uint8_t kPageSize = 8;
 
     struct SocketItem
@@ -80,7 +95,7 @@ public:
         uint8_t cool_port = 0xFF;
         uint8_t button_port = 0xFF;
         uint8_t mode = 0;
-        float target_c = 0.0f;
+        int16_t target_c = 0;
         float hysteresis = 0.0f;
         bool power_on = false;
         bool heat_on = false;
@@ -138,12 +153,32 @@ public:
         uint32_t updated_ms = 0;
         bool has_plc = false;
         bool has_rtc = false;
+        bool has_wifi = false;
+        bool has_gsm = false;
         bool rtc_temp_ok = false;
         float board_temp = 0.0f;
         bool fan_on = false;
         float rtc_temp = 0.0f;
         char rtc_date[kDateLen] = {};
         char rtc_time[kTimeLen] = {};
+        char wifi_mode[kWifiModeLen] = {};
+        char wifi_ssid[kWifiSsidLen] = {};
+        char wifi_ap_ssid[kWifiSsidLen] = {};
+        char wifi_ip[kIpLen] = {};
+        char wifi_mac[kMacLen] = {};
+        bool gsm_enabled = false;
+        bool gsm_started = false;
+        char gsm_imei[kGsmImeiLen] = {};
+        char gsm_imsi[kGsmImsiLen] = {};
+        char gsm_operator[kGsmOperatorLen] = {};
+        char gsm_signal[kGsmSignalLen] = {};
+        char gsm_reg_status[kGsmRegStatusLen] = {};
+        char gsm_last_error[kGsmErrorLen] = {};
+        char gsm_last_urc[kGsmUrcLen] = {};
+        char gsm_last_call[kGsmCallLen] = {};
+        char gsm_last_ussd[kGsmUssdLen] = {};
+        int32_t gsm_last_http_status = -1;
+        int32_t gsm_last_http_len = -1;
         uint16_t sockets_enabled = 0;
         uint16_t sockets_on = 0;
         uint16_t lights_enabled = 0;
@@ -184,6 +219,10 @@ public:
         bool avr_reserve_ok = false;
         bool avr_fault = false;
         uint8_t avr_active_source = 0;
+        bool ports_state_valid = false;
+        uint8_t relay_used_bits[kPortMaskBytes] = {};
+        uint8_t dinput_used_bits[kPortMaskBytes] = {};
+        uint8_t sensor_used_bits[kPortMaskBytes] = {};
     };
 
     struct CacheState

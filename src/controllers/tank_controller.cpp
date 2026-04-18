@@ -698,7 +698,8 @@ void TankController::updateControl_(const TankController::TankConfig &cfg, TankC
     }
     else
     {
-        st.pump_on = true;
+        // Dry-run protection: pump must stay off while tank is empty.
+        st.pump_on = !empty;
         st.valve_on = empty || !full;
     }
     writeRelay_(cfg.relay_pump, st.pump_on);

@@ -12,6 +12,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <math.h>
 #include <stdint.h>
 
 #include "boards/board_profile.hpp"
@@ -288,14 +289,29 @@ public:
                 _c.printPrompt_();
                 return true;
             }
-            float val = 0.0f;
-            if (!parseFloat_(val_str, val))
+            bool ok = false;
+            if (is_target)
             {
-                _c._io->println(F("Invalid value"));
-                _c.printPrompt_();
-                return true;
+                float parsed = 0.0f;
+                if (!parseFloat_(val_str, parsed))
+                {
+                    _c._io->println(F("Invalid value"));
+                    _c.printPrompt_();
+                    return true;
+                }
+                ok = _thermo.setTarget(id, (int16_t)lroundf(parsed));
             }
-            const bool ok = is_target ? _thermo.setTarget(id, val) : _thermo.setHysteresis(id, val);
+            else
+            {
+                float val = 0.0f;
+                if (!parseFloat_(val_str, val))
+                {
+                    _c._io->println(F("Invalid value"));
+                    _c.printPrompt_();
+                    return true;
+                }
+                ok = _thermo.setHysteresis(id, val);
+            }
             if (!ok)
                 _c._io->println(F("Failed"));
             else
@@ -541,7 +557,7 @@ private:
         else
             _c.printPadStr_(F("--"), 4);
         _c._io->print(F("  "));
-        dtostrf(cfg.target_c, 0, 2, buf);
+        snprintf(buf, sizeof(buf), "%d", (int)cfg.target_c);
         _c.printPadStr_(buf, 6);
         _c._io->print(F("  "));
         dtostrf(cfg.hysteresis, 0, 2, buf);

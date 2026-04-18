@@ -477,6 +477,8 @@ void TankHandler::handleTanksSave(WebInterface &web, AsyncWebServerRequest *requ
                 }
             }
         }
+        if (ok && changed && web._controllers)
+            web._controllers->invalidateGpioUsageCache();
         if (ok)
             web._tanks_status = changed ? WebUiRu::Common::kUpdated : WebUiRu::Common::kSaved;
         web.sendRedirect_(request, "/tanks", set_cookie);
