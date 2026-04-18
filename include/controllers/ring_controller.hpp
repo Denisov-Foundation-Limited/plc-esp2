@@ -9,16 +9,6 @@
 /*                                                                    */
 /**********************************************************************/
 
-/*                                                                    */
-/* Programmable Logic Controller for ESP microcontrollers             */
-/*                                                                    */
-/* Copyright (C) 2026 Denisov Foundation Limited                      */
-/* License: GPLv3                                                     */
-/* Written by Sergey Denisov aka LittleBuster                         */
-/* Email: DenisovFoundationLtd@gmail.com                              */
-/*                                                                    */
-/**********************************************************************/
-
 #pragma once
 
 #include <Arduino.h>
@@ -63,7 +53,29 @@ public:
         Stack = 4
     };
 
-    RingController(Gpio &gpio, Logger &logs) ;bool begin();void task();void applyConfig(JsonObjectConst obj);void serialize(JsonObject out) const;bool setControllerEnabled(bool enabled);bool controllerEnabled() const;bool setButtonPort(uint8_t port);bool setRelayPort(uint8_t port);bool setHoldRelay(bool on);bool setHoldRelayLocal(bool on);bool setHoldRelayWithSource(bool on, Source source);bool setHoldRelayLocalWithSource(bool on, Source source);const Config &config() const;const State &state() const;Source lastSource() const;void setHoldHandler(HoldHandler cb, void *ctx);void setHoldHandlerSecondary(HoldHandler cb, void *ctx);LockGuard lockGuard(uint32_t timeout_ms = 0xFFFFFFFFu) const { return _lock.guard(timeout_ms); }
+    RingController(Gpio &gpio, Logger &logs);
+    bool begin();
+    void task();
+    void applyConfig(JsonObjectConst obj);
+    void serialize(JsonObject out) const;
+    bool setControllerEnabled(bool enabled);
+    bool controllerEnabled() const;
+    bool setButtonPort(uint8_t port);
+    bool setRelayPort(uint8_t port);
+    bool setHoldRelay(bool on);
+    bool setHoldRelayLocal(bool on);
+    bool setHoldRelayWithSource(bool on, Source source);
+    bool setHoldRelayLocalWithSource(bool on, Source source);
+    const Config &config() const;
+    const State &state() const;
+    Source lastSource() const;
+    void setHoldHandler(HoldHandler cb, void *ctx);
+    void setHoldHandlerSecondary(HoldHandler cb, void *ctx);
+    LockGuard lockGuard(uint32_t timeout_ms = 0xFFFFFFFFu) const
+    {
+        return _lock.guard(timeout_ms);
+    }
+
 private:
     Gpio &_gpio;
     Logger &_logs;
@@ -77,7 +89,17 @@ private:
     bool _pending_hold_on = false;
     mutable RtosRecursiveLock _lock;
 
-    void setupHardware_();void ensureRelayOff_();void handleButton_();void setHoldActive_(bool on, bool notify);bool setHoldRelay_(bool on, bool notify, Source source);void pollStackHoldTimeout_();bool setupButton_();bool setupRelay_();void writeRelay_(bool on);static bool parsePort_(JsonVariantConst v, uint8_t &out);static constexpr bool kButtonActiveLow = false;
+    void setupHardware_();
+    void ensureRelayOff_();
+    void handleButton_();
+    void setHoldActive_(bool on, bool notify);
+    bool setHoldRelay_(bool on, bool notify, Source source);
+    void pollStackHoldTimeout_();
+    bool setupButton_();
+    bool setupRelay_();
+    void writeRelay_(bool on);
+    static bool parsePort_(JsonVariantConst v, uint8_t &out);
+    static constexpr bool kButtonActiveLow = false;
     static constexpr bool kRelayInvert = false;
     static constexpr bool kButtonPullup = true;
     static constexpr uint32_t kReleaseCooldownMs = 1000;

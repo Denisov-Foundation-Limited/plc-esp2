@@ -107,12 +107,52 @@ public:
     };
     using EventHandler = void (*)(void *ctx, Event ev, const State &st, const char *message);
 
-    AvrController(Gpio &gpio, Logger &logs)
-        ;bool begin();void task();void applyConfig(JsonObjectConst obj);void serialize(JsonObject out) const;bool setControllerEnabled(bool enabled);bool controllerEnabled() const;bool setAutoMode(bool auto_mode);bool autoMode() const;bool setPreferMain(bool prefer_main);bool preferMain() const;bool setAutoReturnMain(bool auto_return);bool autoReturnMain() const;bool setManualSource(Source src);Source manualSource() const;Source activeSource() const;const Config &config() const;const State &state() const;bool setMainOkPort(uint8_t port);bool setReserveOkPort(uint8_t port);bool setRelayMainPort(uint8_t port);bool setRelayReservePort(uint8_t port);bool setFeedbackMainPort(uint8_t port);bool setFeedbackReservePort(uint8_t port);bool transferInProgress() const;Fault fault() const;void clearFault();void setEventHandler(EventHandler cb, void *ctx);static const char *sourceName(Source s);static const char *faultName(Fault f);LockGuard lockGuard(uint32_t timeout_ms = 0xFFFFFFFFu) const { return _lock.guard(timeout_ms); }
+    AvrController(Gpio &gpio, Logger &logs);
+    bool begin();
+    void task();
+    void applyConfig(JsonObjectConst obj);
+    void serialize(JsonObject out) const;
+    bool setControllerEnabled(bool enabled);
+    bool controllerEnabled() const;
+    bool setAutoMode(bool auto_mode);
+    bool autoMode() const;
+    bool setPreferMain(bool prefer_main);
+    bool preferMain() const;
+    bool setAutoReturnMain(bool auto_return);
+    bool autoReturnMain() const;
+    bool setManualSource(Source src);
+    Source manualSource() const;
+    Source activeSource() const;
+    const Config &config() const;
+    const State &state() const;
+    bool setMainOkPort(uint8_t port);
+    bool setReserveOkPort(uint8_t port);
+    bool setRelayMainPort(uint8_t port);
+    bool setRelayReservePort(uint8_t port);
+    bool setFeedbackMainPort(uint8_t port);
+    bool setFeedbackReservePort(uint8_t port);
+    bool transferInProgress() const;
+    Fault fault() const;
+    void clearFault();
+    void setEventHandler(EventHandler cb, void *ctx);
+    static const char *sourceName(Source s);
+    static const char *faultName(Fault f);
+    LockGuard lockGuard(uint32_t timeout_ms = 0xFFFFFFFFu) const
+    {
+        return _lock.guard(timeout_ms);
+    }
 #if RTOS_LOCK_DIAG
-    const char *lockOwnerName() const { return _lock.ownerName(); }
-    uint32_t lockHeldMs() const { return _lock.heldMs(); }
+    const char *lockOwnerName() const
+    {
+        return _lock.ownerName();
+    }
+
+    uint32_t lockHeldMs() const
+    {
+        return _lock.heldMs();
+    }
 #endif
+
 private:
     struct InputSample
     {
@@ -152,4 +192,21 @@ private:
     void *_event_ctx = nullptr;
     mutable RtosRecursiveLock _lock;
 
-    void setupHardware_();void setupInputPort_(uint8_t port);void setupRelayPort_(uint8_t port);static bool parsePort_(JsonVariantConst v, uint8_t &out);static void parseMs_(JsonVariantConst v, uint32_t &out);bool readInput_(uint8_t port, bool active_low, bool &out) const;bool updateDebounce_(InputDebounce &db, bool value, uint32_t now);void sampleInputs_(const Config &cfg, InputSample &sample) const;void applyInputSample_(const InputSample &sample, uint32_t now);void setRelays_(bool main_on, bool reserve_on);void setFault_(Fault f);Source decideAutoSource_(uint32_t now);void startTransfer_(Source target, uint32_t now);void processTransfer_(uint32_t now);void notifyMainStateIfChanged_();void notifySourceSwitched_(Source from, Source to);void notifyEvent_(Event ev, const char *message);};
+    void setupHardware_();
+    void setupInputPort_(uint8_t port);
+    void setupRelayPort_(uint8_t port);
+    static bool parsePort_(JsonVariantConst v, uint8_t &out);
+    static void parseMs_(JsonVariantConst v, uint32_t &out);
+    bool readInput_(uint8_t port, bool active_low, bool &out) const;
+    bool updateDebounce_(InputDebounce &db, bool value, uint32_t now);
+    void sampleInputs_(const Config &cfg, InputSample &sample) const;
+    void applyInputSample_(const InputSample &sample, uint32_t now);
+    void setRelays_(bool main_on, bool reserve_on);
+    void setFault_(Fault f);
+    Source decideAutoSource_(uint32_t now);
+    void startTransfer_(Source target, uint32_t now);
+    void processTransfer_(uint32_t now);
+    void notifyMainStateIfChanged_();
+    void notifySourceSwitched_(Source from, Source to);
+    void notifyEvent_(Event ev, const char *message);
+};

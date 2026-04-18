@@ -36,10 +36,49 @@ class Controllers
 public:
     using LockGuard = RtosRecursiveLock::Guard;
     Controllers(Gpio &gpio, OneWireManager &ow, EepromStorage &storage, Logger &logs,
-                GsmModem &gsm, RTC &rtc)
-        ;bool begin();void task();void applyConfig(JsonObjectConst cfg);void serialize(JsonObject out) const;SocketController &sockets();const SocketController &sockets() const;MeteoController &meteo();const MeteoController &meteo() const;ThermoController &thermo();const ThermoController &thermo() const;TankController &tanks();const TankController &tanks() const;SepticController &septic();const SepticController &septic() const;SecurityController &security();const SecurityController &security() const;RingController &ring();const RingController &ring() const;WateringController &watering();const WateringController &watering() const;AvrController &avr();const AvrController &avr() const;LeakController &leak();const LeakController &leak() const;void invalidateGpioUsageCache() const;bool gpioPortUsed(uint8_t port) const;bool gpioPortUsedByType(uint8_t port, PortIO::PinType type) const;void setSaveIntervalMs(uint32_t ms);bool eepromSaveEnabled() const;bool eepromLoadEnabled() const;void setEepromSaveEnabled(bool enabled);void setEepromLoadEnabled(bool enabled);void restoreFromStorage();bool ensureSocketConfigsLoaded();private:
-    LockGuard lockGuard() const { return _lock.guard(); }
+                GsmModem &gsm, RTC &rtc);
+
+    bool begin();
+    void task();
+    void applyConfig(JsonObjectConst cfg);
+    void serialize(JsonObject out) const;
+    SocketController &sockets();
+    const SocketController &sockets() const;
+    MeteoController &meteo();
+    const MeteoController &meteo() const;
+    ThermoController &thermo();
+    const ThermoController &thermo() const;
+    TankController &tanks();
+    const TankController &tanks() const;
+    SepticController &septic();
+    const SepticController &septic() const;
+    SecurityController &security();
+    const SecurityController &security() const;
+    RingController &ring();
+    const RingController &ring() const;
+    WateringController &watering();
+    const WateringController &watering() const;
+    AvrController &avr();
+    const AvrController &avr() const;
+    LeakController &leak();
+    const LeakController &leak() const;
+    void invalidateGpioUsageCache() const;
+    bool gpioPortUsed(uint8_t port) const;
+    bool gpioPortUsedByType(uint8_t port, PortIO::PinType type) const;
+    void setSaveIntervalMs(uint32_t ms);
+    bool eepromSaveEnabled() const;
+    bool eepromLoadEnabled() const;
+    void setEepromSaveEnabled(bool enabled);
+    void setEepromLoadEnabled(bool enabled);
+    void restoreFromStorage();
+    bool ensureSocketConfigsLoaded();
+
 private:
+    LockGuard lockGuard() const
+    {
+        return _lock.guard();
+    }
+
     struct GpioUsageCache
     {
         bool valid = false;
@@ -66,4 +105,9 @@ private:
     mutable GpioUsageCache _gpio_usage_cache;
     mutable RtosRecursiveLock _lock;
 
-    static void markPortUsed_(bool used[], uint8_t port);void rebuildGpioUsageCache_(bool used[]) const;void ensureGpioUsageCache_() const;void loadFromStorage_();void saveIfNeeded_();};
+    static void markPortUsed_(bool used[], uint8_t port);
+    void rebuildGpioUsageCache_(bool used[]) const;
+    void ensureGpioUsageCache_() const;
+    void loadFromStorage_();
+    void saveIfNeeded_();
+};
