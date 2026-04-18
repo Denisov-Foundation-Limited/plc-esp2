@@ -39,12 +39,15 @@ public:
         uint8_t hour = 0xFF;
         uint8_t minute = 0xFF;
         uint32_t duration_sec = 0;
+        bool slot1_enabled = false;
         uint8_t hour2 = 0xFF;
         uint8_t minute2 = 0xFF;
         uint32_t duration2_sec = 0;
+        bool slot2_enabled = false;
         uint8_t hour3 = 0xFF;
         uint8_t minute3 = 0xFF;
         uint32_t duration3_sec = 0;
+        bool slot3_enabled = false;
         uint8_t resume_level = 0; // 0=low,1=mid,2=full
         bool resume_after_refill = false;
         String name;
@@ -94,6 +97,7 @@ public:
     bool setWeekdaysMask(size_t id, uint8_t mask);
     bool setDuration(size_t id, uint32_t duration_sec);
     bool setDurationSlot(size_t id, uint8_t slot, uint32_t duration_sec);
+    bool setSlotEnabled(size_t id, uint8_t slot, bool enabled);
     bool setStatus(size_t id, bool status);
     bool controllerEnabled() const;
     void setControllerEnabled(bool enabled);
@@ -130,9 +134,14 @@ private:
     void reset_();
     static bool isStartValid_(const RuleConfig &cfg);
     static uint32_t makeStartKey_(uint16_t year, uint8_t month, uint8_t day, uint8_t hour, uint8_t minute, uint8_t slot);
-    static void getSlot_(const RuleConfig &cfg, uint8_t slot, uint8_t &hour, uint8_t &minute, uint32_t &duration_sec);
+    static void getSlot_(const RuleConfig &cfg, uint8_t slot, bool &enabled, uint8_t &hour, uint8_t &minute,
+                         uint32_t &duration_sec);
     static void setSlotTime_(uint8_t slot, RuleConfig &cfg, uint8_t hour, uint8_t minute);
     static void setSlotDuration_(uint8_t slot, RuleConfig &cfg, uint32_t duration_sec);
+    static void setSlotEnabled_(uint8_t slot, RuleConfig &cfg, bool enabled);
+    static bool slotEnabled_(const RuleConfig &cfg, uint8_t slot);
+    static bool slotConfigured_(uint8_t hour, uint8_t minute, uint32_t duration_sec);
+    static bool slotConfigured_(const RuleConfig &cfg, uint8_t slot);
     static uint8_t calcDow_(uint16_t y, uint8_t m, uint8_t d);
     static bool isWeekdayAllowed_(const RuleConfig &cfg, uint8_t day_of_week);
     static bool timeAfterOrEqual_(uint32_t now, uint32_t target);

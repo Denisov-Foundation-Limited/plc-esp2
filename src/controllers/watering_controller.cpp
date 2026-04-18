@@ -121,8 +121,9 @@ void WateringController::task(){
                 uint8_t slot_hour = 0;
                 uint8_t slot_minute = 0;
                 uint32_t slot_duration_sec = 0;
-                getSlot_(cfg, slot, slot_hour, slot_minute, slot_duration_sec);
-                if (slot_duration_sec == 0)
+                bool slot_enabled = false;
+                getSlot_(cfg, slot, slot_enabled, slot_hour, slot_minute, slot_duration_sec);
+                if (!slot_enabled || slot_duration_sec == 0)
                     continue;
                 if (slot_hour > 23 || slot_minute > 59)
                     continue;
@@ -244,8 +245,16 @@ void WateringController::applyConfig(JsonArrayConst rules){
             if (raw <= 0xFFu)
                 cfg.minute = (uint8_t)raw;
         }
+        bool slot1_enabled_set = false;
+        bool slot2_enabled_set = false;
+        bool slot3_enabled_set = false;
         if (obj["duration_s"].is<unsigned long>())
             cfg.duration_sec = (uint32_t)obj["duration_s"].as<unsigned long>();
+        if (obj["slot1_enabled"].is<bool>())
+        {
+            cfg.slot1_enabled = obj["slot1_enabled"].as<bool>();
+            slot1_enabled_set = true;
+        }
         if (obj["hour2"].is<unsigned>())
         {
             const unsigned raw = obj["hour2"].as<unsigned>();
@@ -260,6 +269,11 @@ void WateringController::applyConfig(JsonArrayConst rules){
         }
         if (obj["duration2_s"].is<unsigned long>())
             cfg.duration2_sec = (uint32_t)obj["duration2_s"].as<unsigned long>();
+        if (obj["slot2_enabled"].is<bool>())
+        {
+            cfg.slot2_enabled = obj["slot2_enabled"].as<bool>();
+            slot2_enabled_set = true;
+        }
         if (obj["hour3"].is<unsigned>())
         {
             const unsigned raw = obj["hour3"].as<unsigned>();
@@ -274,6 +288,11 @@ void WateringController::applyConfig(JsonArrayConst rules){
         }
         if (obj["duration3_s"].is<unsigned long>())
             cfg.duration3_sec = (uint32_t)obj["duration3_s"].as<unsigned long>();
+        if (obj["slot3_enabled"].is<bool>())
+        {
+            cfg.slot3_enabled = obj["slot3_enabled"].as<bool>();
+            slot3_enabled_set = true;
+        }
         if (obj["resume_after_refill"].is<bool>())
             cfg.resume_after_refill = obj["resume_after_refill"].as<bool>();
         if (obj["resume_level"].is<const char *>())
@@ -299,6 +318,12 @@ void WateringController::applyConfig(JsonArrayConst rules){
         }
         if (!enabled_set)
             cfg.enabled = true;
+        if (!slot1_enabled_set)
+            cfg.slot1_enabled = slotConfigured_(cfg, 0);
+        if (!slot2_enabled_set)
+            cfg.slot2_enabled = slotConfigured_(cfg, 1);
+        if (!slot3_enabled_set)
+            cfg.slot3_enabled = slotConfigured_(cfg, 2);
         ++idx;
     }
 }
@@ -326,18 +351,33 @@ void WateringController::serialize(JsonArray out) const{
             obj["hour"] = cfg.hour;
             obj["minute"] = cfg.minute;
             obj["duration_s"] = cfg.duration_sec;
+            obj["slot1_enabled"] = cfg.slot1_enabled;
+        }
+        else if (cfg.slot1_enabled)
+        {
+            obj["slot1_enabled"] = cfg.slot1_enabled;
         }
         if (cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
         {
             obj["hour2"] = cfg.hour2;
             obj["minute2"] = cfg.minute2;
             obj["duration2_s"] = cfg.duration2_sec;
+            obj["slot2_enabled"] = cfg.slot2_enabled;
+        }
+        else if (cfg.slot2_enabled)
+        {
+            obj["slot2_enabled"] = cfg.slot2_enabled;
         }
         if (cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
         {
             obj["hour3"] = cfg.hour3;
             obj["minute3"] = cfg.minute3;
             obj["duration3_s"] = cfg.duration3_sec;
+            obj["slot3_enabled"] = cfg.slot3_enabled;
+        }
+        else if (cfg.slot3_enabled)
+        {
+            obj["slot3_enabled"] = cfg.slot3_enabled;
         }
         obj["resume_after_refill"] = cfg.resume_after_refill;
         if (cfg.resume_level == 1)
@@ -503,6 +543,8 @@ bool WateringController::setStartTimeSlot(size_t id, uint8_t slot, uint8_t hour,
     if (!indexById_(id, idx))
         return false;
     setSlotTime_(slot, _cfg[idx], hour, minute);
+    if (slotConfigured_(_cfg[idx], slot))
+        setSlotEnabled_(slot, _cfg[idx], true);
     return true;
 }
 
@@ -528,6 +570,19 @@ bool WateringController::setDurationSlot(size_t id, uint8_t slot, uint32_t durat
     if (!indexById_(id, idx))
         return false;
     setSlotDuration_(slot, _cfg[idx], duration_sec);
+    if (slotConfigured_(_cfg[idx], slot))
+        setSlotEnabled_(slot, _cfg[idx], true);
+    return true;
+}
+
+bool WateringController::setSlotEnabled(size_t id, uint8_t slot, bool enabled){
+    auto guard = _lock.guard();
+    if (slot >= kTimeSlotCount)
+        return false;
+    size_t idx = 0;
+    if (!indexById_(id, idx))
+        return false;
+    setSlotEnabled_(slot, _cfg[idx], enabled);
     return true;
 }
 
@@ -664,11 +719,12 @@ bool WateringController::isStartValid_(const WateringController::RuleConfig &cfg
         return false;
     for (uint8_t slot = 0; slot < kTimeSlotCount; ++slot)
     {
+        bool enabled = false;
         uint8_t h = 0;
         uint8_t m = 0;
         uint32_t d = 0;
-        getSlot_(cfg, slot, h, m, d);
-        if (d == 0)
+        getSlot_(cfg, slot, enabled, h, m, d);
+        if (!enabled || d == 0)
             continue;
         if (h <= 23 && m <= 59)
             return true;
@@ -682,9 +738,11 @@ uint32_t WateringController::makeStartKey_(uint16_t year, uint8_t month, uint8_t
     return base * 10u + (uint32_t)(slot % kTimeSlotCount);
 }
 
-void WateringController::getSlot_(const WateringController::RuleConfig &cfg, uint8_t slot, uint8_t &hour, uint8_t &minute, uint32_t &duration_sec){
+void WateringController::getSlot_(const WateringController::RuleConfig &cfg, uint8_t slot, bool &enabled, uint8_t &hour,
+                                  uint8_t &minute, uint32_t &duration_sec){
     if (slot == 0)
     {
+        enabled = cfg.slot1_enabled;
         hour = cfg.hour;
         minute = cfg.minute;
         duration_sec = cfg.duration_sec;
@@ -692,11 +750,13 @@ void WateringController::getSlot_(const WateringController::RuleConfig &cfg, uin
     }
     if (slot == 1)
     {
+        enabled = cfg.slot2_enabled;
         hour = cfg.hour2;
         minute = cfg.minute2;
         duration_sec = cfg.duration2_sec;
         return;
     }
+    enabled = cfg.slot3_enabled;
     hour = cfg.hour3;
     minute = cfg.minute3;
     duration_sec = cfg.duration3_sec;
@@ -731,6 +791,40 @@ void WateringController::setSlotDuration_(uint8_t slot, WateringController::Rule
         return;
     }
     cfg.duration3_sec = duration_sec;
+}
+
+void WateringController::setSlotEnabled_(uint8_t slot, WateringController::RuleConfig &cfg, bool enabled){
+    if (slot == 0)
+    {
+        cfg.slot1_enabled = enabled;
+        return;
+    }
+    if (slot == 1)
+    {
+        cfg.slot2_enabled = enabled;
+        return;
+    }
+    cfg.slot3_enabled = enabled;
+}
+
+bool WateringController::slotEnabled_(const WateringController::RuleConfig &cfg, uint8_t slot){
+    if (slot == 0)
+        return cfg.slot1_enabled;
+    if (slot == 1)
+        return cfg.slot2_enabled;
+    return cfg.slot3_enabled;
+}
+
+bool WateringController::slotConfigured_(uint8_t hour, uint8_t minute, uint32_t duration_sec){
+    return duration_sec > 0 && hour <= 23 && minute <= 59;
+}
+
+bool WateringController::slotConfigured_(const WateringController::RuleConfig &cfg, uint8_t slot){
+    if (slot == 0)
+        return slotConfigured_(cfg.hour, cfg.minute, cfg.duration_sec);
+    if (slot == 1)
+        return slotConfigured_(cfg.hour2, cfg.minute2, cfg.duration2_sec);
+    return slotConfigured_(cfg.hour3, cfg.minute3, cfg.duration3_sec);
 }
 
 uint8_t WateringController::calcDow_(uint16_t y, uint8_t m, uint8_t d){

@@ -348,12 +348,15 @@
             "hour": "u8",
             "minute": "u8",
             "duration_s": "u32",
+            "slot1_enabled": "bool",
             "hour2": "u8",
             "minute2": "u8",
             "duration2_s": "u32",
+            "slot2_enabled": "bool",
             "hour3": "u8",
             "minute3": "u8",
             "duration3_s": "u32",
+            "slot3_enabled": "bool",
             "resume": "bool",
             "resume_level": "u8",
             "active": "bool",
@@ -444,8 +447,12 @@
         "watering": [
             { "action": "status", "args": { "id": "u8", "state": "on|off" } },
             { "action": "weekdays", "args": { "id": "u8", "weekdays_mask": "u8" } },
+            { "action": "tank", "args": { "id": "u8", "tank_id": "u8" } },
+            { "action": "resume", "args": { "id": "u8", "enabled": "bool" } },
+            { "action": "resume_level", "args": { "id": "u8", "level": "u8" } },
             { "action": "time", "args": { "id": "u8", "slot": "u8", "hour": "u8", "minute": "u8" } },
-            { "action": "duration", "args": { "id": "u8", "slot": "u8", "duration_s": "u32" } }
+            { "action": "duration", "args": { "id": "u8", "slot": "u8", "duration_s": "u32" } },
+            { "action": "slot_enabled", "args": { "id": "u8", "slot": "u8", "enabled": "bool" } }
         ],
         "security": [
             { "action": "arm", "args": {} },

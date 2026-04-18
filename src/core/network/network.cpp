@@ -813,6 +813,22 @@ bool Network::stackIndexTanksPage(uint32_t node_id, uint8_t offset, StackUnitSna
     return _stack_unit_snapshot.tanksPage(node_id, offset, out, capacity, out_count);
 }
 
+bool Network::stackIndexWateringById(uint32_t node_id, uint8_t id, StackUnitSnapshot::WateringItem &out) const
+{
+    return _stack_unit_snapshot.wateringById(node_id, id, out);
+}
+
+bool Network::stackIndexWateringAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::WateringItem &out) const
+{
+    return _stack_unit_snapshot.wateringAt(node_id, index, out);
+}
+
+bool Network::stackIndexWateringPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::WateringItem *out,
+                                     uint8_t capacity, uint8_t &out_count) const
+{
+    return _stack_unit_snapshot.wateringPage(node_id, offset, out, capacity, out_count);
+}
+
 bool Network::stackIndexLeakById(uint32_t node_id, uint8_t id, StackUnitSnapshot::LeakItem &out) const
 {
     return _stack_unit_snapshot.leakById(node_id, id, out);
@@ -844,6 +860,8 @@ bool Network::prepareStackPageRequest(StackUnitSnapshot::PageKind kind, uint32_t
             return _stack_unit_snapshot.prepareThermoPageRequest(node_id, now_ms, offset, pending_ms);
         case StackUnitSnapshot::PageKind::Tanks:
             return _stack_unit_snapshot.prepareTanksPageRequest(node_id, now_ms, offset, pending_ms);
+        case StackUnitSnapshot::PageKind::Watering:
+            return _stack_unit_snapshot.prepareWateringPageRequest(node_id, now_ms, offset, pending_ms);
         case StackUnitSnapshot::PageKind::Leak:
         default:
             return _stack_unit_snapshot.prepareLeakPageRequest(node_id, now_ms, offset, pending_ms);
@@ -868,6 +886,9 @@ void Network::completeStackPageRequest(StackUnitSnapshot::PageKind kind, uint32_
             return;
         case StackUnitSnapshot::PageKind::Tanks:
             _stack_unit_snapshot.completeTanksPageRequest(node_id, offset);
+            return;
+        case StackUnitSnapshot::PageKind::Watering:
+            _stack_unit_snapshot.completeWateringPageRequest(node_id, offset);
             return;
         case StackUnitSnapshot::PageKind::Leak:
         default:
@@ -894,6 +915,9 @@ void Network::clearStackPageRequest(StackUnitSnapshot::PageKind kind, uint32_t n
             return;
         case StackUnitSnapshot::PageKind::Tanks:
             _stack_unit_snapshot.clearTanksPageRequest(node_id);
+            return;
+        case StackUnitSnapshot::PageKind::Watering:
+            _stack_unit_snapshot.clearWateringPageRequest(node_id);
             return;
         case StackUnitSnapshot::PageKind::Leak:
         default:
@@ -950,6 +974,13 @@ void Network::updateStackIndexTanksPage(uint32_t node_id, uint16_t offset, uint1
                                         uint32_t updated_ms)
 {
     _stack_unit_snapshot.applyTanksPage(node_id, offset, enabled_total, alert_total, items, item_count, updated_ms);
+}
+
+void Network::updateStackIndexWateringPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total,
+                                           uint16_t active_total, const StackUnitSnapshot::WateringItem *items,
+                                           uint8_t item_count, uint32_t updated_ms)
+{
+    _stack_unit_snapshot.applyWateringPage(node_id, offset, enabled_total, active_total, items, item_count, updated_ms);
 }
 
 void Network::updateStackIndexLeaksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,

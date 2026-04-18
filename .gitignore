@@ -8,3 +8,4 @@
 .venv-pio/*
 .venv-pio
 fcplc.ino.cpp
+compile_commands.json

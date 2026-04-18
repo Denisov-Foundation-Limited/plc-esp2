@@ -2180,12 +2180,15 @@ int32_t WebInterface::scaled10_(float value)
                     hashAdd_(hash, (uint32_t)cfg->hour);
                     hashAdd_(hash, (uint32_t)cfg->minute);
                     hashAdd_(hash, (uint32_t)cfg->duration_sec);
+                    hashAdd_(hash, cfg->slot1_enabled ? 1u : 0u);
                     hashAdd_(hash, (uint32_t)cfg->hour2);
                     hashAdd_(hash, (uint32_t)cfg->minute2);
                     hashAdd_(hash, (uint32_t)cfg->duration2_sec);
+                    hashAdd_(hash, cfg->slot2_enabled ? 1u : 0u);
                     hashAdd_(hash, (uint32_t)cfg->hour3);
                     hashAdd_(hash, (uint32_t)cfg->minute3);
                     hashAdd_(hash, (uint32_t)cfg->duration3_sec);
+                    hashAdd_(hash, cfg->slot3_enabled ? 1u : 0u);
                     hashAdd_(hash, cfg->resume_after_refill ? 1u : 0u);
                     hashAdd_(hash, (uint32_t)cfg->resume_level);
                     hashAdd_(hash, cfg->name);

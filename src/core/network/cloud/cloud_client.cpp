@@ -895,6 +895,32 @@ void CloudClient::handleCmdLocal_(const String &req_id, const String &ctrl, cons
     else if (ctrl == "cameras")
         ok = handleCmdCameras_(action, args, &error);
 
+    if (ok && ctrl == "watering")
+    {
+        const bool persist_action =
+            action == "weekdays" ||
+            action == "tank" ||
+            action == "resume" ||
+            action == "resume_level" ||
+            action == "time" ||
+            action == "duration" ||
+            action == "slot_enabled";
+        if (persist_action)
+        {
+            if (!_configs)
+            {
+                ok = false;
+                error = "config manager missing";
+            }
+            else if (!_configs->save())
+            {
+                ok = false;
+                error = "save failed";
+                _log.warn(F("CLOUD"), F("Cmd save failed: ctrl: watering action: %s"), action.c_str());
+            }
+        }
+    }
+
     sendAck_(req_id, ok, ok ? "" : error.c_str());
 }
 void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
@@ -1231,6 +1257,152 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
         sendAck_(req_id, true, "");
         return;
     }
+    if (ctrl_key == "watering")
+    {
+        const uint32_t item_id = (uint32_t)(args["id"] | 0);
+        if (item_id == 0)
+        {
+            sendError_(req_id, "bad id");
+            return;
+        }
+        if (action_key != "status" && action_key != "weekdays" && action_key != "tank" &&
+            action_key != "resume" && action_key != "resume_level" && action_key != "time" &&
+            action_key != "duration" && action_key != "slot_enabled" && action_key != "set")
+        {
+            sendError_(req_id, "unsupported action");
+            return;
+        }
+        if (!_network)
+        {
+            sendError_(req_id, "stack route missing");
+            return;
+        }
+        DynamicJsonDocument params(384);
+        JsonArray items = params["items"].to<JsonArray>();
+        JsonObject o = items.add<JsonObject>();
+        o["id"] = (unsigned)item_id;
+        if (action_key == "status")
+        {
+            o["status"] = (String(args["state"] | "") == "on");
+        }
+        else if (action_key == "weekdays")
+        {
+            o["weekdays_mask"] = (uint8_t)(args["weekdays_mask"] | 0);
+        }
+        else if (action_key == "tank")
+        {
+            o["tank"] = (uint8_t)(args["tank_id"] | 0);
+        }
+        else if (action_key == "resume")
+        {
+            o["resume"] = args["enabled"].is<bool>() ? args["enabled"].as<bool>()
+                                                     : (String(args["enabled"] | "") == "on");
+        }
+        else if (action_key == "resume_level")
+        {
+            o["resume_level"] = (uint8_t)(args["level"] | 0);
+        }
+        else if (action_key == "time")
+        {
+            const uint8_t slot = (uint8_t)(args["slot"] | 1);
+            const uint8_t hour = (uint8_t)(args["hour"] | 0xFF);
+            const uint8_t minute = (uint8_t)(args["minute"] | 0xFF);
+            if (slot <= 1)
+            {
+                o["hour"] = hour;
+                o["minute"] = minute;
+            }
+            else if (slot == 2)
+            {
+                o["hour2"] = hour;
+                o["minute2"] = minute;
+            }
+            else if (slot == 3)
+            {
+                o["hour3"] = hour;
+                o["minute3"] = minute;
+            }
+        }
+        else if (action_key == "duration")
+        {
+            const uint8_t slot = (uint8_t)(args["slot"] | 1);
+            const uint32_t duration_s = (uint32_t)(args["duration_s"] | 0u);
+            if (slot <= 1)
+                o["duration_s"] = duration_s;
+            else if (slot == 2)
+                o["duration2_s"] = duration_s;
+            else if (slot == 3)
+                o["duration3_s"] = duration_s;
+        }
+        else if (action_key == "slot_enabled")
+        {
+            const uint8_t slot = (uint8_t)(args["slot"] | 1);
+            const bool enabled = args["enabled"].is<bool>() ? args["enabled"].as<bool>()
+                                                            : (String(args["enabled"] | "") == "on");
+            if (slot <= 1)
+                o["slot1_enabled"] = enabled;
+            else if (slot == 2)
+                o["slot2_enabled"] = enabled;
+            else if (slot == 3)
+                o["slot3_enabled"] = enabled;
+        }
+        else
+        {
+            if (args.containsKey("enabled"))
+                o["enabled"] = args["enabled"];
+            if (args.containsKey("name"))
+                o["name"] = args["name"];
+            if (args.containsKey("port"))
+                o["port"] = args["port"];
+            if (args.containsKey("status"))
+                o["status"] = args["status"];
+            if (args.containsKey("weekdays_mask"))
+                o["weekdays_mask"] = args["weekdays_mask"];
+            if (args.containsKey("tank"))
+                o["tank"] = args["tank"];
+            if (args.containsKey("resume"))
+                o["resume"] = args["resume"];
+            if (args.containsKey("resume_level"))
+                o["resume_level"] = args["resume_level"];
+            if (args.containsKey("hour"))
+                o["hour"] = args["hour"];
+            if (args.containsKey("minute"))
+                o["minute"] = args["minute"];
+            if (args.containsKey("duration_s"))
+                o["duration_s"] = args["duration_s"];
+            if (args.containsKey("slot1_enabled"))
+                o["slot1_enabled"] = args["slot1_enabled"];
+            if (args.containsKey("hour2"))
+                o["hour2"] = args["hour2"];
+            if (args.containsKey("minute2"))
+                o["minute2"] = args["minute2"];
+            if (args.containsKey("duration2_s"))
+                o["duration2_s"] = args["duration2_s"];
+            if (args.containsKey("slot2_enabled"))
+                o["slot2_enabled"] = args["slot2_enabled"];
+            if (args.containsKey("hour3"))
+                o["hour3"] = args["hour3"];
+            if (args.containsKey("minute3"))
+                o["minute3"] = args["minute3"];
+            if (args.containsKey("duration3_s"))
+                o["duration3_s"] = args["duration3_s"];
+            if (args.containsKey("slot3_enabled"))
+                o["slot3_enabled"] = args["slot3_enabled"];
+        }
+        const bool sent = _network->stackRoute().sendEventSelected(stack_payload_mode, node_id, "watering", "set", &params);
+        if (!sent)
+        {
+            sendError_(req_id, "stack route send failed");
+            return;
+        }
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "controllers", "summary_req", nullptr, true);
+        DynamicJsonDocument req(64);
+        req["offset"] = 0;
+        req["limit"] = StackUnitSnapshot::kPageSize;
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "watering", "snapshot_req", &req, true);
+        sendAck_(req_id, true, "");
+        return;
+    }
     if (ctrl_key == "security")
     {
         if (action_key != "arm" && action_key != "disarm" && action_key != "clear")
@@ -1437,6 +1609,18 @@ bool CloudClient::handleCmdWatering_(const String &action, JsonObjectConst args)
         return _controllers.watering().setWeekdaysMask(
             id,
             (uint8_t)((unsigned)(args["weekdays_mask"] | 0) & 0x7Fu));
+    if (action == "tank")
+        return _controllers.watering().setTankId(
+            id,
+            (uint8_t)(args["tank_id"] | 0));
+    if (action == "resume")
+        return _controllers.watering().setResumeAfterRefill(
+            id,
+            (bool)(args["enabled"] | false));
+    if (action == "resume_level")
+        return _controllers.watering().setResumeLevel(
+            id,
+            (uint8_t)(args["level"] | 0));
     if (action == "time")
     {
         const uint8_t hour = (uint8_t)(args["hour"] | 0);
@@ -1450,6 +1634,11 @@ bool CloudClient::handleCmdWatering_(const String &action, JsonObjectConst args)
             id,
             slot_idx,
             (uint32_t)(args["duration_s"] | 0UL));
+    if (action == "slot_enabled")
+        return _controllers.watering().setSlotEnabled(
+            id,
+            slot_idx,
+            (bool)(args["enabled"] | false));
     return false;
 }
 bool CloudClient::handleCmdSecurity_(const String &action, JsonObjectConst args, const ActorInfo &actor)
@@ -2486,18 +2675,21 @@ void CloudClient::fillWatering_(JsonArray out)
             o["minute"] = cfg.minute;
             o["duration_s"] = cfg.duration_sec;
         }
+        o["slot1_enabled"] = cfg.slot1_enabled;
         if (cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
         {
             o["hour2"] = cfg.hour2;
             o["minute2"] = cfg.minute2;
             o["duration2_s"] = cfg.duration2_sec;
         }
+        o["slot2_enabled"] = cfg.slot2_enabled;
         if (cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
         {
             o["hour3"] = cfg.hour3;
             o["minute3"] = cfg.minute3;
             o["duration3_s"] = cfg.duration3_sec;
         }
+        o["slot3_enabled"] = cfg.slot3_enabled;
         o["resume"] = cfg.resume_after_refill;
         o["resume_level"] = cfg.resume_level;
         o["active"] = st.active;
@@ -3027,10 +3219,58 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                 has_any = has_any || (snapshot.septic_enabled > 0);
             }
 
-            JsonObject watering = out.createNestedObject("watering");
-            watering["enabled_count"] = snapshot.watering_enabled;
-            watering["active_count"] = snapshot.watering_active;
-            has_any = has_any || (snapshot.watering_enabled > 0);
+            if (cache.watering_count > 0)
+            {
+                JsonArray watering = out.createNestedArray("watering");
+                _network->forEachStackWatering(node_id, cache.watering_count,
+                                              [&](uint8_t, const StackUnitSnapshot::WateringItem &it) {
+                    if (it.id == 0)
+                        return;
+                    JsonObject o = watering.add<JsonObject>();
+                    o["id"] = it.id;
+                    o["enabled"] = it.enabled;
+                    o["status"] = it.status;
+                    o["active"] = it.active;
+                    o["paused"] = it.paused;
+                    if (it.port != WateringController::kInvalidPort)
+                        o["port"] = it.port;
+                    if (it.tank_id)
+                    {
+                        o["tank"] = it.tank_id;
+                        StackUnitSnapshot::TankItem tank{};
+                        if (_network->stackIndexTankById(node_id, it.tank_id, tank) && tank.name[0])
+                            o["tank_name"] = sanitizeUtf8_(String(tank.name));
+                    }
+                    if (it.weekdays_mask)
+                        o["weekdays_mask"] = it.weekdays_mask;
+                    o["hour"] = it.hour;
+                    o["minute"] = it.minute;
+                    o["duration_s"] = it.duration_sec;
+                    o["slot1_enabled"] = it.slot1_enabled;
+                    o["hour2"] = it.hour2;
+                    o["minute2"] = it.minute2;
+                    o["duration2_s"] = it.duration2_sec;
+                    o["slot2_enabled"] = it.slot2_enabled;
+                    o["hour3"] = it.hour3;
+                    o["minute3"] = it.minute3;
+                    o["duration3_s"] = it.duration3_sec;
+                    o["slot3_enabled"] = it.slot3_enabled;
+                    o["resume"] = it.resume_after_refill;
+                    o["resume_level"] = it.resume_level;
+                    if (it.remaining_ms)
+                        o["remaining_ms"] = it.remaining_ms;
+                    if (it.name[0])
+                        o["name"] = sanitizeUtf8_(String(it.name));
+                });
+                has_any = true;
+            }
+            else
+            {
+                JsonObject watering = out.createNestedObject("watering");
+                watering["enabled_count"] = snapshot.watering_enabled;
+                watering["active_count"] = snapshot.watering_active;
+                has_any = has_any || (snapshot.watering_enabled > 0);
+            }
 
             JsonObject security = out.createNestedObject("security");
             security["enabled"] = snapshot.security_enabled;
@@ -3160,6 +3400,19 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
             req["limit"] = StackUnitSnapshot::kPageSize;
             _network->stackRoute().sendRequestSelected(
                 _configs ? _configs->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Json, node_id, "tanks",
+                "snapshot_req", &req, true);
+        }
+    }
+    if (snapshot.watering_enabled > 0 && cache.watering_count < snapshot.watering_enabled)
+    {
+        if (_network->prepareStackPageRequest(StackUnitSnapshot::PageKind::Watering, node_id, now, cache.watering_count,
+                                             4000u))
+        {
+            DynamicJsonDocument req(64);
+            req["offset"] = cache.watering_count;
+            req["limit"] = StackUnitSnapshot::kPageSize;
+            _network->stackRoute().sendRequestSelected(
+                _configs ? _configs->stackPayloadMode() : ConfigsManagerIface::StackPayloadMode::Json, node_id, "watering",
                 "snapshot_req", &req, true);
         }
     }

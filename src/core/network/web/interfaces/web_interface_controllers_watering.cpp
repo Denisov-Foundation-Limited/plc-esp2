@@ -220,6 +220,14 @@ String WebInterfaceControllersWateringHelper::listWateringHtml_(WebInterface &we
                 }
                 items += "</div></div>";
 
+                items += "<div class=\"form-row\"><label><input type=\"hidden\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_time_en\" value=\"0\"><input type=\"checkbox\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_time_en\" value=\"1\"";
+                if (cfg.slot1_enabled)
+                    items += " checked";
+                items += "> Слот 1</label></div>";
                 items += WebUiRu::Watering::kInputClassFieldMiniTypeTimeName;
                 items += String((unsigned)cfg.id);
                 items += "_time\" value=\"";
@@ -236,6 +244,14 @@ String WebInterfaceControllersWateringHelper::listWateringHtml_(WebInterface &we
                 if (cfg.duration_sec)
                     items += String((unsigned long)((cfg.duration_sec + 59) / 60));
                 items += "\"></div>";
+                items += "<div class=\"form-row\"><label><input type=\"hidden\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_time2_en\" value=\"0\"><input type=\"checkbox\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_time2_en\" value=\"1\"";
+                if (cfg.slot2_enabled)
+                    items += " checked";
+                items += "> Слот 2</label></div>";
                 items += WebUiRu::Watering::kText2InputClassFieldMiniTypeTime;
                 items += String((unsigned)cfg.id);
                 items += "_time2\" value=\"";
@@ -252,6 +268,14 @@ String WebInterfaceControllersWateringHelper::listWateringHtml_(WebInterface &we
                 if (cfg.duration2_sec)
                     items += String((unsigned long)((cfg.duration2_sec + 59) / 60));
                 items += "\"></div>";
+                items += "<div class=\"form-row\"><label><input type=\"hidden\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_time3_en\" value=\"0\"><input type=\"checkbox\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_time3_en\" value=\"1\"";
+                if (cfg.slot3_enabled)
+                    items += " checked";
+                items += "> Слот 3</label></div>";
                 items += WebUiRu::Watering::kText3InputClassFieldMiniTypeTime;
                 items += String((unsigned)cfg.id);
                 items += "_time3\" value=\"";

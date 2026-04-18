@@ -418,6 +418,9 @@ const char kWebInterfaceWateringHtml[] PROGMEM = R"HTML(
         tile.querySelectorAll('input[type="time"], input[type="number"]').forEach((input) => {
           input.value = '';
         });
+        tile.querySelectorAll('input[type="checkbox"][name$="_time_en"]').forEach((input) => {
+          input.checked = false;
+        });
         tile.querySelectorAll('.weekday-item input[type="checkbox"]').forEach((input) => {
           input.checked = false;
         });

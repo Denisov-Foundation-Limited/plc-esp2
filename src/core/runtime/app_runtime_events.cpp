@@ -330,6 +330,7 @@ void AppRuntime::onStackNodeEvent_(void *ctx, uint32_t node_id, bool online){
         self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id);
         self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Thermo, node_id);
         self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Tanks, node_id);
+        self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Watering, node_id);
         self->net.network.clearStackPageRequest(StackUnitSnapshot::PageKind::Leak, node_id);
         self->core.logs.info(F("STACK"), F("Sync %s sys"), label.length() ? label.c_str() : "unknown");
         self->net.network.stackRoute().sendRequestSelected(self->cfg.configs_manager.stackPayloadMode(), node_id,
@@ -2065,7 +2066,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
     }
     if (strcmp(route.feature, "watering") == 0)
     {
-        handleWateringFrame_(node_id, action, params);
+        handleWateringFrame_(node_id, route.source_node, route.meta.request_id, action, params);
         return;
     }
 }
@@ -2673,6 +2674,73 @@ void AppRuntime::appendTankSnapshotPage_(JsonObject root, uint16_t offset, uint1
     root["total"] = tanks_enabled;
 }
 
+void AppRuntime::appendWateringSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const{
+    JsonObject summary = root["summary"].to<JsonObject>();
+    JsonObject watering_summary = summary["watering"].to<JsonObject>();
+    JsonObject controllers_out = root["controllers"].to<JsonObject>();
+    JsonArray watering_out = controllers_out["watering"].to<JsonArray>();
+
+    uint16_t watering_enabled = 0;
+    uint16_t watering_active = 0;
+    uint16_t current_index = 0;
+
+    WateringController &watering = control.controllers.watering();
+    auto guard = watering.lockGuard();
+    for (size_t i = 0; i < WateringController::kRuleCount; ++i)
+    {
+        const auto *cfg = watering.configByIndex(i);
+        const auto *st = watering.stateByIndex(i);
+        if (!cfg || !st || !cfg->enabled)
+            continue;
+
+        ++watering_enabled;
+        if (st->active)
+            ++watering_active;
+
+        if (current_index < offset)
+        {
+            ++current_index;
+            continue;
+        }
+        if ((uint16_t)watering_out.size() >= limit)
+            continue;
+
+        JsonObject o = watering_out.add<JsonObject>();
+        o["id"] = cfg->id;
+        o["enabled"] = cfg->enabled;
+        o["status"] = st->status;
+        o["active"] = st->active;
+        o["paused"] = st->paused;
+        o["port"] = cfg->port;
+        o["tank"] = cfg->tank_id;
+        o["weekdays_mask"] = cfg->weekdays_mask;
+        o["hour"] = cfg->hour;
+        o["minute"] = cfg->minute;
+        o["duration_s"] = cfg->duration_sec;
+        o["slot1_enabled"] = cfg->slot1_enabled;
+        o["hour2"] = cfg->hour2;
+        o["minute2"] = cfg->minute2;
+        o["duration2_s"] = cfg->duration2_sec;
+        o["slot2_enabled"] = cfg->slot2_enabled;
+        o["hour3"] = cfg->hour3;
+        o["minute3"] = cfg->minute3;
+        o["duration3_s"] = cfg->duration3_sec;
+        o["slot3_enabled"] = cfg->slot3_enabled;
+        o["resume"] = cfg->resume_after_refill;
+        o["resume_level"] = cfg->resume_level;
+        o["remaining_ms"] = st->remaining_ms;
+        if (cfg->name.length())
+            o["name"] = sanitizeUtf8_(cfg->name);
+        ++current_index;
+    }
+
+    watering_summary["enabled"] = watering_enabled;
+    watering_summary["active"] = watering_active;
+    root["offset"] = offset;
+    root["limit"] = limit;
+    root["total"] = watering_enabled;
+}
+
 void AppRuntime::appendLeakSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const{
     JsonObject summary = root["summary"].to<JsonObject>();
     JsonObject leak_summary = summary["leak"].to<JsonObject>();
@@ -3028,7 +3096,214 @@ void AppRuntime::handleTankFrame_(uint32_t node_id, const String &action, JsonVa
     publishCloudStackEvent_(node_id, "tanks.level", "empty", event_json);
 }
 
-void AppRuntime::handleWateringFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
+void AppRuntime::handleWateringFrame_(uint32_t node_id, uint32_t target_node, uint32_t reply_to,
+                                      const String &action, JsonVariantConst params){
+    if (action == "snapshot_req")
+    {
+        const uint16_t offset = (uint16_t)(params["offset"] | 0);
+        uint16_t limit = (uint16_t)(params["limit"] | StackUnitSnapshot::kPageSize);
+        if (limit == 0 || limit > StackUnitSnapshot::kPageSize)
+            limit = StackUnitSnapshot::kPageSize;
+        DynamicJsonDocument doc(3072);
+        appendWateringSnapshotPage_(doc.to<JsonObject>(), offset, limit);
+        net.network.stackSlaveSendResponse(target_node, "watering", "snapshot", reply_to, &doc);
+        return;
+    }
+    if (action == "snapshot")
+    {
+        const uint16_t offset = (uint16_t)(params["offset"] | 0);
+        const uint16_t total = (uint16_t)(params["total"] | 0);
+        const uint16_t summary_total = (uint16_t)(params["summary"]["watering"]["enabled"] | 0);
+        const uint16_t active_total = (uint16_t)(params["summary"]["watering"]["active"] | 0);
+        uint8_t item_count = 0;
+        const JsonArrayConst watering_items = params["controllers"]["watering"].as<JsonArrayConst>();
+        memset(_stack_watering_page_items, 0, sizeof(_stack_watering_page_items));
+        if (!watering_items.isNull())
+        {
+            for (JsonObjectConst item : watering_items)
+            {
+                if (item_count >= StackUnitSnapshot::kPageSize)
+                    break;
+                auto &dst = _stack_watering_page_items[item_count];
+                dst.id = (uint8_t)(item["id"] | 0);
+                dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                         : (item["enabled"].as<int>() != 0);
+                dst.status = item["status"].is<bool>() ? item["status"].as<bool>()
+                                                       : (item["status"].as<int>() != 0);
+                dst.active = item["active"].is<bool>() ? item["active"].as<bool>()
+                                                       : (item["active"].as<int>() != 0);
+                dst.paused = item["paused"].is<bool>() ? item["paused"].as<bool>()
+                                                       : (item["paused"].as<int>() != 0);
+                dst.port = (uint8_t)(item["port"] | WateringController::kInvalidPort);
+                dst.tank_id = (uint8_t)(item["tank"] | 0);
+                dst.weekdays_mask = (uint8_t)(item["weekdays_mask"] | 0);
+                dst.hour = (uint8_t)(item["hour"] | 0xFF);
+                dst.minute = (uint8_t)(item["minute"] | 0xFF);
+                dst.duration_sec = (uint32_t)(item["duration_s"] | 0u);
+                dst.slot1_enabled = item["slot1_enabled"].is<bool>() ? item["slot1_enabled"].as<bool>()
+                                                                     : (item["slot1_enabled"].as<int>() != 0);
+                dst.hour2 = (uint8_t)(item["hour2"] | 0xFF);
+                dst.minute2 = (uint8_t)(item["minute2"] | 0xFF);
+                dst.duration2_sec = (uint32_t)(item["duration2_s"] | 0u);
+                dst.slot2_enabled = item["slot2_enabled"].is<bool>() ? item["slot2_enabled"].as<bool>()
+                                                                     : (item["slot2_enabled"].as<int>() != 0);
+                dst.hour3 = (uint8_t)(item["hour3"] | 0xFF);
+                dst.minute3 = (uint8_t)(item["minute3"] | 0xFF);
+                dst.duration3_sec = (uint32_t)(item["duration3_s"] | 0u);
+                dst.slot3_enabled = item["slot3_enabled"].is<bool>() ? item["slot3_enabled"].as<bool>()
+                                                                     : (item["slot3_enabled"].as<int>() != 0);
+                dst.resume_after_refill = item["resume"].is<bool>() ? item["resume"].as<bool>()
+                                                                    : (item["resume"].as<int>() != 0);
+                dst.resume_level = (uint8_t)(item["resume_level"] | 0);
+                dst.remaining_ms = (uint32_t)(item["remaining_ms"] | 0u);
+                strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
+                ++item_count;
+            }
+        }
+        net.network.completeStackPageRequest(StackUnitSnapshot::PageKind::Watering, node_id, offset);
+        net.network.updateStackIndexWateringPage(node_id, offset, total > 0 ? total : summary_total, active_total,
+                                                 _stack_watering_page_items, item_count, millis());
+        StackUnitSnapshot::State state{};
+        StackUnitSnapshot::CacheState cache{};
+        if (net.network.stackIndexState(node_id, state) && net.network.stackIndexCacheState(node_id, cache))
+        {
+            const uint16_t expected_total = (total > 0) ? total : summary_total;
+            const uint16_t target_total =
+                (expected_total > StackUnitSnapshot::kWateringCount) ? (uint16_t)StackUnitSnapshot::kWateringCount
+                                                                     : expected_total;
+            if (target_total > 0 && cache.watering_count < target_total)
+            {
+                const uint16_t next_offset = cache.watering_count;
+                if (net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Watering, node_id, millis(),
+                                                        next_offset, 4000u))
+                {
+                    _pending_stack_watering_page = true;
+                    _pending_stack_watering_node_id = node_id;
+                    _pending_stack_watering_offset = next_offset;
+                    _pending_stack_watering_limit = StackUnitSnapshot::kPageSize;
+                    const bool bootstrap_log = shouldLogStackBootstrapSync_(node_id);
+                    _pending_stack_watering_log =
+                        bootstrap_log &&
+                        !(_stack_bootstrap_logged_watering_node_id == node_id &&
+                          _stack_bootstrap_logged_watering_offset == next_offset);
+                    if (_pending_stack_watering_log)
+                    {
+                        _stack_bootstrap_logged_watering_node_id = node_id;
+                        _stack_bootstrap_logged_watering_offset = next_offset;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    if (action == "set")
+    {
+        WateringController &watering = control.controllers.watering();
+        auto guard = watering.lockGuard();
+        const JsonArrayConst items = params["items"].as<JsonArrayConst>();
+        bool persist_needed = false;
+        for (JsonObjectConst item : items)
+        {
+            const uint8_t id = (uint8_t)(item["id"] | 0);
+            if (id == 0)
+                continue;
+            if (item.containsKey("enabled"))
+            {
+                persist_needed = true;
+                watering.setEnabled(id, item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                                   : (item["enabled"].as<int>() != 0));
+            }
+            if (item.containsKey("name"))
+            {
+                persist_needed = true;
+                watering.setName(id, String(item["name"] | ""));
+            }
+            if (item.containsKey("port"))
+            {
+                persist_needed = true;
+                watering.setPort(id, (uint8_t)(item["port"] | WateringController::kInvalidPort));
+            }
+            if (item.containsKey("status"))
+            {
+                const bool status = item["status"].is<bool>() ? item["status"].as<bool>()
+                                                              : (item["status"].as<int>() != 0);
+                watering.setStatus(id, status);
+            }
+            if (item.containsKey("weekdays_mask"))
+            {
+                persist_needed = true;
+                watering.setWeekdaysMask(id, (uint8_t)(item["weekdays_mask"] | 0));
+            }
+            if (item.containsKey("tank"))
+            {
+                persist_needed = true;
+                watering.setTankId(id, (uint8_t)(item["tank"] | 0));
+            }
+            if (item.containsKey("resume"))
+            {
+                persist_needed = true;
+                watering.setResumeAfterRefill(id, item["resume"].is<bool>() ? item["resume"].as<bool>()
+                                                                           : (item["resume"].as<int>() != 0));
+            }
+            if (item.containsKey("resume_level"))
+            {
+                persist_needed = true;
+                watering.setResumeLevel(id, (uint8_t)(item["resume_level"] | 0));
+            }
+
+            if (item.containsKey("hour") || item.containsKey("minute"))
+            {
+                persist_needed = true;
+                watering.setStartTimeSlot(id, 0, (uint8_t)(item["hour"] | 0xFF), (uint8_t)(item["minute"] | 0xFF));
+            }
+            if (item.containsKey("duration_s"))
+            {
+                persist_needed = true;
+                watering.setDurationSlot(id, 0, (uint32_t)(item["duration_s"] | 0u));
+            }
+            if (item.containsKey("slot1_enabled"))
+            {
+                persist_needed = true;
+                watering.setSlotEnabled(id, 0, item["slot1_enabled"].is<bool>() ? item["slot1_enabled"].as<bool>()
+                                                                                 : (item["slot1_enabled"].as<int>() != 0));
+            }
+            if (item.containsKey("hour2") || item.containsKey("minute2"))
+            {
+                persist_needed = true;
+                watering.setStartTimeSlot(id, 1, (uint8_t)(item["hour2"] | 0xFF), (uint8_t)(item["minute2"] | 0xFF));
+            }
+            if (item.containsKey("duration2_s"))
+            {
+                persist_needed = true;
+                watering.setDurationSlot(id, 1, (uint32_t)(item["duration2_s"] | 0u));
+            }
+            if (item.containsKey("slot2_enabled"))
+            {
+                persist_needed = true;
+                watering.setSlotEnabled(id, 1, item["slot2_enabled"].is<bool>() ? item["slot2_enabled"].as<bool>()
+                                                                                 : (item["slot2_enabled"].as<int>() != 0));
+            }
+            if (item.containsKey("hour3") || item.containsKey("minute3"))
+            {
+                persist_needed = true;
+                watering.setStartTimeSlot(id, 2, (uint8_t)(item["hour3"] | 0xFF), (uint8_t)(item["minute3"] | 0xFF));
+            }
+            if (item.containsKey("duration3_s"))
+            {
+                persist_needed = true;
+                watering.setDurationSlot(id, 2, (uint32_t)(item["duration3_s"] | 0u));
+            }
+            if (item.containsKey("slot3_enabled"))
+            {
+                persist_needed = true;
+                watering.setSlotEnabled(id, 2, item["slot3_enabled"].is<bool>() ? item["slot3_enabled"].as<bool>()
+                                                                                 : (item["slot3_enabled"].as<int>() != 0));
+            }
+        }
+        if (persist_needed && !cfg.configs_manager.save())
+            core.logs.warn(F("STACK"), F("Watering stack save failed: node: 0x%08lX"), (unsigned long)node_id);
+        return;
+    }
     if (action != "event")
         return;
     const String event = params["event"] | "";
@@ -3379,6 +3654,47 @@ void AppRuntime::flushPendingStackTanksPage_(){
     else
     {
         logStackSendFailDiag_(node_id, "tanks", offset, range_end);
+    }
+}
+
+void AppRuntime::flushPendingStackWateringPage_(){
+    if (!_pending_stack_watering_page)
+        return;
+    if (!stackMasterActive_() && !(stackSlaveActive_() && net.network.stackSlaveAuthorized()))
+        return;
+    _pending_stack_watering_page = false;
+    const bool log_sync = _pending_stack_watering_log;
+    _pending_stack_watering_log = false;
+
+    const uint32_t node_id = _pending_stack_watering_node_id;
+    const uint16_t offset = _pending_stack_watering_offset;
+    uint16_t limit = _pending_stack_watering_limit;
+    if (node_id == 0)
+        return;
+    if (limit == 0)
+        limit = StackUnitSnapshot::kPageSize;
+
+    DynamicJsonDocument req(64);
+    req["offset"] = offset;
+    req["limit"] = limit;
+
+    const uint16_t range_end = (uint16_t)(offset + limit - 1u);
+    const String label = stackNodeLabel_(node_id);
+
+    const bool sent = net.network.stackRoute().sendRequestSelected(cfg.configs_manager.stackPayloadMode(), node_id,
+                                                                   "watering", "snapshot_req", &req, true);
+    if (sent)
+    {
+        if (log_sync)
+        {
+            core.logs.info(F("STACK"), F("Sync %s water %u-%u"),
+                           label.length() ? label.c_str() : "unknown",
+                           (unsigned)offset, (unsigned)range_end);
+        }
+    }
+    else
+    {
+        logStackSendFailDiag_(node_id, "watering", offset, range_end);
     }
 }
 

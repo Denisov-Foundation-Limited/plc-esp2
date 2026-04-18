@@ -265,6 +265,41 @@ bool StackUnitSnapshot::tanksPage(uint32_t node_id, uint8_t offset, TankItem *ou
     return entry && copyPage_<TankItem, kTankCount>(entry->tanks.items, entry->cache.tank_count, offset, out, capacity, out_count);
 }
 
+bool StackUnitSnapshot::wateringById(uint32_t node_id, uint8_t id, WateringItem &out) const
+{
+    if (node_id == 0 || id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyItemById_<WateringItem, kWateringCount>(entry->watering.items, entry->cache.watering_count, id, out);
+}
+
+bool StackUnitSnapshot::wateringAt(uint32_t node_id, uint8_t index, WateringItem &out) const
+{
+    if (node_id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyItemAt_<WateringItem, kWateringCount>(entry->watering.items, entry->cache.watering_count, index, out);
+}
+
+bool StackUnitSnapshot::wateringPage(uint32_t node_id, uint8_t offset, WateringItem *out, uint8_t capacity,
+                                     uint8_t &out_count) const
+{
+    if (node_id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyPage_<WateringItem, kWateringCount>(entry->watering.items, entry->cache.watering_count, offset,
+                                                            out, capacity, out_count);
+}
+
 bool StackUnitSnapshot::leakById(uint32_t node_id, uint8_t id, LeakItem &out) const
 {
     if (node_id == 0 || id == 0)
@@ -323,6 +358,12 @@ bool StackUnitSnapshot::prepareTanksPageRequest(uint32_t node_id, uint32_t now_m
     return preparePageRequest_(node_id, PageKind::Tanks, now_ms, offset, pending_ms);
 }
 
+bool StackUnitSnapshot::prepareWateringPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset,
+                                                   uint32_t pending_ms)
+{
+    return preparePageRequest_(node_id, PageKind::Watering, now_ms, offset, pending_ms);
+}
+
 bool StackUnitSnapshot::prepareLeakPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
 {
     return preparePageRequest_(node_id, PageKind::Leak, now_ms, offset, pending_ms);
@@ -353,6 +394,11 @@ void StackUnitSnapshot::completeTanksPageRequest(uint32_t node_id, uint16_t offs
     completePageRequest_(node_id, PageKind::Tanks, offset);
 }
 
+void StackUnitSnapshot::completeWateringPageRequest(uint32_t node_id, uint16_t offset)
+{
+    completePageRequest_(node_id, PageKind::Watering, offset);
+}
+
 void StackUnitSnapshot::completeLeakPageRequest(uint32_t node_id, uint16_t offset)
 {
     completePageRequest_(node_id, PageKind::Leak, offset);
@@ -381,6 +427,11 @@ void StackUnitSnapshot::clearThermoPageRequest(uint32_t node_id)
 void StackUnitSnapshot::clearTanksPageRequest(uint32_t node_id)
 {
     clearPageRequest_(node_id, PageKind::Tanks);
+}
+
+void StackUnitSnapshot::clearWateringPageRequest(uint32_t node_id)
+{
+    clearPageRequest_(node_id, PageKind::Watering);
 }
 
 void StackUnitSnapshot::clearLeakPageRequest(uint32_t node_id)
@@ -527,6 +578,26 @@ void StackUnitSnapshot::applyTanksPage(uint32_t node_id, uint16_t offset, uint16
     entry->state.tanks_enabled = enabled_total;
     entry->state.tanks_alert = alert_total;
     entry->cache.tank_count = applyPage_(entry->tanks, offset, items, item_count);
+}
+
+void StackUnitSnapshot::applyWateringPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total,
+                                          uint16_t active_total, const WateringItem *items, uint8_t item_count,
+                                          uint32_t updated_ms)
+{
+    if (node_id == 0)
+        return;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return;
+    Entry *entry = allocEntry_(node_id);
+    if (!entry)
+        return;
+    entry->used = true;
+    entry->state.node_id = node_id;
+    entry->state.updated_ms = updated_ms ? updated_ms : millis();
+    entry->state.watering_enabled = enabled_total;
+    entry->state.watering_active = active_total;
+    entry->cache.watering_count = applyPage_(entry->watering, offset, items, item_count);
 }
 
 void StackUnitSnapshot::applyLeaksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
@@ -800,6 +871,8 @@ StackUnitSnapshot::PageRequestState &StackUnitSnapshot::pageRequestState_(Entry 
             return entry.thermo_request;
         case PageKind::Tanks:
             return entry.tanks_request;
+        case PageKind::Watering:
+            return entry.watering_request;
         case PageKind::Leak:
         default:
             return entry.leak_request;
@@ -820,6 +893,8 @@ const StackUnitSnapshot::PageRequestState &StackUnitSnapshot::pageRequestState_(
             return entry.thermo_request;
         case PageKind::Tanks:
             return entry.tanks_request;
+        case PageKind::Watering:
+            return entry.watering_request;
         case PageKind::Leak:
         default:
             return entry.leak_request;

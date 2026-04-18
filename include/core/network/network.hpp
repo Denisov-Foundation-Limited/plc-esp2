@@ -210,6 +210,10 @@ public:
     bool stackIndexTankAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::TankItem &out) const;
     bool stackIndexTanksPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::TankItem *out, uint8_t capacity,
                              uint8_t &out_count) const;
+    bool stackIndexWateringById(uint32_t node_id, uint8_t id, StackUnitSnapshot::WateringItem &out) const;
+    bool stackIndexWateringAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::WateringItem &out) const;
+    bool stackIndexWateringPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::WateringItem *out, uint8_t capacity,
+                                uint8_t &out_count) const;
     bool stackIndexLeakById(uint32_t node_id, uint8_t id, StackUnitSnapshot::LeakItem &out) const;
     bool stackIndexLeakAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::LeakItem &out) const;
     bool stackIndexLeaksPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::LeakItem *out, uint8_t capacity,
@@ -231,6 +235,9 @@ public:
                                     const StackUnitSnapshot::ThermoItem *items, uint8_t item_count, uint32_t updated_ms);
     void updateStackIndexTanksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
                                    const StackUnitSnapshot::TankItem *items, uint8_t item_count, uint32_t updated_ms);
+    void updateStackIndexWateringPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t active_total,
+                                      const StackUnitSnapshot::WateringItem *items, uint8_t item_count,
+                                      uint32_t updated_ms);
     void updateStackIndexLeaksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
                                    const StackUnitSnapshot::LeakItem *items, uint8_t item_count, uint32_t updated_ms);
     void invalidateStackIndexState(uint32_t node_id);
@@ -342,6 +349,25 @@ public:
                                      ? StackUnitSnapshot::kPageSize
                                      : (uint8_t)(limit - offset);
             if (!stackIndexLeaksPage(node_id, offset, page, want, page_count) || page_count == 0)
+                break;
+            for (uint8_t i = 0; i < page_count; ++i)
+                fn((uint8_t)(offset + i), page[i]);
+            offset = (uint8_t)(offset + page_count);
+        }
+    }
+
+    template <typename FnT>
+    void forEachStackWatering(uint32_t node_id, uint8_t count, FnT fn) const
+    {
+        StackUnitSnapshot::WateringItem page[StackUnitSnapshot::kPageSize]{};
+        const uint8_t limit = (count > StackUnitSnapshot::kWateringCount) ? (uint8_t)StackUnitSnapshot::kWateringCount : count;
+        for (uint8_t offset = 0; offset < limit;)
+        {
+            uint8_t page_count = 0;
+            const uint8_t want = ((uint8_t)(limit - offset) > StackUnitSnapshot::kPageSize)
+                                     ? StackUnitSnapshot::kPageSize
+                                     : (uint8_t)(limit - offset);
+            if (!stackIndexWateringPage(node_id, offset, page, want, page_count) || page_count == 0)
                 break;
             for (uint8_t i = 0; i < page_count; ++i)
                 fn((uint8_t)(offset + i), page[i]);

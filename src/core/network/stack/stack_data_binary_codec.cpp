@@ -64,6 +64,27 @@ enum WateringEventMask : uint8_t
     kWateringHasReason = 0x02,
 };
 
+enum WateringSetMask : uint32_t
+{
+    kWateringSetEnabled = 0x0001,
+    kWateringSetName = 0x0002,
+    kWateringSetPort = 0x0004,
+    kWateringSetStatus = 0x0008,
+    kWateringSetWeekdays = 0x0010,
+    kWateringSetTank = 0x0020,
+    kWateringSetResume = 0x0040,
+    kWateringSetResumeLevel = 0x0080,
+    kWateringSetSlot1Time = 0x0100,
+    kWateringSetSlot1Duration = 0x0200,
+    kWateringSetSlot1Enabled = 0x0400,
+    kWateringSetSlot2Time = 0x0800,
+    kWateringSetSlot2Duration = 0x1000,
+    kWateringSetSlot2Enabled = 0x2000,
+    kWateringSetSlot3Time = 0x4000,
+    kWateringSetSlot3Duration = 0x8000,
+    kWateringSetSlot3Enabled = 0x00010000,
+};
+
 enum SecurityResultMask : uint8_t
 {
     kSecurityResultMatch = 0x01,
@@ -1232,6 +1253,141 @@ bool decodeSocketSet_(const uint8_t *data, size_t size, DynamicJsonDocument &out
     return left == 0;
 }
 
+bool encodeWateringSnapshot_(JsonVariantConst value, std::vector<uint8_t> &out)
+{
+    JsonObjectConst summary = value["summary"]["watering"].as<JsonObjectConst>();
+    JsonArrayConst items = value["controllers"]["watering"].as<JsonArrayConst>();
+    out.clear();
+    appendU8_(out, kSchemaVersion);
+    appendU16_(out, (uint16_t)(value["offset"] | 0));
+    appendU16_(out, (uint16_t)(value["limit"] | StackUnitSnapshot::kPageSize));
+    appendU16_(out, (uint16_t)(value["total"] | 0));
+    appendU16_(out, (uint16_t)(summary["enabled"] | 0));
+    appendU16_(out, (uint16_t)(summary["active"] | 0));
+    const uint8_t count = items.isNull() ? 0u : (uint8_t)min((size_t)StackUnitSnapshot::kPageSize, items.size());
+    appendU8_(out, count);
+    if (!items.isNull())
+    {
+        uint8_t emitted = 0;
+        for (JsonObjectConst item : items)
+        {
+            if (emitted >= count)
+                break;
+            appendU8_(out, (uint8_t)(item["id"] | 0));
+            uint8_t flags = 0;
+            if (item["enabled"] | false)
+                flags |= kItemEnabled;
+            if (item["status"] | false)
+                flags |= kItemState;
+            if (item["active"] | false)
+                flags |= kItemBool3;
+            if (item["paused"] | false)
+                flags |= kItemBool4;
+            if (item["slot1_enabled"] | false)
+                flags |= kItemBool5;
+            if (item["slot2_enabled"] | false)
+                flags |= kItemBool6;
+            if (item["slot3_enabled"] | false)
+                flags |= kItemBool7;
+            if (item["resume"] | false)
+                flags |= kItemBool8;
+            appendU8_(out, flags);
+            appendU8_(out, (uint8_t)(item["port"] | 0xFF));
+            appendU8_(out, (uint8_t)(item["tank"] | 0));
+            appendU8_(out, (uint8_t)(item["weekdays_mask"] | 0));
+            appendU8_(out, (uint8_t)(item["hour"] | 0xFF));
+            appendU8_(out, (uint8_t)(item["minute"] | 0xFF));
+            appendU32_(out, (uint32_t)(item["duration_s"] | 0u));
+            appendU8_(out, (uint8_t)(item["hour2"] | 0xFF));
+            appendU8_(out, (uint8_t)(item["minute2"] | 0xFF));
+            appendU32_(out, (uint32_t)(item["duration2_s"] | 0u));
+            appendU8_(out, (uint8_t)(item["hour3"] | 0xFF));
+            appendU8_(out, (uint8_t)(item["minute3"] | 0xFF));
+            appendU32_(out, (uint32_t)(item["duration3_s"] | 0u));
+            appendU8_(out, (uint8_t)(item["resume_level"] | 0));
+            appendU32_(out, (uint32_t)(item["remaining_ms"] | 0u));
+            appendString_(out, item["name"] | "");
+            ++emitted;
+        }
+    }
+    return true;
+}
+
+bool decodeWateringSnapshot_(const uint8_t *data, size_t size, DynamicJsonDocument &out)
+{
+    const uint8_t *p = data;
+    size_t left = size;
+    uint16_t offset = 0, limit = 0, total = 0, enabled_total = 0, active_total = 0;
+    uint8_t count = 0;
+    if (!readVersion_(p, left) || !readU16_(p, left, offset) || !readU16_(p, left, limit) || !readU16_(p, left, total) ||
+        !readU16_(p, left, enabled_total) || !readU16_(p, left, active_total) || !readU8_(p, left, count))
+        return false;
+    out.clear();
+    out["offset"] = offset;
+    out["limit"] = limit;
+    out["total"] = total;
+    JsonObject summary = out["summary"].to<JsonObject>();
+    JsonObject watering_summary = summary["watering"].to<JsonObject>();
+    watering_summary["enabled"] = enabled_total;
+    watering_summary["active"] = active_total;
+    JsonObject controllers = out["controllers"].to<JsonObject>();
+    JsonArray items = controllers["watering"].to<JsonArray>();
+    for (uint8_t i = 0; i < count; ++i)
+    {
+        uint8_t id = 0;
+        uint8_t flags = 0;
+        uint8_t port = 0xFF;
+        uint8_t tank = 0;
+        uint8_t weekdays_mask = 0;
+        uint8_t hour = 0xFF;
+        uint8_t minute = 0xFF;
+        uint32_t duration_s = 0;
+        uint8_t hour2 = 0xFF;
+        uint8_t minute2 = 0xFF;
+        uint32_t duration2_s = 0;
+        uint8_t hour3 = 0xFF;
+        uint8_t minute3 = 0xFF;
+        uint32_t duration3_s = 0;
+        uint8_t resume_level = 0;
+        uint32_t remaining_ms = 0;
+        String name;
+        if (!readU8_(p, left, id) || !readU8_(p, left, flags) || !readU8_(p, left, port) || !readU8_(p, left, tank) ||
+            !readU8_(p, left, weekdays_mask) || !readU8_(p, left, hour) || !readU8_(p, left, minute) ||
+            !readU32_(p, left, duration_s) || !readU8_(p, left, hour2) || !readU8_(p, left, minute2) ||
+            !readU32_(p, left, duration2_s) || !readU8_(p, left, hour3) || !readU8_(p, left, minute3) ||
+            !readU32_(p, left, duration3_s) || !readU8_(p, left, resume_level) || !readU32_(p, left, remaining_ms) ||
+            !readString_(p, left, name))
+            return false;
+        JsonObject item = items.add<JsonObject>();
+        item["id"] = id;
+        item["enabled"] = (flags & kItemEnabled) != 0;
+        item["status"] = (flags & kItemState) != 0;
+        item["active"] = (flags & kItemBool3) != 0;
+        item["paused"] = (flags & kItemBool4) != 0;
+        item["slot1_enabled"] = (flags & kItemBool5) != 0;
+        item["slot2_enabled"] = (flags & kItemBool6) != 0;
+        item["slot3_enabled"] = (flags & kItemBool7) != 0;
+        item["resume"] = (flags & kItemBool8) != 0;
+        item["port"] = port;
+        item["tank"] = tank;
+        item["weekdays_mask"] = weekdays_mask;
+        item["hour"] = hour;
+        item["minute"] = minute;
+        item["duration_s"] = duration_s;
+        item["hour2"] = hour2;
+        item["minute2"] = minute2;
+        item["duration2_s"] = duration2_s;
+        item["hour3"] = hour3;
+        item["minute3"] = minute3;
+        item["duration3_s"] = duration3_s;
+        item["resume_level"] = resume_level;
+        item["remaining_ms"] = remaining_ms;
+        if (name.length())
+            item["name"] = name;
+    }
+    return left == 0;
+}
+
 bool encodeMeteoSet_(JsonVariantConst value, std::vector<uint8_t> &out)
 {
     JsonArrayConst items = value["items"].as<JsonArrayConst>();
@@ -1896,6 +2052,238 @@ bool decodeWateringEvent_(const uint8_t *data, size_t size, DynamicJsonDocument 
     return left == 0;
 }
 
+bool encodeWateringSet_(JsonVariantConst value, std::vector<uint8_t> &out)
+{
+    JsonArrayConst items = value["items"].as<JsonArrayConst>();
+    out.clear();
+    appendU8_(out, kSchemaVersion);
+    const uint8_t count = items.isNull() ? 0u : (uint8_t)min((size_t)255u, items.size());
+    appendU8_(out, count);
+    if (!items.isNull())
+    {
+        for (JsonObjectConst item : items)
+        {
+            uint32_t mask = 0;
+            if (item.containsKey("enabled"))
+                mask |= kWateringSetEnabled;
+            if (item.containsKey("name"))
+                mask |= kWateringSetName;
+            if (item.containsKey("port"))
+                mask |= kWateringSetPort;
+            if (item.containsKey("status"))
+                mask |= kWateringSetStatus;
+            if (item.containsKey("weekdays_mask"))
+                mask |= kWateringSetWeekdays;
+            if (item.containsKey("tank"))
+                mask |= kWateringSetTank;
+            if (item.containsKey("resume"))
+                mask |= kWateringSetResume;
+            if (item.containsKey("resume_level"))
+                mask |= kWateringSetResumeLevel;
+            if (item.containsKey("hour") || item.containsKey("minute"))
+                mask |= kWateringSetSlot1Time;
+            if (item.containsKey("duration_s"))
+                mask |= kWateringSetSlot1Duration;
+            if (item.containsKey("slot1_enabled"))
+                mask |= kWateringSetSlot1Enabled;
+            if (item.containsKey("hour2") || item.containsKey("minute2"))
+                mask |= kWateringSetSlot2Time;
+            if (item.containsKey("duration2_s"))
+                mask |= kWateringSetSlot2Duration;
+            if (item.containsKey("slot2_enabled"))
+                mask |= kWateringSetSlot2Enabled;
+            if (item.containsKey("hour3") || item.containsKey("minute3"))
+                mask |= kWateringSetSlot3Time;
+            if (item.containsKey("duration3_s"))
+                mask |= kWateringSetSlot3Duration;
+            if (item.containsKey("slot3_enabled"))
+                mask |= kWateringSetSlot3Enabled;
+            appendU8_(out, (uint8_t)(item["id"] | 0));
+            appendU32_(out, mask);
+            if (mask & kWateringSetEnabled)
+                appendBool_(out, item["enabled"] | false);
+            if (mask & kWateringSetName)
+                appendString_(out, item["name"] | "");
+            if (mask & kWateringSetPort)
+                appendU8_(out, (uint8_t)(item["port"] | 0xFF));
+            if (mask & kWateringSetStatus)
+                appendBool_(out, item["status"] | false);
+            if (mask & kWateringSetWeekdays)
+                appendU8_(out, (uint8_t)(item["weekdays_mask"] | 0));
+            if (mask & kWateringSetTank)
+                appendU8_(out, (uint8_t)(item["tank"] | 0));
+            if (mask & kWateringSetResume)
+                appendBool_(out, item["resume"] | false);
+            if (mask & kWateringSetResumeLevel)
+                appendU8_(out, (uint8_t)(item["resume_level"] | 0));
+            if (mask & kWateringSetSlot1Time)
+            {
+                appendU8_(out, (uint8_t)(item["hour"] | 0xFF));
+                appendU8_(out, (uint8_t)(item["minute"] | 0xFF));
+            }
+            if (mask & kWateringSetSlot1Duration)
+                appendU32_(out, (uint32_t)(item["duration_s"] | 0u));
+            if (mask & kWateringSetSlot1Enabled)
+                appendBool_(out, item["slot1_enabled"] | false);
+            if (mask & kWateringSetSlot2Time)
+            {
+                appendU8_(out, (uint8_t)(item["hour2"] | 0xFF));
+                appendU8_(out, (uint8_t)(item["minute2"] | 0xFF));
+            }
+            if (mask & kWateringSetSlot2Duration)
+                appendU32_(out, (uint32_t)(item["duration2_s"] | 0u));
+            if (mask & kWateringSetSlot2Enabled)
+                appendBool_(out, item["slot2_enabled"] | false);
+            if (mask & kWateringSetSlot3Time)
+            {
+                appendU8_(out, (uint8_t)(item["hour3"] | 0xFF));
+                appendU8_(out, (uint8_t)(item["minute3"] | 0xFF));
+            }
+            if (mask & kWateringSetSlot3Duration)
+                appendU32_(out, (uint32_t)(item["duration3_s"] | 0u));
+            if (mask & kWateringSetSlot3Enabled)
+                appendBool_(out, item["slot3_enabled"] | false);
+        }
+    }
+    return true;
+}
+
+bool decodeWateringSet_(const uint8_t *data, size_t size, DynamicJsonDocument &out)
+{
+    const uint8_t *p = data;
+    size_t left = size;
+    uint8_t count = 0;
+    if (!readVersion_(p, left) || !readU8_(p, left, count))
+        return false;
+    out.clear();
+    JsonArray items = out["items"].to<JsonArray>();
+    for (uint8_t i = 0; i < count; ++i)
+    {
+        uint8_t id = 0;
+        uint32_t mask = 0;
+        if (!readU8_(p, left, id) || !readU32_(p, left, mask))
+            return false;
+        JsonObject item = items.add<JsonObject>();
+        item["id"] = id;
+        bool boolv = false;
+        uint8_t u8 = 0;
+        uint32_t u32 = 0;
+        String text;
+        if (mask & kWateringSetEnabled)
+        {
+            if (!readBool_(p, left, boolv))
+                return false;
+            item["enabled"] = boolv;
+        }
+        if (mask & kWateringSetName)
+        {
+            if (!readString_(p, left, text))
+                return false;
+            item["name"] = text;
+        }
+        if (mask & kWateringSetPort)
+        {
+            if (!readU8_(p, left, u8))
+                return false;
+            item["port"] = u8;
+        }
+        if (mask & kWateringSetStatus)
+        {
+            if (!readBool_(p, left, boolv))
+                return false;
+            item["status"] = boolv;
+        }
+        if (mask & kWateringSetWeekdays)
+        {
+            if (!readU8_(p, left, u8))
+                return false;
+            item["weekdays_mask"] = u8;
+        }
+        if (mask & kWateringSetTank)
+        {
+            if (!readU8_(p, left, u8))
+                return false;
+            item["tank"] = u8;
+        }
+        if (mask & kWateringSetResume)
+        {
+            if (!readBool_(p, left, boolv))
+                return false;
+            item["resume"] = boolv;
+        }
+        if (mask & kWateringSetResumeLevel)
+        {
+            if (!readU8_(p, left, u8))
+                return false;
+            item["resume_level"] = u8;
+        }
+        if (mask & kWateringSetSlot1Time)
+        {
+            if (!readU8_(p, left, u8))
+                return false;
+            item["hour"] = u8;
+            if (!readU8_(p, left, u8))
+                return false;
+            item["minute"] = u8;
+        }
+        if (mask & kWateringSetSlot1Duration)
+        {
+            if (!readU32_(p, left, u32))
+                return false;
+            item["duration_s"] = u32;
+        }
+        if (mask & kWateringSetSlot1Enabled)
+        {
+            if (!readBool_(p, left, boolv))
+                return false;
+            item["slot1_enabled"] = boolv;
+        }
+        if (mask & kWateringSetSlot2Time)
+        {
+            if (!readU8_(p, left, u8))
+                return false;
+            item["hour2"] = u8;
+            if (!readU8_(p, left, u8))
+                return false;
+            item["minute2"] = u8;
+        }
+        if (mask & kWateringSetSlot2Duration)
+        {
+            if (!readU32_(p, left, u32))
+                return false;
+            item["duration2_s"] = u32;
+        }
+        if (mask & kWateringSetSlot2Enabled)
+        {
+            if (!readBool_(p, left, boolv))
+                return false;
+            item["slot2_enabled"] = boolv;
+        }
+        if (mask & kWateringSetSlot3Time)
+        {
+            if (!readU8_(p, left, u8))
+                return false;
+            item["hour3"] = u8;
+            if (!readU8_(p, left, u8))
+                return false;
+            item["minute3"] = u8;
+        }
+        if (mask & kWateringSetSlot3Duration)
+        {
+            if (!readU32_(p, left, u32))
+                return false;
+            item["duration3_s"] = u32;
+        }
+        if (mask & kWateringSetSlot3Enabled)
+        {
+            if (!readBool_(p, left, boolv))
+                return false;
+            item["slot3_enabled"] = boolv;
+        }
+    }
+    return left == 0;
+}
+
 bool encodeSecuritySet_(JsonVariantConst value, std::vector<uint8_t> &out)
 {
     uint8_t mask = 0;
@@ -2341,6 +2729,12 @@ bool StackDataBinaryCodec::encode(const char *feature, const char *action, JsonV
     }
     if (strcmp(feature, "watering") == 0)
     {
+        if (strcmp(action, "snapshot_req") == 0)
+            return encodePageRequest_(value, out);
+        if (strcmp(action, "snapshot") == 0)
+            return encodeWateringSnapshot_(value, out);
+        if (strcmp(action, "set") == 0)
+            return encodeWateringSet_(value, out);
         if (strcmp(action, "event") == 0)
             return encodeWateringEvent_(value, out);
     }
@@ -2472,6 +2866,12 @@ bool StackDataBinaryCodec::decode(const char *feature, const char *action, const
     }
     if (strcmp(feature, "watering") == 0)
     {
+        if (strcmp(action, "snapshot_req") == 0)
+            return decodePageRequest_(data, size, out);
+        if (strcmp(action, "snapshot") == 0)
+            return decodeWateringSnapshot_(data, size, out);
+        if (strcmp(action, "set") == 0)
+            return decodeWateringSet_(data, size, out);
         if (strcmp(action, "event") == 0)
             return decodeWateringEvent_(data, size, out);
     }

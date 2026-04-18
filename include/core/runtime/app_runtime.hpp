@@ -177,10 +177,12 @@ private:
     void appendMeteoSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
     void appendThermoSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
     void appendTankSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
+    void appendWateringSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
     void appendLeakSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const;
     void appendControllerSnapshotSummary_(JsonObject root) const;
 
-    void handleWateringFrame_(uint32_t node_id, const String &action, JsonVariantConst params);
+    void handleWateringFrame_(uint32_t node_id, uint32_t target_node, uint32_t reply_to,
+                              const String &action, JsonVariantConst params);
 
     void updateSecurityNotifyMode_();
 
@@ -207,6 +209,7 @@ private:
     void flushPendingStackMeteoPage_();
     void flushPendingStackThermoPage_();
     void flushPendingStackTanksPage_();
+    void flushPendingStackWateringPage_();
     void flushPendingStackLeakPage_();
 
     void flushPendingRfid_();
@@ -294,8 +297,8 @@ private:
     static constexpr uint32_t kStackBootstrapPollMs = 250;
     static constexpr uint32_t kStackBootstrapTimeoutMs = 25000;
     static constexpr uint8_t kStackBootstrapPasses = 2;
-    static constexpr uint8_t kStackPollFeatureCount = 8;
-    static constexpr uint8_t kStackBackgroundPollFeatureCount = 6;
+    static constexpr uint8_t kStackPollFeatureCount = 9;
+    static constexpr uint8_t kStackBackgroundPollFeatureCount = 7;
 
     CoreContext &core;
     HardwareContext &hw;
@@ -360,6 +363,11 @@ private:
     uint16_t _pending_stack_tanks_offset = 0;
     uint16_t _pending_stack_tanks_limit = 0;
     bool _pending_stack_tanks_log = false;
+    bool _pending_stack_watering_page = false;
+    uint32_t _pending_stack_watering_node_id = 0;
+    uint16_t _pending_stack_watering_offset = 0;
+    uint16_t _pending_stack_watering_limit = 0;
+    bool _pending_stack_watering_log = false;
     bool _pending_stack_leak_page = false;
     uint32_t _pending_stack_leak_node_id = 0;
     uint16_t _pending_stack_leak_offset = 0;
@@ -405,12 +413,14 @@ private:
     uint32_t _stack_bootstrap_logged_meteo_node_id = 0;
     uint32_t _stack_bootstrap_logged_thermo_node_id = 0;
     uint32_t _stack_bootstrap_logged_tanks_node_id = 0;
+    uint32_t _stack_bootstrap_logged_watering_node_id = 0;
     uint32_t _stack_bootstrap_logged_leak_node_id = 0;
     uint16_t _stack_bootstrap_logged_sockets_offset = 0xFFFF;
     uint16_t _stack_bootstrap_logged_lights_offset = 0xFFFF;
     uint16_t _stack_bootstrap_logged_meteo_offset = 0xFFFF;
     uint16_t _stack_bootstrap_logged_thermo_offset = 0xFFFF;
     uint16_t _stack_bootstrap_logged_tanks_offset = 0xFFFF;
+    uint16_t _stack_bootstrap_logged_watering_offset = 0xFFFF;
     uint16_t _stack_bootstrap_logged_leak_offset = 0xFFFF;
     uint32_t _stack_bootstrap_queue[StackDeviceRegistry::kMaxDevices]{};
     uint8_t _stack_bootstrap_queue_count = 0;
@@ -425,5 +435,6 @@ private:
     StackUnitSnapshot::MeteoItem _stack_meteo_page_items[StackUnitSnapshot::kPageSize]{};
     StackUnitSnapshot::ThermoItem _stack_thermo_page_items[StackUnitSnapshot::kPageSize]{};
     StackUnitSnapshot::TankItem _stack_tank_page_items[StackUnitSnapshot::kPageSize]{};
+    StackUnitSnapshot::WateringItem _stack_watering_page_items[StackUnitSnapshot::kPageSize]{};
     StackUnitSnapshot::LeakItem _stack_leak_page_items[StackUnitSnapshot::kPageSize]{};
 };

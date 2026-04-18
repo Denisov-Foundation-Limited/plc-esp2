@@ -376,6 +376,7 @@ void WateringHandler::handleWateringSave(WebInterface &web, AsyncWebServerReques
             }
 
             const String time_str = web.paramValue_(request, time_key);
+            const bool slot1_enabled = request->hasParam(prefix + "time_en", true);
             uint8_t hour = 0;
             uint8_t minute = 0;
             const bool time_ok = parseTime_(time_str, hour, minute);
@@ -429,7 +430,13 @@ void WateringHandler::handleWateringSave(WebInterface &web, AsyncWebServerReques
                 watering.setDuration(cfg->id, dur_sec);
                 changed = true;
             }
+            if (slot1_enabled != cfg->slot1_enabled)
+            {
+                watering.setSlotEnabled(cfg->id, 0, slot1_enabled);
+                changed = true;
+            }
             const String dur2_str = web.paramValue_(request, dur2_key);
+            const bool slot2_enabled = request->hasParam(prefix + "time2_en", true);
             uint32_t dur2_min = 0;
             parseDuration_(dur2_str, dur2_min);
             uint32_t dur2_sec = dur2_min * 60u;
@@ -440,7 +447,13 @@ void WateringHandler::handleWateringSave(WebInterface &web, AsyncWebServerReques
                 watering.setDurationSlot(cfg->id, 1, dur2_sec);
                 changed = true;
             }
+            if (slot2_enabled != cfg->slot2_enabled)
+            {
+                watering.setSlotEnabled(cfg->id, 1, slot2_enabled);
+                changed = true;
+            }
             const String dur3_str = web.paramValue_(request, dur3_key);
+            const bool slot3_enabled = request->hasParam(prefix + "time3_en", true);
             uint32_t dur3_min = 0;
             parseDuration_(dur3_str, dur3_min);
             uint32_t dur3_sec = dur3_min * 60u;
@@ -449,6 +462,11 @@ void WateringHandler::handleWateringSave(WebInterface &web, AsyncWebServerReques
             if (dur3_sec != cfg->duration3_sec)
             {
                 watering.setDurationSlot(cfg->id, 2, dur3_sec);
+                changed = true;
+            }
+            if (slot3_enabled != cfg->slot3_enabled)
+            {
+                watering.setSlotEnabled(cfg->id, 2, slot3_enabled);
                 changed = true;
             }
 
