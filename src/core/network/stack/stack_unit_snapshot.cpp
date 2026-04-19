@@ -300,6 +300,29 @@ bool StackUnitSnapshot::wateringPage(uint32_t node_id, uint8_t offset, WateringI
                                                             out, capacity, out_count);
 }
 
+bool StackUnitSnapshot::ruleAt(uint32_t node_id, uint8_t index, RuleItem &out) const
+{
+    if (node_id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyItemAt_<RuleItem, kRuleCount>(entry->rules.items, entry->cache.rule_count, index, out);
+}
+
+bool StackUnitSnapshot::rulesPage(uint32_t node_id, uint8_t offset, RuleItem *out, uint8_t capacity, uint8_t &out_count) const
+{
+    if (node_id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyPage_<RuleItem, kRuleCount>(entry->rules.items, entry->cache.rule_count, offset, out, capacity,
+                                                    out_count);
+}
+
 bool StackUnitSnapshot::leakById(uint32_t node_id, uint8_t id, LeakItem &out) const
 {
     if (node_id == 0 || id == 0)
@@ -600,6 +623,30 @@ void StackUnitSnapshot::applyWateringPage(uint32_t node_id, uint16_t offset, uin
     entry->cache.watering_count = applyPage_(entry->watering, offset, items, item_count);
 }
 
+void StackUnitSnapshot::applyRulesSummary(uint32_t node_id, uint16_t enabled_total, const RuleItem *items, uint8_t item_count,
+                                          uint32_t updated_ms)
+{
+    if (node_id == 0)
+        return;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return;
+    Entry *entry = allocEntry_(node_id);
+    if (!entry)
+        return;
+    entry->used = true;
+    entry->state.node_id = node_id;
+    entry->state.updated_ms = updated_ms ? updated_ms : millis();
+    entry->state.rules_enabled = enabled_total;
+    clearPageCache_(entry->rules);
+    entry->cache.rule_count = 0;
+    if (!items || item_count == 0)
+        return;
+    const uint8_t safe_count = clampCount_(item_count, kRuleCount);
+    memcpy(entry->rules.items, items, sizeof(RuleItem) * safe_count);
+    entry->cache.rule_count = safe_count;
+}
+
 void StackUnitSnapshot::applyLeaksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
                                        const LeakItem *items, uint8_t item_count, uint32_t updated_ms)
 {
@@ -827,6 +874,7 @@ void StackUnitSnapshot::mergeControllerSummary_(State &dst, const State &src)
     memcpy(dst.septic_name, src.septic_name, sizeof(dst.septic_name));
     dst.watering_enabled = src.watering_enabled;
     dst.watering_active = src.watering_active;
+    dst.rules_enabled = src.rules_enabled;
     dst.security_sensors_enabled = src.security_sensors_enabled;
     dst.security_detected = src.security_detected;
     dst.security_detect_preview_count = src.security_detect_preview_count;

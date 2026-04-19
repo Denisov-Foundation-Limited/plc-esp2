@@ -46,6 +46,8 @@ public:
     static constexpr size_t kTankCount = 20;
     static constexpr size_t kWateringNameLen = 24;
     static constexpr size_t kWateringCount = 30;
+    static constexpr size_t kRuleNameLen = 24;
+    static constexpr size_t kRuleCount = 30;
     static constexpr size_t kSepticNameLen = 24;
     static constexpr size_t kLeakNameLen = 24;
     static constexpr size_t kLeakCount = 16;
@@ -148,6 +150,7 @@ public:
         uint8_t id = 0;
         bool enabled = false;
         bool status = false;
+        bool force = false;
         bool active = false;
         bool paused = false;
         uint8_t port = 0xFF;
@@ -169,6 +172,13 @@ public:
         uint8_t resume_level = 0;
         uint32_t remaining_ms = 0;
         char name[kWateringNameLen] = {};
+    };
+
+    struct RuleItem
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        char name[kRuleNameLen] = {};
     };
 
     struct State
@@ -233,6 +243,7 @@ public:
         char septic_name[kSepticNameLen] = {};
         uint16_t watering_enabled = 0;
         uint16_t watering_active = 0;
+        uint16_t rules_enabled = 0;
         uint16_t security_sensors_enabled = 0;
         uint16_t security_detected = 0;
         uint8_t security_detect_preview_count = 0;
@@ -263,6 +274,7 @@ public:
         uint8_t thermo_count = 0;
         uint8_t tank_count = 0;
         uint8_t watering_count = 0;
+        uint8_t rule_count = 0;
         uint8_t leak_count = 0;
     };
 
@@ -316,6 +328,8 @@ public:
     bool wateringById(uint32_t node_id, uint8_t id, WateringItem &out) const;
     bool wateringAt(uint32_t node_id, uint8_t index, WateringItem &out) const;
     bool wateringPage(uint32_t node_id, uint8_t offset, WateringItem *out, uint8_t capacity, uint8_t &out_count) const;
+    bool ruleAt(uint32_t node_id, uint8_t index, RuleItem &out) const;
+    bool rulesPage(uint32_t node_id, uint8_t offset, RuleItem *out, uint8_t capacity, uint8_t &out_count) const;
     bool leakById(uint32_t node_id, uint8_t id, LeakItem &out) const;
     bool leakAt(uint32_t node_id, uint8_t index, LeakItem &out) const;
     bool leaksPage(uint32_t node_id, uint8_t offset, LeakItem *out, uint8_t capacity, uint8_t &out_count) const;
@@ -355,6 +369,8 @@ public:
                         const TankItem *items, uint8_t item_count, uint32_t updated_ms);
     void applyWateringPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t active_total,
                            const WateringItem *items, uint8_t item_count, uint32_t updated_ms);
+    void applyRulesSummary(uint32_t node_id, uint16_t enabled_total, const RuleItem *items, uint8_t item_count,
+                           uint32_t updated_ms);
     void applyLeaksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
                         const LeakItem *items, uint8_t item_count, uint32_t updated_ms);
     void invalidate(uint32_t node_id);
@@ -385,6 +401,7 @@ private:
         PageCache<ThermoItem, kThermoCount> thermo{};
         PageCache<TankItem, kTankCount> tanks{};
         PageCache<WateringItem, kWateringCount> watering{};
+        PageCache<RuleItem, kRuleCount> rules{};
         PageCache<LeakItem, kLeakCount> leaks{};
     };
 

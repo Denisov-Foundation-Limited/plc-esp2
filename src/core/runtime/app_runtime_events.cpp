@@ -659,6 +659,35 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             return;
         params = payload_doc.as<JsonVariantConst>();
     }
+    if (strcmp(route.feature, "quick_actions") == 0)
+    {
+        if (action == "run")
+        {
+            String preset = params["preset"] | "";
+            preset.trim();
+            preset.toLowerCase();
+            uint8_t rule_id = 0;
+            if (preset == "home")
+                rule_id = 1;
+            else if (preset == "prepare")
+                rule_id = 2;
+            else if (preset == "away")
+                rule_id = 3;
+            if (rule_id != 0)
+                control.rules.triggerRule(rule_id);
+        }
+        return;
+    }
+    if (strcmp(route.feature, "rules") == 0)
+    {
+        if (action == "run")
+        {
+            const uint8_t rule_id = (uint8_t)(params["id"] | 0);
+            if (rule_id != 0)
+                control.rules.triggerRule(rule_id);
+        }
+        return;
+    }
     if (strcmp(route.feature, "security") == 0)
     {
         if (action == "alarm")
@@ -871,10 +900,14 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             JsonVariantConst tanks_summary = params["summary"]["tanks"];
             JsonVariantConst septic_summary = params["summary"]["septic"];
             JsonVariantConst watering_summary = params["summary"]["watering"];
+            JsonVariantConst rules_summary = params["summary"]["rules"];
             JsonVariantConst security_summary = params["summary"]["security"];
             JsonVariantConst ring_summary = params["summary"]["ring"];
             JsonVariantConst avr_summary = params["summary"]["avr"];
             JsonVariantConst leak_summary = params["summary"]["leak"];
+            StackUnitSnapshot::RuleItem rule_items[StackUnitSnapshot::kRuleCount]{};
+            uint8_t rule_count = 0;
+            const uint16_t rules_enabled = rules_summary["enabled"] | 0;
             state.security_detect_preview_count = 0;
             memset(state.security_detect_preview, 0, sizeof(state.security_detect_preview));
             state.sockets_enabled = sockets_summary["enabled"] | 0;
@@ -908,6 +941,20 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             strlcpy(state.septic_name, septic_summary["name"] | "", sizeof(state.septic_name));
             state.watering_enabled = watering_summary["enabled"] | 0;
             state.watering_active = watering_summary["active"] | 0;
+            JsonArrayConst rules_items = rules_summary["items"].as<JsonArrayConst>();
+            if (!rules_items.isNull())
+            {
+                for (JsonObjectConst item : rules_items)
+                {
+                    if (rule_count >= StackUnitSnapshot::kRuleCount)
+                        break;
+                    rule_items[rule_count].id = (uint8_t)(item["id"] | 0);
+                    rule_items[rule_count].enabled =
+                        item["enabled"].is<bool>() ? item["enabled"].as<bool>() : (item["enabled"].as<int>() != 0);
+                    strlcpy(rule_items[rule_count].name, item["name"] | "", sizeof(rule_items[rule_count].name));
+                    ++rule_count;
+                }
+            }
             state.security_enabled = security_summary["enabled"] | false;
             state.security_sensors_enabled = security_summary["sensors_enabled"] | 0;
             state.security_detected = security_summary["detected"] | 0;
@@ -938,6 +985,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.leak_enabled = leak_summary["enabled"] | 0;
             state.leak_alert = leak_summary["alert"] | 0;
             net.network.applyStackIndexControllerSummary(node_id, state);
+            net.network.updateStackIndexRulesSummary(node_id, rules_enabled, rule_items, rule_count, state.updated_ms);
             if (!prev_security_alarm && state.security_alarm)
                 syncRemoteSecurityAlarmFromSummary_(node_id);
             return;
@@ -1087,10 +1135,14 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             const JsonVariantConst tanks_summary = params["summary"]["tanks"];
             const JsonVariantConst septic_summary = params["summary"]["septic"];
             const JsonVariantConst watering_summary = params["summary"]["watering"];
+            const JsonVariantConst rules_summary = params["summary"]["rules"];
             const JsonVariantConst security_summary = params["summary"]["security"];
             const JsonVariantConst ring_summary = params["summary"]["ring"];
             const JsonVariantConst avr_summary = params["summary"]["avr"];
             const JsonVariantConst leak_summary = params["summary"]["leak"];
+            StackUnitSnapshot::RuleItem rule_items[StackUnitSnapshot::kRuleCount]{};
+            uint8_t rule_count = 0;
+            const uint16_t rules_enabled = rules_summary["enabled"] | 0;
             if (!meteo_summary.isNull())
             {
                 JsonObject meteo = summary["meteo"].to<JsonObject>();
@@ -1121,6 +1173,31 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                 JsonObject watering = summary["watering"].to<JsonObject>();
                 watering["enabled"] = watering_summary["enabled"] | 0;
                 watering["active"] = watering_summary["active"] | 0;
+            }
+            if (!rules_summary.isNull())
+            {
+                JsonObject rules = summary["rules"].to<JsonObject>();
+                rules["enabled"] = rules_enabled;
+                JsonArray rules_items = rules["items"].to<JsonArray>();
+                JsonArrayConst src_rules_items = rules_summary["items"].as<JsonArrayConst>();
+                if (!src_rules_items.isNull())
+                {
+                    for (JsonObjectConst item : src_rules_items)
+                    {
+                        if (rule_count >= StackUnitSnapshot::kRuleCount)
+                            break;
+                        rule_items[rule_count].id = (uint8_t)(item["id"] | 0);
+                        rule_items[rule_count].enabled =
+                            item["enabled"].is<bool>() ? item["enabled"].as<bool>() : (item["enabled"].as<int>() != 0);
+                        strlcpy(rule_items[rule_count].name, item["name"] | "", sizeof(rule_items[rule_count].name));
+                        JsonObject dst = rules_items.add<JsonObject>();
+                        dst["id"] = rule_items[rule_count].id;
+                        dst["enabled"] = rule_items[rule_count].enabled;
+                        if (rule_items[rule_count].name[0] != '\0')
+                            dst["name"] = rule_items[rule_count].name;
+                        ++rule_count;
+                    }
+                }
             }
             if (!security_summary.isNull())
             {
@@ -1182,6 +1259,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.septic_alert = septic_summary["alert"] | 0;
             state.watering_enabled = watering_summary["enabled"] | 0;
             state.watering_active = watering_summary["active"] | 0;
+            state.rules_enabled = rules_enabled;
             state.security_enabled = security_summary["enabled"] | false;
             state.security_sensors_enabled = security_summary["sensors_enabled"] | 0;
             state.security_detected = security_summary["detected"] | 0;
@@ -1333,6 +1411,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             }
             net.network.applyStackIndexSystemState(node_id, state);
             net.network.applyStackIndexControllerSummary(node_id, state);
+            net.network.updateStackIndexRulesSummary(node_id, rules_enabled, rule_items, rule_count, state.updated_ms);
             if (!prev_security_alarm && state.security_alarm)
                 syncRemoteSecurityAlarmFromSummary_(node_id);
             net.network.clearStackIndexStatePending(node_id);
@@ -2709,6 +2788,7 @@ void AppRuntime::appendWateringSnapshotPage_(JsonObject root, uint16_t offset, u
         o["id"] = cfg->id;
         o["enabled"] = cfg->enabled;
         o["status"] = st->status;
+        o["force"] = st->force;
         o["active"] = st->active;
         o["paused"] = st->paused;
         o["port"] = cfg->port;
@@ -2928,6 +3008,25 @@ void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
     watering_out["active"] = watering_active;
 
     {
+        uint16_t rules_enabled = 0;
+        JsonObject rules_out = summary["rules"].to<JsonObject>();
+        JsonArray rules_items = rules_out["items"].to<JsonArray>();
+        for (size_t i = 0; i < RulesController::kRuleCount; ++i)
+        {
+            const auto *rule = control.rules.ruleByIndex(i);
+            if (!rule || !rule->enabled)
+                continue;
+            ++rules_enabled;
+            JsonObject item = rules_items.add<JsonObject>();
+            item["id"] = (unsigned)rule->id;
+            item["enabled"] = true;
+            if (rule->name.length())
+                item["name"] = sanitizeUtf8_(rule->name);
+        }
+        rules_out["enabled"] = rules_enabled;
+    }
+
+    {
         SecurityController &security = control.controllers.security();
         auto guard = security.lockGuard();
         uint16_t sensors_enabled = 0;
@@ -3130,6 +3229,8 @@ void AppRuntime::handleWateringFrame_(uint32_t node_id, uint32_t target_node, ui
                                                          : (item["enabled"].as<int>() != 0);
                 dst.status = item["status"].is<bool>() ? item["status"].as<bool>()
                                                        : (item["status"].as<int>() != 0);
+                dst.force = item["force"].is<bool>() ? item["force"].as<bool>()
+                                                     : (item["force"].as<int>() != 0);
                 dst.active = item["active"].is<bool>() ? item["active"].as<bool>()
                                                        : (item["active"].as<int>() != 0);
                 dst.paused = item["paused"].is<bool>() ? item["paused"].as<bool>()
@@ -3228,6 +3329,11 @@ void AppRuntime::handleWateringFrame_(uint32_t node_id, uint32_t target_node, ui
                 const bool status = item["status"].is<bool>() ? item["status"].as<bool>()
                                                               : (item["status"].as<int>() != 0);
                 watering.setStatus(id, status);
+            }
+            if (item.containsKey("force"))
+            {
+                watering.setForce(id, item["force"].is<bool>() ? item["force"].as<bool>()
+                                                               : (item["force"].as<int>() != 0));
             }
             if (item.containsKey("weekdays_mask"))
             {

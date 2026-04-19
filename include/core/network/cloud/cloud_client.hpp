@@ -223,6 +223,8 @@ private:
     bool handleCmdSeptic_(const String &action, JsonObjectConst args);
 
     bool handleCmdWatering_(const String &action, JsonObjectConst args);
+    bool handleCmdRules_(const String &action, JsonObjectConst args, String *error_out = nullptr);
+    bool handleCmdQuickActions_(const String &action, JsonObjectConst args, String *error_out = nullptr);
 
     bool handleCmdSecurity_(const String &action, JsonObjectConst args, const ActorInfo &actor);
 
@@ -255,6 +257,7 @@ private:
     static void onLeakEvent_(void *ctx, LeakController::Event ev, uint8_t id, const String &name,
                              bool wet, bool alarm_latched);
     static void onRuleTriggered_(void *ctx, const RulesController::Rule &rule);
+    bool executeRuleControllerAction_(const RulesController::Rule &rule, const RulesController::RuleAction &action);
 
     void fillSystemInfo_(JsonObject out);
     void fillAuthzInfo_(JsonObject out);

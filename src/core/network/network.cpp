@@ -829,6 +829,17 @@ bool Network::stackIndexWateringPage(uint32_t node_id, uint8_t offset, StackUnit
     return _stack_unit_snapshot.wateringPage(node_id, offset, out, capacity, out_count);
 }
 
+bool Network::stackIndexRuleAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::RuleItem &out) const
+{
+    return _stack_unit_snapshot.ruleAt(node_id, index, out);
+}
+
+bool Network::stackIndexRulesPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::RuleItem *out, uint8_t capacity,
+                                  uint8_t &out_count) const
+{
+    return _stack_unit_snapshot.rulesPage(node_id, offset, out, capacity, out_count);
+}
+
 bool Network::stackIndexLeakById(uint32_t node_id, uint8_t id, StackUnitSnapshot::LeakItem &out) const
 {
     return _stack_unit_snapshot.leakById(node_id, id, out);
@@ -981,6 +992,13 @@ void Network::updateStackIndexWateringPage(uint32_t node_id, uint16_t offset, ui
                                            uint8_t item_count, uint32_t updated_ms)
 {
     _stack_unit_snapshot.applyWateringPage(node_id, offset, enabled_total, active_total, items, item_count, updated_ms);
+}
+
+void Network::updateStackIndexRulesSummary(uint32_t node_id, uint16_t enabled_total,
+                                           const StackUnitSnapshot::RuleItem *items, uint8_t item_count,
+                                           uint32_t updated_ms)
+{
+    _stack_unit_snapshot.applyRulesSummary(node_id, enabled_total, items, item_count, updated_ms);
 }
 
 void Network::updateStackIndexLeaksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,

@@ -745,8 +745,6 @@ bool SecurityController::armForcedFrom(const char *src, const String &user){
 
 bool SecurityController::disarmFrom(const char *src, const String &user, bool silent ){
     auto guard = _lock.guard();
-    if (!_armed)
-        return true;
     disarm_(silent, src, user);
     return true;
 }
@@ -1891,8 +1889,7 @@ void SecurityController::disarm_(bool silent){
     if (!silent)
         startBeep_(1, kBeepLongMs, 0);
     _dirty = true;
-    if (was_alarm)
-        _force_save = true;
+    _force_save = true;
     logArmAction_(false, nullptr, String());
     notifyArmState_(false);
     if (was_alarm)
@@ -1965,8 +1962,7 @@ void SecurityController::disarm_(bool silent, const char *src, const String &use
     if (!silent)
         startBeep_(1, kBeepLongMs, 0);
     _dirty = true;
-    if (was_alarm)
-        _force_save = true;
+    _force_save = true;
     logArmAction_(false, src, user);
     notifyArmState_(false);
     if (was_alarm)

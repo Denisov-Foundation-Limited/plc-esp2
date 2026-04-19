@@ -62,7 +62,48 @@ void WateringController::task(){
             RuleConfig &cfg = _cfg[i];
             RuleState &st = _state[i];
 
-            if (!cfg.enabled || !st.status)
+            if (!cfg.enabled)
+            {
+                const bool was_active = st.active;
+                st.force = false;
+                stopIfActive_(cfg, st, Event::Stop, false);
+                if (was_active)
+                    push_event(Event::Stop, cfg, st);
+                st.paused = false;
+                st.remaining_ms = 0;
+                continue;
+            }
+
+            const bool tank_empty = isTankEmpty_(cfg);
+            if (st.force)
+            {
+                if (cfg.port == kInvalidPort || tank_empty)
+                {
+                    st.force = false;
+                    const bool was_active = st.active;
+                    stopIfActive_(cfg, st, tank_empty ? Event::StopEmpty : Event::Stop, false);
+                    if (was_active)
+                        push_event(tank_empty ? Event::StopEmpty : Event::Stop, cfg, st);
+                    st.paused = false;
+                    st.remaining_ms = 0;
+                    continue;
+                }
+                if (!st.active)
+                {
+                    st.active = true;
+                    writePort_(cfg.port, true);
+                    _logs.info(F("WATER"), F("force start: rule: %u port: %u tank: %u"),
+                               (unsigned)cfg.id, (unsigned)cfg.port, (unsigned)cfg.tank_id);
+                    push_event(Event::Start, cfg, st);
+                }
+                st.paused = false;
+                st.end_ms = 0;
+                st.remaining_ms = 0xFFFFFFFFu;
+                _runtime_dirty = true;
+                continue;
+            }
+
+            if (!st.status)
             {
                 const bool was_active = st.active;
                 stopIfActive_(cfg, st, Event::Stop, false);
@@ -73,7 +114,6 @@ void WateringController::task(){
                 continue;
             }
 
-            const bool tank_empty = isTankEmpty_(cfg);
             if (tank_empty && st.active)
             {
                 const Event ev = (cfg.resume_after_refill && timeAfterOrEqual_(st.end_ms, millis())) ? Event::PauseEmpty : Event::StopEmpty;
@@ -435,14 +475,23 @@ void WateringController::applyRuntimeSnapshot(const uint8_t *active_mask, const 
         if (byte >= bytes)
             break;
         st.last_start_key = last_start_key[i];
-        st.remaining_ms = remaining_ms[i];
+        st.force = (remaining_ms[i] == 0xFFFFFFFFu);
+        st.remaining_ms = st.force ? 0xFFFFFFFFu : remaining_ms[i];
         st.active = (active_mask[byte] & bit) != 0;
-        st.paused = (paused_mask[byte] & bit) != 0;
-        if (!cfg.enabled || !st.status || st.remaining_ms == 0)
+        st.paused = st.force ? false : ((paused_mask[byte] & bit) != 0);
+        if (!cfg.enabled || (!st.status && !st.force) || (!st.force && st.remaining_ms == 0))
         {
+            st.force = false;
             st.active = false;
             st.paused = false;
             st.remaining_ms = 0;
+            continue;
+        }
+        if (st.force)
+        {
+            st.active = true;
+            st.end_ms = 0;
+            writePort_(cfg.port, true);
             continue;
         }
         if (st.active)
@@ -470,10 +519,14 @@ void WateringController::buildRuntimeSnapshot(uint8_t *active_mask, uint8_t *pau
             break;
         if (st.active)
             active_mask[byte] |= bit;
-        if (st.paused)
+        if (st.paused && !st.force)
             paused_mask[byte] |= bit;
         last_start_key[i] = st.last_start_key;
-        if (st.active)
+        if (st.force)
+        {
+            remaining_ms[i] = 0xFFFFFFFFu;
+        }
+        else if (st.active)
         {
             const uint32_t now = millis();
             remaining_ms[i] = timeAfterOrEqual_(st.end_ms, now) ? (st.end_ms - now) : 0;
@@ -492,7 +545,10 @@ bool WateringController::setEnabled(size_t id, bool enabled){
         return false;
     _cfg[idx].enabled = enabled;
     if (!enabled)
+    {
+        _state[idx].force = false;
         stopIfActive_(_cfg[idx], _state[idx], Event::Stop);
+    }
     return true;
 }
 
@@ -512,7 +568,10 @@ bool WateringController::setPort(size_t id, uint8_t port){
         return false;
     _cfg[idx].port = port;
     if (port == kInvalidPort)
+    {
+        _state[idx].force = false;
         stopIfActive_(_cfg[idx], _state[idx], Event::Stop);
+    }
     return true;
 }
 
@@ -595,11 +654,49 @@ bool WateringController::setStatus(size_t id, bool status){
         return true;
     _state[idx].status = status;
     if (!status)
+    {
+        _state[idx].force = false;
         stopIfActive_(_cfg[idx], _state[idx], Event::Stop);
+    }
     _state[idx].paused = false;
     _state[idx].remaining_ms = 0;
     _runtime_dirty = true;
     _dirty = true;
+    return true;
+}
+
+bool WateringController::setForce(size_t id, bool force_on){
+    auto guard = _lock.guard();
+    size_t idx = 0;
+    if (!indexById_(id, idx))
+        return false;
+    RuleConfig &cfg = _cfg[idx];
+    RuleState &st = _state[idx];
+    if (!cfg.enabled || cfg.port == kInvalidPort)
+        return false;
+    if (st.force == force_on)
+        return true;
+    if (force_on)
+    {
+        if (isTankEmpty_(cfg))
+            return false;
+        st.force = true;
+        st.active = true;
+        st.paused = false;
+        st.end_ms = 0;
+        st.remaining_ms = 0xFFFFFFFFu;
+        writePort_(cfg.port, true);
+        _logs.info(F("WATER"), F("force on: rule: %u port: %u tank: %u"),
+                   (unsigned)cfg.id, (unsigned)cfg.port, (unsigned)cfg.tank_id);
+        _runtime_dirty = true;
+        notifyEvent_(Event::Start, cfg, st);
+        return true;
+    }
+    st.force = false;
+    st.paused = false;
+    st.remaining_ms = 0;
+    stopIfActive_(cfg, st, Event::Stop);
+    _runtime_dirty = true;
     return true;
 }
 
@@ -630,7 +727,10 @@ bool WateringController::setTankId(size_t id, uint8_t tank_id){
     if (tank_id == 0)
         return true;
     if (isTankEmpty_(_cfg[idx]))
+    {
+        _state[idx].force = false;
         stopForEmpty_(_cfg[idx], _state[idx]);
+    }
     return true;
 }
 

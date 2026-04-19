@@ -34,6 +34,20 @@
 
 namespace
 {
+uint8_t quickActionRuleId_(const String &preset)
+{
+    String key = preset;
+    key.trim();
+    key.toLowerCase();
+    if (key == "home")
+        return 1;
+    if (key == "prepare")
+        return 2;
+    if (key == "away")
+        return 3;
+    return 0;
+}
+
 uint32_t parseNodeId_(JsonVariantConst v)
 {
     if (v.is<uint32_t>())
@@ -882,6 +896,10 @@ void CloudClient::handleCmdLocal_(const String &req_id, const String &ctrl, cons
         ok = handleCmdTanks_(action, args);
     else if (ctrl == "septic")
         ok = handleCmdSeptic_(action, args);
+    else if (ctrl == "quick_actions")
+        ok = handleCmdQuickActions_(action, args, &error);
+    else if (ctrl == "rules")
+        ok = handleCmdRules_(action, args, &error);
     else if (ctrl == "watering")
         ok = handleCmdWatering_(action, args);
     else if (ctrl == "security")
@@ -1265,7 +1283,7 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
             sendError_(req_id, "bad id");
             return;
         }
-        if (action_key != "status" && action_key != "weekdays" && action_key != "tank" &&
+        if (action_key != "status" && action_key != "force" && action_key != "weekdays" && action_key != "tank" &&
             action_key != "resume" && action_key != "resume_level" && action_key != "time" &&
             action_key != "duration" && action_key != "slot_enabled" && action_key != "set")
         {
@@ -1284,6 +1302,10 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
         if (action_key == "status")
         {
             o["status"] = (String(args["state"] | "") == "on");
+        }
+        else if (action_key == "force")
+        {
+            o["force"] = (String(args["state"] | "") == "on");
         }
         else if (action_key == "weekdays")
         {
@@ -1356,6 +1378,8 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
                 o["port"] = args["port"];
             if (args.containsKey("status"))
                 o["status"] = args["status"];
+            if (args.containsKey("force"))
+                o["force"] = args["force"];
             if (args.containsKey("weekdays_mask"))
                 o["weekdays_mask"] = args["weekdays_mask"];
             if (args.containsKey("tank"))
@@ -1400,6 +1424,60 @@ void CloudClient::handleCmdStack_(const String &req_id, uint32_t node_id,
         req["offset"] = 0;
         req["limit"] = StackUnitSnapshot::kPageSize;
         _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "watering", "snapshot_req", &req, true);
+        sendAck_(req_id, true, "");
+        return;
+    }
+    if (ctrl_key == "quick_actions")
+    {
+        if (action_key != "run")
+        {
+            sendError_(req_id, "unsupported action");
+            return;
+        }
+        if (!_network)
+        {
+            sendError_(req_id, "stack route missing");
+            return;
+        }
+        DynamicJsonDocument params(96);
+        params["preset"] = args["preset"] | "";
+        const bool sent = _network->stackRoute().sendEventSelected(stack_payload_mode, node_id, "quick_actions", "run", &params);
+        if (!sent)
+        {
+            sendError_(req_id, "stack route send failed");
+            return;
+        }
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "controllers", "summary_req", nullptr, true);
+        _network->stackRoute().sendRequestSelected(stack_payload_mode, node_id, "security", "status_req", nullptr, true);
+        sendAck_(req_id, true, "");
+        return;
+    }
+    if (ctrl_key == "rules")
+    {
+        if (action_key != "run")
+        {
+            sendError_(req_id, "unsupported action");
+            return;
+        }
+        const uint32_t rule_id = (uint32_t)(args["id"] | 0);
+        if (rule_id == 0)
+        {
+            sendError_(req_id, "bad id");
+            return;
+        }
+        if (!_network)
+        {
+            sendError_(req_id, "stack route missing");
+            return;
+        }
+        DynamicJsonDocument params(64);
+        params["id"] = rule_id;
+        const bool sent = _network->stackRoute().sendEventSelected(stack_payload_mode, node_id, "rules", "run", &params);
+        if (!sent)
+        {
+            sendError_(req_id, "stack route send failed");
+            return;
+        }
         sendAck_(req_id, true, "");
         return;
     }
@@ -1605,6 +1683,8 @@ bool CloudClient::handleCmdWatering_(const String &action, JsonObjectConst args)
     const uint8_t slot_idx = (uint8_t)(slot - 1u);
     if (action == "status")
         return _controllers.watering().setStatus(id, (String(args["state"] | "") == "on"));
+    if (action == "force")
+        return _controllers.watering().setForce(id, (String(args["state"] | "") == "on"));
     if (action == "weekdays")
         return _controllers.watering().setWeekdaysMask(
             id,
@@ -1641,6 +1721,67 @@ bool CloudClient::handleCmdWatering_(const String &action, JsonObjectConst args)
             (bool)(args["enabled"] | false));
     return false;
 }
+
+bool CloudClient::handleCmdRules_(const String &action, JsonObjectConst args, String *error_out)
+{
+    if (action != "run")
+    {
+        if (error_out)
+            *error_out = "unsupported action";
+        return false;
+    }
+    if (!_rules)
+    {
+        if (error_out)
+            *error_out = "rules unavailable";
+        return false;
+    }
+    const uint8_t rule_id = (uint8_t)(args["id"] | 0);
+    if (rule_id == 0)
+    {
+        if (error_out)
+            *error_out = "bad id";
+        return false;
+    }
+    if (!_rules->triggerRule(rule_id))
+    {
+        if (error_out)
+            *error_out = "rule not triggered";
+        return false;
+    }
+    return true;
+}
+
+bool CloudClient::handleCmdQuickActions_(const String &action, JsonObjectConst args, String *error_out)
+{
+    if (action != "run")
+    {
+        if (error_out)
+            *error_out = "unsupported action";
+        return false;
+    }
+    if (!_rules)
+    {
+        if (error_out)
+            *error_out = "rules unavailable";
+        return false;
+    }
+    const uint8_t rule_id = quickActionRuleId_(String(args["preset"] | ""));
+    if (rule_id == 0)
+    {
+        if (error_out)
+            *error_out = "bad preset";
+        return false;
+    }
+    if (!_rules->triggerRule(rule_id))
+    {
+        if (error_out)
+            *error_out = "rule not triggered";
+        return false;
+    }
+    return true;
+}
+
 bool CloudClient::handleCmdSecurity_(const String &action, JsonObjectConst args, const ActorInfo &actor)
 {
     const String src_user = actor.resolved_user.length() ? actor.resolved_user : String("cloud");
@@ -2062,6 +2203,8 @@ void CloudClient::onRuleTriggered_(void *ctx, const RulesController::Rule &rule)
     for (size_t i = 0; i < RulesController::kActionCount; ++i)
     {
         const auto &action = rule.actions[i];
+        if (action.enabled && action.kind == RulesController::ActionKind::Controller)
+            self->executeRuleControllerAction_(rule, action);
         if (!action.enabled || action.kind != RulesController::ActionKind::Notify)
             continue;
         DynamicJsonDocument doc(320);
@@ -2081,6 +2224,37 @@ void CloudClient::onRuleTriggered_(void *ctx, const RulesController::Rule &rule)
         const String reason = action.parameter.length() ? action.parameter : String("rule");
         self->enqueueEvent_(kind, reason, json);
     }
+}
+
+bool CloudClient::executeRuleControllerAction_(const RulesController::Rule &rule, const RulesController::RuleAction &action)
+{
+    String controller = action.controller;
+    String parameter = action.parameter;
+    controller.trim();
+    controller.toLowerCase();
+    parameter.trim();
+    parameter.toLowerCase();
+    if (controller != "security")
+        return false;
+
+    ActorInfo actor{};
+    actor.source = "rule";
+    actor.resolved_user = rule.name.length() ? rule.name : String("rule");
+    actor.username = actor.resolved_user;
+    actor.plc_username = actor.resolved_user;
+    actor.is_admin = true;
+
+    DynamicJsonDocument args(64);
+    if (parameter == "arm")
+        return action.node_id ? (_network ? (handleCmdStack_(String(), action.node_id, controller, "arm", args.as<JsonObjectConst>(), actor), true) : false)
+                              : handleCmdSecurity_("arm", args.as<JsonObjectConst>(), actor);
+    if (parameter == "disarm")
+        return action.node_id ? (_network ? (handleCmdStack_(String(), action.node_id, controller, "disarm", args.as<JsonObjectConst>(), actor), true) : false)
+                              : handleCmdSecurity_("disarm", args.as<JsonObjectConst>(), actor);
+    if (parameter == "clear")
+        return action.node_id ? (_network ? (handleCmdStack_(String(), action.node_id, controller, "clear", args.as<JsonObjectConst>(), actor), true) : false)
+                              : handleCmdSecurity_("clear", args.as<JsonObjectConst>(), actor);
+    return false;
 }
 
 void CloudClient::fillSystemInfo_(JsonObject out)
@@ -2260,6 +2434,21 @@ void CloudClient::fillControllersInfo_(JsonObject out)
 {
     _controllers.ensureSocketConfigsLoaded();
     fillGroups_(out.createNestedArray("groups"));
+    JsonArray rules = out.createNestedArray("rules");
+    if (_rules)
+    {
+        for (size_t i = 0; i < RulesController::kRuleCount; ++i)
+        {
+            const auto *rule = _rules->ruleByIndex(i);
+            if (!rule || !rule->enabled)
+                continue;
+            JsonObject o = rules.add<JsonObject>();
+            o["id"] = (unsigned)rule->id;
+            o["enabled"] = true;
+            if (rule->name.length())
+                o["name"] = rule->name;
+        }
+    }
     fillSockets_(out.createNestedArray("sockets"), false);
     fillSockets_(out.createNestedArray("lights"), true);
     fillMeteo_(out.createNestedArray("meteo"));
@@ -2657,6 +2846,7 @@ void CloudClient::fillWatering_(JsonArray out)
         o["id"] = (unsigned)cfg.id;
         o["enabled"] = cfg.enabled;
         o["status"] = st.status;
+        o["force"] = st.force;
         if (cfg.name.length())
             o["name"] = cfg.name;
         if (cfg.port != WateringController::kInvalidPort)
@@ -3230,6 +3420,7 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                     o["id"] = it.id;
                     o["enabled"] = it.enabled;
                     o["status"] = it.status;
+                    o["force"] = it.force;
                     o["active"] = it.active;
                     o["paused"] = it.paused;
                     if (it.port != WateringController::kInvalidPort)
@@ -3270,6 +3461,21 @@ bool CloudClient::fillStackCachedControllers_(JsonObject out, uint32_t node_id)
                 watering["enabled_count"] = snapshot.watering_enabled;
                 watering["active_count"] = snapshot.watering_active;
                 has_any = has_any || (snapshot.watering_enabled > 0);
+            }
+
+            if (cache.rule_count > 0)
+            {
+                JsonArray rules = out.createNestedArray("rules");
+                _network->forEachStackRule(node_id, cache.rule_count, [&](uint8_t, const StackUnitSnapshot::RuleItem &it) {
+                    if (it.id == 0 || !it.enabled)
+                        return;
+                    JsonObject o = rules.add<JsonObject>();
+                    o["id"] = it.id;
+                    o["enabled"] = it.enabled;
+                    if (it.name[0])
+                        o["name"] = sanitizeUtf8_(String(it.name));
+                });
+                has_any = true;
             }
 
             JsonObject security = out.createNestedObject("security");
@@ -3825,6 +4031,10 @@ bool CloudClient::aclControllerByName_(const String &ctrl, UsersRegistry::AclCon
         out = UsersRegistry::AclController::Security;
     else if (ctrl == "watering")
         out = UsersRegistry::AclController::Watering;
+    else if (ctrl == "quick_actions")
+        out = UsersRegistry::AclController::Security;
+    else if (ctrl == "rules")
+        out = UsersRegistry::AclController::Security;
     else if (ctrl == "leak")
         out = UsersRegistry::AclController::Leak;
     else if (ctrl == "avr")
@@ -3858,6 +4068,10 @@ bool CloudClient::aclCanControl_(const ActorInfo &actor, const String &ctrl, con
         return false;
     if (actor.is_admin)
         return true;
+    if (ctrl == "quick_actions")
+        return u.tg_quick_actions;
+    if (ctrl == "rules")
+        return u.tg_quick_actions;
 
     UsersRegistry::AclController acl_ctrl = UsersRegistry::AclController::Sockets;
     if (!aclControllerByName_(ctrl, acl_ctrl))

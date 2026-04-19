@@ -544,19 +544,16 @@ void SecurityHandler::handleSecurityArm(WebInterface &web, AsyncWebServerRequest
         }
         const bool desired = (armed_str == "1" || armed_str == "true" || armed_str == "on");
         bool ok = true;
-        if (sec.armed() != desired)
+        if (desired)
         {
-            if (desired)
-            {
-                if (!sec.controllerEnabled())
-                    sec.setControllerEnabled(true);
-                ok = sec.armFrom("web", "admin");
-            }
-            else
-            {
-                sec.disarmFrom("web", "admin");
-                ok = true;
-            }
+            if (!sec.controllerEnabled())
+                sec.setControllerEnabled(true);
+            ok = sec.armFrom("web", "admin");
+        }
+        else
+        {
+            sec.disarmFrom("web", "admin");
+            ok = true;
         }
         if (!ok)
             web._security_status = "Security disabled";

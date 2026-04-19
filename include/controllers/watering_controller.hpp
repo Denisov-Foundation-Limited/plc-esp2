@@ -56,6 +56,7 @@ public:
     struct RuleState
     {
         bool status = false; // monitor time
+        bool force = false;
         bool active = false;
         bool paused = false;
         uint32_t end_ms = 0;
@@ -99,6 +100,7 @@ public:
     bool setDurationSlot(size_t id, uint8_t slot, uint32_t duration_sec);
     bool setSlotEnabled(size_t id, uint8_t slot, bool enabled);
     bool setStatus(size_t id, bool status);
+    bool setForce(size_t id, bool force_on);
     bool controllerEnabled() const;
     void setControllerEnabled(bool enabled);
     bool setTankId(size_t id, uint8_t tank_id);

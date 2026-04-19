@@ -83,6 +83,7 @@ enum WateringSetMask : uint32_t
     kWateringSetSlot3Time = 0x4000,
     kWateringSetSlot3Duration = 0x8000,
     kWateringSetSlot3Enabled = 0x00010000,
+    kWateringSetForce = 0x00020000,
 };
 
 enum SecurityResultMask : uint8_t
@@ -508,6 +509,20 @@ bool encodeControllersSummary_(JsonVariantConst value, std::vector<uint8_t> &out
     appendString_(out, summary["septic"]["name"] | "");
     appendU16_(out, (uint16_t)(summary["watering"]["enabled"] | 0));
     appendU16_(out, (uint16_t)(summary["watering"]["active"] | 0));
+    JsonVariantConst rules = summary["rules"];
+    JsonArrayConst rule_items = rules["items"].as<JsonArrayConst>();
+    appendU16_(out, (uint16_t)(rules["enabled"] | 0));
+    const uint8_t rule_count = rule_items.isNull() ? 0u : (uint8_t)min((size_t)255u, rule_items.size());
+    appendU8_(out, rule_count);
+    if (!rule_items.isNull())
+    {
+        for (JsonObjectConst item : rule_items)
+        {
+            appendU8_(out, (uint8_t)(item["id"] | 0));
+            appendBool_(out, item["enabled"] | false);
+            appendString_(out, item["name"] | "");
+        }
+    }
     appendBool_(out, security["enabled"] | false);
     appendU16_(out, (uint16_t)(security["sensors_enabled"] | 0));
     appendU16_(out, (uint16_t)(security["detected"] | 0));
@@ -605,6 +620,26 @@ bool decodeControllersSummary_(const uint8_t *data, size_t size, DynamicJsonDocu
         return false;
     addSummaryCounts_(summary, "watering", a, "enabled", b, "active");
 
+    JsonObject rules = summary["rules"].to<JsonObject>();
+    uint16_t rules_enabled = 0;
+    uint8_t rules_count = 0;
+    if (!readU16_(p, left, rules_enabled) || !readU8_(p, left, rules_count) ||
+        rules_count > StackUnitSnapshot::kRuleCount)
+        return false;
+    rules["enabled"] = rules_enabled;
+    JsonArray rule_items = rules["items"].to<JsonArray>();
+    for (uint8_t i = 0; i < rules_count; ++i)
+    {
+        uint8_t id = 0;
+        bool enabled = false;
+        if (!readU8_(p, left, id) || !readBool_(p, left, enabled) || !readString_(p, left, text))
+            return false;
+        JsonObject item = rule_items.add<JsonObject>();
+        item["id"] = id;
+        item["enabled"] = enabled;
+        item["name"] = text;
+    }
+
     JsonObject security = summary["security"].to<JsonObject>();
     if (!readBool_(p, left, boolv))
         return false;
@@ -613,9 +648,9 @@ bool decodeControllersSummary_(const uint8_t *data, size_t size, DynamicJsonDocu
         return false;
     security["sensors_enabled"] = a;
     security["detected"] = b;
+    JsonArray detected_items = security["detected_items"].to<JsonArray>();
     if (!readU8_(p, left, u8))
         return false;
-    JsonArray detected_items = security["detected_items"].to<JsonArray>();
     for (uint8_t i = 0; i < u8; ++i)
     {
         uint8_t id = 0;
@@ -914,20 +949,11 @@ bool decodeThermoSnapshot_(const uint8_t *data, size_t size, DynamicJsonDocument
             !readU32_(p, left, sensor_node_id) || !readU8_(p, left, heat_port) || !readU8_(p, left, cool_port) ||
             !readU8_(p, left, button_port) || !readU8_(p, left, mode_id))
             return false;
-        const uint8_t *value_p = p;
-        const size_t value_left = left;
         if (!readI16_(p, left, target_c) || !readFloat_(p, left, hyst) || !readString_(p, left, name))
         {
-            float legacy_target = 0.0f;
-            p = value_p;
-            left = value_left;
-            if (!readFloat_(p, left, legacy_target) || !readFloat_(p, left, hyst) || !readString_(p, left, name))
-            {
-                p = item_p0;
-                left = item_left0;
-                return false;
-            }
-            target_c = (int16_t)lroundf(legacy_target);
+            p = item_p0;
+            left = item_left0;
+            return false;
         }
         JsonObject item = items.add<JsonObject>();
         item["id"] = id;
@@ -1305,7 +1331,9 @@ bool encodeWateringSnapshot_(JsonVariantConst value, std::vector<uint8_t> &out)
             appendU8_(out, (uint8_t)(item["minute3"] | 0xFF));
             appendU32_(out, (uint32_t)(item["duration3_s"] | 0u));
             appendU8_(out, (uint8_t)(item["resume_level"] | 0));
-            appendU32_(out, (uint32_t)(item["remaining_ms"] | 0u));
+            const bool force = item["force"] | false;
+            const uint32_t remaining_ms = force ? 0xFFFFFFFFu : (uint32_t)(item["remaining_ms"] | 0u);
+            appendU32_(out, remaining_ms);
             appendString_(out, item["name"] | "");
             ++emitted;
         }
@@ -1381,7 +1409,9 @@ bool decodeWateringSnapshot_(const uint8_t *data, size_t size, DynamicJsonDocume
         item["minute3"] = minute3;
         item["duration3_s"] = duration3_s;
         item["resume_level"] = resume_level;
-        item["remaining_ms"] = remaining_ms;
+        item["force"] = remaining_ms == 0xFFFFFFFFu;
+        if (remaining_ms != 0xFFFFFFFFu)
+            item["remaining_ms"] = remaining_ms;
         if (name.length())
             item["name"] = name;
     }
@@ -1640,17 +1670,8 @@ bool decodeThermoSet_(const uint8_t *data, size_t size, DynamicJsonDocument &out
         }
         if (mask & kThermoSetTarget)
         {
-            const uint8_t *target_p = p;
-            const size_t target_left = left;
             if (!readI16_(p, left, i16v))
-            {
-                float legacy_target = 0.0f;
-                p = target_p;
-                left = target_left;
-                if (!readFloat_(p, left, legacy_target))
-                    return false;
-                i16v = (int16_t)lroundf(legacy_target);
-            }
+                return false;
             item["target_c"] = i16v;
         }
         if (mask & kThermoSetHyst)
@@ -2098,6 +2119,8 @@ bool encodeWateringSet_(JsonVariantConst value, std::vector<uint8_t> &out)
                 mask |= kWateringSetSlot3Duration;
             if (item.containsKey("slot3_enabled"))
                 mask |= kWateringSetSlot3Enabled;
+            if (item.containsKey("force"))
+                mask |= kWateringSetForce;
             appendU8_(out, (uint8_t)(item["id"] | 0));
             appendU32_(out, mask);
             if (mask & kWateringSetEnabled)
@@ -2143,6 +2166,8 @@ bool encodeWateringSet_(JsonVariantConst value, std::vector<uint8_t> &out)
                 appendU32_(out, (uint32_t)(item["duration3_s"] | 0u));
             if (mask & kWateringSetSlot3Enabled)
                 appendBool_(out, item["slot3_enabled"] | false);
+            if (mask & kWateringSetForce)
+                appendBool_(out, item["force"] | false);
         }
     }
     return true;
@@ -2279,6 +2304,12 @@ bool decodeWateringSet_(const uint8_t *data, size_t size, DynamicJsonDocument &o
             if (!readBool_(p, left, boolv))
                 return false;
             item["slot3_enabled"] = boolv;
+        }
+        if (mask & kWateringSetForce)
+        {
+            if (!readBool_(p, left, boolv))
+                return false;
+            item["force"] = boolv;
         }
     }
     return left == 0;
@@ -2417,6 +2448,46 @@ bool decodeSecuritySimplePair_(const uint8_t *data, size_t size, const char *id_
     out[id_key] = id;
     if (name.length())
         out[name_key] = name;
+    return true;
+}
+
+bool encodeQuickActionRun_(JsonVariantConst value, std::vector<uint8_t> &out)
+{
+    out.clear();
+    appendU8_(out, kSchemaVersion);
+    appendString_(out, value["preset"] | "");
+    return true;
+}
+
+bool decodeQuickActionRun_(const uint8_t *data, size_t size, DynamicJsonDocument &out)
+{
+    const uint8_t *p = data;
+    size_t left = size;
+    String preset;
+    if (!readVersion_(p, left) || !readString_(p, left, preset) || left != 0)
+        return false;
+    out.clear();
+    out["preset"] = preset;
+    return true;
+}
+
+bool encodeRuleRun_(JsonVariantConst value, std::vector<uint8_t> &out)
+{
+    out.clear();
+    appendU8_(out, kSchemaVersion);
+    appendU8_(out, (uint8_t)(value["id"] | 0));
+    return true;
+}
+
+bool decodeRuleRun_(const uint8_t *data, size_t size, DynamicJsonDocument &out)
+{
+    const uint8_t *p = data;
+    size_t left = size;
+    uint8_t id = 0;
+    if (!readVersion_(p, left) || !readU8_(p, left, id) || left != 0)
+        return false;
+    out.clear();
+    out["id"] = id;
     return true;
 }
 
@@ -2761,6 +2832,16 @@ bool StackDataBinaryCodec::encode(const char *feature, const char *action, JsonV
         if (strcmp(action, "ibutton_result") == 0)
             return encodeSecurityResult_(value, "serial", out);
     }
+    if (strcmp(feature, "quick_actions") == 0)
+    {
+        if (strcmp(action, "run") == 0)
+            return encodeQuickActionRun_(value, out);
+    }
+    if (strcmp(feature, "rules") == 0)
+    {
+        if (strcmp(action, "run") == 0)
+            return encodeRuleRun_(value, out);
+    }
     return false;
 }
 
@@ -2897,6 +2978,16 @@ bool StackDataBinaryCodec::decode(const char *feature, const char *action, const
             return decodeSecurityResult_(data, size, "uid", out);
         if (strcmp(action, "ibutton_result") == 0)
             return decodeSecurityResult_(data, size, "serial", out);
+    }
+    if (strcmp(feature, "quick_actions") == 0)
+    {
+        if (strcmp(action, "run") == 0)
+            return decodeQuickActionRun_(data, size, out);
+    }
+    if (strcmp(feature, "rules") == 0)
+    {
+        if (strcmp(action, "run") == 0)
+            return decodeRuleRun_(data, size, out);
     }
     return false;
 }
