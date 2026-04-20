@@ -47,9 +47,14 @@ CliConsole::CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftes
       _leak_cli(*this, controllers.leak()),
       _watering_cli(*this, controllers.watering()),
       _cloud_cli(*this),
+      _camera_cli(*this),
+      _groups_cli(*this),
+      _display_cli(*this),
+      _user_cli(*this),
       _enable(*this, _wifi_cli),
       _config(*this, _wifi_cli, _socket_cli, _meteo_cli, _thermo_cli, _tank_cli, _septic_cli,
-              _security_cli, _ring_cli, _avr_cli, _leak_cli, _watering_cli, _cloud_cli)
+              _security_cli, _ring_cli, _avr_cli, _leak_cli, _watering_cli, _cloud_cli,
+              _camera_cli, _groups_cli, _display_cli, _user_cli)
 {
 }
 void CliConsole::begin(Stream &io)
@@ -193,6 +198,14 @@ void CliConsole::enterConfigWatering()
 { _mode = Mode::ConfigWatering; printPrompt_(); }
 void CliConsole::enterConfigCloud()
 { _mode = Mode::ConfigCloud; printPrompt_(); }
+void CliConsole::enterConfigCamera()
+{ _mode = Mode::ConfigCamera; printPrompt_(); }
+void CliConsole::enterConfigGroups()
+{ _mode = Mode::ConfigGroups; printPrompt_(); }
+void CliConsole::enterConfigDisplay()
+{ _mode = Mode::ConfigDisplay; printPrompt_(); }
+void CliConsole::enterConfigUser()
+{ _mode = Mode::ConfigUser; printPrompt_(); }
 void CliConsole::logout()
 {
     _state = State::NeedUser;
@@ -943,6 +956,13 @@ void CliConsole::showHelpTopic_(const String &topic)
         _io->println(F("  show ring       - ring status"));
         _io->println(F("  show avr        - AVR config/state"));
         _io->println(F("  show leak       - leak zones/state"));
+        _io->println(F("  show cameras    - list camera configs"));
+        _io->println(F("  show camera <id> - camera details"));
+        _io->println(F("  show groups     - list groups"));
+        _io->println(F("  show group <id> - group details"));
+        _io->println(F("  show display    - list display slots"));
+        _io->println(F("  show users      - list users"));
+        _io->println(F("  show user <id>  - user details"));
         return;
     }
     if (t == "wifi")
@@ -977,6 +997,26 @@ void CliConsole::showHelpTopic_(const String &topic)
     if (t == "cloud")
     {
         _cloud_cli.printHelpTopic();
+        return;
+    }
+    if (t == "camera")
+    {
+        _camera_cli.printHelpTopic();
+        return;
+    }
+    if (t == "groups")
+    {
+        _groups_cli.printHelpTopic();
+        return;
+    }
+    if (t == "display")
+    {
+        _display_cli.printHelpTopic();
+        return;
+    }
+    if (t == "user")
+    {
+        _user_cli.printHelpTopic();
         return;
     }
     if (t == "socket")
@@ -1050,7 +1090,7 @@ void CliConsole::handleTab_()
 {
     if (!_io || _state != State::LoggedIn)
         return;
-    static const std::array<const char *, 75> kEnableCmds = {{
+    static const std::array<const char *, 87> kEnableCmds = {{
         "show plc",
         "show board",
         "show wifi",
@@ -1079,6 +1119,13 @@ void CliConsole::handleTab_()
         "show ring",
         "show avr",
         "show leak",
+        "show cameras",
+        "show camera <id>",
+        "show groups",
+        "show group <id>",
+        "show display",
+        "show users",
+        "show user <id>",
         "ring on",
         "ring off",
         "avr on",
@@ -1125,9 +1172,13 @@ void CliConsole::handleTab_()
         "help security",
         "help ring",
         "help avr",
-        "help leak"}};
+        "help leak",
+        "help camera",
+        "help groups",
+        "help display",
+        "help user"}};
 
-    static const std::array<const char *, 46> kConfigCmds = {{
+    static const std::array<const char *, 54> kConfigCmds = {{
         "password <pass>",
         "admin password <pass>",
         "stack role <master|slave>",
@@ -1155,6 +1206,10 @@ void CliConsole::handleTab_()
         "ring",
         "avr",
         "leak",
+        "camera",
+        "groups",
+        "display",
+        "user",
         "exit",
         "end",
         "help",
@@ -1173,7 +1228,11 @@ void CliConsole::handleTab_()
         "help security",
         "help ring",
         "help avr",
-        "help leak"}};
+        "help leak",
+        "help camera",
+        "help groups",
+        "help display",
+        "help user"}};
 
     static const std::array<const char *, 16> kConfigWifiCmds = {{
         "ssid <value>",
@@ -1363,7 +1422,7 @@ void CliConsole::handleTab_()
         "exit",
         "help"}};
 
-    static const std::array<const char *, 19> kConfigWateringCmds = {{
+    static const std::array<const char *, 23> kConfigWateringCmds = {{
         "show",
         "show <id>",
         "name <id> <text>",
@@ -1376,11 +1435,15 @@ void CliConsole::handleTab_()
         "time <id> <HH:MM>",
         "time2 <id> <HH:MM>",
         "time3 <id> <HH:MM>",
+        "slot1 <id> <on|off>",
+        "slot2 <id> <on|off>",
+        "slot3 <id> <on|off>",
         "duration <id> <min>",
         "duration2 <id> <min>",
         "duration3 <id> <min>",
         "resume <id> <on|off>",
         "resume_level <id> <low|mid|full>",
+        "force <id> <on|off>",
         "exit",
         "help"}};
 
@@ -1399,6 +1462,65 @@ void CliConsole::handleTab_()
         "api_key <value>",
         "api_key clear",
         "show",
+        "exit",
+        "end",
+        "help"}};
+
+    static const std::array<const char *, 11> kConfigCameraCmds = {{
+        "show",
+        "show <id>",
+        "enable <id>",
+        "disable <id>",
+        "name <id> <text>",
+        "url <id> <value>",
+        "user <id> <value|clear>",
+        "password <id> <value|clear>",
+        "exit",
+        "end",
+        "help"}};
+
+    static const std::array<const char *, 10> kConfigGroupsCmds = {{
+        "show",
+        "show <id>",
+        "add <name>",
+        "name <id> <text>",
+        "sort <id> <num>",
+        "delete <id>",
+        "exit",
+        "end",
+        "help",
+        "help groups"}};
+
+    static const std::array<const char *, 10> kConfigDisplayCmds = {{
+        "show",
+        "show <slot>",
+        "clear <slot>",
+        "text <slot> <text>",
+        "set <slot> <kind> <field> [index] [node]",
+        "exit",
+        "end",
+        "help",
+        "help display",
+        "help show"}};
+
+    static const std::array<const char *, 20> kConfigUserCmds = {{
+        "show",
+        "show <id>",
+        "enable <id>",
+        "disable <id>",
+        "username <id> <text>",
+        "password <id> <text|clear>",
+        "phone <id> <num|none>",
+        "sms <id> <on|off>",
+        "call <id> <on|off>",
+        "ibutton <id> <hex|clear>",
+        "rfid <id> <hex|clear>",
+        "acl show <id> [unit]",
+        "acl controller <id> <unit> <ctrl> <on|off>",
+        "acl view <id> <unit> <ctrl> <item> <on|off>",
+        "acl control <id> <unit> <ctrl> <item> <on|off>",
+        "acl clear <id> <unit>",
+        "acl grant <id> <unit>",
         "exit",
         "end",
         "help"}};
@@ -1466,6 +1588,22 @@ void CliConsole::handleTab_()
     case Mode::ConfigCloud:
         cmds = kConfigCloudCmds.data();
         count = kConfigCloudCmds.size();
+        break;
+    case Mode::ConfigCamera:
+        cmds = kConfigCameraCmds.data();
+        count = kConfigCameraCmds.size();
+        break;
+    case Mode::ConfigGroups:
+        cmds = kConfigGroupsCmds.data();
+        count = kConfigGroupsCmds.size();
+        break;
+    case Mode::ConfigDisplay:
+        cmds = kConfigDisplayCmds.data();
+        count = kConfigDisplayCmds.size();
+        break;
+    case Mode::ConfigUser:
+        cmds = kConfigUserCmds.data();
+        count = kConfigUserCmds.size();
         break;
     case Mode::User:
         cmds = kEnableCmds.data();
@@ -1808,6 +1946,44 @@ void CliConsole::handleShow_(String what)
         _avr_cli.showAvr();
     else if (eq_(what, "leak"))
         _leak_cli.showAll();
+    else if (eq_(what, "cameras"))
+        _camera_cli.showCameras();
+    else if (startsWith_(what, "camera "))
+    {
+        String tail = what.substring(7);
+        tail.trim();
+        uint16_t id = 0;
+        if (!parseUint_(tail, id))
+            _io->println(F("Usage: show camera <id>"));
+        else
+            _camera_cli.showCamera((uint8_t)id);
+    }
+    else if (eq_(what, "groups"))
+        _groups_cli.showGroups();
+    else if (startsWith_(what, "group "))
+    {
+        String tail = what.substring(6);
+        tail.trim();
+        uint16_t id = 0;
+        if (!parseUint_(tail, id))
+            _io->println(F("Usage: show group <id>"));
+        else
+            _groups_cli.showGroup((uint8_t)id);
+    }
+    else if (eq_(what, "display"))
+        _display_cli.showSlots();
+    else if (eq_(what, "users"))
+        _user_cli.showUsers();
+    else if (startsWith_(what, "user "))
+    {
+        String tail = what.substring(5);
+        tail.trim();
+        uint16_t id = 0;
+        if (!parseUint_(tail, id))
+            _io->println(F("Usage: show user <id>"));
+        else
+            _user_cli.showUser((uint8_t)id);
+    }
     else
         _io->println(F("Unknown show"));
     printPrompt_();
@@ -2087,6 +2263,18 @@ void CliConsole::handleLine_(String line)
     case Mode::ConfigCloud:
         _config.handleCloudContext(line);
         break;
+    case Mode::ConfigCamera:
+        _config.handleCameraContext(line);
+        break;
+    case Mode::ConfigGroups:
+        _config.handleGroupsContext(line);
+        break;
+    case Mode::ConfigDisplay:
+        _config.handleDisplayContext(line);
+        break;
+    case Mode::ConfigUser:
+        _config.handleUserContext(line);
+        break;
     case Mode::User:
         _enable.handle(line);
         break;
@@ -2251,6 +2439,14 @@ size_t CliConsole::promptWidth_() const
         return 22;
     case Mode::ConfigCloud:
         return 19;
+    case Mode::ConfigCamera:
+        return 20;
+    case Mode::ConfigGroups:
+        return 20;
+    case Mode::ConfigDisplay:
+        return 21;
+    case Mode::ConfigUser:
+        return 18;
     }
     return 5;
 }
@@ -2321,6 +2517,18 @@ void CliConsole::printPromptUnlocked_(Stream &io, bool set_interactive) const
             break;
         case Mode::ConfigCloud:
             io.print(F("plc(config-cloud)# "));
+            break;
+        case Mode::ConfigCamera:
+            io.print(F("plc(config-camera)# "));
+            break;
+        case Mode::ConfigGroups:
+            io.print(F("plc(config-groups)# "));
+            break;
+        case Mode::ConfigDisplay:
+            io.print(F("plc(config-display)# "));
+            break;
+        case Mode::ConfigUser:
+            io.print(F("plc(config-user)# "));
             break;
         }
     }

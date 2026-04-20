@@ -34,6 +34,10 @@
 #include "core/cli/modules/cli_leak.hpp"
 #include "core/cli/modules/cli_watering.hpp"
 #include "core/cli/modules/cli_cloud.hpp"
+#include "core/cli/modules/cli_camera.hpp"
+#include "core/cli/modules/cli_groups.hpp"
+#include "core/cli/modules/cli_display.hpp"
+#include "core/cli/modules/cli_user.hpp"
 #include "hal/bus/i2c.hpp"
 #include "hal/bus/onewire.hpp"
 #include "hal/camera.hpp"
@@ -61,6 +65,10 @@ public:
     using CLILeak = CLILeakT<CliConsole>;
     using CLIWatering = CLIWateringT<CliConsole>;
     using CLICloud = CLICloudT<CliConsole>;
+    using CLICamera = CLICameraT<CliConsole>;
+    using CLIGroups = CLIGroupsT<CliConsole>;
+    using CLIDisplay = CLIDisplayT<CliConsole>;
+    using CLIUser = CLIUserT<CliConsole>;
     static constexpr const char kAdminUser[] = "admin";
 
     CliConsole(PlcControl &plc, WifiManager &wifi, RTC &rtc, Ftest &ftest, I2CManager &i2c, OneWireManager &ow,
@@ -102,6 +110,10 @@ public:
     void enterConfigLeak();
     void enterConfigWatering();
     void enterConfigCloud();
+    void enterConfigCamera();
+    void enterConfigGroups();
+    void enterConfigDisplay();
+    void enterConfigUser();
     void logout();
 
     void cmdShowPlc_();
@@ -208,7 +220,11 @@ private:
         ConfigAvr,
         ConfigLeak,
         ConfigWatering,
-        ConfigCloud
+        ConfigCloud,
+        ConfigCamera,
+        ConfigGroups,
+        ConfigDisplay,
+        ConfigUser
     };
 
     enum class State : uint8_t
@@ -339,6 +355,10 @@ private:
     CLILeak _leak_cli;
     CLIWatering _watering_cli;
     CLICloud _cloud_cli;
+    CLICamera _camera_cli;
+    CLIGroups _groups_cli;
+    CLIDisplay _display_cli;
+    CLIUser _user_cli;
     CLIEnable _enable;
     CLIConfig _config;
 
@@ -437,6 +457,14 @@ private:
     friend class CLIWateringT;
     template <typename>
     friend class CLICloudT;
+    template <typename>
+    friend class CLICameraT;
+    template <typename>
+    friend class CLIGroupsT;
+    template <typename>
+    friend class CLIDisplayT;
+    template <typename>
+    friend class CLIUserT;
 
 public:
     void setConfigsManager(ConfigsManagerIface &mgr);

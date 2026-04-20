@@ -290,7 +290,7 @@ Cloud -> Storage: /uploads/devices/<device_id>/latest.jpg
 - пользователи
 - камеры
 
-Локальный web также является основным конфигуратором для некоторых новых возможностей, которые пока не покрыты CLI один-в-один:
+Локальный web остаётся самым удобным конфигуратором для визуальных сценариев и быстрой проверки состояния:
 
 - per-slot enable у правил полива
 - привязка бака и `resume_after_refill`
@@ -315,8 +315,14 @@ CLI разбит на режимы:
 - `photo get/upload/cloud/status/clear`
 - `config -> stack ...`
 - `config -> cloud ...`
-- `config -> watering ...`
+- `config -> camera ...`
+- `config -> groups ...`
+- `config -> display ...`
+- `config -> user ...`
+- `config -> watering ...` включая `slot1|slot2|slot3`, `resume_level` и `force`
 - `show stack` с runtime-диагностикой очередей и lock times
+
+CLI сейчас покрывает рабочую конфигурацию контроллеров, сетевых подсистем, `CameraStore`, `Groups`, `Display` и локального редактора пользователей с ACL.
 
 Полный актуальный справочник: [CLI.md](./CLI.md)
 

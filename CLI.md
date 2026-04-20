@@ -15,7 +15,6 @@
 Важно:
 
 - это справочник именно по CLI, а не полный список всех возможностей проекта
-- часть новых возможностей локального Web и cloud/Telegram пока не имеет прямого CLI-аналога
 
 Общий обзор проекта: [README.md](./README.md)
 
@@ -105,6 +104,13 @@ plc(config-<module>)#
 - `show ring`
 - `show avr`
 - `show leak`
+- `show cameras`
+- `show camera <id>`
+- `show groups`
+- `show group <id>`
+- `show display`
+- `show users`
+- `show user <id>`
 
 ### Управление контроллерами
 
@@ -159,6 +165,10 @@ photo cloud
 - `wifi`
 - `time`
 - `cloud`
+- `camera`
+- `groups`
+- `display`
+- `user`
 - `socket`
 - `meteo`
 - `thermo`
@@ -263,6 +273,106 @@ photo cloud
 - `api_key <value>`
 - `api_key clear`
 - `show`
+
+## 📷 Camera: `plc(config-camera)#`
+
+- `show`
+- `show <id>`
+- `enable <id>`
+- `disable <id>`
+- `name <id> <text>`
+- `url <id> <value>`
+- `user <id> <value|clear>`
+- `password <id> <value|clear>`
+
+Эти команды редактируют локальный `CameraStore` (`/cameras.json`) напрямую.
+
+## 🧩 Groups: `plc(config-groups)#`
+
+- `show`
+- `show <id>`
+- `add <name>`
+- `name <id> <text>`
+- `sort <id> <num>`
+- `delete <id>`
+
+## 🖥️ Display: `plc(config-display)#`
+
+- `show`
+- `show <slot>`
+- `clear <slot>`
+- `text <slot> <text>`
+- `set <slot> <kind> <field> [index] [node]`
+
+Допустимые `kind`:
+
+- `none`
+- `time`
+- `socket`
+- `light`
+- `meteo`
+- `thermo`
+- `tank`
+- `septic`
+- `security`
+- `avr`
+- `leak`
+- `text`
+
+Допустимые `field`:
+
+- `none`
+- `hm`
+- `min`
+- `state`
+- `temp`
+- `hum`
+- `level`
+- `armed`
+- `avr_source`
+- `avr_main_ok`
+- `avr_reserve_ok`
+- `leak_state`
+- `text`
+
+## 👤 User / ACL: `plc(config-user)#`
+
+- `show`
+- `show <id>`
+- `enable <id>`
+- `disable <id>`
+- `username <id> <text>`
+- `password <id> <text|clear>`
+- `phone <id> <num|none>`
+- `sms <id> <on|off>`
+- `call <id> <on|off>`
+- `ibutton <id> <hex|clear>`
+- `rfid <id> <hex|clear>`
+- `acl show <id> [unit]`
+- `acl controller <id> <unit> <ctrl> <on|off>`
+- `acl view <id> <unit> <ctrl> <item> <on|off>`
+- `acl control <id> <unit> <ctrl> <item> <on|off>`
+- `acl clear <id> <unit>`
+- `acl grant <id> <unit>`
+
+`unit` задаётся так же, как в локальном web ACL:
+
+- `1` — локальный PLC
+- `2..8` — stack-юниты
+
+Допустимые `ctrl`:
+
+- `sockets`
+- `lights`
+- `meteo`
+- `thermo`
+- `tanks`
+- `septic`
+- `security`
+- `watering`
+- `leak`
+- `avr`
+- `ring`
 
 ## 🕒 Time: `plc(config-time)#`
 
@@ -412,25 +522,25 @@ photo cloud
 - `time <id> <HH:MM>`
 - `time2 <id> <HH:MM>`
 - `time3 <id> <HH:MM>`
+- `slot1 <id> <on|off>`
+- `slot2 <id> <on|off>`
+- `slot3 <id> <on|off>`
 - `duration <id> <min>`
 - `duration2 <id> <min>`
 - `duration3 <id> <min>`
 - `resume <id> <on|off>`
 - `resume_level <id> <low|mid|full>`
+- `force <id> <on|off>`
 
-CLI для полива сейчас покрывает базовый конфиг правила:
+CLI для полива сейчас покрывает полный рабочий конфиг правила:
 
 - имя, enable, status
 - GPIO-порт
 - дни недели
-- 3 времени и 3 длительности
+- 3 времени, 3 длительности и `slot_enabled`
 - привязку бака
 - возобновление после refill и порог возобновления
-
-Что важно:
-
-- per-slot enable (`slot_enabled`) сейчас настраивается не через CLI, а через local web/cloud path
-- `force`-режим полива существует в runtime и cloud/Telegram, но отдельной CLI-команды под него пока нет
+- ручной `force`-режим полива
 
 ## 📝 Практические замечания
 

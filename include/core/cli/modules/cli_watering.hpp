@@ -72,11 +72,15 @@ public:
         _c._io->println(String(F("    time <id>")) + range + F(" <HH:MM>       - set start time slot 1"));
         _c._io->println(String(F("    time2 <id>")) + range + F(" <HH:MM>      - set start time slot 2"));
         _c._io->println(String(F("    time3 <id>")) + range + F(" <HH:MM>      - set start time slot 3"));
+        _c._io->println(String(F("    slot1 <id>")) + range + F(" <on|off>      - enable slot 1"));
+        _c._io->println(String(F("    slot2 <id>")) + range + F(" <on|off>      - enable slot 2"));
+        _c._io->println(String(F("    slot3 <id>")) + range + F(" <on|off>      - enable slot 3"));
         _c._io->println(String(F("    duration <id>")) + range + F(" <min>        - set duration slot 1 (minutes)"));
         _c._io->println(String(F("    duration2 <id>")) + range + F(" <min>       - set duration slot 2 (minutes)"));
         _c._io->println(String(F("    duration3 <id>")) + range + F(" <min>       - set duration slot 3 (minutes)"));
         _c._io->println(String(F("    resume <id>")) + range + F(" <on|off>      - resume after refill"));
         _c._io->println(String(F("    resume_level <id>")) + range + F(" <low|mid|full> - resume at >= level"));
+        _c._io->println(String(F("    force <id>")) + range + F(" <on|off>       - start/stop manual watering"));
     }
 
     void showRules()
@@ -181,6 +185,12 @@ public:
             return true;
         if (handleTimeSlot_(cmd, lower, "time3", 2))
             return true;
+        if (handleSlotEnabled_(cmd, lower, "slot1", 0))
+            return true;
+        if (handleSlotEnabled_(cmd, lower, "slot2", 1))
+            return true;
+        if (handleSlotEnabled_(cmd, lower, "slot3", 2))
+            return true;
         if (handleDurationSlot_(cmd, lower, "duration", 0))
             return true;
         if (handleDurationSlot_(cmd, lower, "duration2", 1))
@@ -190,6 +200,8 @@ public:
         if (handleResume_(cmd, lower))
             return true;
         if (handleResumeLevel_(cmd, lower))
+            return true;
+        if (handleForce_(cmd, lower))
             return true;
         return false;
     }
@@ -358,7 +370,7 @@ private:
 
     void printHeader_()
     {
-        _c._io->println(F("  id  en  mon  port  tank  days           t1     d1  t2     d2  t3     d3  act  res  lvl  name"));
+        _c._io->println(F("  id  en  mon  frc  port  tank  days           s1  t1     d1  s2  t2     d2  s3  t3     d3  act  pau  res  lvl  name"));
     }
 
     void printRow_(const WateringController::RuleConfig &cfg, const WateringController::RuleState &st)
@@ -372,6 +384,8 @@ private:
         _c._io->print(F(" "));
         _c.printPadStr_(st.status ? F("on") : F("off"), 3);
         _c._io->print(F("   "));
+        _c.printPadStr_(st.force ? F("on") : F("off"), 3);
+        _c._io->print(F("  "));
         if (cfg.port == WateringController::kInvalidPort)
             _c.printPadStr_(F("--"), 4);
         else
@@ -392,7 +406,9 @@ private:
         formatWeekdays_(cfg.weekdays_mask, days, sizeof(days));
         _c.printPadStr_(days, 14);
         _c._io->print(F("  "));
-        if (cfg.weekdays_mask && cfg.duration_sec && cfg.hour <= 23 && cfg.minute <= 59)
+        _c.printPadStr_(cfg.slot1_enabled ? F("on") : F("off"), 3);
+        _c._io->print(F(" "));
+        if (cfg.slot1_enabled && cfg.weekdays_mask && cfg.duration_sec && cfg.hour <= 23 && cfg.minute <= 59)
             snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour, (unsigned)cfg.minute);
         else
             strncpy(buf, "--:--", sizeof(buf) - 1);
@@ -404,7 +420,9 @@ private:
             strncpy(buf, "--", sizeof(buf) - 1);
         _c.printPadStr_(buf, 6);
         _c._io->print(F("  "));
-        if (cfg.weekdays_mask && cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
+        _c.printPadStr_(cfg.slot2_enabled ? F("on") : F("off"), 3);
+        _c._io->print(F(" "));
+        if (cfg.slot2_enabled && cfg.weekdays_mask && cfg.duration2_sec && cfg.hour2 <= 23 && cfg.minute2 <= 59)
             snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour2, (unsigned)cfg.minute2);
         else
             strncpy(buf, "--:--", sizeof(buf) - 1);
@@ -416,7 +434,9 @@ private:
             strncpy(buf, "--", sizeof(buf) - 1);
         _c.printPadStr_(buf, 3);
         _c._io->print(F("  "));
-        if (cfg.weekdays_mask && cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
+        _c.printPadStr_(cfg.slot3_enabled ? F("on") : F("off"), 3);
+        _c._io->print(F(" "));
+        if (cfg.slot3_enabled && cfg.weekdays_mask && cfg.duration3_sec && cfg.hour3 <= 23 && cfg.minute3 <= 59)
             snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)cfg.hour3, (unsigned)cfg.minute3);
         else
             strncpy(buf, "--:--", sizeof(buf) - 1);
@@ -429,6 +449,8 @@ private:
         _c.printPadStr_(buf, 3);
         _c._io->print(F("  "));
         _c.printPadStr_(st.active ? F("on") : F("off"), 3);
+        _c._io->print(F("  "));
+        _c.printPadStr_(st.paused ? F("on") : F("off"), 3);
         _c._io->print(F("  "));
         _c.printPadStr_(cfg.resume_after_refill ? F("on") : F("off"), 3);
         _c._io->print(F("  "));
@@ -744,6 +766,44 @@ private:
         return true;
     }
 
+    bool handleSlotEnabled_(const String &cmd, const String &lower, const char *name, uint8_t slot)
+    {
+        const String prefix = String(name) + " ";
+        if (!lower.startsWith(prefix))
+            return false;
+        String rest = cmd.substring(prefix.length());
+        rest.trim();
+        const int space = rest.indexOf(' ');
+        if (space <= 0)
+        {
+            _c._io->print(F("Usage: "));
+            _c._io->print(name);
+            _c._io->print(F(" <id> <on|off>"));
+            return true;
+        }
+        String id_str = rest.substring(0, space);
+        String val_str = rest.substring(space + 1);
+        id_str.trim();
+        val_str.trim();
+        uint16_t id = 0;
+        if (!parseId_(id_str, id))
+        {
+            printInvalidId_();
+            return true;
+        }
+        bool enabled = false;
+        if (!parseBool_(val_str, enabled))
+        {
+            _c._io->println(F("Invalid value"));
+            return true;
+        }
+        if (!_watering.setSlotEnabled(id, slot, enabled))
+            _c._io->println(F("Failed"));
+        else
+            _c._io->println(F("OK"));
+        return true;
+    }
+
     bool handleResume_(const String &cmd, const String &lower)
     {
         if (!lower.startsWith("resume "))
@@ -816,6 +876,41 @@ private:
             return true;
         }
         if (!_watering.setResumeLevel(id, lvl))
+            _c._io->println(F("Failed"));
+        else
+            _c._io->println(F("OK"));
+        return true;
+    }
+
+    bool handleForce_(const String &cmd, const String &lower)
+    {
+        if (!lower.startsWith("force "))
+            return false;
+        String rest = cmd.substring(6);
+        rest.trim();
+        const int space = rest.indexOf(' ');
+        if (space <= 0)
+        {
+            _c._io->print(F("Usage: force <id> <on|off>"));
+            return true;
+        }
+        String id_str = rest.substring(0, space);
+        String val_str = rest.substring(space + 1);
+        id_str.trim();
+        val_str.trim();
+        uint16_t id = 0;
+        if (!parseId_(id_str, id))
+        {
+            printInvalidId_();
+            return true;
+        }
+        bool force_on = false;
+        if (!parseBool_(val_str, force_on))
+        {
+            _c._io->println(F("Invalid value"));
+            return true;
+        }
+        if (!_watering.setForce(id, force_on))
             _c._io->println(F("Failed"));
         else
             _c._io->println(F("OK"));

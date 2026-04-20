@@ -25,6 +25,10 @@
 #include "core/cli/modules/cli_leak.hpp"
 #include "core/cli/modules/cli_watering.hpp"
 #include "core/cli/modules/cli_cloud.hpp"
+#include "core/cli/modules/cli_camera.hpp"
+#include "core/cli/modules/cli_groups.hpp"
+#include "core/cli/modules/cli_display.hpp"
+#include "core/cli/modules/cli_user.hpp"
 #include "utils/configs_manager_iface.hpp"
 
 template <typename ConsoleT>
@@ -35,7 +39,9 @@ public:
                CLISocketT<ConsoleT> &socket, CLIMeteoT<ConsoleT> &meteo, CLIThermoT<ConsoleT> &thermo,
                CLITankT<ConsoleT> &tank, CLISepticT<ConsoleT> &septic, CLISecurityT<ConsoleT> &security,
                CLIRingT<ConsoleT> &ring, CLIAvrT<ConsoleT> &avr, CLILeakT<ConsoleT> &leak,
-               CLIWateringT<ConsoleT> &watering, CLICloudT<ConsoleT> &cloud)
+               CLIWateringT<ConsoleT> &watering, CLICloudT<ConsoleT> &cloud,
+               CLICameraT<ConsoleT> &camera, CLIGroupsT<ConsoleT> &groups, CLIDisplayT<ConsoleT> &display,
+               CLIUserT<ConsoleT> &user)
         : _c(console),
           _wifi(wifi),
           _socket(socket),
@@ -48,7 +54,11 @@ public:
           _avr(avr),
           _leak(leak),
           _watering(watering),
-          _cloud(cloud)
+          _cloud(cloud),
+          _camera(camera),
+          _groups(groups),
+          _display(display),
+          _user(user)
     {
     }
 
@@ -93,6 +103,10 @@ public:
             _avr.printHelpConfigLines();
             _leak.printHelpConfigLines();
             _watering.printHelpConfigLines();
+            _camera.printHelpConfigLines();
+            _groups.printHelpConfigLines();
+            _display.printHelpConfigLines();
+            _user.printHelpConfigLines();
             _c._io->println(F("  Session:"));
             _c._io->println(F("    exit                     - return to enable"));
             _c._io->println(F("    end                      - return to enable"));
@@ -167,6 +181,26 @@ public:
         if (lower == "cloud")
         {
             _c.enterConfigCloud();
+            return;
+        }
+        if (lower == "camera")
+        {
+            _c.enterConfigCamera();
+            return;
+        }
+        if (lower == "groups")
+        {
+            _c.enterConfigGroups();
+            return;
+        }
+        if (lower == "display")
+        {
+            _c.enterConfigDisplay();
+            return;
+        }
+        if (lower == "user")
+        {
+            _c.enterConfigUser();
             return;
         }
         if (lower.startsWith("stack "))
@@ -811,6 +845,170 @@ public:
         _c.printPrompt_();
     }
 
+    void handleCameraContext(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String lower = cmd;
+        lower.toLowerCase();
+
+        if (lower.startsWith("help "))
+        {
+            String topic = cmd.substring(5);
+            topic.trim();
+            _c.showHelpTopic_(topic);
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "help" || lower == "?")
+        {
+            _c._io->println(F("Commands (config-camera):"));
+            _camera.printHelpContextLines();
+            _c._io->println(F("  Session:"));
+            _c._io->println(F("    exit                    - return to config"));
+            _c._io->println(F("    end                     - return to enable"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "exit")
+        {
+            _c.enterConfig();
+            return;
+        }
+        if (lower == "end")
+        {
+            _c.enterEnable();
+            return;
+        }
+        if (_camera.handleContext(cmd))
+            return;
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
+    }
+
+    void handleGroupsContext(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String lower = cmd;
+        lower.toLowerCase();
+
+        if (lower.startsWith("help "))
+        {
+            String topic = cmd.substring(5);
+            topic.trim();
+            _c.showHelpTopic_(topic);
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "help" || lower == "?")
+        {
+            _c._io->println(F("Commands (config-groups):"));
+            _groups.printHelpContextLines();
+            _c._io->println(F("  Session:"));
+            _c._io->println(F("    exit                    - return to config"));
+            _c._io->println(F("    end                     - return to enable"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "exit")
+        {
+            _c.enterConfig();
+            return;
+        }
+        if (lower == "end")
+        {
+            _c.enterEnable();
+            return;
+        }
+        if (_groups.handleContext(cmd))
+            return;
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
+    }
+
+    void handleDisplayContext(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String lower = cmd;
+        lower.toLowerCase();
+
+        if (lower.startsWith("help "))
+        {
+            String topic = cmd.substring(5);
+            topic.trim();
+            _c.showHelpTopic_(topic);
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "help" || lower == "?")
+        {
+            _c._io->println(F("Commands (config-display):"));
+            _display.printHelpContextLines();
+            _c._io->println(F("  Session:"));
+            _c._io->println(F("    exit                    - return to config"));
+            _c._io->println(F("    end                     - return to enable"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "exit")
+        {
+            _c.enterConfig();
+            return;
+        }
+        if (lower == "end")
+        {
+            _c.enterEnable();
+            return;
+        }
+        if (_display.handleContext(cmd))
+            return;
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
+    }
+
+    void handleUserContext(const String &line)
+    {
+        String cmd = line;
+        cmd.trim();
+        String lower = cmd;
+        lower.toLowerCase();
+
+        if (lower.startsWith("help "))
+        {
+            String topic = cmd.substring(5);
+            topic.trim();
+            _c.showHelpTopic_(topic);
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "help" || lower == "?")
+        {
+            _c._io->println(F("Commands (config-user):"));
+            _user.printHelpContextLines();
+            _c._io->println(F("  Session:"));
+            _c._io->println(F("    exit                    - return to config"));
+            _c._io->println(F("    end                     - return to enable"));
+            _c.printPrompt_();
+            return;
+        }
+        if (lower == "exit")
+        {
+            _c.enterConfig();
+            return;
+        }
+        if (lower == "end")
+        {
+            _c.enterEnable();
+            return;
+        }
+        if (_user.handleContext(cmd))
+            return;
+        _c._io->println(F("Unknown command"));
+        _c.printPrompt_();
+    }
+
     void handleLeakContext(const String &line)
     {
         String cmd = line;
@@ -1230,4 +1428,8 @@ private:
     CLILeakT<ConsoleT> &_leak;
     CLIWateringT<ConsoleT> &_watering;
     CLICloudT<ConsoleT> &_cloud;
+    CLICameraT<ConsoleT> &_camera;
+    CLIGroupsT<ConsoleT> &_groups;
+    CLIDisplayT<ConsoleT> &_display;
+    CLIUserT<ConsoleT> &_user;
 };

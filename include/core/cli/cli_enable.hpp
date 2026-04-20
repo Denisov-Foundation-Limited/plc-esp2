@@ -69,6 +69,13 @@ public:
             _c._io->println(F("    show ring       - ring status"));
             _c._io->println(F("    show avr        - AVR config/state"));
             _c._io->println(F("    show leak       - leak zones/state"));
+            _c._io->println(F("    show cameras    - list camera configs"));
+            _c._io->println(F("    show camera <id> - camera details"));
+            _c._io->println(F("    show groups     - list groups"));
+            _c._io->println(F("    show group <id> - group details"));
+            _c._io->println(F("    show display    - list display slots"));
+            _c._io->println(F("    show users      - list users"));
+            _c._io->println(F("    show user <id>  - user details"));
             _c._io->println(String(F("    socket toggle <id>")) + socketIdRangeString_() + F(" - toggle socket relay"));
             _c._io->println(String(F("    socket on <id>")) + socketIdRangeString_() + F("     - relay ON"));
             _c._io->println(String(F("    socket off <id>")) + socketIdRangeString_() + F("    - relay OFF"));
