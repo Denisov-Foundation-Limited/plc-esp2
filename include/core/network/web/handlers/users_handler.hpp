@@ -28,8 +28,6 @@ public:
     static void handleUsersAclSave(WebInterface &web, AsyncWebServerRequest *request);
 
 private:
-    static int64_t parseChatId_(const String &value);
-
     static String usersCards_(WebInterface &web, bool read_only);
 
     template <typename FnT>

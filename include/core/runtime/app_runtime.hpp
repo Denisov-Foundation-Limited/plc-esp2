@@ -145,7 +145,7 @@ private:
 
     void sendSepticDetectToMaster_(uint8_t septic_id, const String &name, bool is_alarm);
 
-    void sendTankEmptyToMaster_(uint8_t tank_id, const String &name);
+    void sendTankLevelToMaster_(uint8_t tank_id, const String &name);
 
     void sendWateringEventToMaster_(WateringController::Event ev,
                                     const WateringController::RuleConfig &cfg,

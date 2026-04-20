@@ -13,6 +13,16 @@
 
 #include <string.h>
 
+namespace
+{
+
+const char *tankLogName_(const TankController::TankConfig &cfg)
+{
+    return cfg.name.length() ? cfg.name.c_str() : "-";
+}
+
+}
+
 TankController::TankController(Gpio &gpio, Logger &logs)
  : _gpio(gpio), _logs(logs){
     reset_();
@@ -76,21 +86,17 @@ void TankController::task(){
             logLevelChange_(cfg, prev, st);
             logRelayChange_(cfg, prev, st);
             const bool empty = isEmpty_(st);
-            if (empty && !st.last_empty)
+            const bool level_changed = (prev.level_low != st.level_low) ||
+                                       (prev.level_mid != st.level_mid) ||
+                                       (prev.level_full != st.level_full) ||
+                                       (prev.levels_ok != st.levels_ok);
+            if (level_changed && pending_count < kTankCount)
             {
-                const uint32_t now = millis();
-                const bool allow_event = (st.last_empty_event_ms == 0) ||
-                                         ((uint32_t)(now - st.last_empty_event_ms) >= kEmptyEventDebounceMs);
-                if (allow_event)
-                {
-                    if (pending_count < kTankCount)
-                    {
-                        pending_cfg[pending_count] = cfg;
-                        pending_empty[pending_count] = true;
-                        ++pending_count;
-                    }
-                    st.last_empty_event_ms = now;
-                }
+                pending_cfg[pending_count] = cfg;
+                pending_empty[pending_count] = empty;
+                ++pending_count;
+                if (empty)
+                    st.last_empty_event_ms = millis();
             }
             st.last_empty = empty;
         }
@@ -226,8 +232,8 @@ void TankController::applySnapshot(const uint8_t *power_mask, size_t bytes){
         if (cfg.power_on == on)
             continue;
         cfg.power_on = on;
-        _logs.info(F("TANK"), F("id: %u power: %s (restore)"),
-                   (unsigned)cfg.id, on ? "on" : "off");
+        _logs.info(F("TANK"), F("name: %s id: %u power: %s (restore)"),
+                   tankLogName_(cfg), (unsigned)cfg.id, on ? "on" : "off");
         if (!_controller_enabled)
             continue;
         if (!cfg.power_on)
@@ -322,7 +328,8 @@ bool TankController::setEnabled(size_t id, bool enabled){
         cfg.enabled = false;
         cfg.power_on = false;
         st = TankState{};
-        _logs.info(F("TANK"), F("id: %u enabled: false"), (unsigned)cfg.id);
+        _logs.info(F("TANK"), F("name: %s id: %u enabled: false"),
+                   tankLogName_(cfg), (unsigned)cfg.id);
         return true;
     }
     cfg.enabled = true;
@@ -338,7 +345,8 @@ bool TankController::setEnabled(size_t id, bool enabled){
         writeAllOff_(cfg, st);
     if (st.levels_ok)
         st.last_empty = isEmpty_(st);
-    _logs.info(F("TANK"), F("id: %u enabled: true"), (unsigned)cfg.id);
+    _logs.info(F("TANK"), F("name: %s id: %u enabled: true"),
+               tankLogName_(cfg), (unsigned)cfg.id);
     return true;
 }
 
@@ -353,7 +361,8 @@ bool TankController::setPower(size_t id, bool on){
         return true;
     cfg.power_on = on;
     _dirty = true;
-    _logs.info(F("TANK"), F("id: %u power: %s"), (unsigned)cfg.id, on ? "on" : "off");
+    _logs.info(F("TANK"), F("name: %s id: %u power: %s"),
+               tankLogName_(cfg), (unsigned)cfg.id, on ? "on" : "off");
     if (!_controller_enabled || !cfg.enabled)
         return true;
     if (!on)
@@ -656,7 +665,8 @@ void TankController::readLevels_(const TankController::TankConfig &cfg, TankCont
         if (st.levels_ok_prev)
         {
             _logs.warn(F("TANK"),
-                       F("id: %u level read failed (low:%u port:%u mid:%u port:%u full:%u port:%u)"),
+                       F("name: %s id: %u level read failed (low:%u port:%u mid:%u port:%u full:%u port:%u)"),
+                       tankLogName_(cfg),
                        (unsigned)cfg.id,
                        ok_low ? 1u : 0u,
                        (unsigned)cfg.level_low,
@@ -668,7 +678,8 @@ void TankController::readLevels_(const TankController::TankConfig &cfg, TankCont
     }
     else if (!st.levels_ok_prev)
     {
-        _logs.info(F("TANK"), F("id: %u level read ok"), (unsigned)cfg.id);
+        _logs.info(F("TANK"), F("name: %s id: %u level read ok"),
+                   tankLogName_(cfg), (unsigned)cfg.id);
     }
     st.levels_ok_prev = st.levels_ok;
 }
@@ -712,7 +723,8 @@ void TankController::logLevelChange_(const TankController::TankConfig &cfg, cons
         prev.level_mid == curr.level_mid &&
         prev.level_full == curr.level_full)
         return;
-    _logs.info(F("TANK"), F("id: %u low: %u mid: %u full: %u"),
+    _logs.info(F("TANK"), F("name: %s id: %u low: %u mid: %u full: %u"),
+               tankLogName_(cfg),
                (unsigned)cfg.id,
                curr.level_low ? 1u : 0u,
                curr.level_mid ? 1u : 0u,
@@ -721,11 +733,11 @@ void TankController::logLevelChange_(const TankController::TankConfig &cfg, cons
 
 void TankController::logRelayChange_(const TankController::TankConfig &cfg, const TankController::TankState &prev, const TankController::TankState &curr){
     if (prev.pump_on != curr.pump_on)
-        _logs.info(F("TANK"), F("id: %u pump: %s"),
-                   (unsigned)cfg.id, curr.pump_on ? "on" : "off");
+        _logs.info(F("TANK"), F("name: %s id: %u pump: %s"),
+                   tankLogName_(cfg), (unsigned)cfg.id, curr.pump_on ? "on" : "off");
     if (prev.valve_on != curr.valve_on)
-        _logs.info(F("TANK"), F("id: %u valve: %s"),
-                   (unsigned)cfg.id, curr.valve_on ? "on" : "off");
+        _logs.info(F("TANK"), F("name: %s id: %u valve: %s"),
+                   tankLogName_(cfg), (unsigned)cfg.id, curr.valve_on ? "on" : "off");
 }
 
 bool TankController::isEmpty_(const TankController::TankState &st){

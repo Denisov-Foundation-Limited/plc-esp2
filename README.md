@@ -1,6 +1,6 @@
 ﻿# plc-esp2
 
-Прошивка PLC для ESP32/ESP32-S3 с локальным управлением, RTOS-runtime, stack-сетью master/slave, облаком и локальной камерой/snapshot pipeline.
+Прошивка PLC для ESP32/ESP32-S3 с локальным управлением, RTOS-runtime, stack-сетью `master/slave`, облаком, локальной камерой/snapshot pipeline и общей моделью удалённых узлов через `StackUnitSnapshot`.
 
 ## 🧭 Документация
 
@@ -13,8 +13,9 @@
 
 - Локальные интерфейсы: `Web`, `CLI`, `Display`
 - Контроллеры: `Sockets`, `Lights`, `Meteo`, `Thermo`, `Tanks`, `Septic`, `Security`, `Watering`, `Ring`, `AVR`, `Leak`
-- Stack-сеть: `master/slave`, `websocket` или `rs485`, `json/binary`, fallback-режим
-- Cloud: device session, события, команды, загрузка фото
+- Rules/сценарии: локальные правила, дефолтные quick actions (`Я дома`, `Собираюсь`, `Ушел`), запуск из cloud и по stack
+- Stack-сеть: `master/slave`, `websocket` или `rs485`, `json/binary`, fallback-режим, page-based sync удалённых контроллеров
+- Cloud: device session, события, команды, загрузка фото, управление локальными и stack-контроллерами
 - Камеры: локальный список камер на мастере, snapshot в `PSRAM`, upload в `plc-cloud`
 
 ## 🧱 Архитектура проекта
@@ -74,9 +75,9 @@ flowchart TD
 
 - `AppRuntime::init()` поднимает HAL, сети, контроллеры, display/layout, stack bindings
 - `TaskBinder` разносит блокирующие и сервисные части по RTOS-задачам
-- основной loop больше не выполняет всю логику напрямую, а работает через фазы:
-  - `PreNetwork`
-  - `PostNetwork`
+- основной loop не содержит тяжёлой бизнес-логики напрямую:
+  - pre-network инициализация и быстрые локальные проверки живут вне сетевого critical path
+  - post-network работа stack обрабатывается в отдельной RTOS-задаче через `stack_evt`
 
 ### 🧵 RTOS-задачи
 
@@ -112,7 +113,7 @@ flowchart TD
 - `StackSlaveClient` — клиент слейва
 - `StackRouteAdapter` — единый верхний слой обмена `request/event/response/notify`
 - `StackDeviceRegistry` — онлайн-реестр узлов
-- `StackUnitSnapshot` — текущий индекс/снимок состояния узлов
+- `StackUnitSnapshot` — текущий индекс/снимок состояния узлов и страниц удалённых контроллеров
 
 ```mermaid
 flowchart LR
@@ -138,13 +139,19 @@ flowchart LR
 
 - роль: `master | slave`
 - transport: `websocket | rs485`
-- payload: `auto | json | binary`
-- exchange policy: `auto | direct | poll`
+- payload mode: `json | binary`
+- exchange policy: `direct | poll`
 - fallback:
   - `fallback on|off`
   - `fallback_host <host>`
 - признак узла:
   - `slave_controller on|off`
+
+Практические детали текущей реализации:
+
+- `websocket` transport использует heartbeat на обеих сторонах (`ping 5s / pong timeout 12s / disconnect after 3 timeouts`)
+- для `rs485` payload принудительно `binary`
+- `slave_controller=false` позволяет держать в stack технический модуль, который не должен всплывать как полноценное устройство в `plc-cloud`/Telegram
 
 Подробности и актуальные схемы: [STACK.md](./STACK.md)
 
@@ -174,6 +181,13 @@ flowchart TD
 - контроллеры не шлют в сеть напрямую
 - локальные и stack-события попадают в очередь `CloudClient`
 - transport можно менять без переписывания бизнес-логики
+- `CloudClient` отдаёт в `plc-cloud` и локальные, и stack-данные через единый JSON-протокол `proto.json`
+- изменения cloud/stack-команд нужно синхронно отражать в:
+  - `proto.json`
+  - `CloudClient`
+  - stack route handlers
+  - локальном Web/CLI
+  - документации
 
 ## 📷 Камеры и фото
 
@@ -276,6 +290,13 @@ Cloud -> Storage: /uploads/devices/<device_id>/latest.jpg
 - пользователи
 - камеры
 
+Локальный web также является основным конфигуратором для некоторых новых возможностей, которые пока не покрыты CLI один-в-один:
+
+- per-slot enable у правил полива
+- привязка бака и `resume_after_refill`
+- stack-страницы удалённых контроллеров
+- GPIO usage cache и валидация занятых портов
+
 ## ⌨️ CLI
 
 CLI разбит на режимы:
@@ -294,6 +315,8 @@ CLI разбит на режимы:
 - `photo get/upload/cloud/status/clear`
 - `config -> stack ...`
 - `config -> cloud ...`
+- `config -> watering ...`
+- `show stack` с runtime-диагностикой очередей и lock times
 
 Полный актуальный справочник: [CLI.md](./CLI.md)
 
@@ -303,6 +326,7 @@ CLI разбит на режимы:
 - `src/core/network/stack/` — стек и routing layer
 - `src/core/network/cloud/` — cloud client/transports
 - `src/core/network/web/` — web handlers/pages/interfaces
+- `src/core/` — rules, CLI, snapshot glue
 - `src/controllers/` — бизнес-логика контроллеров
 - `src/hal/` — низкоуровневое железо, шины, camera, extender
 - `include/boards/` — board profiles
@@ -326,6 +350,14 @@ pio run -e fcplc
 - русские web-страницы и docs нужно сохранять в `UTF-8`
 - в логах использовать `:` вместо `=`
 - для stack/cloud/web/CLI менять документацию синхронно с кодом
+- не раздувать большие runtime-структуры временными локальными объектами на стеке RTOS-задач
+- `StackUnitSnapshot` нельзя очищать через временный `Entry{}` — только in-place
+- при добавлении stack feature нужно синхронизировать:
+  - `StackUnitSnapshot`
+  - `AppRuntime`
+  - `CloudClient`
+  - local web
+  - docs
 
 ## 📚 Смежные документы
 

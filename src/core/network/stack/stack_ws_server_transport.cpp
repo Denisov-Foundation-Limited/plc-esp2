@@ -13,8 +13,11 @@
 
 namespace
 {
-constexpr uint32_t kWsHeartbeatPingMs = 20000u;
-constexpr uint32_t kWsHeartbeatPongTimeoutMs = 10000u;
+constexpr uint32_t kWsHeartbeatPingMs = 5000u;
+// WebSockets heartbeat timeout is checked from connection time, even before the
+// first ping is sent. Keep pong timeout above ping interval, otherwise fresh
+// slave sessions may be disconnected before the first heartbeat round-trip.
+constexpr uint32_t kWsHeartbeatPongTimeoutMs = 12000u;
 constexpr uint8_t kWsHeartbeatDisconnectCount = 3u;
 }
 

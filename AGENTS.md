@@ -801,3 +801,81 @@ Bootstrap для ноды завершается, если:
 - Bootstrap сейчас ускоряет только первичный прогрев кэшей после `Unit online`; дальше работает обычный round-robin.
 - Для тяжёлых feature (`Ports`, page-based) bootstrap не отменяет page-based логику, а просто даёт им приоритет раньше.
 - Быстрый hash по MAC снижает риск коллизий, но не заменяет идею явного `node_id override` в конфиге (если понадобится жёсткое управление ID в больших установках).
+
+## Новые договорённости и наблюдения (последние изменения)
+
+### Stack WebSocket heartbeat
+
+- Для stack `websocket` heartbeat сейчас рабочая схема такая:
+  - `pingInterval: 5000 ms`
+  - `pongTimeout: 12000 ms`
+  - `disconnectTimeoutCount: 3`
+- Нельзя ставить `pongTimeout < pingInterval`: используемая библиотека начинает считать timeout с момента подключения, ещё до первого `ping`, и это даёт ложные `transport_disconnect` примерно через 10 секунд “на пустом месте”.
+- Если в логах есть:
+  - `WS slave disconnected ... reason: transport_disconnect`
+  - и `idle_ms` очень маленький,
+  это не похоже на idle watchdog слейва; сначала смотреть heartbeat/transport close, а не display/runtime.
+
+### Stack snapshot: текущее покрытие
+
+- `StackUnitSnapshot` сейчас реально покрывает:
+  - `system state` (`rtc/plc/wifi/gsm`)
+  - `controllers summary`
+  - pages: `sockets/lights/meteo/thermo/tanks/watering/leak`
+  - `rules summary`
+- Для `security` в stack пока хранится summary + detect preview, а не полный page-cache всех датчиков.
+- Если в cloud/Telegram нужен полный список security sensors со слейва, это отдельное расширение stack snapshot, а не баг UI.
+
+### Watering: текущее поведение и границы
+
+- Для `watering` теперь есть полноценный stack path, как для local:
+  - `status`
+  - `force`
+  - `weekdays`
+  - `tank`
+  - `resume`
+  - `resume_level`
+  - `time`
+  - `duration`
+  - `slot_enabled`
+- Изменения конфигурации полива, пришедшие через cloud/stack, должны сохраняться в startup-config на принимающем узле, а не оставаться только в RAM.
+- `force` у полива:
+  - включает реле сразу, вне расписания;
+  - снимается вручную;
+  - если привязан бак и бак стал пустым / `levels_ok == false`, `force` должен сниматься автоматически.
+- Для обычного полива по расписанию:
+  - если бак привязан и `resume_after_refill == false`, при опустошении бака полив должен останавливаться;
+  - если `resume_after_refill == true`, правило уходит в pause-empty и ждёт заданный `resume_level`.
+
+### Security: форсированное снятие
+
+- `disarm` должен быть идемпотентным, но не “тихо пропускаемым”:
+  - даже если охрана уже считается снятой, команда снятия должна снова применяться,
+  - состояние должно сохраняться в EEPROM,
+  - stack/cloud notify по arm-state тоже должен уходить повторно.
+- Для stack-снятия охраны поведение должно быть таким же, как локально:
+  - со звуком снятия,
+  - с тем же сохранением состояния,
+  - без специальных `silent=true` только из-за источника `stack`.
+
+### Quick actions и rules
+
+- Telegram/cloud quick actions (`Я дома`, `Собираюсь`, `Ушел`) больше не считать заглушкой:
+  - они должны реально вызывать дефолтные правила контроллера,
+  - локально и по stack.
+- `rules.run` тоже должен работать и локально, и по stack.
+- При расширении rules/quick actions обязательно синхронизировать:
+  - `CloudClient`
+  - `AppRuntime` stack route handlers
+  - binary codec
+  - cloud `proto.json`
+  - документацию
+
+### Docs sync: теперь обязательно обновлять сразу
+
+- При изменениях в `stack/cloud/watering/security/rules/display` нужно синхронно проверять и обновлять:
+  - `README.md`
+  - `STACK.md`
+  - `CLI.md`
+  - `AGENTS.md`
+- Отдельно помнить, что CLI docs не обязаны описывать всё, что уже есть в local web или cloud; если CLI не покрывает новую фичу, это лучше написать явно в `CLI.md`, чем делать вид, что команда существует.

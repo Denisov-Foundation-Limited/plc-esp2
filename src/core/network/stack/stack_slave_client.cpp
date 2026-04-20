@@ -25,8 +25,11 @@ constexpr uint32_t kWsConnectWatchdogMs = 15000u;
 constexpr uint32_t kWsAuthWatchdogMs = 15000u;
 constexpr uint32_t kWsIdleWatchdogMs = 90000u;
 constexpr uint32_t kWsRestartCooldownMs = 2000u;
-constexpr uint32_t kWsHeartbeatPingMs = 20000u;
-constexpr uint32_t kWsHeartbeatPongTimeoutMs = 10000u;
+constexpr uint32_t kWsHeartbeatPingMs = 5000u;
+// WebSockets heartbeat timeout is checked from connection time, even before the
+// first ping is sent. Keep pong timeout above ping interval, otherwise fresh
+// connections may be dropped before the first heartbeat round-trip.
+constexpr uint32_t kWsHeartbeatPongTimeoutMs = 12000u;
 constexpr uint8_t kWsHeartbeatDisconnectCount = 3u;
 
 const char *wifiStatusLabel_(wl_status_t st)

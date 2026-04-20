@@ -12,6 +12,11 @@
 - photo/camera сценарии
 - stack/cloud настройки
 
+Важно:
+
+- это справочник именно по CLI, а не полный список всех возможностей проекта
+- часть новых возможностей локального Web и cloud/Telegram пока не имеет прямого CLI-аналога
+
 Общий обзор проекта: [README.md](./README.md)
 
 ## 🔐 Режимы CLI
@@ -171,9 +176,9 @@ photo cloud
 
 - `stack role <master|slave>`
 - `stack master <host>`
-- `stack policy <auto|direct|poll>`
+- `stack policy <direct|poll>`
 - `stack transport <websocket|rs485>`
-- `stack payload <auto|json|binary>`
+- `stack payload <json|binary>`
 - `stack fallback <on|off>`
 - `stack fallback_host <host>`
 - `stack slave_controller <on|off>`
@@ -187,11 +192,16 @@ photo cloud
 - `master` — адрес мастера для slave-режима
 - `policy` — политика exchange в `StackRouteAdapter`
 - `transport` — `websocket` или `rs485`
-- `payload` — `auto/json/binary`
+- `payload` — `json/binary`
 - `fallback` — разрешить takeover/fallback mode
 - `fallback_host` — переключаться на другой мастер вместо локального takeover
 - `slave_controller` — публиковать узел как контроллер, а не просто модуль
 - `api_key` — ключ stack auth
+
+Практические замечания:
+
+- для `rs485` payload всё равно будет принудительно `binary`
+- `show stack` показывает реальное runtime-состояние, а не только сохранённый конфиг
 
 ## 📡 `show stack`
 
@@ -408,9 +418,24 @@ photo cloud
 - `resume <id> <on|off>`
 - `resume_level <id> <low|mid|full>`
 
+CLI для полива сейчас покрывает базовый конфиг правила:
+
+- имя, enable, status
+- GPIO-порт
+- дни недели
+- 3 времени и 3 длительности
+- привязку бака
+- возобновление после refill и порог возобновления
+
+Что важно:
+
+- per-slot enable (`slot_enabled`) сейчас настраивается не через CLI, а через local web/cloud path
+- `force`-режим полива существует в runtime и cloud/Telegram, но отдельной CLI-команды под него пока нет
+
 ## 📝 Практические замечания
 
 - если забыли синтаксис, не угадывайте: `help` внутри нужного режима уже показывает актуальный набор команд
 - `photo get` ожидает прямой `http://` или `https://` JPEG endpoint
 - `photo cloud` использует текущий cloud config и API key
 - `show stack` сейчас важнее старых “trace/nodes/send” команд, которые относились к предыдущей модели stack
+- если документация и `help` расходятся, источником правды считать `help` и текущий код

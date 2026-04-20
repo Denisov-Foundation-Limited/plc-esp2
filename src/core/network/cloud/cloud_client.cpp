@@ -2022,11 +2022,42 @@ void CloudClient::onTankEvent_(void *ctx, uint8_t tank_id, const String &name, b
     auto *self = static_cast<CloudClient *>(ctx);
     if (!self)
         return;
-    DynamicJsonDocument doc(192);
+    DynamicJsonDocument doc(384);
     doc["id"] = tank_id;
     if (name.length())
         doc["name"] = name;
     doc["empty"] = empty;
+    JsonObject controllers = doc.createNestedObject("controllers");
+    JsonArray tanks = controllers.createNestedArray("tanks");
+    JsonObject item = tanks.createNestedObject();
+    item["id"] = tank_id;
+    if (name.length())
+        item["name"] = name;
+    item["empty"] = empty;
+    TankController &tanks_ctrl = self->_controllers.tanks();
+    auto guard = tanks_ctrl.lockGuard();
+    const auto *cfg = tanks_ctrl.config((size_t)tank_id);
+    const auto *st = tanks_ctrl.state((size_t)tank_id);
+    if (cfg)
+    {
+        item["enabled"] = cfg->enabled;
+        item["power_on"] = cfg->power_on;
+        if (!name.length() && cfg->name.length())
+        {
+            doc["name"] = cfg->name;
+            item["name"] = cfg->name;
+        }
+    }
+    if (st)
+    {
+        item["level_low"] = st->level_low;
+        item["level_mid"] = st->level_mid;
+        item["level_full"] = st->level_full;
+        item["levels_ok"] = st->levels_ok;
+        item["valve_on"] = st->valve_on;
+        item["pump_on"] = st->pump_on;
+        item["alarm_on"] = st->alarm_on;
+    }
     String json;
     serializeJson(doc, json);
     self->enqueueEvent_("tanks.level", empty ? "empty" : "change", json);

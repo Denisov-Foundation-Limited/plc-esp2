@@ -439,9 +439,8 @@ void AppRuntime::onSepticDetect_(void *ctx, uint8_t septic_id, const String &nam
 void AppRuntime::onTankEmpty_(void *ctx, uint8_t tank_id, const String &name, bool empty){
     if (!ctx)
         return;
-    if (!empty)
-        return;
-    static_cast<AppRuntime *>(ctx)->sendTankEmptyToMaster_(tank_id, name);
+    (void)empty;
+    static_cast<AppRuntime *>(ctx)->sendTankLevelToMaster_(tank_id, name);
 }
 
 void AppRuntime::onWateringEvent_(void *ctx, WateringController::Event ev,
@@ -500,15 +499,36 @@ void AppRuntime::sendSepticDetectToMaster_(uint8_t septic_id, const String &name
     }
 }
 
-void AppRuntime::sendTankEmptyToMaster_(uint8_t tank_id, const String &name){
+void AppRuntime::sendTankLevelToMaster_(uint8_t tank_id, const String &name){
     if (!stackSlaveActive_())
         return;
-    StaticJsonDocument<160> doc;
+    StaticJsonDocument<256> doc;
     doc["id"] = tank_id;
-    doc["empty"] = true;
     if (name.length())
         doc["name"] = name;
-    if (!net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), 0, "tanks", "empty", &doc))
+    {
+        TankController &tanks = control.controllers.tanks();
+        auto guard = tanks.lockGuard();
+        const auto *st = tanks.state((size_t)tank_id);
+        if (st)
+        {
+            doc["empty"] = !(st->level_low || st->level_mid || st->level_full);
+            doc["level_low"] = st->level_low;
+            doc["level_mid"] = st->level_mid;
+            doc["level_full"] = st->level_full;
+            doc["levels_ok"] = st->levels_ok;
+            doc["valve_on"] = st->valve_on;
+            doc["pump_on"] = st->pump_on;
+            doc["alarm_on"] = st->alarm_on;
+        }
+        const auto *cfg_item = tanks.config((size_t)tank_id);
+        if (cfg_item)
+        {
+            doc["enabled"] = cfg_item->enabled;
+            doc["power_on"] = cfg_item->power_on;
+        }
+    }
+    if (!net.network.stackRoute().sendEventSelected(cfg.configs_manager.stackPayloadMode(), 0, "tanks", "level", &doc))
     {
         _pending_tank_empty = true;
         _pending_tank_id = tank_id;
@@ -3164,35 +3184,88 @@ void AppRuntime::handleSepticFrame_(uint32_t node_id, const String &action, Json
 }
 
 void AppRuntime::handleTankFrame_(uint32_t node_id, const String &action, JsonVariantConst params){
-    if (action != "empty")
+    if (action != "empty" && action != "level")
         return;
     const bool empty = params["empty"].is<bool>() ? params["empty"].as<bool>()
                                                   : (params["empty"].as<int>() != 0);
-    if (!empty)
-        return;
     const uint8_t tank_id = (uint8_t)(params["id"] | 0);
     const String name = params["name"] | "";
     const String source = stackNodeLabel_(node_id);
-    core.logs.warn(F("TANK"), F("remote empty: unit: %s id: %u name: %s"),
-                   source.c_str(),
-                   (unsigned)tank_id,
-                   name.length() ? name.c_str() : "");
-    if (tank_id > 0 && tank_id <= 32)
-        hw.plc.setAlarmDetail(PlcControl::AlarmModule::Tanks, (uint8_t)(tank_id - 1), true);
-    const int unit_idx = stackNodeIndex_(node_id);
-    if (unit_idx >= 0 && unit_idx < 32)
-        hw.plc.setAlarmUnit(PlcControl::AlarmModule::Tanks, (uint8_t)unit_idx, true);
-    control.controllers.tanks().notifyRemoteEmpty(source, tank_id, name);
-    DynamicJsonDocument event_doc(192);
+    if (empty)
+    {
+        core.logs.warn(F("TANK"), F("remote empty: unit: %s id: %u name: %s"),
+                       source.c_str(),
+                       (unsigned)tank_id,
+                       name.length() ? name.c_str() : "");
+        if (tank_id > 0 && tank_id <= 32)
+            hw.plc.setAlarmDetail(PlcControl::AlarmModule::Tanks, (uint8_t)(tank_id - 1), true);
+        const int unit_idx = stackNodeIndex_(node_id);
+        if (unit_idx >= 0 && unit_idx < 32)
+            hw.plc.setAlarmUnit(PlcControl::AlarmModule::Tanks, (uint8_t)unit_idx, true);
+        control.controllers.tanks().notifyRemoteEmpty(source, tank_id, name);
+    }
+    DynamicJsonDocument event_doc(320);
     event_doc["id"] = tank_id;
     if (name.length())
         event_doc["name"] = name;
-    event_doc["empty"] = true;
+    event_doc["empty"] = empty;
+    if (params["level_low"].is<bool>() || params["level_low"].is<int>())
+        event_doc["level_low"] = params["level_low"].is<bool>() ? params["level_low"].as<bool>()
+                                                                 : (params["level_low"].as<int>() != 0);
+    if (params["level_mid"].is<bool>() || params["level_mid"].is<int>())
+        event_doc["level_mid"] = params["level_mid"].is<bool>() ? params["level_mid"].as<bool>()
+                                                                 : (params["level_mid"].as<int>() != 0);
+    if (params["level_full"].is<bool>() || params["level_full"].is<int>())
+        event_doc["level_full"] = params["level_full"].is<bool>() ? params["level_full"].as<bool>()
+                                                                   : (params["level_full"].as<int>() != 0);
+    if (params["levels_ok"].is<bool>() || params["levels_ok"].is<int>())
+        event_doc["levels_ok"] = params["levels_ok"].is<bool>() ? params["levels_ok"].as<bool>()
+                                                                 : (params["levels_ok"].as<int>() != 0);
+    if (params["enabled"].is<bool>() || params["enabled"].is<int>())
+        event_doc["enabled"] = params["enabled"].is<bool>() ? params["enabled"].as<bool>()
+                                                             : (params["enabled"].as<int>() != 0);
+    if (params["power_on"].is<bool>() || params["power_on"].is<int>())
+        event_doc["power_on"] = params["power_on"].is<bool>() ? params["power_on"].as<bool>()
+                                                               : (params["power_on"].as<int>() != 0);
+    if (params["valve_on"].is<bool>() || params["valve_on"].is<int>())
+        event_doc["valve_on"] = params["valve_on"].is<bool>() ? params["valve_on"].as<bool>()
+                                                               : (params["valve_on"].as<int>() != 0);
+    if (params["pump_on"].is<bool>() || params["pump_on"].is<int>())
+        event_doc["pump_on"] = params["pump_on"].is<bool>() ? params["pump_on"].as<bool>()
+                                                             : (params["pump_on"].as<int>() != 0);
+    if (params["alarm_on"].is<bool>() || params["alarm_on"].is<int>())
+        event_doc["alarm_on"] = params["alarm_on"].is<bool>() ? params["alarm_on"].as<bool>()
+                                                               : (params["alarm_on"].as<int>() != 0);
+    JsonObject controllers = event_doc.createNestedObject("controllers");
+    JsonArray tanks = controllers.createNestedArray("tanks");
+    JsonObject tank = tanks.createNestedObject();
+    tank["id"] = tank_id;
+    if (name.length())
+        tank["name"] = name;
+    tank["empty"] = empty;
+    if (event_doc["level_low"].is<bool>())
+        tank["level_low"] = event_doc["level_low"].as<bool>();
+    if (event_doc["level_mid"].is<bool>())
+        tank["level_mid"] = event_doc["level_mid"].as<bool>();
+    if (event_doc["level_full"].is<bool>())
+        tank["level_full"] = event_doc["level_full"].as<bool>();
+    if (event_doc["levels_ok"].is<bool>())
+        tank["levels_ok"] = event_doc["levels_ok"].as<bool>();
+    if (event_doc["enabled"].is<bool>())
+        tank["enabled"] = event_doc["enabled"].as<bool>();
+    if (event_doc["power_on"].is<bool>())
+        tank["power_on"] = event_doc["power_on"].as<bool>();
+    if (event_doc["valve_on"].is<bool>())
+        tank["valve_on"] = event_doc["valve_on"].as<bool>();
+    if (event_doc["pump_on"].is<bool>())
+        tank["pump_on"] = event_doc["pump_on"].as<bool>();
+    if (event_doc["alarm_on"].is<bool>())
+        tank["alarm_on"] = event_doc["alarm_on"].as<bool>();
     if (source.length())
         event_doc["unit_name"] = source;
     String event_json;
     serializeJson(event_doc, event_json);
-    publishCloudStackEvent_(node_id, "tanks.level", "empty", event_json);
+    publishCloudStackEvent_(node_id, "tanks.level", empty ? "empty" : "change", event_json);
 }
 
 void AppRuntime::handleWateringFrame_(uint32_t node_id, uint32_t target_node, uint32_t reply_to,
@@ -3483,7 +3556,7 @@ void AppRuntime::flushPendingTankEmpty_(){
     if (!stackSlaveActive_())
         return;
     _pending_tank_empty = false;
-    sendTankEmptyToMaster_(_pending_tank_id, _pending_tank_name);
+    sendTankLevelToMaster_(_pending_tank_id, _pending_tank_name);
 }
 
 void AppRuntime::flushPendingWateringEvent_(){

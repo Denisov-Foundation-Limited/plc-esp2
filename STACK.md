@@ -4,7 +4,7 @@
 
 Актуальное описание stack-подсистемы на текущей ветке `develop`.
 
-Этот документ описывает именно новую структуру проекта:
+Этот документ описывает именно текущую структуру проекта:
 
 - `StackTransport`
 - `StackMasterServer`
@@ -111,11 +111,9 @@ flowchart TD
 - `sendResponse(...)`
 - unified route/notify handling
 - payload mode:
-  - `auto`
   - `json`
   - `binary`
 - exchange policy:
-  - `auto`
   - `direct`
   - `poll`
 
@@ -147,7 +145,8 @@ flowchart TD
 - `State`
 - `CacheState`
 - `RequestState`
-- страницы данных (`sockets/lights/meteo/thermo/tanks`)
+- страницы данных (`sockets/lights/meteo/thermo/tanks/watering/leak`)
+- `rules summary`
 - bookkeeping по page requests
 
 Ключевая идея:
@@ -190,7 +189,6 @@ CLI/Web конфиг поддерживает:
 
 ### Policy
 
-- `auto`
 - `direct`
 - `poll`
 
@@ -198,11 +196,9 @@ CLI/Web конфиг поддерживает:
 
 - `direct` — упор на прямую доставку/обмен
 - `poll` — более выраженный запросный режим
-- `auto` — стандартный рекомендуемый режим
 
 ### Payload mode
 
-- `auto`
 - `json`
 - `binary`
 
@@ -210,7 +206,7 @@ CLI/Web конфиг поддерживает:
 
 - `json` удобно для совместимости и трассировки
 - `binary` нужен для более компактного или типизированного обмена
-- `auto` оставляет выбор route layer/runtime
+- для `rs485` payload принудительно `binary`
 
 ## 📡 Транспорт
 
@@ -224,6 +220,16 @@ CLI/Web конфиг поддерживает:
 - CLI
 - Web `/stack`
 - runtime apply через `ConfigsManager`
+
+### WebSocket heartbeat
+
+Для `websocket` transport сейчас используется симметричный heartbeat:
+
+- `pingInterval: 5000 ms`
+- `pongTimeout: 12000 ms`
+- `disconnectTimeoutCount: 3`
+
+Это убирает ложные `transport_disconnect` до первого `ping/pong`, но всё ещё быстро ловит реальную потерю канала.
 
 ## 🔁 Поток обмена
 
@@ -265,6 +271,9 @@ sequenceDiagram
 - meteo page
 - thermo page
 - tanks page
+- watering page
+- leak page
+- rules summary
 
 И для каждого узла ведёт:
 
@@ -273,6 +282,39 @@ sequenceDiagram
 - pending request
 - pending page request
 - offset/limit bookkeeping
+
+### Что входит в текущий `system state`
+
+`system snapshot` для stack-юнита сейчас покрывает:
+
+- `rtc`
+- `plc`
+- `wifi`
+- `gsm`
+
+Это нужно, чтобы web/cloud могли показывать вкладку `Сеть` и диагностику не только у локального мастера, но и у слейвов.
+
+### Что входит в текущий `controllers summary`
+
+Сводка по удалённому узлу сейчас покрывает:
+
+- `sockets`
+- `lights`
+- `meteo`
+- `thermo`
+- `tanks`
+- `septic`
+- `watering`
+- `security`
+- `ring`
+- `avr`
+- `leak`
+- `rules`
+
+Отдельное ограничение текущей реализации:
+
+- `security` в stack сейчас живёт как summary + detect preview
+- полного page-cache всех `security sensors` в `StackUnitSnapshot` пока нет
 
 ### Почему это важно
 
@@ -317,6 +359,15 @@ flowchart TD
 - meteo
 - thermo
 - tanks
+- watering
+- leak
+
+Отдельно, без page-потока, синхронизируются:
+
+- `system snapshot`
+- `controllers summary`
+- `rules summary`
+- `security summary + detect preview`
 
 Это важно, чтобы:
 
@@ -350,6 +401,36 @@ Stack-события теперь могут публиковаться в cloud
 - в `payload.data` прокидывается `source_name`
 - контроллеры не шлют в cloud напрямую, это делает runtime/cloud layer
 
+### Что уже работает и локально, и по stack
+
+На текущем `develop` одинаково для local и stack уже заведены:
+
+- `sockets`
+- `lights`
+- `meteo`
+- `thermo`
+- `tanks`
+- `security`
+- `septic`
+- `ring`
+- `watering`
+- `quick_actions.run`
+- `rules.run`
+
+По `watering` стек уже поддерживает:
+
+- `status`
+- `force`
+- `weekdays`
+- `tank`
+- `resume`
+- `resume_level`
+- `time`
+- `duration`
+- `slot_enabled`
+
+И изменения конфигурации полива, пришедшие по stack, сохраняются на принимающем узле, а не остаются только в RAM.
+
 ## 🧪 Диагностика
 
 ### `show stack`
@@ -382,12 +463,15 @@ CLI показывает:
 5. `retried/expired/dropped`
 6. `network_lock_held_ms` / `rt_lock_held_ms`
 7. `rs485_*` counters при транспортных проблемах
+8. причину disconnect: `transport_disconnect`, `auth_failed`, `watchdog`
+9. для websocket не путать `transport close` и slave watchdog — это разные источники логов
 
 ## ⚠️ Частые ошибки
 
 - Документация/код рассинхронизированы и продолжают ссылаться на старые stack-классы
 - page bookkeeping случайно затирается временным snapshot
 - UI принимает pending/stale state за финальное состояние
+- в docs остаются старые `auto` для stack policy/payload, хотя в текущем коде реально работают только `direct|poll` и `json|binary`
 - новые stack feature меняются в runtime, но не синхронизируются с:
   - CLI
   - Web

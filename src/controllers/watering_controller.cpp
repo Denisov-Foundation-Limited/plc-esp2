@@ -11,6 +11,28 @@
 
 #include "controllers/watering_controller.hpp"
 
+namespace
+{
+
+String wateringRuleLogName_(const WateringController::RuleConfig &cfg)
+{
+    if (cfg.name.length())
+        return cfg.name;
+    return String(F("rule#")) + String((unsigned)cfg.id);
+}
+
+String wateringTankLogName_(TankController &tanks, uint8_t tank_id)
+{
+    if (tank_id == 0)
+        return String(F("-"));
+    const auto *cfg = tanks.config((size_t)tank_id);
+    if (cfg && cfg->name.length())
+        return cfg->name;
+    return String(F("tank#")) + String((unsigned)tank_id);
+}
+
+}
+
 WateringController::WateringController(Gpio &gpio, TankController &tanks, RTC &rtc, Logger &logs)
  : _gpio(gpio), _tanks(tanks), _rtc(rtc), _logs(logs){
     reset_();
@@ -92,8 +114,11 @@ void WateringController::task(){
                 {
                     st.active = true;
                     writePort_(cfg.port, true);
-                    _logs.info(F("WATER"), F("force start: rule: %u port: %u tank: %u"),
-                               (unsigned)cfg.id, (unsigned)cfg.port, (unsigned)cfg.tank_id);
+                    const String rule_name = wateringRuleLogName_(cfg);
+                    const String tank_name = wateringTankLogName_(_tanks, cfg.tank_id);
+                    _logs.info(F("WATER"), F("force start: rule: %s id: %u port: %u tank: %s id: %u"),
+                               rule_name.c_str(), (unsigned)cfg.id, (unsigned)cfg.port,
+                               tank_name.c_str(), (unsigned)cfg.tank_id);
                     push_event(Event::Start, cfg, st);
                 }
                 st.paused = false;
@@ -180,9 +205,11 @@ void WateringController::task(){
                 st.remaining_ms = 0;
                 st.end_ms = millis() + slot_duration_sec * 1000u;
                 writePort_(cfg.port, true);
-                _logs.info(F("WATER"), F("start: rule: %u slot: %u port: %u tank: %u duration_s: %lu"),
-                           (unsigned)cfg.id, (unsigned)(slot + 1u), (unsigned)cfg.port, (unsigned)cfg.tank_id,
-                           (unsigned long)slot_duration_sec);
+                const String rule_name = wateringRuleLogName_(cfg);
+                const String tank_name = wateringTankLogName_(_tanks, cfg.tank_id);
+                _logs.info(F("WATER"), F("start: rule: %s id: %u slot: %u port: %u tank: %s id: %u duration_s: %lu"),
+                           rule_name.c_str(), (unsigned)cfg.id, (unsigned)(slot + 1u), (unsigned)cfg.port,
+                           tank_name.c_str(), (unsigned)cfg.tank_id, (unsigned long)slot_duration_sec);
                 push_event(Event::Start, cfg, st);
                 _runtime_dirty = true;
                 break;
@@ -669,32 +696,100 @@ bool WateringController::setForce(size_t id, bool force_on){
     auto guard = _lock.guard();
     size_t idx = 0;
     if (!indexById_(id, idx))
+    {
+        _logs.warn(F("WATER"), F("force reject: bad rule id: %u"), (unsigned)id);
         return false;
+    }
     RuleConfig &cfg = _cfg[idx];
     RuleState &st = _state[idx];
-    if (!cfg.enabled || cfg.port == kInvalidPort)
+    if (!cfg.enabled)
+    {
+        const String rule_name = wateringRuleLogName_(cfg);
+        _logs.warn(F("WATER"), F("force reject: rule: %s id: %u disabled"),
+                   rule_name.c_str(), (unsigned)cfg.id);
         return false;
+    }
+    if (cfg.port == kInvalidPort)
+    {
+        const String rule_name = wateringRuleLogName_(cfg);
+        _logs.warn(F("WATER"), F("force reject: invalid port: rule: %s id: %u"),
+                   rule_name.c_str(), (unsigned)cfg.id);
+        return false;
+    }
     if (st.force == force_on)
+    {
+        if (force_on)
+        {
+            st.active = true;
+            st.paused = false;
+            st.end_ms = 0;
+            st.remaining_ms = 0xFFFFFFFFu;
+            writePort_(cfg.port, true);
+            _runtime_dirty = true;
+        }
+        else
+        {
+            st.active = false;
+            st.paused = false;
+            st.end_ms = 0;
+            st.remaining_ms = 0;
+            writePort_(cfg.port, false);
+            _runtime_dirty = true;
+        }
         return true;
+    }
     if (force_on)
     {
         if (isTankEmpty_(cfg))
+        {
+            const String rule_name = wateringRuleLogName_(cfg);
+            const String tank_name = wateringTankLogName_(_tanks, cfg.tank_id);
+            _logs.warn(F("WATER"), F("force reject: empty tank: rule: %s id: %u tank: %s id: %u"),
+                       rule_name.c_str(), (unsigned)cfg.id, tank_name.c_str(), (unsigned)cfg.tank_id);
             return false;
+        }
         st.force = true;
         st.active = true;
         st.paused = false;
         st.end_ms = 0;
         st.remaining_ms = 0xFFFFFFFFu;
         writePort_(cfg.port, true);
-        _logs.info(F("WATER"), F("force on: rule: %u port: %u tank: %u"),
-                   (unsigned)cfg.id, (unsigned)cfg.port, (unsigned)cfg.tank_id);
+        const String rule_name = wateringRuleLogName_(cfg);
+        const String tank_name = wateringTankLogName_(_tanks, cfg.tank_id);
+        _logs.info(F("WATER"), F("force on: rule: %s id: %u port: %u tank: %s id: %u"),
+                   rule_name.c_str(), (unsigned)cfg.id, (unsigned)cfg.port,
+                   tank_name.c_str(), (unsigned)cfg.tank_id);
         _runtime_dirty = true;
         notifyEvent_(Event::Start, cfg, st);
         return true;
     }
+    // If manual watering is cancelled exactly in the scheduled start minute,
+    // prevent the scheduler from immediately re-starting the same rule.
+    Ds3231Mz::DateTime now{};
+    if (_rtc.Time(now) && isWeekdayAllowed_(cfg, now.day_of_week))
+    {
+        for (uint8_t slot = 0; slot < kTimeSlotCount; ++slot)
+        {
+            bool slot_enabled = false;
+            uint8_t slot_hour = 0;
+            uint8_t slot_minute = 0;
+            uint32_t slot_duration_sec = 0;
+            getSlot_(cfg, slot, slot_enabled, slot_hour, slot_minute, slot_duration_sec);
+            if (!slot_enabled || slot_duration_sec == 0)
+                continue;
+            if (slot_hour > 23 || slot_minute > 59)
+                continue;
+            if (slot_hour != now.hour || slot_minute != now.minute)
+                continue;
+            st.last_start_key = makeStartKey_(now.year, now.month, now.day, slot_hour, slot_minute, slot);
+            break;
+        }
+    }
     st.force = false;
     st.paused = false;
+    st.end_ms = 0;
     st.remaining_ms = 0;
+    writePort_(cfg.port, false);
     stopIfActive_(cfg, st, Event::Stop);
     _runtime_dirty = true;
     return true;
@@ -953,8 +1048,11 @@ void WateringController::stopIfActive_(const WateringController::RuleConfig &cfg
     st.end_ms = 0;
     st.remaining_ms = 0;
     writePort_(cfg.port, false);
-    _logs.info(F("WATER"), F("stop: rule: %u port: %u tank: %u"),
-               (unsigned)cfg.id, (unsigned)cfg.port, (unsigned)cfg.tank_id);
+    const String rule_name = wateringRuleLogName_(cfg);
+    const String tank_name = wateringTankLogName_(_tanks, cfg.tank_id);
+    _logs.info(F("WATER"), F("stop: rule: %s id: %u port: %u tank: %s id: %u"),
+               rule_name.c_str(), (unsigned)cfg.id, (unsigned)cfg.port,
+               tank_name.c_str(), (unsigned)cfg.tank_id);
     if (notify)
         notifyEvent_(reason, cfg, st);
     _runtime_dirty = true;
@@ -969,9 +1067,11 @@ void WateringController::stopForEmpty_(const WateringController::RuleConfig &cfg
     {
         st.remaining_ms = st.end_ms - now;
         st.paused = true;
+        const String rule_name = wateringRuleLogName_(cfg);
+        const String tank_name = wateringTankLogName_(_tanks, cfg.tank_id);
         _logs.warn(F("WATER"),
-                   F("pause: empty tank: rule: %u tank: %u remaining_ms: %lu resume_level: %s"),
-                   (unsigned)cfg.id, (unsigned)cfg.tank_id, (unsigned long)st.remaining_ms,
+                   F("pause: empty tank: rule: %s id: %u tank: %s id: %u remaining_ms: %lu resume_level: %s"),
+                   rule_name.c_str(), (unsigned)cfg.id, tank_name.c_str(), (unsigned)cfg.tank_id, (unsigned long)st.remaining_ms,
                    cfg.resume_level == 2 ? "full" : (cfg.resume_level == 1 ? "mid" : "low"));
         ev = Event::PauseEmpty;
     }
@@ -979,8 +1079,10 @@ void WateringController::stopForEmpty_(const WateringController::RuleConfig &cfg
     {
         st.remaining_ms = 0;
         st.paused = false;
-        _logs.warn(F("WATER"), F("stop: empty tank: rule: %u tank: %u"),
-                   (unsigned)cfg.id, (unsigned)cfg.tank_id);
+        const String rule_name = wateringRuleLogName_(cfg);
+        const String tank_name = wateringTankLogName_(_tanks, cfg.tank_id);
+        _logs.warn(F("WATER"), F("stop: empty tank: rule: %s id: %u tank: %s id: %u"),
+                   rule_name.c_str(), (unsigned)cfg.id, tank_name.c_str(), (unsigned)cfg.tank_id);
     }
     st.active = false;
     st.end_ms = 0;
@@ -998,8 +1100,11 @@ void WateringController::resumeAfterRefill_(const WateringController::RuleConfig
     st.end_ms = millis() + st.remaining_ms;
     st.remaining_ms = 0;
     writePort_(cfg.port, true);
-    _logs.info(F("WATER"), F("resume: rule: %u port: %u tank: %u"),
-               (unsigned)cfg.id, (unsigned)cfg.port, (unsigned)cfg.tank_id);
+    const String rule_name = wateringRuleLogName_(cfg);
+    const String tank_name = wateringTankLogName_(_tanks, cfg.tank_id);
+    _logs.info(F("WATER"), F("resume: rule: %s id: %u port: %u tank: %s id: %u"),
+               rule_name.c_str(), (unsigned)cfg.id, (unsigned)cfg.port,
+               tank_name.c_str(), (unsigned)cfg.tank_id);
     if (notify)
         notifyEvent_(Event::Resume, cfg, st);
     _runtime_dirty = true;
