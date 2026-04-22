@@ -103,9 +103,25 @@ String WebInterfaceControllersWateringHelper::wateringDeviceSelectHtml_(const We
     }
 
 String WebInterfaceControllersWateringHelper::stackWateringStatusText_(const WebInterface &web, uint32_t node_id) {
-            (void)web;
-            (void)node_id;
+        if (!web.network() || node_id == 0)
             return WebUiRu::kNoDataFromSlave;
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache))
+            return WebUiRu::kNoDataFromSlave;
+        String out;
+        out.reserve(64);
+        out += WebUiRu::Watering::kText6;
+        out += String((unsigned)snapshot.watering_enabled);
+        out += " · ";
+        out += WebUiRu::Watering::kText9;
+        out += String((unsigned)snapshot.watering_active);
+        if (cache.watering_count < snapshot.watering_enabled)
+        {
+            out += " · ";
+            out += "загрузка";
+        }
+        return out;
     }
 
 bool WebInterfaceControllersWateringHelper::isStackWateringView_(const WebInterface &web, uint32_t node_id) {
@@ -116,23 +132,226 @@ bool WebInterfaceControllersWateringHelper::isStackWateringView_(const WebInterf
     }
 
 bool WebInterfaceControllersWateringHelper::requestStackWatering_(WebInterface &web, uint32_t node_id) {
-        (void)web;
-        (void)node_id;
-        return false;
+        if (!web.network() || node_id == 0)
+            return false;
+        const uint32_t now = millis();
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+        const bool has_cache = web.network()->stackIndexCacheState(node_id, cache);
+        if (!has_snapshot || snapshot.updated_ms == 0 || (uint32_t)(now - snapshot.updated_ms) > 5000u ||
+            !has_cache || (cache.watering_count == 0 && snapshot.watering_enabled > 0))
+        {
+            if (!web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Watering, node_id, now, 0, 4000u))
+                return false;
+            DynamicJsonDocument req(64);
+            req["offset"] = 0;
+            req["limit"] = StackUnitSnapshot::kPageSize;
+            return web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "watering",
+                                                                   "snapshot_req", &req, true);
+        }
+        if (snapshot.watering_enabled > 0 && cache.watering_count < snapshot.watering_enabled)
+        {
+            const uint16_t next_offset = cache.watering_count;
+            if (!web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Watering, node_id, now, next_offset,
+                                                        4000u))
+                return true;
+            DynamicJsonDocument req(64);
+            req["offset"] = next_offset;
+            req["limit"] = StackUnitSnapshot::kPageSize;
+            return web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "watering",
+                                                                   "snapshot_req", &req, true);
+        }
+        return true;
     }
 
 size_t WebInterfaceControllersWateringHelper::stackWateringVisibleCount_(const WebInterface &web, uint32_t node_id) {
-        (void)web;
-        (void)node_id;
-        return 0;
+        if (!web.network() || node_id == 0)
+            return 0;
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache))
+            return 0;
+        return cache.watering_count > 0 ? cache.watering_count : snapshot.watering_enabled;
     }
 
 String WebInterfaceControllersWateringHelper::listStackWateringHtml_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
-        (void)web;
-        (void)node_id;
-        (void)offset;
-        (void)limit;
-        return WebUiRu::Watering::kText;
+        if (!web.network() || node_id == 0)
+            return WebUiRu::kNoDataFromSlave;
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache))
+            return WebUiRu::kNoDataFromSlave;
+        if (cache.watering_count == 0)
+            return snapshot.watering_enabled > 0 ? String("Данные загружаются") : String(WebUiRu::Watering::kText);
+
+        String items;
+        items.reserve(16384);
+        const size_t page_limit = (limit == 0) ? SIZE_MAX : limit;
+        const bool can_view_disabled = web.webSessionIsAdmin_();
+        size_t rendered = 0;
+        size_t visible_idx = 0;
+        web.network()->forEachStackWatering(node_id, cache.watering_count, [&](uint8_t, const StackUnitSnapshot::WateringItem &cfg) {
+            if (rendered >= page_limit)
+                return;
+            if (!web.webAclCanViewItem_(UsersRegistry::AclController::Watering, cfg.id, node_id))
+                return;
+            if (!can_view_disabled && !cfg.enabled)
+                return;
+            if (visible_idx < offset)
+            {
+                ++visible_idx;
+                return;
+            }
+            ++visible_idx;
+
+            const bool can_control = web.webAclCanControlItem_(UsersRegistry::AclController::Watering, cfg.id, node_id);
+            const char *state_label = cfg.active ? WebUiRu::Watering::kText3
+                                                 : (cfg.paused ? WebUiRu::Watering::kText4 : WebUiRu::Watering::kText5);
+            items += "<div class=\"tile\" data-rule-id=\"";
+            items += String((unsigned)cfg.id);
+            items += "\" data-active=\"";
+            items += cfg.active ? "1\">" : "0\">";
+            items += WebUiRu::Watering::kText6;
+            items += String((unsigned)cfg.id);
+            items += "</strong><span class=\"badge\">";
+            items += cfg.enabled ? WebUiRu::Watering::kText7 : WebUiRu::Watering::kText8;
+            items += WebUiRu::Watering::kText9;
+            items += state_label;
+            items += "</span></div></div>";
+            items += "<div><div class=\"tile-head\"><strong>";
+            if (cfg.name[0])
+                web.appendHtmlEscaped_(items, cfg.name);
+            else
+                items += WebUiRu::Watering::kText10;
+            items += "</strong>";
+            if (can_control)
+            {
+                items += "<input type=\"hidden\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_en\" value=\"0\"><label class=\"switch\"><input type=\"checkbox\" value=\"1\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_en\"";
+                if (cfg.enabled)
+                    items += " checked";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label>";
+            }
+            items += "</div>";
+            if (can_control)
+            {
+                items += "<input class=\"field name\" type=\"text\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_name\" value=\"";
+                web.appendHtmlEscaped_(items, cfg.name);
+                items += "\"><div class=\"form-grid\">";
+                items += WebUiRu::Watering::kInputTypeCheckboxNameW;
+                items += String((unsigned)cfg.id);
+                items += "_status\"";
+                if (cfg.status)
+                    items += " checked";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+                items += WebUiRu::Watering::kSelectClassFieldMiniWateringSelectData;
+                if (cfg.port != WateringController::kInvalidPort)
+                    items += String((unsigned)cfg.port);
+                items += "\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_port\"></select></div>";
+                items += WebUiRu::Watering::kText28;
+            }
+            static const uint8_t kWeekdayMap[7] = {2, 3, 4, 5, 6, 7, 1};
+            static const char *kWeekdayLabels[7] = {WebUiRu::Watering::kText14, WebUiRu::Watering::kText15,
+                                                    WebUiRu::Watering::kText16, WebUiRu::Watering::kText17,
+                                                    WebUiRu::Watering::kText18, WebUiRu::Watering::kText19,
+                                                    WebUiRu::Watering::kText20};
+            if (can_control)
+            {
+                for (size_t wi = 0; wi < 7; ++wi)
+                {
+                    const uint8_t dow = kWeekdayMap[wi];
+                    items += "<label class=\"weekday-item\"><input type=\"checkbox\" name=\"w";
+                    items += String((unsigned)cfg.id);
+                    items += "_d";
+                    items += String((unsigned)dow);
+                    items += "\"";
+                    if (cfg.weekdays_mask & (uint8_t)(1u << (dow - 1u)))
+                        items += " checked";
+                    items += "><span>";
+                    items += kWeekdayLabels[wi];
+                    items += "</span></label>";
+                }
+                items += "</div></div>";
+
+                auto appendSlot = [&](uint8_t slot_index, bool slot_enabled, uint8_t hour, uint8_t minute,
+                                      uint32_t duration_sec) {
+                    const char *slot_label = slot_index == 0 ? " Слот 1" : (slot_index == 1 ? " Слот 2" : " Слот 3");
+                    const char *time_name = slot_index == 0 ? "_time" : (slot_index == 1 ? "_time2" : "_time3");
+                    const char *dur_name = slot_index == 0 ? "_dur" : (slot_index == 1 ? "_dur2" : "_dur3");
+                    const char *en_name = slot_index == 0 ? "_time_en" : (slot_index == 1 ? "_time2_en" : "_time3_en");
+                    items += "<div class=\"form-row\"><label><input type=\"hidden\" name=\"w";
+                    items += String((unsigned)cfg.id);
+                    items += en_name;
+                    items += "\" value=\"0\"><input type=\"checkbox\" name=\"w";
+                    items += String((unsigned)cfg.id);
+                    items += en_name;
+                    items += "\" value=\"1\"";
+                    if (slot_enabled)
+                        items += " checked";
+                    items += ">";
+                    items += slot_label;
+                    items += "</label></div>";
+                    items += WebUiRu::Watering::kInputClassFieldMiniTypeTimeName;
+                    items += String((unsigned)cfg.id);
+                    items += time_name;
+                    items += "\" value=\"";
+                    if (hour <= 23 && minute <= 59)
+                    {
+                        char buf[8] = {};
+                        snprintf(buf, sizeof(buf), "%02u:%02u", (unsigned)hour, (unsigned)minute);
+                        items += buf;
+                    }
+                    items += "\"></div>";
+                    items += WebUiRu::Watering::kInputClassFieldMiniTypeNumberMin;
+                    items += String((unsigned)cfg.id);
+                    items += dur_name;
+                    items += "\" value=\"";
+                    if (duration_sec)
+                        items += String((unsigned long)((duration_sec + 59) / 60));
+                    items += "\"></div>";
+                };
+
+                appendSlot(0, cfg.slot1_enabled, cfg.hour, cfg.minute, cfg.duration_sec);
+                appendSlot(1, cfg.slot2_enabled, cfg.hour2, cfg.minute2, cfg.duration2_sec);
+                appendSlot(2, cfg.slot3_enabled, cfg.hour3, cfg.minute3, cfg.duration3_sec);
+
+                items += WebUiRu::Watering::kSelectClassFieldMiniWateringSelectData2;
+                if (cfg.tank_id)
+                    items += String((unsigned)cfg.tank_id);
+                items += "\" name=\"w";
+                items += String((unsigned)cfg.id);
+                items += "_tank\"></select></div>";
+                items += WebUiRu::Watering::kInputTypeCheckboxNameW2;
+                items += String((unsigned)cfg.id);
+                items += "_resume\"";
+                if (cfg.resume_after_refill)
+                    items += " checked";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+                items += WebUiRu::Watering::kGeSelectClassFieldMiniNameW;
+                items += String((unsigned)cfg.id);
+                items += "_resume_level\"><option value=\"low\"";
+                if (cfg.resume_level == 0)
+                    items += " selected";
+                items += ">low</option><option value=\"mid\"";
+                if (cfg.resume_level == 1)
+                    items += " selected";
+                items += ">mid</option><option value=\"full\"";
+                if (cfg.resume_level == 2)
+                    items += " selected";
+                items += ">full</option></select></div>";
+            }
+            items += "</div></div></div>";
+            ++rendered;
+        });
+        return items.length() ? items : WebUiRu::Watering::kText;
     }
 
 String WebInterfaceControllersWateringHelper::listWateringHtml_(WebInterface &web, size_t offset, size_t limit) {
@@ -391,9 +610,32 @@ String WebInterfaceControllersWateringHelper::wateringTankOptionsJson_(const Web
     }
 
 String WebInterfaceControllersWateringHelper::stackWateringTankOptionsJson_(const WebInterface &web, uint32_t node_id) {
-        (void)web;
-        (void)node_id;
-        return "[]";
+        if (!web.network() || node_id == 0)
+            return "[]";
+        StackUnitSnapshot::CacheState cache{};
+        if (!web.network()->stackIndexCacheState(node_id, cache) || cache.tank_count == 0)
+            return "[]";
+        String out;
+        out.reserve(256);
+        out += "[";
+        bool first = true;
+        web.network()->forEachStackTank(node_id, cache.tank_count, [&](uint8_t, const StackUnitSnapshot::TankItem &cfg) {
+            if (!cfg.enabled)
+                return;
+            if (!first)
+                out += ",";
+            out += "{\"v\":";
+            out += String((unsigned)cfg.id);
+            out += ",\"l\":\"";
+            if (cfg.name[0])
+                web.appendJsonEscaped_(out, String(cfg.name));
+            else
+                out += String("Tank #") + String((unsigned)cfg.id);
+            out += "\"}";
+            first = false;
+        });
+        out += "]";
+        return out;
     }
 
 size_t WebInterface::wateringLocalRenderCount_() const {

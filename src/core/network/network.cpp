@@ -781,6 +781,11 @@ bool Network::stackIndexMeteoPage(uint32_t node_id, uint8_t offset, StackUnitSna
     return _stack_unit_snapshot.meteoPage(node_id, offset, out, capacity, out_count);
 }
 
+bool Network::stackIndexMeteoDs18At(uint32_t node_id, uint8_t index, char out[StackUnitSnapshot::kMeteoDs18Len]) const
+{
+    return _stack_unit_snapshot.meteoDs18At(node_id, index, out);
+}
+
 bool Network::stackIndexThermoById(uint32_t node_id, uint8_t id, StackUnitSnapshot::ThermoItem &out) const
 {
     return _stack_unit_snapshot.thermoById(node_id, id, out);
@@ -856,6 +861,33 @@ bool Network::stackIndexLeaksPage(uint32_t node_id, uint8_t offset, StackUnitSna
     return _stack_unit_snapshot.leaksPage(node_id, offset, out, capacity, out_count);
 }
 
+bool Network::stackIndexSecurityById(uint32_t node_id, uint8_t id, StackUnitSnapshot::SecurityItem &out) const
+{
+    return _stack_unit_snapshot.securityById(node_id, id, out);
+}
+
+bool Network::stackIndexSecurityAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::SecurityItem &out) const
+{
+    return _stack_unit_snapshot.securityAt(node_id, index, out);
+}
+
+bool Network::stackIndexSecurityPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::SecurityItem *out,
+                                     uint8_t capacity, uint8_t &out_count) const
+{
+    return _stack_unit_snapshot.securityPage(node_id, offset, out, capacity, out_count);
+}
+
+bool Network::stackIndexGroupAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::GroupItem &out) const
+{
+    return _stack_unit_snapshot.groupAt(node_id, index, out);
+}
+
+bool Network::stackIndexGroupsPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::GroupItem *out,
+                                   uint8_t capacity, uint8_t &out_count) const
+{
+    return _stack_unit_snapshot.groupsPage(node_id, offset, out, capacity, out_count);
+}
+
 bool Network::prepareStackPageRequest(StackUnitSnapshot::PageKind kind, uint32_t node_id, uint32_t now_ms, uint16_t offset,
                                       uint32_t pending_ms)
 {
@@ -873,6 +905,8 @@ bool Network::prepareStackPageRequest(StackUnitSnapshot::PageKind kind, uint32_t
             return _stack_unit_snapshot.prepareTanksPageRequest(node_id, now_ms, offset, pending_ms);
         case StackUnitSnapshot::PageKind::Watering:
             return _stack_unit_snapshot.prepareWateringPageRequest(node_id, now_ms, offset, pending_ms);
+        case StackUnitSnapshot::PageKind::Security:
+            return _stack_unit_snapshot.prepareSecurityPageRequest(node_id, now_ms, offset, pending_ms);
         case StackUnitSnapshot::PageKind::Leak:
         default:
             return _stack_unit_snapshot.prepareLeakPageRequest(node_id, now_ms, offset, pending_ms);
@@ -900,6 +934,9 @@ void Network::completeStackPageRequest(StackUnitSnapshot::PageKind kind, uint32_
             return;
         case StackUnitSnapshot::PageKind::Watering:
             _stack_unit_snapshot.completeWateringPageRequest(node_id, offset);
+            return;
+        case StackUnitSnapshot::PageKind::Security:
+            _stack_unit_snapshot.completeSecurityPageRequest(node_id, offset);
             return;
         case StackUnitSnapshot::PageKind::Leak:
         default:
@@ -929,6 +966,9 @@ void Network::clearStackPageRequest(StackUnitSnapshot::PageKind kind, uint32_t n
             return;
         case StackUnitSnapshot::PageKind::Watering:
             _stack_unit_snapshot.clearWateringPageRequest(node_id);
+            return;
+        case StackUnitSnapshot::PageKind::Security:
+            _stack_unit_snapshot.clearSecurityPageRequest(node_id);
             return;
         case StackUnitSnapshot::PageKind::Leak:
         default:
@@ -973,6 +1013,13 @@ void Network::updateStackIndexMeteoPage(uint32_t node_id, uint16_t offset, uint1
     _stack_unit_snapshot.applyMeteoPage(node_id, offset, enabled_total, ok_total, items, item_count, updated_ms);
 }
 
+void Network::updateStackIndexMeteoDs18List(uint32_t node_id,
+                                            const char items[][StackUnitSnapshot::kMeteoDs18Len],
+                                            uint8_t item_count, uint32_t updated_ms)
+{
+    _stack_unit_snapshot.applyMeteoDs18List(node_id, items, item_count, updated_ms);
+}
+
 void Network::updateStackIndexThermoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t active_total,
                                          const StackUnitSnapshot::ThermoItem *items, uint8_t item_count,
                                          uint32_t updated_ms)
@@ -1006,6 +1053,20 @@ void Network::updateStackIndexLeaksPage(uint32_t node_id, uint16_t offset, uint1
                                         uint32_t updated_ms)
 {
     _stack_unit_snapshot.applyLeaksPage(node_id, offset, enabled_total, alert_total, items, item_count, updated_ms);
+}
+
+void Network::updateStackIndexSecurityPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total,
+                                           uint16_t detected_total, const StackUnitSnapshot::SecurityItem *items,
+                                           uint8_t item_count, uint32_t updated_ms)
+{
+    _stack_unit_snapshot.applySecurityPage(node_id, offset, enabled_total, detected_total, items, item_count,
+                                           updated_ms);
+}
+
+void Network::updateStackIndexGroups(uint32_t node_id, const StackUnitSnapshot::GroupItem *items, uint8_t item_count,
+                                     uint32_t updated_ms)
+{
+    _stack_unit_snapshot.applyGroups(node_id, items, item_count, updated_ms);
 }
 
 void Network::invalidateStackIndexState(uint32_t node_id)

@@ -351,22 +351,36 @@ String WebInterfaceControllersOps::globalUsedPortsJson_(PortIO::PinType type) co
 
 String WebInterfaceControllersOps::stackPortOptionsJson_(uint32_t node_id, PortIO::PinType type) const
 {
-        (void)node_id;
+    StackUnitSnapshot::State state{};
+    if (!_web.network() || node_id == 0 || !_web.network()->stackIndexState(node_id, state) || !state.ports_state_valid)
+        return "[]";
         String out;
-        out.reserve(128);
+        out.reserve(256);
         out += "[";
         bool first = true;
+        uint8_t next_id[11] = {};
         for (uint16_t i = 0; i < PortIO::PORT_COUNT; ++i)
         {
             const auto &p = ActiveBoardProfile::PORTS[i];
             if (p.caps == Cap::None || p.type != type)
                 continue;
+            if ((state.port_available_bits[i >> 3] & (uint8_t)(1u << (i & 0x07u))) == 0)
+                continue;
+            uint8_t ui_id = p.ui_id;
+            if (ui_id == 0)
+            {
+                const uint8_t loc = _web.locationIndex_(p.location);
+                if (loc < 11)
+                    ui_id = ++next_id[loc];
+                else
+                    ui_id = 0;
+            }
             if (!first)
                 out += ",";
             out += "{\"v\":";
             out += String((unsigned)i);
             out += ",\"l\":\"";
-            out += String((unsigned)i);
+            _web.appendPortLabel_(out, type, p, ui_id);
             out += "\"}";
             first = false;
         }
@@ -402,6 +416,8 @@ String WebInterfaceControllersOps::stackUsedPortsJson_(uint32_t node_id, PortIO:
         for (uint16_t port = 0; port < PortIO::PORT_COUNT; ++port)
         {
             if ((bits[port >> 3] & (uint8_t)(1u << (port & 0x07u))) == 0)
+                continue;
+            if ((state.port_available_bits[port >> 3] & (uint8_t)(1u << (port & 0x07u))) == 0)
                 continue;
             const auto &p = ActiveBoardProfile::PORTS[port];
             if (p.caps == Cap::None || p.type != type)

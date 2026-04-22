@@ -54,7 +54,23 @@ void GroupsHandler::handleGroups(WebInterface &web, AsyncWebServerRequest *reque
         rows.reserve(2048);
         if (stack_view)
         {
-            rows = String("<tr><td colspan=\"4\" class=\"muted\"><strong>not migrated</strong></td></tr>");
+            DynamicJsonDocument doc(64);
+            web.network()->stackRoute().sendRequestSelected(ConfigsManagerIface::StackPayloadMode::Json, node_id,
+                                                            "groups", "snapshot_req", &doc, true);
+            StackUnitSnapshot::CacheState cache{};
+            if (web.network() && web.network()->stackIndexCacheState(node_id, cache) && cache.group_count > 0)
+            {
+                for (uint8_t i = 0; i < cache.group_count; ++i)
+                {
+                    StackUnitSnapshot::GroupItem group{};
+                    if (!web.network()->stackIndexGroupAt(node_id, i, group) || group.id == 0 || group.name[0] == '\0')
+                        continue;
+                    appendGroupRow_(web, rows, group.id, group.name, group.sort);
+                }
+            }
+            if (rows.length() == 0)
+                rows = String("<tr><td colspan=\"4\" class=\"muted\"><strong>") +
+                       WebUiRu::GroupsPage::kEmptyList + "</strong></td></tr>";
         }
         else if (!web._configs_manager || web._configs_manager->groupCount() == 0)
         {
@@ -197,8 +213,71 @@ void GroupsHandler::appendRowsFromStackCache_(WebInterface &web, String &rows, c
 
 void GroupsHandler::handleGroupsSaveStack_(WebInterface &web, AsyncWebServerRequest *request,
                                        uint32_t node_id, const String &back, bool set_cookie) {
-        (void)request;
-        (void)node_id;
-        web._groups_status = "not migrated";
+        if (!web.network())
+        {
+            web._groups_status = WebUiRu::kNoDataFromSlave;
+            web.sendRedirect_(request, back, set_cookie);
+            return;
+        }
+        DynamicJsonDocument doc(2048);
+        JsonArray items = doc["items"].to<JsonArray>();
+        String action = web.paramValue_(request, "action");
+        action.trim();
+        action.toLowerCase();
+        if (action == "add")
+        {
+            String name = web.paramValue_(request, "name");
+            name.trim();
+            if (!name.length())
+            {
+                web._groups_status = WebUiRu::GroupsPage::kAddFailed;
+                web.sendRedirect_(request, back, set_cookie);
+                return;
+            }
+            StackUnitSnapshot::CacheState cache{};
+            uint8_t next_id = 1;
+            if (web.network()->stackIndexCacheState(node_id, cache))
+            {
+                for (uint8_t i = 0; i < cache.group_count; ++i)
+                {
+                    StackUnitSnapshot::GroupItem group{};
+                    if (web.network()->stackIndexGroupAt(node_id, i, group) && group.id >= next_id)
+                        next_id = (uint8_t)(group.id + 1u);
+                }
+            }
+            JsonObject item = items.add<JsonObject>();
+            item["id"] = next_id;
+            item["name"] = name;
+            item["sort"] = (uint16_t)web.paramValue_(request, "sort").toInt();
+        }
+        else
+        {
+            StackUnitSnapshot::CacheState cache{};
+            if (web.network()->stackIndexCacheState(node_id, cache))
+            {
+                for (uint8_t i = 0; i < cache.group_count; ++i)
+                {
+                    StackUnitSnapshot::GroupItem group{};
+                    if (!web.network()->stackIndexGroupAt(node_id, i, group) || group.id == 0)
+                        continue;
+                    const String prefix = String("g") + String((unsigned)group.id) + "_";
+                    JsonObject item = items.add<JsonObject>();
+                    item["id"] = group.id;
+                    item["name"] = web.paramValue_(request, prefix + "name");
+                    item["sort"] = (uint16_t)web.paramValue_(request, prefix + "sort").toInt();
+                    if (request->hasParam(prefix + "delete", true))
+                        item["delete"] = true;
+                }
+            }
+        }
+        const bool sent = web.network()->stackRoute().sendEventSelected(ConfigsManagerIface::StackPayloadMode::Json,
+                                                                        node_id, "groups", "set", &doc);
+        if (sent)
+        {
+            DynamicJsonDocument refresh_doc(32);
+            web.network()->stackRoute().sendRequestSelected(ConfigsManagerIface::StackPayloadMode::Json, node_id,
+                                                            "groups", "snapshot_req", &refresh_doc, true);
+        }
+        web._groups_status = sent ? WebUiRu::Common::kUpdated : "Stack send failed";
         web.sendRedirect_(request, back, set_cookie);
     }

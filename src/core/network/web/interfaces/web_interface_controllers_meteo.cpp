@@ -345,28 +345,16 @@ String WebInterfaceControllersMeteoHelper::listStackMeteoHtml_(WebInterface &web
                 reserve = 8192u;
             items.reserve(reserve);
             const bool can_view_disabled = web.webSessionIsAdmin_();
-            char ds18_list[StackUnitSnapshot::kMeteoCount][17] = {};
+            char ds18_list[StackUnitSnapshot::kMeteoDs18Count][StackUnitSnapshot::kMeteoDs18Len] = {};
             size_t ds18_count = 0;
-            web.network()->forEachStackMeteo(node_id, cache.meteo_count, [&](uint8_t, const StackUnitSnapshot::MeteoItem &item) {
-                if (!item.enabled || item.type != (uint8_t)MeteoController::SensorType::Ds18b20 || !item.ds18_addr_set)
-                    return;
-                char hex[17] = {};
-                MeteoController::formatHexAddr(item.ds18_addr, hex);
-                bool exists = false;
-                for (size_t j = 0; j < ds18_count; ++j)
-                {
-                    if (strcmp(ds18_list[j], hex) == 0)
-                    {
-                        exists = true;
-                        break;
-                    }
-                }
-                if (!exists && ds18_count < StackUnitSnapshot::kMeteoCount)
-                {
-                    strncpy(ds18_list[ds18_count], hex, sizeof(ds18_list[ds18_count]) - 1);
-                    ++ds18_count;
-                }
-            });
+            const size_t ds18_limit = cache.meteo_ds18_count > StackUnitSnapshot::kMeteoDs18Count
+                                          ? StackUnitSnapshot::kMeteoDs18Count
+                                          : cache.meteo_ds18_count;
+            for (; ds18_count < ds18_limit; ++ds18_count)
+            {
+                if (!web.network()->stackIndexMeteoDs18At(node_id, (uint8_t)ds18_count, ds18_list[ds18_count]))
+                    break;
+            }
             const size_t render_count = stackMeteoRenderCount_(web, node_id, cache.meteo_count, can_view_disabled);
             size_t rendered = 0;
             size_t visible_idx = 0;
@@ -959,24 +947,76 @@ String WebInterfaceControllersMeteoHelper::stackMeteoDs18OptionsJson_(const WebI
             web.network()->stackIndexCacheState(node_id, cache);
         }
         bool first = true;
-        web.network()->forEachStackMeteo(node_id, cache.meteo_count, [&](uint8_t, const StackUnitSnapshot::MeteoItem &item) {
-            if (!item.enabled || item.type != (uint8_t)MeteoController::SensorType::Ds18b20 || !item.ds18_addr_set)
-                return;
-            char hex[17] = {};
-            MeteoController::formatHexAddr(item.ds18_addr, hex);
+        const size_t ds18_limit = cache.meteo_ds18_count > StackUnitSnapshot::kMeteoDs18Count
+                                      ? StackUnitSnapshot::kMeteoDs18Count
+                                      : cache.meteo_ds18_count;
+        for (size_t i = 0; i < ds18_limit; ++i)
+        {
+            char hex[StackUnitSnapshot::kMeteoDs18Len] = {};
+            if (!web.network()->stackIndexMeteoDs18At(node_id, (uint8_t)i, hex) || hex[0] == '\0')
+                break;
             if (!first)
                 out += ",";
             out += "\"";
             out += hex;
             out += "\"";
             first = false;
-        });
+        }
         out += "]";
         return out;
     }
 
 String WebInterfaceControllersMeteoHelper::stackMeteoDs18UsedJson_(const WebInterface &web, uint32_t node_id) {
-        return stackMeteoDs18OptionsJson_(web, node_id);
+        String out;
+        out.reserve(256);
+        out += "[";
+        if (!web.network() || node_id == 0)
+            return "[]";
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache))
+        {
+            const_cast<WebInterface &>(web).requestStackMeteo_(node_id);
+            waitForStackMeteoCache_(const_cast<WebInterface &>(web), node_id);
+        }
+        if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache))
+            return "[]";
+        if (cache.meteo_count == 0 && snapshot.meteo_enabled > 0)
+        {
+            const_cast<WebInterface &>(web).requestStackMeteo_(node_id);
+            waitForStackMeteoCache_(const_cast<WebInterface &>(web), node_id);
+            web.network()->stackIndexState(node_id, snapshot);
+            web.network()->stackIndexCacheState(node_id, cache);
+        }
+        bool first = true;
+        char used[StackUnitSnapshot::kMeteoCount][StackUnitSnapshot::kMeteoDs18Len] = {};
+        size_t used_count = 0;
+        web.network()->forEachStackMeteo(node_id, cache.meteo_count, [&](uint8_t, const StackUnitSnapshot::MeteoItem &item) {
+            if (!item.enabled || item.type != (uint8_t)MeteoController::SensorType::Ds18b20 || !item.ds18_addr_set)
+                return;
+            char hex[StackUnitSnapshot::kMeteoDs18Len] = {};
+            MeteoController::formatHexAddr(item.ds18_addr, hex);
+            for (size_t i = 0; i < used_count; ++i)
+            {
+                if (strcmp(used[i], hex) == 0)
+                    return;
+            }
+            if (used_count >= StackUnitSnapshot::kMeteoCount)
+                return;
+            strlcpy(used[used_count], hex, sizeof(used[used_count]));
+            ++used_count;
+        });
+        for (size_t i = 0; i < used_count; ++i)
+        {
+            if (!first)
+                out += ",";
+            out += "\"";
+            out += used[i];
+            out += "\"";
+            first = false;
+        }
+        out += "]";
+        return out;
     }
 
 String WebInterfaceControllersMeteoHelper::meteoSensorOptionsHtml_(const WebInterface &web, uint8_t selected_id, uint32_t selected_node_id,

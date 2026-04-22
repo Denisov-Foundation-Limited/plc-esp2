@@ -881,14 +881,26 @@ bool WebInterface::sendStackRingCmdAll_(bool set_state, bool state)
     bool WebInterface::hasGroups_(uint32_t node_id) const
 {
     if (node_id != 0)
-        return false;
+    {
+        if (!_network)
+            return false;
+        StackUnitSnapshot::CacheState cache{};
+        return _network->stackIndexCacheState(node_id, cache) && cache.group_count > 0;
+    }
     return _configs_manager && _configs_manager->groupCount() > 0;
 }
 
     uint8_t WebInterface::firstGroupId_(uint32_t node_id) const
 {
     if (node_id != 0)
+    {
+        if (!_network)
+            return 0;
+        StackUnitSnapshot::GroupItem group{};
+        if (_network->stackIndexGroupAt(node_id, 0, group))
+            return group.id;
         return 0;
+    }
     if (!_configs_manager)
         return 0;
     for (size_t i = 0; i < _configs_manager->groupCount(); ++i)
@@ -902,12 +914,13 @@ bool WebInterface::sendStackRingCmdAll_(bool set_state, bool state)
 
     String WebInterface::groupVisibilityStyleAttr_(uint8_t group_id, uint32_t node_id) const
 {
-    if (!hasGroups_(node_id))
-        return "";
-    const uint8_t selected_group_id = firstGroupId_(node_id);
-    if (selected_group_id == 0 || group_id == selected_group_id)
-        return "";
-    return " style=\"display:none\"";
+    (void)group_id;
+    (void)node_id;
+    // Initial controller lists should not be server-side filtered by the first
+    // group. The active filter is applied client-side by the group selector,
+    // and its default state must be "all", otherwise local pages can render
+    // completely empty when the first group has no matching items.
+    return "";
 }
 
     String WebInterface::groupOptionsHtml_(uint8_t selected_group_id, bool include_none, bool disabled_if_empty, uint32_t node_id) const
@@ -924,24 +937,51 @@ bool WebInterface::sendStackRingCmdAll_(bool set_state, bool state)
         html += "</option>";
     }
     if (node_id != 0)
+    {
         if (!has_groups && disabled_if_empty && !include_none)
             html += String("<option value=\"0\" selected>") + WebUiRu::GroupsPage::kNoGroups + "</option>";
         return html;
-    if (!_configs_manager)
-        return html;
-    for (size_t i = 0; i < _configs_manager->groupCount(); ++i)
+    }
+    if (node_id != 0)
     {
-        ConfigsManagerIface::GroupConfig g;
-        if (!_configs_manager->groupByIndex(i, g) || g.id == 0 || g.name.length() == 0)
-            continue;
-        html += "<option value=\"";
-        html += String((unsigned)g.id);
-        html += "\"";
-        if (selected_group_id == g.id)
-            html += " selected";
-        html += ">";
-        appendHtmlEscaped_(html, g.name);
-        html += "</option>";
+        if (!_network)
+            return html;
+        StackUnitSnapshot::CacheState cache{};
+        if (!_network->stackIndexCacheState(node_id, cache))
+            return html;
+        for (uint8_t i = 0; i < cache.group_count; ++i)
+        {
+            StackUnitSnapshot::GroupItem g{};
+            if (!_network->stackIndexGroupAt(node_id, i, g) || g.id == 0 || g.name[0] == '\0')
+                continue;
+            html += "<option value=\"";
+            html += String((unsigned)g.id);
+            html += "\"";
+            if (selected_group_id == g.id)
+                html += " selected";
+            html += ">";
+            appendHtmlEscaped_(html, g.name);
+            html += "</option>";
+        }
+    }
+    else
+    {
+        if (!_configs_manager)
+            return html;
+        for (size_t i = 0; i < _configs_manager->groupCount(); ++i)
+        {
+            ConfigsManagerIface::GroupConfig g;
+            if (!_configs_manager->groupByIndex(i, g) || g.id == 0 || g.name.length() == 0)
+                continue;
+            html += "<option value=\"";
+            html += String((unsigned)g.id);
+            html += "\"";
+            if (selected_group_id == g.id)
+                html += " selected";
+            html += ">";
+            appendHtmlEscaped_(html, g.name);
+            html += "</option>";
+        }
     }
     if (!has_groups && disabled_if_empty && !include_none)
         html += String("<option value=\"0\" selected>") + WebUiRu::GroupsPage::kNoGroups + "</option>";
@@ -952,7 +992,7 @@ String WebInterface::groupFilterHtml_(const char *select_id, uint32_t node_id) c
 {
     if (!hasGroups_(node_id) || !select_id)
         return "";
-    const uint8_t selected_group_id = firstGroupId_(node_id);
+    const uint8_t selected_group_id = 0;
     String html;
     html.reserve(640);
     html += "<div class=\"row\">";

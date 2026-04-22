@@ -15,6 +15,7 @@
 #include <ArduinoJson.h>
 
 #include "controllers/avr_controller.hpp"
+#include "core/network/stack/stack_unit_snapshot.hpp"
 
 class AvrHandler
 {
@@ -53,6 +54,8 @@ private:
     static String buildStateIndicatorsUnknown_();
 
     static String buildStateIndicators_(const AvrController::State &st);
+
+    static String buildStateIndicatorsStack_(const StackUnitSnapshot::State &st);
 
     static String buildStateText_(const AvrController::State &st);
 };

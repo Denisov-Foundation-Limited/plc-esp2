@@ -36,6 +36,36 @@ void appendPortUsageHex_(String &out, const Controllers &controllers, PortIO::Pi
     }
 }
 
+void appendPortAvailableHex_(String &out, const HardwareContext &hw)
+{
+    uint8_t bits[StackUnitSnapshot::kPortMaskBytes] = {};
+    const auto *devs = hw.ext.devs();
+    const uint8_t dev_count = hw.ext.devCount();
+    for (uint16_t port = 0; port < PortIO::PORT_COUNT; ++port)
+    {
+        const auto &p = ActiveBoardProfile::PORTS[port];
+        if (p.caps == Cap::None)
+            continue;
+        bool available = true;
+        if (p.backend == PortIO::Backend::Extender)
+        {
+            const uint8_t dev = p.u.ext.dev;
+            available = devs && dev < dev_count && dev < Extender::MAX_DEVS &&
+                        devs[dev].type == Extender::Type::MCP23017 && hw.ext.isPresent(dev);
+        }
+        if (!available)
+            continue;
+        bits[port >> 3] |= (uint8_t)(1u << (port & 0x07u));
+    }
+    out.reserve(StackUnitSnapshot::kPortMaskBytes * 2u);
+    for (size_t i = 0; i < StackUnitSnapshot::kPortMaskBytes; ++i)
+    {
+        const uint8_t value = bits[i];
+        out += kHexDigits_[(value >> 4) & 0x0Fu];
+        out += kHexDigits_[value & 0x0Fu];
+    }
+}
+
 bool decodeHexNibble_(char c, uint8_t &out)
 {
     if (c >= '0' && c <= '9')
@@ -69,6 +99,24 @@ void decodePortUsageHex_(const String &hex, uint8_t (&out)[StackUnitSnapshot::kP
         if (!decodeHexNibble_(hex[(int)(i * 2u)], hi) || !decodeHexNibble_(hex[(int)(i * 2u + 1u)], lo))
             return;
         out[i] = (uint8_t)((hi << 4) | lo);
+    }
+}
+
+void fillDefaultPortAvailableBits_(uint8_t (&out)[StackUnitSnapshot::kPortMaskBytes])
+{
+    memset(out, 0, sizeof(out));
+    for (uint16_t port = 0; port < PortIO::PORT_COUNT; ++port)
+    {
+        const auto &p = ActiveBoardProfile::PORTS[port];
+        if (p.caps == Cap::None)
+            continue;
+        if (p.backend == PortIO::Backend::Extender && p.u.ext.dev < Extender::MAX_DEVS)
+        {
+            if (p.u.ext.dev >= ActiveBoardProfile::EXT_DEVS_COUNT ||
+                ActiveBoardProfile::EXT_DEVS[p.u.ext.dev].type != Extender::Type::MCP23017)
+                continue;
+        }
+        out[port >> 3] |= (uint8_t)(1u << (port & 0x07u));
     }
 }
 
@@ -708,8 +756,153 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         }
         return;
     }
+    if (strcmp(route.feature, "groups") == 0)
+    {
+        if (action == "snapshot_req")
+        {
+            DynamicJsonDocument doc(1024);
+            appendGroupsSnapshot_(doc.to<JsonObject>());
+            net.network.stackSlaveSendResponse(route.source_node, "groups", "snapshot",
+                                               route.meta.request_id, &doc);
+            return;
+        }
+        if (action == "snapshot")
+        {
+            StackUnitSnapshot::GroupItem items[StackUnitSnapshot::kGroupCount]{};
+            uint8_t item_count = 0;
+            const JsonArrayConst groups = params["controllers"]["groups"].as<JsonArrayConst>();
+            if (!groups.isNull())
+            {
+                for (JsonObjectConst item : groups)
+                {
+                    if (item_count >= StackUnitSnapshot::kGroupCount)
+                        break;
+                    items[item_count].id = (uint8_t)(item["id"] | 0);
+                    items[item_count].sort = (uint16_t)(item["sort"] | 0);
+                    strlcpy(items[item_count].name, item["name"] | "", sizeof(items[item_count].name));
+                    ++item_count;
+                }
+            }
+            net.network.updateStackIndexGroups(node_id, items, item_count, millis());
+            return;
+        }
+        if (action == "set")
+        {
+            bool changed = false;
+            const JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            if (!items.isNull())
+            {
+                for (JsonObjectConst item : items)
+                {
+                    const uint8_t id = (uint8_t)(item["id"] | 0);
+                    if (id == 0)
+                        continue;
+                    const bool remove = item["delete"].is<bool>() ? item["delete"].as<bool>()
+                                                                  : (item["delete"].as<int>() != 0);
+                    if (remove)
+                    {
+                        changed = cfg.configs_manager.removeGroup(id) || changed;
+                        continue;
+                    }
+                    String name = item["name"] | "";
+                    name.trim();
+                    const uint16_t sort = (uint16_t)(item["sort"] | 0);
+                    changed = cfg.configs_manager.setGroup(id, name, sort) || changed;
+                }
+            }
+            if (changed)
+            {
+                if (!cfg.configs_manager.save())
+                    core.logs.warn(F("STACK"), F("Groups stack save failed: node: 0x%08lX"), (unsigned long)node_id);
+                control.controllers.invalidateGpioUsageCache();
+            }
+            return;
+        }
+        return;
+    }
     if (strcmp(route.feature, "security") == 0)
     {
+        if (action == "snapshot_req")
+        {
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            uint16_t limit = (uint16_t)(params["limit"] | StackUnitSnapshot::kPageSize);
+            if (limit == 0 || limit > StackUnitSnapshot::kPageSize)
+                limit = StackUnitSnapshot::kPageSize;
+            DynamicJsonDocument doc(4096);
+            appendSecuritySnapshotPage_(doc.to<JsonObject>(), offset, limit);
+            net.network.stackSlaveSendResponse(route.source_node, "security", "snapshot",
+                                               route.meta.request_id, &doc);
+            return;
+        }
+        if (action == "snapshot")
+        {
+            StackUnitSnapshot::State state{};
+            StackUnitSnapshot::CacheState cache{};
+            net.network.stackIndexState(node_id, state);
+            net.network.stackIndexCacheState(node_id, cache);
+            const uint16_t offset = (uint16_t)(params["offset"] | 0);
+            const uint16_t total = (uint16_t)(params["total"] | 0);
+            const JsonVariantConst summary = params["summary"]["security"];
+            const uint16_t enabled_total = (uint16_t)(summary["sensors_enabled"] | 0);
+            const uint16_t detected_total = (uint16_t)(summary["detected"] | 0);
+            uint8_t item_count = 0;
+            const JsonArrayConst items = params["controllers"]["security"].as<JsonArrayConst>();
+            memset(_stack_security_page_items, 0, sizeof(_stack_security_page_items));
+            if (!items.isNull())
+            {
+                for (JsonObjectConst item : items)
+                {
+                    if (item_count >= StackUnitSnapshot::kPageSize)
+                        break;
+                    auto &dst = _stack_security_page_items[item_count];
+                    dst.id = (uint8_t)(item["id"] | 0);
+                    dst.enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                             : (item["enabled"].as<int>() != 0);
+                    dst.active = item["active"].is<bool>() ? item["active"].as<bool>()
+                                                           : (item["active"].as<int>() != 0);
+                    dst.detect = item["detect"].is<bool>() ? item["detect"].as<bool>()
+                                                           : (item["detect"].as<int>() != 0);
+                    dst.silent = item["silent"].is<bool>() ? item["silent"].as<bool>()
+                                                           : (item["silent"].as<int>() != 0);
+                    dst.type = (uint8_t)(item["type_id"] | 0);
+                    dst.port = (uint8_t)(item["port"] | SecurityController::kInvalidPort);
+                    dst.group_id = (uint8_t)(item["group_id"] | 0);
+                    strlcpy(dst.name, item["name"] | "", sizeof(dst.name));
+                    ++item_count;
+                }
+            }
+            net.network.completeStackPageRequest(StackUnitSnapshot::PageKind::Security, node_id, offset);
+            net.network.updateStackIndexSecurityPage(node_id, offset, total > 0 ? total : enabled_total,
+                                                     detected_total, _stack_security_page_items, item_count, millis());
+            state.security_enabled = summary["enabled"] | false;
+            state.security_siren_port = (uint8_t)(summary["siren"] | SecurityController::kInvalidPort);
+            state.security_sensors_enabled = enabled_total;
+            state.security_detected = detected_total;
+            state.security_armed = summary["armed"] | false;
+            state.security_alarm = summary["alarm"] | false;
+            net.network.applyStackIndexControllerSummary(node_id, state);
+            if (net.network.stackIndexState(node_id, state) && net.network.stackIndexCacheState(node_id, cache))
+            {
+                const uint16_t expected_total = (total > 0) ? total : enabled_total;
+                const uint16_t target_total =
+                    (expected_total > StackUnitSnapshot::kSecurityCount) ? (uint16_t)StackUnitSnapshot::kSecurityCount
+                                                                         : expected_total;
+                if (target_total > 0 && cache.security_count < target_total)
+                {
+                    const uint16_t next_offset = cache.security_count;
+                    if (net.network.prepareStackPageRequest(StackUnitSnapshot::PageKind::Security, node_id, millis(),
+                                                            next_offset, 4000u))
+                    {
+                        _pending_stack_security_page = true;
+                        _pending_stack_security_node_id = node_id;
+                        _pending_stack_security_offset = next_offset;
+                        _pending_stack_security_limit = StackUnitSnapshot::kPageSize;
+                        _pending_stack_security_log = false;
+                    }
+                }
+            }
+            return;
+        }
         if (action == "alarm")
         {
             const bool alarm = params["alarm"].is<bool>() ? params["alarm"].as<bool>()
@@ -785,6 +978,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         if (action == "set")
         {
             auto &sec = control.controllers.security();
+            bool persist_needed = false;
             if (params["armed"].is<bool>() || params["armed"].is<int>())
             {
                 if (params["armed"].as<bool>())
@@ -814,8 +1008,67 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                 sec.setAlarmState(params["alarm"].as<bool>());
             if (params["clear"].is<bool>() && params["clear"].as<bool>())
                 sec.clearDetect();
+            if (params.containsKey("enabled"))
+            {
+                sec.setControllerEnabled(params["enabled"].is<bool>() ? params["enabled"].as<bool>()
+                                                                      : (params["enabled"].as<int>() != 0));
+                persist_needed = true;
+            }
+            if (params.containsKey("siren"))
+            {
+                sec.setSirenPort((uint8_t)(params["siren"] | SecurityController::kInvalidPort));
+                persist_needed = true;
+            }
+            JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            if (!items.isNull())
+            {
+                for (JsonObjectConst item : items)
+                {
+                    const uint8_t id = (uint8_t)(item["id"] | 0);
+                    if (id == 0)
+                        continue;
+                    if (item.containsKey("enabled"))
+                    {
+                        sec.setEnabled(id, item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                                       : (item["enabled"].as<int>() != 0));
+                        persist_needed = true;
+                    }
+                    if (item.containsKey("name"))
+                    {
+                        sec.setName(id, String(item["name"] | ""));
+                        persist_needed = true;
+                    }
+                    if (item.containsKey("group_id"))
+                    {
+                        sec.setGroupId(id, (uint8_t)(item["group_id"] | 0));
+                        persist_needed = true;
+                    }
+                    if (item.containsKey("type_id"))
+                    {
+                        sec.setType(id, (SecurityController::SensorType)(uint8_t)(item["type_id"] | 0));
+                        persist_needed = true;
+                    }
+                    if (item.containsKey("port"))
+                    {
+                        sec.setPort(id, (uint8_t)(item["port"] | SecurityController::kInvalidPort));
+                        persist_needed = true;
+                    }
+                    if (item.containsKey("silent"))
+                    {
+                        sec.setSilent(id, item["silent"].is<bool>() ? item["silent"].as<bool>()
+                                                                     : (item["silent"].as<int>() != 0));
+                        persist_needed = true;
+                    }
+                }
+            }
             const char *beep = params["beep"] | "";
             (void)beep;
+            if (persist_needed)
+            {
+                if (!cfg.configs_manager.save())
+                    core.logs.warn(F("STACK"), F("Security stack save failed: node: 0x%08lX"), (unsigned long)node_id);
+                control.controllers.invalidateGpioUsageCache();
+            }
             return;
         }
         if (action == "prearm_blocked")
@@ -1020,12 +1273,15 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             String relay_used_hex;
             String dinput_used_hex;
             String sensor_used_hex;
+            String port_available_hex;
             appendPortUsageHex_(relay_used_hex, control.controllers, PortIO::PinType::Relay);
             appendPortUsageHex_(dinput_used_hex, control.controllers, PortIO::PinType::DInput);
             appendPortUsageHex_(sensor_used_hex, control.controllers, PortIO::PinType::Sensor);
+            appendPortAvailableHex_(port_available_hex, hw);
             doc["relay_used_bits"] = relay_used_hex;
             doc["dinput_used_bits"] = dinput_used_hex;
             doc["sensor_used_bits"] = sensor_used_hex;
+            doc["port_available_bits"] = port_available_hex;
             appendControllerSnapshotSummary_(doc.to<JsonObject>());
             appendSocketSnapshotItems_(doc.to<JsonObject>());
             appendLightSnapshotItems_(doc.to<JsonObject>());
@@ -1036,7 +1292,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             core.logs.info(F("STACK"), F("Slave snapshot tx prepare: dst 0x%08lX req: %lu sockets: %u lights: %u heap: %u"),
                            (unsigned long)route.source_node, (unsigned long)route.meta.request_id,
                            (unsigned)sockets_count, (unsigned)lights_count, (unsigned)ESP.getFreeHeap());
-            const bool sent = net.network.stackSlaveSendResponse(route.source_node, "system", "snapshot",
+            const bool sent = net.network.stackSlaveSendResponse(route.source_node, "web", "index_state",
                                                                  route.meta.request_id, &doc);
             core.logs.info(F("STACK"), F("Slave snapshot tx result: dst 0x%08lX req: %lu sent: %u"),
                            (unsigned long)route.source_node, (unsigned long)route.meta.request_id,
@@ -1223,6 +1479,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             {
                 JsonObject security = summary["security"].to<JsonObject>();
                 security["enabled"] = security_summary["enabled"] | false;
+                security["siren"] = security_summary["siren"] | SecurityController::kInvalidPort;
                 security["sensors_enabled"] = security_summary["sensors_enabled"] | 0;
                 security["detected"] = security_summary["detected"] | 0;
                 JsonArray detected_items = security["detected_items"].to<JsonArray>();
@@ -1245,15 +1502,42 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                 JsonObject ring = summary["ring"].to<JsonObject>();
                 ring["enabled"] = ring_summary["enabled"] | false;
                 ring["on"] = ring_summary["on"] | false;
+                ring["button"] = ring_summary["button"] | RingController::kInvalidPort;
+                ring["relay"] = ring_summary["relay"] | RingController::kInvalidPort;
             }
             if (!avr_summary.isNull())
             {
                 JsonObject avr = summary["avr"].to<JsonObject>();
                 avr["enabled"] = avr_summary["enabled"] | false;
+                avr["auto_mode"] = avr_summary["auto_mode"] | true;
+                avr["prefer_main"] = avr_summary["prefer_main"] | true;
+                avr["auto_return_main"] = avr_summary["auto_return_main"] | true;
                 avr["main_ok"] = avr_summary["main_ok"] | false;
                 avr["reserve_ok"] = avr_summary["reserve_ok"] | false;
                 avr["fault"] = avr_summary["fault"] | false;
                 avr["active_source"] = avr_summary["active_source"] | "off";
+                avr["active_source_id"] = avr_summary["active_source_id"] | 0;
+                avr["manual_source_id"] = avr_summary["manual_source_id"] | 0;
+                avr["fault_id"] = avr_summary["fault_id"] | 0;
+                avr["transfer_in_progress"] = avr_summary["transfer_in_progress"] | false;
+                avr["main_ok_port"] = avr_summary["main_ok_port"] | AvrController::kInvalidPort;
+                avr["reserve_ok_port"] = avr_summary["reserve_ok_port"] | AvrController::kInvalidPort;
+                avr["relay_main_port"] = avr_summary["relay_main_port"] | AvrController::kInvalidPort;
+                avr["relay_reserve_port"] = avr_summary["relay_reserve_port"] | AvrController::kInvalidPort;
+                avr["feedback_main_port"] = avr_summary["feedback_main_port"] | AvrController::kInvalidPort;
+                avr["feedback_reserve_port"] = avr_summary["feedback_reserve_port"] | AvrController::kInvalidPort;
+                avr["main_ok_active_low"] = avr_summary["main_ok_active_low"] | true;
+                avr["reserve_ok_active_low"] = avr_summary["reserve_ok_active_low"] | true;
+                avr["feedback_main_active_low"] = avr_summary["feedback_main_active_low"] | true;
+                avr["feedback_reserve_active_low"] = avr_summary["feedback_reserve_active_low"] | true;
+                avr["relay_main_invert"] = avr_summary["relay_main_invert"] | false;
+                avr["relay_reserve_invert"] = avr_summary["relay_reserve_invert"] | false;
+                avr["debounce_ms"] = avr_summary["debounce_ms"] | 500;
+                avr["loss_delay_ms"] = avr_summary["loss_delay_ms"] | 1500;
+                avr["return_delay_ms"] = avr_summary["return_delay_ms"] | 5000;
+                avr["break_ms"] = avr_summary["break_ms"] | 250;
+                avr["warmup_ms"] = avr_summary["warmup_ms"] | 1500;
+                avr["transfer_timeout_ms"] = avr_summary["transfer_timeout_ms"] | 15000;
             }
             if (!leak_summary.isNull())
             {
@@ -1281,6 +1565,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.watering_active = watering_summary["active"] | 0;
             state.rules_enabled = rules_enabled;
             state.security_enabled = security_summary["enabled"] | false;
+            state.security_siren_port = (uint8_t)(security_summary["siren"] | SecurityController::kInvalidPort);
             state.security_sensors_enabled = security_summary["sensors_enabled"] | 0;
             state.security_detected = security_summary["detected"] | 0;
             JsonArrayConst security_detect_items = security_summary["detected_items"].as<JsonArrayConst>();
@@ -1302,14 +1587,45 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             state.security_alarm = security_summary["alarm"] | false;
             state.ring_enabled = ring_summary["enabled"] | false;
             state.ring_on = ring_summary["on"] | false;
+            state.ring_button_port = (uint8_t)(ring_summary["button"] | RingController::kInvalidPort);
+            state.ring_relay_port = (uint8_t)(ring_summary["relay"] | RingController::kInvalidPort);
             state.avr_enabled = avr_summary["enabled"] | false;
+            state.avr_auto_mode = avr_summary["auto_mode"] | true;
+            state.avr_prefer_main = avr_summary["prefer_main"] | true;
+            state.avr_auto_return_main = avr_summary["auto_return_main"] | true;
             state.avr_main_ok = avr_summary["main_ok"] | false;
             state.avr_reserve_ok = avr_summary["reserve_ok"] | false;
             state.avr_fault = avr_summary["fault"] | false;
             state.avr_active_source = (uint8_t)(avr_summary["active_source_id"] | 0);
+            state.avr_manual_source = (uint8_t)(avr_summary["manual_source_id"] | 0);
+            state.avr_fault_id = (uint8_t)(avr_summary["fault_id"] | 0);
+            state.avr_transfer_in_progress = avr_summary["transfer_in_progress"] | false;
+            state.avr_main_ok_port = (uint8_t)(avr_summary["main_ok_port"] | AvrController::kInvalidPort);
+            state.avr_reserve_ok_port = (uint8_t)(avr_summary["reserve_ok_port"] | AvrController::kInvalidPort);
+            state.avr_relay_main_port = (uint8_t)(avr_summary["relay_main_port"] | AvrController::kInvalidPort);
+            state.avr_relay_reserve_port =
+                (uint8_t)(avr_summary["relay_reserve_port"] | AvrController::kInvalidPort);
+            state.avr_feedback_main_port =
+                (uint8_t)(avr_summary["feedback_main_port"] | AvrController::kInvalidPort);
+            state.avr_feedback_reserve_port =
+                (uint8_t)(avr_summary["feedback_reserve_port"] | AvrController::kInvalidPort);
+            state.avr_main_ok_active_low = avr_summary["main_ok_active_low"] | true;
+            state.avr_reserve_ok_active_low = avr_summary["reserve_ok_active_low"] | true;
+            state.avr_feedback_main_active_low = avr_summary["feedback_main_active_low"] | true;
+            state.avr_feedback_reserve_active_low = avr_summary["feedback_reserve_active_low"] | true;
+            state.avr_relay_main_invert = avr_summary["relay_main_invert"] | false;
+            state.avr_relay_reserve_invert = avr_summary["relay_reserve_invert"] | false;
+            state.avr_debounce_ms = (uint32_t)(avr_summary["debounce_ms"] | 500u);
+            state.avr_loss_delay_ms = (uint32_t)(avr_summary["loss_delay_ms"] | 1500u);
+            state.avr_return_delay_ms = (uint32_t)(avr_summary["return_delay_ms"] | 5000u);
+            state.avr_break_ms = (uint32_t)(avr_summary["break_ms"] | 250u);
+            state.avr_warmup_ms = (uint32_t)(avr_summary["warmup_ms"] | 1500u);
+            state.avr_transfer_timeout_ms = (uint32_t)(avr_summary["transfer_timeout_ms"] | 15000u);
             state.leak_enabled = leak_summary["enabled"] | 0;
             state.leak_alert = leak_summary["alert"] | 0;
             state.ports_state_valid = true;
+            fillDefaultPortAvailableBits_(state.port_available_bits);
+            decodePortUsageHex_(params["port_available_bits"] | "", state.port_available_bits);
             decodePortUsageHex_(params["relay_used_bits"] | "", state.relay_used_bits);
             decodePortUsageHex_(params["dinput_used_bits"] | "", state.dinput_used_bits);
             decodePortUsageHex_(params["sensor_used_bits"] | "", state.sensor_used_bits);
@@ -1444,6 +1760,34 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
     }
     if (strcmp(route.feature, "ring") == 0)
     {
+        if (action == "snapshot_req")
+        {
+            DynamicJsonDocument doc(512);
+            JsonObject summary = doc["summary"].to<JsonObject>();
+            JsonObject ring_out = summary["ring"].to<JsonObject>();
+            RingController &ring = control.controllers.ring();
+            auto guard = ring.lockGuard();
+            const auto &cfg_ring = ring.config();
+            const auto &st_ring = ring.state();
+            ring_out["enabled"] = ring.controllerEnabled() && cfg_ring.enabled;
+            ring_out["on"] = st_ring.relay_on;
+            ring_out["button"] = cfg_ring.button_port;
+            ring_out["relay"] = cfg_ring.relay_port;
+            net.network.stackSlaveSendResponse(route.source_node, "ring", "snapshot", route.meta.request_id, &doc);
+            return;
+        }
+        if (action == "snapshot")
+        {
+            StackUnitSnapshot::State state{};
+            net.network.stackIndexState(node_id, state);
+            const JsonVariantConst ring_summary = params["summary"]["ring"];
+            state.ring_enabled = ring_summary["enabled"] | false;
+            state.ring_on = ring_summary["on"] | false;
+            state.ring_button_port = (uint8_t)(ring_summary["button"] | RingController::kInvalidPort);
+            state.ring_relay_port = (uint8_t)(ring_summary["relay"] | RingController::kInvalidPort);
+            net.network.applyStackIndexControllerSummary(node_id, state);
+            return;
+        }
         if (action == "button")
         {
             const bool pressed = params["pressed"].is<bool>() ? params["pressed"].as<bool>()
@@ -1453,9 +1797,158 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
         }
         if (action == "set")
         {
-            const bool state = params["state"].is<bool>() ? params["state"].as<bool>()
-                                                          : (params["state"].as<int>() != 0);
-            control.controllers.ring().setHoldRelayWithSource(state, RingController::Source::Stack);
+            RingController &ring = control.controllers.ring();
+            bool persist_needed = false;
+            if (params.containsKey("enabled"))
+            {
+                ring.setControllerEnabled(params["enabled"].is<bool>() ? params["enabled"].as<bool>()
+                                                                       : (params["enabled"].as<int>() != 0));
+                persist_needed = true;
+            }
+            if (params.containsKey("button"))
+            {
+                ring.setButtonPort((uint8_t)(params["button"] | RingController::kInvalidPort));
+                persist_needed = true;
+            }
+            if (params.containsKey("relay"))
+            {
+                ring.setRelayPort((uint8_t)(params["relay"] | RingController::kInvalidPort));
+                persist_needed = true;
+            }
+            if (params.containsKey("state"))
+            {
+                const bool state = params["state"].is<bool>() ? params["state"].as<bool>()
+                                                              : (params["state"].as<int>() != 0);
+                ring.setHoldRelayWithSource(state, RingController::Source::Stack);
+            }
+            if (persist_needed)
+            {
+                if (!cfg.configs_manager.save())
+                    core.logs.warn(F("STACK"), F("Ring stack save failed: node: 0x%08lX"), (unsigned long)node_id);
+                control.controllers.invalidateGpioUsageCache();
+            }
+            return;
+        }
+        return;
+    }
+    if (strcmp(route.feature, "avr") == 0)
+    {
+        if (action == "snapshot_req")
+        {
+            DynamicJsonDocument doc(1024);
+            JsonObject summary = doc["summary"].to<JsonObject>();
+            JsonObject avr_out = summary["avr"].to<JsonObject>();
+            AvrController &avr = control.controllers.avr();
+            auto guard = avr.lockGuard();
+            avr_out["enabled"] = avr.controllerEnabled() && avr.config().enabled;
+            avr_out["auto_mode"] = avr.config().auto_mode;
+            avr_out["prefer_main"] = avr.config().prefer_main;
+            avr_out["auto_return_main"] = avr.config().auto_return_main;
+            avr_out["main_ok"] = avr.state().main_ok;
+            avr_out["reserve_ok"] = avr.state().reserve_ok;
+            avr_out["fault"] = avr.fault() != AvrController::Fault::None;
+            avr_out["active_source"] = AvrController::sourceName(avr.activeSource());
+            avr_out["active_source_id"] = (uint8_t)avr.activeSource();
+            avr_out["manual_source_id"] = (uint8_t)avr.manualSource();
+            avr_out["fault_id"] = (uint8_t)avr.fault();
+            avr_out["transfer_in_progress"] = avr.transferInProgress();
+            avr_out["main_ok_port"] = avr.config().main_ok_port;
+            avr_out["reserve_ok_port"] = avr.config().reserve_ok_port;
+            avr_out["relay_main_port"] = avr.config().relay_main_port;
+            avr_out["relay_reserve_port"] = avr.config().relay_reserve_port;
+            avr_out["feedback_main_port"] = avr.config().feedback_main_port;
+            avr_out["feedback_reserve_port"] = avr.config().feedback_reserve_port;
+            avr_out["main_ok_active_low"] = avr.config().main_ok_active_low;
+            avr_out["reserve_ok_active_low"] = avr.config().reserve_ok_active_low;
+            avr_out["feedback_main_active_low"] = avr.config().feedback_main_active_low;
+            avr_out["feedback_reserve_active_low"] = avr.config().feedback_reserve_active_low;
+            avr_out["relay_main_invert"] = avr.config().relay_main_invert;
+            avr_out["relay_reserve_invert"] = avr.config().relay_reserve_invert;
+            avr_out["debounce_ms"] = avr.config().debounce_ms;
+            avr_out["loss_delay_ms"] = avr.config().loss_delay_ms;
+            avr_out["return_delay_ms"] = avr.config().return_delay_ms;
+            avr_out["break_ms"] = avr.config().break_ms;
+            avr_out["warmup_ms"] = avr.config().warmup_ms;
+            avr_out["transfer_timeout_ms"] = avr.config().transfer_timeout_ms;
+            net.network.stackSlaveSendResponse(route.source_node, "avr", "snapshot", route.meta.request_id, &doc);
+            return;
+        }
+        if (action == "snapshot")
+        {
+            StackUnitSnapshot::State state{};
+            net.network.stackIndexState(node_id, state);
+            const JsonVariantConst avr_summary = params["summary"]["avr"];
+            state.avr_enabled = avr_summary["enabled"] | false;
+            state.avr_auto_mode = avr_summary["auto_mode"] | true;
+            state.avr_prefer_main = avr_summary["prefer_main"] | true;
+            state.avr_auto_return_main = avr_summary["auto_return_main"] | true;
+            state.avr_main_ok = avr_summary["main_ok"] | false;
+            state.avr_reserve_ok = avr_summary["reserve_ok"] | false;
+            state.avr_fault = avr_summary["fault"] | false;
+            state.avr_active_source = (uint8_t)(avr_summary["active_source_id"] | 0);
+            state.avr_manual_source = (uint8_t)(avr_summary["manual_source_id"] | 0);
+            state.avr_fault_id = (uint8_t)(avr_summary["fault_id"] | 0);
+            state.avr_transfer_in_progress = avr_summary["transfer_in_progress"] | false;
+            state.avr_main_ok_port = (uint8_t)(avr_summary["main_ok_port"] | AvrController::kInvalidPort);
+            state.avr_reserve_ok_port = (uint8_t)(avr_summary["reserve_ok_port"] | AvrController::kInvalidPort);
+            state.avr_relay_main_port = (uint8_t)(avr_summary["relay_main_port"] | AvrController::kInvalidPort);
+            state.avr_relay_reserve_port =
+                (uint8_t)(avr_summary["relay_reserve_port"] | AvrController::kInvalidPort);
+            state.avr_feedback_main_port =
+                (uint8_t)(avr_summary["feedback_main_port"] | AvrController::kInvalidPort);
+            state.avr_feedback_reserve_port =
+                (uint8_t)(avr_summary["feedback_reserve_port"] | AvrController::kInvalidPort);
+            state.avr_main_ok_active_low = avr_summary["main_ok_active_low"] | true;
+            state.avr_reserve_ok_active_low = avr_summary["reserve_ok_active_low"] | true;
+            state.avr_feedback_main_active_low = avr_summary["feedback_main_active_low"] | true;
+            state.avr_feedback_reserve_active_low = avr_summary["feedback_reserve_active_low"] | true;
+            state.avr_relay_main_invert = avr_summary["relay_main_invert"] | false;
+            state.avr_relay_reserve_invert = avr_summary["relay_reserve_invert"] | false;
+            state.avr_debounce_ms = (uint32_t)(avr_summary["debounce_ms"] | 500u);
+            state.avr_loss_delay_ms = (uint32_t)(avr_summary["loss_delay_ms"] | 1500u);
+            state.avr_return_delay_ms = (uint32_t)(avr_summary["return_delay_ms"] | 5000u);
+            state.avr_break_ms = (uint32_t)(avr_summary["break_ms"] | 250u);
+            state.avr_warmup_ms = (uint32_t)(avr_summary["warmup_ms"] | 1500u);
+            state.avr_transfer_timeout_ms = (uint32_t)(avr_summary["transfer_timeout_ms"] | 15000u);
+            net.network.applyStackIndexControllerSummary(node_id, state);
+            return;
+        }
+        if (action == "set")
+        {
+            AvrController &avr = control.controllers.avr();
+            auto guard = avr.lockGuard();
+            bool persist_needed = false;
+            DynamicJsonDocument doc(1024);
+            JsonObject obj = doc.to<JsonObject>();
+            const char *keys[] = {"enabled", "auto_mode", "prefer_main", "auto_return_main", "main_ok",
+                                  "reserve_ok", "relay_main", "relay_reserve", "feedback_main",
+                                  "feedback_reserve", "main_ok_active_low", "reserve_ok_active_low",
+                                  "feedback_main_active_low", "feedback_reserve_active_low",
+                                  "relay_main_invert", "relay_reserve_invert", "debounce_ms",
+                                  "loss_delay_ms", "return_delay_ms", "break_ms", "warmup_ms",
+                                  "transfer_timeout_ms"};
+            for (const char *key : keys)
+            {
+                if (params.containsKey(key))
+                {
+                    obj[key] = params[key];
+                    persist_needed = true;
+                }
+            }
+            if (!obj.isNull() && obj.size() > 0)
+                avr.applyConfig(doc.as<JsonObjectConst>());
+            if (params.containsKey("manual_source"))
+                avr.setManualSource((AvrController::Source)(uint8_t)(params["manual_source"] | 0));
+            if (params.containsKey("clear_fault") &&
+                (params["clear_fault"].is<bool>() ? params["clear_fault"].as<bool>()
+                                                  : (params["clear_fault"].as<int>() != 0)))
+                avr.clearFault();
+            if (persist_needed)
+            {
+                if (!cfg.configs_manager.save())
+                    core.logs.warn(F("STACK"), F("AVR stack save failed: node: 0x%08lX"), (unsigned long)node_id);
+                control.controllers.invalidateGpioUsageCache();
+            }
             return;
         }
         return;
@@ -1667,9 +2160,36 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             const uint16_t total = (uint16_t)(params["total"] | 0);
             const uint16_t summary_total = (uint16_t)(params["summary"]["meteo"]["enabled"] | 0);
             const uint16_t ok_total = (uint16_t)(params["summary"]["meteo"]["ok"] | 0);
+            char ds18_items[StackUnitSnapshot::kMeteoDs18Count][StackUnitSnapshot::kMeteoDs18Len] = {};
+            uint8_t ds18_count = 0;
             uint8_t item_count = 0;
             const JsonArrayConst meteo_items = params["controllers"]["meteo"].as<JsonArrayConst>();
+            const JsonArrayConst ds18_array = params["controllers"]["ds18"].as<JsonArrayConst>();
             memset(_stack_meteo_page_items, 0, sizeof(_stack_meteo_page_items));
+            if (!ds18_array.isNull())
+            {
+                for (JsonVariantConst item : ds18_array)
+                {
+                    if (ds18_count >= StackUnitSnapshot::kMeteoDs18Count)
+                        break;
+                    const char *hex = item | "";
+                    if (!hex || hex[0] == '\0')
+                        continue;
+                    bool exists = false;
+                    for (uint8_t i = 0; i < ds18_count; ++i)
+                    {
+                        if (strncmp(ds18_items[i], hex, StackUnitSnapshot::kMeteoDs18Len - 1) == 0)
+                        {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    if (exists)
+                        continue;
+                    strlcpy(ds18_items[ds18_count], hex, StackUnitSnapshot::kMeteoDs18Len);
+                    ++ds18_count;
+                }
+            }
             if (!meteo_items.isNull())
             {
                 for (JsonObjectConst item : meteo_items)
@@ -1710,6 +2230,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             net.network.completeStackPageRequest(StackUnitSnapshot::PageKind::Meteo, node_id, offset);
             net.network.updateStackIndexMeteoPage(node_id, offset, total > 0 ? total : summary_total, ok_total,
                                                   _stack_meteo_page_items, item_count, millis());
+            net.network.updateStackIndexMeteoDs18List(node_id, ds18_items, ds18_count, millis());
             StackUnitSnapshot::State state{};
             StackUnitSnapshot::CacheState cache{};
             if (net.network.stackIndexState(node_id, state) && net.network.stackIndexCacheState(node_id, cache))
@@ -1748,6 +2269,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             MeteoController &meteo = control.controllers.meteo();
             auto guard = meteo.lockGuard();
             const JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            bool persist_needed = false;
             for (JsonObjectConst item : items)
             {
                 const uint8_t id = (uint8_t)(item["id"] | 0);
@@ -1758,15 +2280,28 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     const bool enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
                                                                     : (item["enabled"].as<int>() != 0);
                     meteo.setEnabled(id, enabled);
+                    persist_needed = true;
                 }
                 if (item.containsKey("name"))
+                {
                     meteo.setName(id, String(item["name"] | ""));
+                    persist_needed = true;
+                }
                 if (item.containsKey("group_id"))
+                {
                     meteo.setGroupId(id, (uint8_t)(item["group_id"] | 0));
+                    persist_needed = true;
+                }
                 if (item.containsKey("type_id"))
+                {
                     meteo.setType(id, (MeteoController::SensorType)(uint8_t)(item["type_id"] | 0));
+                    persist_needed = true;
+                }
                 if (item.containsKey("pin"))
+                {
                     meteo.setDht22Pin(id, (uint8_t)(item["pin"] | MeteoController::kInvalidPin));
+                    persist_needed = true;
+                }
                 if (item.containsKey("addr_set"))
                 {
                     uint8_t addr[MeteoController::kAddrLen] = {};
@@ -1778,9 +2313,19 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                         meteo.setDs18b20Addr(id, addr, true);
                     else if (!addr_set)
                         meteo.setDs18b20Addr(id, addr, false);
+                    persist_needed = true;
                 }
                 if (item.containsKey("src_node") || item.containsKey("src_sensor"))
+                {
                     meteo.setRemoteSource(id, (uint32_t)(item["src_node"] | 0u), (uint8_t)(item["src_sensor"] | 0));
+                    persist_needed = true;
+                }
+            }
+            if (persist_needed)
+            {
+                if (!cfg.configs_manager.save())
+                    core.logs.warn(F("STACK"), F("Meteo stack save failed: node: 0x%08lX"), (unsigned long)node_id);
+                control.controllers.invalidateGpioUsageCache();
             }
             return;
         }
@@ -1880,6 +2425,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             ThermoController &thermo = control.controllers.thermo();
             auto guard = thermo.lockGuard();
             const JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            bool persist_needed = false;
             for (JsonObjectConst item : items)
             {
                 const uint8_t id = (uint8_t)(item["id"] | 0);
@@ -1890,11 +2436,18 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     const bool enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
                                                                     : (item["enabled"].as<int>() != 0);
                     thermo.setEnabled(id, enabled);
+                    persist_needed = true;
                 }
                 if (item.containsKey("name"))
+                {
                     thermo.setName(id, String(item["name"] | ""));
+                    persist_needed = true;
+                }
                 if (item.containsKey("group_id"))
+                {
                     thermo.setGroupId(id, (uint8_t)(item["group_id"] | 0));
+                    persist_needed = true;
+                }
                 if (item.containsKey("sensor_node_id") || item.containsKey("sensor_id"))
                 {
                     const uint32_t sensor_node_id = (uint32_t)(item["sensor_node_id"] | 0u);
@@ -1903,20 +2456,39 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                         thermo.setSensorSource(id, sensor_node_id, sensor_id);
                     else
                         thermo.setSensor(id, sensor_id);
+                    persist_needed = true;
                 }
                 if (item.containsKey("mode_id"))
+                {
                     thermo.setMode(id, (ThermoController::Mode)(uint8_t)(item["mode_id"] | 0));
+                    persist_needed = true;
+                }
                 if (item.containsKey("target_c"))
+                {
                     thermo.setTarget(id, (int16_t)(item["target_c"] | 0));
+                    persist_needed = true;
+                }
                 if (item.containsKey("hyst"))
+                {
                     thermo.setHysteresis(id, item["hyst"].is<float>() ? item["hyst"].as<float>()
                                                                       : (float)(item["hyst"] | 0.0));
+                    persist_needed = true;
+                }
                 if (item.containsKey("heat_port"))
+                {
                     thermo.setHeatPort(id, (uint8_t)(item["heat_port"] | ThermoController::kInvalidPort));
+                    persist_needed = true;
+                }
                 if (item.containsKey("cool_port"))
+                {
                     thermo.setCoolPort(id, (uint8_t)(item["cool_port"] | ThermoController::kInvalidPort));
+                    persist_needed = true;
+                }
                 if (item.containsKey("button_port"))
+                {
                     thermo.setButtonPort(id, (uint8_t)(item["button_port"] | ThermoController::kInvalidPort));
+                    persist_needed = true;
+                }
                 const String source = item["source"] | (params["source"] | "stack");
                 if (item["toggle"].is<bool>() && item["toggle"].as<bool>())
                     thermo.togglePower(id, source.c_str());
@@ -1926,6 +2498,12 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                                                                       : (item["power_on"].as<int>() != 0);
                     thermo.setPower(id, power_on, source.c_str());
                 }
+            }
+            if (persist_needed)
+            {
+                if (!cfg.configs_manager.save())
+                    core.logs.warn(F("STACK"), F("Thermo stack save failed: node: 0x%08lX"), (unsigned long)node_id);
+                control.controllers.invalidateGpioUsageCache();
             }
             return;
         }
@@ -2037,6 +2615,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
             TankController &tanks = control.controllers.tanks();
             auto guard = tanks.lockGuard();
             const JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            bool persist_needed = false;
             for (JsonObjectConst item : items)
             {
                 const uint8_t id = (uint8_t)(item["id"] | 0);
@@ -2047,6 +2626,7 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     const bool enabled = item["enabled"].is<bool>() ? item["enabled"].as<bool>()
                                                                     : (item["enabled"].as<int>() != 0);
                     tanks.setEnabled(id, enabled);
+                    persist_needed = true;
                 }
                 if (item.containsKey("toggle"))
                 {
@@ -2061,21 +2641,51 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                     tanks.setPower(id, power_on);
                 }
                 if (item.containsKey("name"))
+                {
                     tanks.setName(id, String(item["name"] | ""));
+                    persist_needed = true;
+                }
                 if (item.containsKey("group_id"))
+                {
                     tanks.setGroupId(id, (uint8_t)(item["group_id"] | 0));
+                    persist_needed = true;
+                }
                 if (item.containsKey("low"))
+                {
                     tanks.setLevelLow(id, (uint8_t)(item["low"] | TankController::kInvalidPort));
+                    persist_needed = true;
+                }
                 if (item.containsKey("mid"))
+                {
                     tanks.setLevelMid(id, (uint8_t)(item["mid"] | TankController::kInvalidPort));
+                    persist_needed = true;
+                }
                 if (item.containsKey("full"))
+                {
                     tanks.setLevelFull(id, (uint8_t)(item["full"] | TankController::kInvalidPort));
+                    persist_needed = true;
+                }
                 if (item.containsKey("valve"))
+                {
                     tanks.setValveRelay(id, (uint8_t)(item["valve"] | TankController::kInvalidPort));
+                    persist_needed = true;
+                }
                 if (item.containsKey("pump"))
+                {
                     tanks.setPumpRelay(id, (uint8_t)(item["pump"] | TankController::kInvalidPort));
+                    persist_needed = true;
+                }
                 if (item.containsKey("alarm"))
+                {
                     tanks.setAlarmRelay(id, (uint8_t)(item["alarm"] | TankController::kInvalidPort));
+                    persist_needed = true;
+                }
+            }
+            if (persist_needed)
+            {
+                if (!cfg.configs_manager.save())
+                    core.logs.warn(F("STACK"), F("Tank stack save failed: node: 0x%08lX"), (unsigned long)node_id);
+                control.controllers.invalidateGpioUsageCache();
             }
             return;
         }
@@ -2158,6 +2768,78 @@ void AppRuntime::handleStackRoute_(uint32_t node_id, const StackJsonProtocol::Ro
                         _pending_stack_leak_log = false;
                     }
                 }
+            }
+            return;
+        }
+        if (action == "set")
+        {
+            LeakController &leak = control.controllers.leak();
+            auto guard = leak.lockGuard();
+            bool persist_needed = false;
+            if (params.containsKey("enabled"))
+            {
+                leak.setControllerEnabled(params["enabled"].is<bool>() ? params["enabled"].as<bool>()
+                                                                      : (params["enabled"].as<int>() != 0));
+                persist_needed = true;
+            }
+            if (params.containsKey("ack_all") &&
+                (params["ack_all"].is<bool>() ? params["ack_all"].as<bool>()
+                                              : (params["ack_all"].as<int>() != 0)))
+                leak.ackAll();
+            const JsonArrayConst items = params["items"].as<JsonArrayConst>();
+            if (!items.isNull())
+            {
+                for (JsonObjectConst item : items)
+                {
+                    const uint8_t id = (uint8_t)(item["id"] | 0);
+                    if (id == 0)
+                        continue;
+                    if (item.containsKey("enabled"))
+                    {
+                        leak.setEnabled(id, item["enabled"].is<bool>() ? item["enabled"].as<bool>()
+                                                                       : (item["enabled"].as<int>() != 0));
+                        persist_needed = true;
+                    }
+                    if (item.containsKey("power_on"))
+                        leak.setPower(id, item["power_on"].is<bool>() ? item["power_on"].as<bool>()
+                                                                      : (item["power_on"].as<int>() != 0));
+                    if (item.containsKey("sensor_active_low"))
+                    {
+                        leak.setSensorActiveLow(id, item["sensor_active_low"].is<bool>()
+                                                        ? item["sensor_active_low"].as<bool>()
+                                                        : (item["sensor_active_low"].as<int>() != 0));
+                        persist_needed = true;
+                    }
+                    if (item.containsKey("name"))
+                    {
+                        leak.setName(id, String(item["name"] | ""));
+                        persist_needed = true;
+                    }
+                    if (item.containsKey("sensor"))
+                    {
+                        leak.setSensorPort(id, (uint8_t)(item["sensor"] | LeakController::kInvalidPort));
+                        persist_needed = true;
+                    }
+                    if (item.containsKey("valve"))
+                    {
+                        leak.setValvePort(id, (uint8_t)(item["valve"] | LeakController::kInvalidPort));
+                        persist_needed = true;
+                    }
+                    if (item.containsKey("alarm"))
+                    {
+                        leak.setAlarmPort(id, (uint8_t)(item["alarm"] | LeakController::kInvalidPort));
+                        persist_needed = true;
+                    }
+                    if (item.containsKey("ack") &&
+                        (item["ack"].is<bool>() ? item["ack"].as<bool>() : (item["ack"].as<int>() != 0)))
+                        leak.ack(id);
+                }
+            }
+            if (persist_needed)
+            {
+                if (!cfg.configs_manager.save())
+                    core.logs.warn(F("STACK"), F("Leak stack save failed: node: 0x%08lX"), (unsigned long)node_id);
+                control.controllers.invalidateGpioUsageCache();
             }
             return;
         }
@@ -2248,6 +2930,7 @@ void AppRuntime::handleSocketFrame_(uint32_t node_id, const String &action, Json
                        state_after ? "on" : "off");
     };
     bool changed = false;
+    bool persist_needed = false;
     for (JsonObjectConst item : items)
     {
         const uint8_t id = (uint8_t)(item["id"] | 0);
@@ -2278,30 +2961,35 @@ void AppRuntime::handleSocketFrame_(uint32_t node_id, const String &action, Json
             const bool enabled = item["enabled"].as<bool>();
             changed = (lights ? sockets.setLightEnabled(id, enabled)
                               : sockets.setEnabled(id, enabled)) || changed;
+            persist_needed = true;
         }
         if (!item["name"].isNull())
         {
             const String name = item["name"] | "";
             changed = (lights ? sockets.setLightName(id, name)
                               : sockets.setName(id, name)) || changed;
+            persist_needed = true;
         }
         if (item["button"].is<int>())
         {
             const uint8_t port = (uint8_t)(item["button"] | SocketController::kInvalidPort);
             changed = (lights ? sockets.setLightButtonPort(id, port)
                               : sockets.setButtonPort(id, port)) || changed;
+            persist_needed = true;
         }
         if (item["relay"].is<int>())
         {
             const uint8_t port = (uint8_t)(item["relay"] | SocketController::kInvalidPort);
             changed = (lights ? sockets.setLightRelayPort(id, port)
                               : sockets.setRelayPort(id, port)) || changed;
+            persist_needed = true;
         }
         if (item["group_id"].is<int>())
         {
             const uint8_t group_id = (uint8_t)(item["group_id"] | 0);
             changed = (lights ? sockets.setLightGroupId(id, group_id)
                               : sockets.setGroupId(id, group_id)) || changed;
+            persist_needed = true;
         }
 
         if (item["state"].is<bool>() || item["state"].is<int>())
@@ -2337,6 +3025,12 @@ void AppRuntime::handleSocketFrame_(uint32_t node_id, const String &action, Json
                 logSwitch(id, state_after);
             }
         }
+    }
+    if (persist_needed && changed)
+    {
+        if (!cfg.configs_manager.save())
+            core.logs.warn(F("STACK"), F("Socket stack save failed: node: 0x%08lX"), (unsigned long)node_id);
+        control.controllers.invalidateGpioUsageCache();
     }
 }
 
@@ -2589,6 +3283,7 @@ void AppRuntime::appendMeteoSnapshotPage_(JsonObject root, uint16_t offset, uint
     JsonObject meteo_summary = summary["meteo"].to<JsonObject>();
     JsonObject controllers_out = root["controllers"].to<JsonObject>();
     JsonArray meteo_out = controllers_out["meteo"].to<JsonArray>();
+    JsonArray ds18_out = controllers_out["ds18"].to<JsonArray>();
 
     uint16_t meteo_enabled = 0;
     uint16_t meteo_ok = 0;
@@ -2596,6 +3291,15 @@ void AppRuntime::appendMeteoSnapshotPage_(JsonObject root, uint16_t offset, uint
 
     MeteoController &meteo = control.controllers.meteo();
     auto guard = meteo.lockGuard();
+    char ds18_list[StackUnitSnapshot::kMeteoDs18Count][StackUnitSnapshot::kMeteoDs18Len] = {};
+    size_t ds18_count = 0;
+    meteo.listDs18b20Serials(ds18_list, StackUnitSnapshot::kMeteoDs18Count, ds18_count);
+    for (size_t i = 0; i < ds18_count; ++i)
+    {
+        if (ds18_list[i][0] == '\0')
+            continue;
+        ds18_out.add(ds18_list[i]);
+    }
     for (size_t i = 0; i < MeteoController::kSensorCount; ++i)
     {
         const auto *cfg = meteo.configByIndex(i);
@@ -2771,6 +3475,78 @@ void AppRuntime::appendTankSnapshotPage_(JsonObject root, uint16_t offset, uint1
     root["offset"] = offset;
     root["limit"] = limit;
     root["total"] = tanks_enabled;
+}
+
+void AppRuntime::appendSecuritySnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const{
+    JsonObject summary = root["summary"].to<JsonObject>();
+    JsonObject security_summary = summary["security"].to<JsonObject>();
+    JsonObject controllers_out = root["controllers"].to<JsonObject>();
+    JsonArray security_out = controllers_out["security"].to<JsonArray>();
+
+    uint16_t sensors_enabled = 0;
+    uint16_t detected_total = 0;
+    uint16_t current_index = 0;
+
+    SecurityController &security = control.controllers.security();
+    auto guard = security.lockGuard();
+    for (size_t i = 0; i < SecurityController::kSensorCount; ++i)
+    {
+        const auto *cfg_item = security.configByIndex(i);
+        const auto *st = security.stateByIndex(i);
+        if (!cfg_item || !st || !cfg_item->enabled)
+            continue;
+
+        ++sensors_enabled;
+        if (st->active || st->is_detect)
+            ++detected_total;
+
+        if (current_index < offset)
+        {
+            ++current_index;
+            continue;
+        }
+        if ((uint16_t)security_out.size() >= limit)
+            continue;
+
+        JsonObject item = security_out.add<JsonObject>();
+        item["id"] = cfg_item->id;
+        item["enabled"] = cfg_item->enabled;
+        item["group_id"] = cfg_item->group_id;
+        item["type_id"] = (uint8_t)cfg_item->type;
+        item["port"] = cfg_item->port;
+        item["silent"] = cfg_item->silent;
+        item["active"] = st->active;
+        item["detect"] = st->is_detect;
+        if (cfg_item->name.length())
+            item["name"] = sanitizeUtf8_(cfg_item->name);
+        ++current_index;
+    }
+
+    security_summary["enabled"] = security.controllerEnabled();
+    security_summary["siren"] = security.sirenPort();
+    security_summary["sensors_enabled"] = sensors_enabled;
+    security_summary["detected"] = detected_total;
+    security_summary["armed"] = security.armed();
+    security_summary["alarm"] = security.alarmOn();
+    root["offset"] = offset;
+    root["limit"] = limit;
+    root["total"] = sensors_enabled;
+}
+
+void AppRuntime::appendGroupsSnapshot_(JsonObject root) const{
+    JsonObject controllers_out = root["controllers"].to<JsonObject>();
+    JsonArray groups_out = controllers_out["groups"].to<JsonArray>();
+    for (size_t i = 0; i < cfg.configs_manager.groupCount(); ++i)
+    {
+        ConfigsManagerIface::GroupConfig group{};
+        if (!cfg.configs_manager.groupByIndex(i, group) || group.id == 0 || group.name.length() == 0)
+            continue;
+        JsonObject item = groups_out.add<JsonObject>();
+        item["id"] = group.id;
+        item["sort"] = group.sort;
+        item["name"] = sanitizeUtf8_(group.name);
+    }
+    root["total"] = groups_out.size();
 }
 
 void AppRuntime::appendWateringSnapshotPage_(JsonObject root, uint16_t offset, uint16_t limit) const{
@@ -3059,6 +3835,7 @@ void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
         }
         JsonObject security_out = summary["security"].to<JsonObject>();
         security_out["enabled"] = security.controllerEnabled();
+        security_out["siren"] = security.sirenPort();
         security_out["sensors_enabled"] = sensors_enabled;
         security_out["detected"] = detected;
         JsonArray detected_items = security_out["detected_items"].to<JsonArray>();
@@ -3087,6 +3864,8 @@ void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
         JsonObject ring_out = summary["ring"].to<JsonObject>();
         ring_out["enabled"] = ring.controllerEnabled() && ring.config().enabled;
         ring_out["on"] = ring.state().relay_on;
+        ring_out["button"] = ring.config().button_port;
+        ring_out["relay"] = ring.config().relay_port;
     }
 
     {
@@ -3094,11 +3873,35 @@ void AppRuntime::appendControllerSnapshotSummary_(JsonObject root) const{
         auto guard = avr.lockGuard();
         JsonObject avr_out = summary["avr"].to<JsonObject>();
         avr_out["enabled"] = avr.controllerEnabled() && avr.config().enabled;
+        avr_out["auto_mode"] = avr.config().auto_mode;
+        avr_out["prefer_main"] = avr.config().prefer_main;
+        avr_out["auto_return_main"] = avr.config().auto_return_main;
         avr_out["main_ok"] = avr.state().main_ok;
         avr_out["reserve_ok"] = avr.state().reserve_ok;
         avr_out["fault"] = avr.fault() != AvrController::Fault::None;
         avr_out["active_source"] = AvrController::sourceName(avr.activeSource());
         avr_out["active_source_id"] = (uint8_t)avr.activeSource();
+        avr_out["manual_source_id"] = (uint8_t)avr.manualSource();
+        avr_out["fault_id"] = (uint8_t)avr.fault();
+        avr_out["transfer_in_progress"] = avr.transferInProgress();
+        avr_out["main_ok_port"] = avr.config().main_ok_port;
+        avr_out["reserve_ok_port"] = avr.config().reserve_ok_port;
+        avr_out["relay_main_port"] = avr.config().relay_main_port;
+        avr_out["relay_reserve_port"] = avr.config().relay_reserve_port;
+        avr_out["feedback_main_port"] = avr.config().feedback_main_port;
+        avr_out["feedback_reserve_port"] = avr.config().feedback_reserve_port;
+        avr_out["main_ok_active_low"] = avr.config().main_ok_active_low;
+        avr_out["reserve_ok_active_low"] = avr.config().reserve_ok_active_low;
+        avr_out["feedback_main_active_low"] = avr.config().feedback_main_active_low;
+        avr_out["feedback_reserve_active_low"] = avr.config().feedback_reserve_active_low;
+        avr_out["relay_main_invert"] = avr.config().relay_main_invert;
+        avr_out["relay_reserve_invert"] = avr.config().relay_reserve_invert;
+        avr_out["debounce_ms"] = avr.config().debounce_ms;
+        avr_out["loss_delay_ms"] = avr.config().loss_delay_ms;
+        avr_out["return_delay_ms"] = avr.config().return_delay_ms;
+        avr_out["break_ms"] = avr.config().break_ms;
+        avr_out["warmup_ms"] = avr.config().warmup_ms;
+        avr_out["transfer_timeout_ms"] = avr.config().transfer_timeout_ms;
     }
 
     uint16_t leak_enabled = 0;
@@ -3128,17 +3931,62 @@ void AppRuntime::handleSepticFrame_(uint32_t node_id, const String &action, Json
         SepticController &septic = control.controllers.septic();
         const uint8_t septic_id = (uint8_t)(params["id"] | 1);
         bool changed = false;
+        bool persist_needed = false;
         if (params.containsKey("monitor"))
         {
             const bool monitor_on = params["monitor"].is<bool>() ? params["monitor"].as<bool>()
                                                                  : (params["monitor"].as<int>() != 0);
             changed = septic.setMonitoring(septic_id, monitor_on) || changed;
+            persist_needed = true;
         }
         if (params.containsKey("enabled"))
         {
             const bool enabled = params["enabled"].is<bool>() ? params["enabled"].as<bool>()
                                                               : (params["enabled"].as<int>() != 0);
             changed = septic.setEnabled(septic_id, enabled) || changed;
+            persist_needed = true;
+        }
+        if (params.containsKey("name"))
+        {
+            String name = params["name"] | "";
+            name.trim();
+            changed = septic.setName(septic_id, name) || changed;
+            persist_needed = true;
+        }
+        if (params.containsKey("group_id"))
+        {
+            changed = septic.setGroupId(septic_id, (uint8_t)(params["group_id"] | 0)) || changed;
+            persist_needed = true;
+        }
+        if (params.containsKey("warning"))
+        {
+            changed = septic.setWarningPort(septic_id,
+                                            (uint8_t)(params["warning"] | SepticController::kInvalidPort)) || changed;
+            persist_needed = true;
+        }
+        if (params.containsKey("alarm"))
+        {
+            changed = septic.setAlarmPort(septic_id,
+                                          (uint8_t)(params["alarm"] | SepticController::kInvalidPort)) || changed;
+            persist_needed = true;
+        }
+        if (params.containsKey("relay_warn"))
+        {
+            changed = septic.setWarningRelay(septic_id,
+                                             (uint8_t)(params["relay_warn"] | SepticController::kInvalidPort)) || changed;
+            persist_needed = true;
+        }
+        if (params.containsKey("relay_alarm"))
+        {
+            changed = septic.setAlarmRelay(septic_id,
+                                           (uint8_t)(params["relay_alarm"] | SepticController::kInvalidPort)) || changed;
+            persist_needed = true;
+        }
+        if (persist_needed && changed)
+        {
+            if (!cfg.configs_manager.save())
+                core.logs.warn(F("STACK"), F("Septic stack save failed: node: 0x%08lX"), (unsigned long)node_id);
+            control.controllers.invalidateGpioUsageCache();
         }
         return;
     }
@@ -3481,6 +4329,8 @@ void AppRuntime::handleWateringFrame_(uint32_t node_id, uint32_t target_node, ui
         }
         if (persist_needed && !cfg.configs_manager.save())
             core.logs.warn(F("STACK"), F("Watering stack save failed: node: 0x%08lX"), (unsigned long)node_id);
+        if (persist_needed)
+            control.controllers.invalidateGpioUsageCache();
         return;
     }
     if (action != "event")

@@ -202,6 +202,7 @@ public:
     bool stackIndexMeteoAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::MeteoItem &out) const;
     bool stackIndexMeteoPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::MeteoItem *out, uint8_t capacity,
                              uint8_t &out_count) const;
+    bool stackIndexMeteoDs18At(uint32_t node_id, uint8_t index, char out[StackUnitSnapshot::kMeteoDs18Len]) const;
     bool stackIndexThermoById(uint32_t node_id, uint8_t id, StackUnitSnapshot::ThermoItem &out) const;
     bool stackIndexThermoAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::ThermoItem &out) const;
     bool stackIndexThermoPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::ThermoItem *out, uint8_t capacity,
@@ -221,6 +222,13 @@ public:
     bool stackIndexLeakAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::LeakItem &out) const;
     bool stackIndexLeaksPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::LeakItem *out, uint8_t capacity,
                              uint8_t &out_count) const;
+    bool stackIndexSecurityById(uint32_t node_id, uint8_t id, StackUnitSnapshot::SecurityItem &out) const;
+    bool stackIndexSecurityAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::SecurityItem &out) const;
+    bool stackIndexSecurityPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::SecurityItem *out,
+                                uint8_t capacity, uint8_t &out_count) const;
+    bool stackIndexGroupAt(uint32_t node_id, uint8_t index, StackUnitSnapshot::GroupItem &out) const;
+    bool stackIndexGroupsPage(uint32_t node_id, uint8_t offset, StackUnitSnapshot::GroupItem *out, uint8_t capacity,
+                              uint8_t &out_count) const;
     bool prepareStackPageRequest(StackUnitSnapshot::PageKind kind, uint32_t node_id, uint32_t now_ms, uint16_t offset,
                                  uint32_t pending_ms);
     void completeStackPageRequest(StackUnitSnapshot::PageKind kind, uint32_t node_id, uint16_t offset);
@@ -234,6 +242,8 @@ public:
                                     const StackUnitSnapshot::SocketItem *items, uint8_t item_count, uint32_t updated_ms);
     void updateStackIndexMeteoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t ok_total,
                                    const StackUnitSnapshot::MeteoItem *items, uint8_t item_count, uint32_t updated_ms);
+    void updateStackIndexMeteoDs18List(uint32_t node_id, const char items[][StackUnitSnapshot::kMeteoDs18Len],
+                                       uint8_t item_count, uint32_t updated_ms);
     void updateStackIndexThermoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t active_total,
                                     const StackUnitSnapshot::ThermoItem *items, uint8_t item_count, uint32_t updated_ms);
     void updateStackIndexTanksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
@@ -245,6 +255,11 @@ public:
                                       uint8_t item_count, uint32_t updated_ms);
     void updateStackIndexLeaksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
                                    const StackUnitSnapshot::LeakItem *items, uint8_t item_count, uint32_t updated_ms);
+    void updateStackIndexSecurityPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t detected_total,
+                                      const StackUnitSnapshot::SecurityItem *items, uint8_t item_count,
+                                      uint32_t updated_ms);
+    void updateStackIndexGroups(uint32_t node_id, const StackUnitSnapshot::GroupItem *items, uint8_t item_count,
+                                uint32_t updated_ms);
     void invalidateStackIndexState(uint32_t node_id);
 
     template <typename FnT>

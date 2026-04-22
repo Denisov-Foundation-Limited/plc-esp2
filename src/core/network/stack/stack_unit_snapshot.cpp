@@ -199,6 +199,24 @@ bool StackUnitSnapshot::meteoPage(uint32_t node_id, uint8_t offset, MeteoItem *o
     return entry && copyPage_<MeteoItem, kMeteoCount>(entry->meteo.items, entry->cache.meteo_count, offset, out, capacity, out_count);
 }
 
+bool StackUnitSnapshot::meteoDs18At(uint32_t node_id, uint8_t index, char out[kMeteoDs18Len]) const
+{
+    if (node_id == 0 || !out)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    if (!entry)
+        return false;
+    const uint8_t limit = clampCount_(entry->cache.meteo_ds18_count, kMeteoDs18Count);
+    if (index >= limit)
+        return false;
+    memcpy(out, entry->meteo_ds18.items[index], kMeteoDs18Len);
+    out[kMeteoDs18Len - 1] = '\0';
+    return true;
+}
+
 bool StackUnitSnapshot::thermoById(uint32_t node_id, uint8_t id, ThermoItem &out) const
 {
     if (node_id == 0 || id == 0)
@@ -356,6 +374,64 @@ bool StackUnitSnapshot::leaksPage(uint32_t node_id, uint8_t offset, LeakItem *ou
     return entry && copyPage_<LeakItem, kLeakCount>(entry->leaks.items, entry->cache.leak_count, offset, out, capacity, out_count);
 }
 
+bool StackUnitSnapshot::securityById(uint32_t node_id, uint8_t id, SecurityItem &out) const
+{
+    if (node_id == 0 || id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyItemById_<SecurityItem, kSecurityCount>(entry->security.items, entry->cache.security_count, id, out);
+}
+
+bool StackUnitSnapshot::securityAt(uint32_t node_id, uint8_t index, SecurityItem &out) const
+{
+    if (node_id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyItemAt_<SecurityItem, kSecurityCount>(entry->security.items, entry->cache.security_count, index, out);
+}
+
+bool StackUnitSnapshot::securityPage(uint32_t node_id, uint8_t offset, SecurityItem *out, uint8_t capacity,
+                                     uint8_t &out_count) const
+{
+    if (node_id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyPage_<SecurityItem, kSecurityCount>(entry->security.items, entry->cache.security_count, offset,
+                                                            out, capacity, out_count);
+}
+
+bool StackUnitSnapshot::groupAt(uint32_t node_id, uint8_t index, GroupItem &out) const
+{
+    if (node_id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyItemAt_<GroupItem, kGroupCount>(entry->groups.items, entry->cache.group_count, index, out);
+}
+
+bool StackUnitSnapshot::groupsPage(uint32_t node_id, uint8_t offset, GroupItem *out, uint8_t capacity, uint8_t &out_count) const
+{
+    if (node_id == 0)
+        return false;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return false;
+    const Entry *entry = findEntry_(node_id);
+    return entry && copyPage_<GroupItem, kGroupCount>(entry->groups.items, entry->cache.group_count, offset, out,
+                                                      capacity, out_count);
+}
+
 bool StackUnitSnapshot::prepareSocketsPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
 {
     return preparePageRequest_(node_id, PageKind::Sockets, now_ms, offset, pending_ms);
@@ -385,6 +461,12 @@ bool StackUnitSnapshot::prepareWateringPageRequest(uint32_t node_id, uint32_t no
                                                    uint32_t pending_ms)
 {
     return preparePageRequest_(node_id, PageKind::Watering, now_ms, offset, pending_ms);
+}
+
+bool StackUnitSnapshot::prepareSecurityPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset,
+                                                   uint32_t pending_ms)
+{
+    return preparePageRequest_(node_id, PageKind::Security, now_ms, offset, pending_ms);
 }
 
 bool StackUnitSnapshot::prepareLeakPageRequest(uint32_t node_id, uint32_t now_ms, uint16_t offset, uint32_t pending_ms)
@@ -422,6 +504,11 @@ void StackUnitSnapshot::completeWateringPageRequest(uint32_t node_id, uint16_t o
     completePageRequest_(node_id, PageKind::Watering, offset);
 }
 
+void StackUnitSnapshot::completeSecurityPageRequest(uint32_t node_id, uint16_t offset)
+{
+    completePageRequest_(node_id, PageKind::Security, offset);
+}
+
 void StackUnitSnapshot::completeLeakPageRequest(uint32_t node_id, uint16_t offset)
 {
     completePageRequest_(node_id, PageKind::Leak, offset);
@@ -455,6 +542,11 @@ void StackUnitSnapshot::clearTanksPageRequest(uint32_t node_id)
 void StackUnitSnapshot::clearWateringPageRequest(uint32_t node_id)
 {
     clearPageRequest_(node_id, PageKind::Watering);
+}
+
+void StackUnitSnapshot::clearSecurityPageRequest(uint32_t node_id)
+{
+    clearPageRequest_(node_id, PageKind::Security);
 }
 
 void StackUnitSnapshot::clearLeakPageRequest(uint32_t node_id)
@@ -565,6 +657,29 @@ void StackUnitSnapshot::applyMeteoPage(uint32_t node_id, uint16_t offset, uint16
     entry->cache.meteo_count = applyPage_(entry->meteo, offset, items, item_count);
 }
 
+void StackUnitSnapshot::applyMeteoDs18List(uint32_t node_id, const char items[][kMeteoDs18Len], uint8_t item_count,
+                                           uint32_t updated_ms)
+{
+    if (node_id == 0)
+        return;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return;
+    Entry *entry = allocEntry_(node_id);
+    if (!entry)
+        return;
+    entry->used = true;
+    entry->state.node_id = node_id;
+    entry->state.updated_ms = updated_ms ? updated_ms : millis();
+    memset(&entry->meteo_ds18, 0, sizeof(entry->meteo_ds18));
+    entry->cache.meteo_ds18_count = 0;
+    if (!items || item_count == 0)
+        return;
+    const uint8_t safe_count = clampCount_(item_count, kMeteoDs18Count);
+    memcpy(entry->meteo_ds18.items, items, sizeof(entry->meteo_ds18.items[0]) * safe_count);
+    entry->cache.meteo_ds18_count = safe_count;
+}
+
 void StackUnitSnapshot::applyThermoPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t active_total,
                                         const ThermoItem *items, uint8_t item_count, uint32_t updated_ms)
 {
@@ -647,6 +762,26 @@ void StackUnitSnapshot::applyRulesSummary(uint32_t node_id, uint16_t enabled_tot
     entry->cache.rule_count = safe_count;
 }
 
+void StackUnitSnapshot::applySecurityPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total,
+                                          uint16_t detected_total,
+                                          const SecurityItem *items, uint8_t item_count, uint32_t updated_ms)
+{
+    if (node_id == 0)
+        return;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return;
+    Entry *entry = allocEntry_(node_id);
+    if (!entry)
+        return;
+    entry->used = true;
+    entry->state.node_id = node_id;
+    entry->state.updated_ms = updated_ms ? updated_ms : millis();
+    entry->state.security_sensors_enabled = enabled_total;
+    entry->state.security_detected = detected_total;
+    entry->cache.security_count = applyPage_(entry->security, offset, items, item_count);
+}
+
 void StackUnitSnapshot::applyLeaksPage(uint32_t node_id, uint16_t offset, uint16_t enabled_total, uint16_t alert_total,
                                        const LeakItem *items, uint8_t item_count, uint32_t updated_ms)
 {
@@ -664,6 +799,28 @@ void StackUnitSnapshot::applyLeaksPage(uint32_t node_id, uint16_t offset, uint16
     entry->state.leak_enabled = enabled_total;
     entry->state.leak_alert = alert_total;
     entry->cache.leak_count = applyPage_(entry->leaks, offset, items, item_count);
+}
+
+void StackUnitSnapshot::applyGroups(uint32_t node_id, const GroupItem *items, uint8_t item_count, uint32_t updated_ms)
+{
+    if (node_id == 0)
+        return;
+    const auto guard = _lock.guard();
+    if (!ensureStorage_())
+        return;
+    Entry *entry = allocEntry_(node_id);
+    if (!entry)
+        return;
+    entry->used = true;
+    entry->state.node_id = node_id;
+    entry->state.updated_ms = updated_ms ? updated_ms : millis();
+    clearPageCache_(entry->groups);
+    entry->cache.group_count = 0;
+    if (!items || item_count == 0)
+        return;
+    const uint8_t safe_count = clampCount_(item_count, kGroupCount);
+    memcpy(entry->groups.items, items, sizeof(GroupItem) * safe_count);
+    entry->cache.group_count = safe_count;
 }
 
 void StackUnitSnapshot::invalidate(uint32_t node_id)
@@ -884,16 +1041,44 @@ void StackUnitSnapshot::mergeControllerSummary_(State &dst, const State &src)
     dst.security_enabled = src.security_enabled;
     dst.security_armed = src.security_armed;
     dst.security_alarm = src.security_alarm;
+    dst.security_siren_port = src.security_siren_port;
     dst.ring_enabled = src.ring_enabled;
     dst.ring_on = src.ring_on;
+    dst.ring_button_port = src.ring_button_port;
+    dst.ring_relay_port = src.ring_relay_port;
     dst.avr_enabled = src.avr_enabled;
+    dst.avr_auto_mode = src.avr_auto_mode;
+    dst.avr_prefer_main = src.avr_prefer_main;
+    dst.avr_auto_return_main = src.avr_auto_return_main;
     dst.avr_main_ok = src.avr_main_ok;
     dst.avr_reserve_ok = src.avr_reserve_ok;
     dst.avr_fault = src.avr_fault;
+    dst.avr_transfer_in_progress = src.avr_transfer_in_progress;
     dst.avr_active_source = src.avr_active_source;
+    dst.avr_manual_source = src.avr_manual_source;
+    dst.avr_fault_id = src.avr_fault_id;
+    dst.avr_main_ok_port = src.avr_main_ok_port;
+    dst.avr_reserve_ok_port = src.avr_reserve_ok_port;
+    dst.avr_relay_main_port = src.avr_relay_main_port;
+    dst.avr_relay_reserve_port = src.avr_relay_reserve_port;
+    dst.avr_feedback_main_port = src.avr_feedback_main_port;
+    dst.avr_feedback_reserve_port = src.avr_feedback_reserve_port;
+    dst.avr_main_ok_active_low = src.avr_main_ok_active_low;
+    dst.avr_reserve_ok_active_low = src.avr_reserve_ok_active_low;
+    dst.avr_feedback_main_active_low = src.avr_feedback_main_active_low;
+    dst.avr_feedback_reserve_active_low = src.avr_feedback_reserve_active_low;
+    dst.avr_relay_main_invert = src.avr_relay_main_invert;
+    dst.avr_relay_reserve_invert = src.avr_relay_reserve_invert;
+    dst.avr_debounce_ms = src.avr_debounce_ms;
+    dst.avr_loss_delay_ms = src.avr_loss_delay_ms;
+    dst.avr_return_delay_ms = src.avr_return_delay_ms;
+    dst.avr_break_ms = src.avr_break_ms;
+    dst.avr_warmup_ms = src.avr_warmup_ms;
+    dst.avr_transfer_timeout_ms = src.avr_transfer_timeout_ms;
     if (src.ports_state_valid)
     {
         dst.ports_state_valid = true;
+        memcpy(dst.port_available_bits, src.port_available_bits, sizeof(dst.port_available_bits));
         memcpy(dst.relay_used_bits, src.relay_used_bits, sizeof(dst.relay_used_bits));
         memcpy(dst.dinput_used_bits, src.dinput_used_bits, sizeof(dst.dinput_used_bits));
         memcpy(dst.sensor_used_bits, src.sensor_used_bits, sizeof(dst.sensor_used_bits));
@@ -921,6 +1106,8 @@ StackUnitSnapshot::PageRequestState &StackUnitSnapshot::pageRequestState_(Entry 
             return entry.tanks_request;
         case PageKind::Watering:
             return entry.watering_request;
+        case PageKind::Security:
+            return entry.security_request;
         case PageKind::Leak:
         default:
             return entry.leak_request;
@@ -943,6 +1130,8 @@ const StackUnitSnapshot::PageRequestState &StackUnitSnapshot::pageRequestState_(
             return entry.tanks_request;
         case PageKind::Watering:
             return entry.watering_request;
+        case PageKind::Security:
+            return entry.security_request;
         case PageKind::Leak:
         default:
             return entry.leak_request;

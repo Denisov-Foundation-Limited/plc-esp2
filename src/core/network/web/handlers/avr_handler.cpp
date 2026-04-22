@@ -31,6 +31,8 @@ void AvrHandler::handleAvr(WebInterface &web, AsyncWebServerRequest *request) {
             return;
         }
         const bool stack_view = isStackAvrView_(web, node_id);
+        if (stack_view)
+            web.requestStackPorts_(node_id);
         String page = FPSTR(kWebInterfaceAvrHtml);
         page.reserve(page.length() + 2048);
         page.replace("%NAV%", web.navHtml_());
@@ -84,13 +86,50 @@ void AvrHandler::handleAvr(WebInterface &web, AsyncWebServerRequest *request) {
 
         if (stack_view)
         {
-            page.replace("%AVR_STATUS%", "not migrated");
-            page.replace("%AVR_STATE_TEXT%", buildStateIndicatorsUnknown_());
-            fillDefaults_(page);
-            page.replace("%AVR_DINPUT_JSON%", web.socketPortOptionsJson_(PortIO::PinType::DInput));
-            page.replace("%AVR_RELAY_JSON%", web.socketPortOptionsJson_(PortIO::PinType::Relay));
-            page.replace("%AVR_DINPUT_USED_JSON%", "[]");
-            page.replace("%AVR_RELAY_USED_JSON%", "[]");
+            DynamicJsonDocument req(32);
+            web.network()->stackRoute().sendRequestSelected(ConfigsManagerIface::StackPayloadMode::Json, node_id,
+                                                            "avr", "snapshot_req", &req, true);
+            StackUnitSnapshot::State snapshot{};
+            if (web.network() && web.network()->stackIndexState(node_id, snapshot))
+            {
+                page.replace("%AVR_STATUS%", stackAvrStatusText_(web, node_id));
+                page.replace("%AVR_STATE_TEXT%", buildStateIndicatorsStack_(snapshot));
+                page.replace("%AVR_ENABLED_CHECKED%", snapshot.avr_enabled ? "checked" : "");
+                page.replace("%AVR_AUTO_MODE_CHECKED%", snapshot.avr_auto_mode ? "checked" : "");
+                page.replace("%AVR_PREFER_MAIN_CHECKED%", snapshot.avr_prefer_main ? "checked" : "");
+                page.replace("%AVR_AUTO_RETURN_MAIN_CHECKED%", snapshot.avr_auto_return_main ? "checked" : "");
+                page.replace("%AVR_MANUAL_OFF_SELECTED%", snapshot.avr_manual_source == (uint8_t)AvrController::Source::Off ? "checked" : "");
+                page.replace("%AVR_MANUAL_MAIN_SELECTED%", snapshot.avr_manual_source == (uint8_t)AvrController::Source::Main ? "checked" : "");
+                page.replace("%AVR_MANUAL_RESERVE_SELECTED%", snapshot.avr_manual_source == (uint8_t)AvrController::Source::Reserve ? "checked" : "");
+                page.replace("%AVR_MAIN_OK_SELECTED%", portValue_(snapshot.avr_main_ok_port));
+                page.replace("%AVR_RESERVE_OK_SELECTED%", portValue_(snapshot.avr_reserve_ok_port));
+                page.replace("%AVR_RELAY_MAIN_SELECTED%", portValue_(snapshot.avr_relay_main_port));
+                page.replace("%AVR_RELAY_RESERVE_SELECTED%", portValue_(snapshot.avr_relay_reserve_port));
+                page.replace("%AVR_FB_MAIN_SELECTED%", portValue_(snapshot.avr_feedback_main_port));
+                page.replace("%AVR_FB_RESERVE_SELECTED%", portValue_(snapshot.avr_feedback_reserve_port));
+                page.replace("%AVR_MAIN_OK_AL_CHECKED%", snapshot.avr_main_ok_active_low ? "checked" : "");
+                page.replace("%AVR_RESERVE_OK_AL_CHECKED%", snapshot.avr_reserve_ok_active_low ? "checked" : "");
+                page.replace("%AVR_FB_MAIN_AL_CHECKED%", snapshot.avr_feedback_main_active_low ? "checked" : "");
+                page.replace("%AVR_FB_RESERVE_AL_CHECKED%", snapshot.avr_feedback_reserve_active_low ? "checked" : "");
+                page.replace("%AVR_RELAY_MAIN_INV_CHECKED%", snapshot.avr_relay_main_invert ? "checked" : "");
+                page.replace("%AVR_RELAY_RESERVE_INV_CHECKED%", snapshot.avr_relay_reserve_invert ? "checked" : "");
+                page.replace("%AVR_DEBOUNCE_MS%", String((unsigned long)snapshot.avr_debounce_ms));
+                page.replace("%AVR_LOSS_DELAY_MS%", String((unsigned long)snapshot.avr_loss_delay_ms));
+                page.replace("%AVR_RETURN_DELAY_MS%", String((unsigned long)snapshot.avr_return_delay_ms));
+                page.replace("%AVR_BREAK_MS%", String((unsigned long)snapshot.avr_break_ms));
+                page.replace("%AVR_WARMUP_MS%", String((unsigned long)snapshot.avr_warmup_ms));
+                page.replace("%AVR_TRANSFER_TIMEOUT_MS%", String((unsigned long)snapshot.avr_transfer_timeout_ms));
+            }
+            else
+            {
+                page.replace("%AVR_STATUS%", WebUiRu::kNoDataFromSlave);
+                page.replace("%AVR_STATE_TEXT%", buildStateIndicatorsUnknown_());
+                fillDefaults_(page);
+            }
+            page.replace("%AVR_DINPUT_JSON%", web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput));
+            page.replace("%AVR_RELAY_JSON%", web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay));
+            page.replace("%AVR_DINPUT_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput));
+            page.replace("%AVR_RELAY_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay));
         }
         else
         {
@@ -168,7 +207,10 @@ void AvrHandler::handleAvrSave(WebInterface &web, AsyncWebServerRequest *request
         {
             if (stack_view)
             {
-                web._avr_status = "not migrated";
+                const bool sent = sendStackAvrSet_(web, node_id, nullptr, true);
+                if (sent)
+                    web.refreshStackPorts_(node_id);
+                web._avr_status = sent ? WebUiRu::Avr::kFaultCleared : "Stack send failed";
             }
             else
             {
@@ -314,7 +356,42 @@ void AvrHandler::handleAvrSave(WebInterface &web, AsyncWebServerRequest *request
 
         if (stack_view)
         {
-            web._avr_status = "not migrated";
+            DynamicJsonDocument doc(1024);
+            doc["enabled"] = enabled;
+            doc["auto_mode"] = auto_mode;
+            doc["prefer_main"] = prefer_main;
+            doc["auto_return_main"] = auto_return_main;
+            if (main_ok != AvrController::kInvalidPort)
+                doc["main_ok"] = main_ok;
+            if (reserve_ok != AvrController::kInvalidPort)
+                doc["reserve_ok"] = reserve_ok;
+            if (relay_main != AvrController::kInvalidPort)
+                doc["relay_main"] = relay_main;
+            if (relay_reserve != AvrController::kInvalidPort)
+                doc["relay_reserve"] = relay_reserve;
+            if (fb_main != AvrController::kInvalidPort)
+                doc["feedback_main"] = fb_main;
+            if (fb_reserve != AvrController::kInvalidPort)
+                doc["feedback_reserve"] = fb_reserve;
+            doc["main_ok_active_low"] = main_ok_al;
+            doc["reserve_ok_active_low"] = reserve_ok_al;
+            doc["feedback_main_active_low"] = fb_main_al;
+            doc["feedback_reserve_active_low"] = fb_reserve_al;
+            doc["relay_main_invert"] = relay_main_inv;
+            doc["relay_reserve_invert"] = relay_reserve_inv;
+            doc["debounce_ms"] = debounce_ms;
+            doc["loss_delay_ms"] = loss_delay_ms;
+            doc["return_delay_ms"] = return_delay_ms;
+            doc["break_ms"] = break_ms;
+            doc["warmup_ms"] = warmup_ms;
+            doc["transfer_timeout_ms"] = transfer_timeout_ms;
+            doc["manual_source"] = (uint8_t)manual;
+            const bool sent = web.network() &&
+                              web.network()->stackRoute().sendEventSelected(ConfigsManagerIface::StackPayloadMode::Json,
+                                                                            node_id, "avr", "set", &doc);
+            if (sent)
+                web.refreshStackPorts_(node_id);
+            web._avr_status = sent ? WebUiRu::Common::kUpdated : "Stack send failed";
             web.sendRedirect_(request, avrRedirectPath_(node_id, true), set_cookie);
             return;
         }
@@ -407,9 +484,20 @@ const char * AvrHandler::manualSourceName_(AvrController::Source src) {
     }
 
 String AvrHandler::stackAvrStatusText_(WebInterface &web, uint32_t node_id) {
-        (void)web;
-        (void)node_id;
-        return "not migrated";
+        if (!web.network() || node_id == 0)
+            return WebUiRu::kNoDataFromSlave;
+        StackUnitSnapshot::State snapshot{};
+        if (!web.network()->stackIndexState(node_id, snapshot))
+            return WebUiRu::kNoDataFromSlave;
+        String out;
+        out.reserve(128);
+        out += WebUiRu::Avr::kActive;
+        out += AvrController::sourceName((AvrController::Source)snapshot.avr_active_source);
+        out += WebUiRu::Avr::kTarget;
+        out += AvrController::sourceName((AvrController::Source)snapshot.avr_manual_source);
+        out += WebUiRu::Avr::kFault;
+        out += snapshot.avr_fault ? AvrController::faultName((AvrController::Fault)snapshot.avr_fault_id) : "none";
+        return out;
     }
 
 String AvrHandler::avrDeviceSelectHtml_(WebInterface &web, uint32_t selected_node_id, bool stack_view) {
@@ -451,11 +539,16 @@ String AvrHandler::avrDeviceSelectHtml_(WebInterface &web, uint32_t selected_nod
     }
 
 bool AvrHandler::sendStackAvrSet_(WebInterface &web, uint32_t node_id, JsonObject *cfg, bool clear_fault) {
-        (void)web;
-        (void)node_id;
-        (void)cfg;
-        (void)clear_fault;
-        return false;
+        if (!web.network() || node_id == 0)
+            return false;
+        DynamicJsonDocument doc(1024);
+        JsonObject root = doc.to<JsonObject>();
+        if (cfg)
+            root.set(*cfg);
+        if (clear_fault)
+            root["clear_fault"] = true;
+        return web.network()->stackRoute().sendEventSelected(ConfigsManagerIface::StackPayloadMode::Json, node_id,
+                                                             "avr", "set", &doc);
     }
 
 void AvrHandler::fillDefaults_(String &page) {
@@ -559,6 +652,17 @@ String AvrHandler::buildStateIndicators_(const AvrController::State &st) {
         out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateMain, st.main_ok, false);
         out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateReserve, st.reserve_ok, false);
         out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateFault, st.fault != AvrController::Fault::None, true);
+        out += "</div>";
+        return out;
+    }
+
+String AvrHandler::buildStateIndicatorsStack_(const StackUnitSnapshot::State &st) {
+        String out;
+        out.reserve(256);
+        out += "<div class=\"state-indicators\">";
+        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateMain, st.avr_main_ok, false);
+        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateReserve, st.avr_reserve_ok, false);
+        out += buildStateIndicatorsItem_(WebUiRu::Avr::kStateFault, st.avr_fault_id != 0, true);
         out += "</div>";
         return out;
     }

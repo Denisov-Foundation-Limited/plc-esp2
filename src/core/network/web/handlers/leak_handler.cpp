@@ -170,13 +170,19 @@ void LeakHandler::handleLeak(WebInterface &web, AsyncWebServerRequest *request) 
             pagination += "</div>";
         }
         page.replace("%NAV%", web.navHtml_());
+        if (stack_view)
+            web.requestStackPorts_(node_id);
         page.replace("%LEAK_DEVICE_SELECT%", leakDeviceSelectHtml_(web, node_id, stack_view));
         page.replace("%LEAK_STATUS%", stack_view ? stackLeakStatusText_(web, node_id) : web._leak_status);
         page.replace("%LEAK_PAGINATION%", pagination);
-        page.replace("%LEAK_DINPUT_JSON%", web.socketPortOptionsJson_(PortIO::PinType::DInput));
-        page.replace("%LEAK_RELAY_JSON%", web.socketPortOptionsJson_(PortIO::PinType::Relay));
-        page.replace("%LEAK_DINPUT_USED_JSON%", stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::DInput));
-        page.replace("%LEAK_RELAY_USED_JSON%", stack_view ? "[]" : web.globalUsedPortsJson_(PortIO::PinType::Relay));
+        page.replace("%LEAK_DINPUT_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput)
+                                                      : web.socketPortOptionsJson_(PortIO::PinType::DInput));
+        page.replace("%LEAK_RELAY_JSON%", stack_view ? web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay)
+                                                     : web.socketPortOptionsJson_(PortIO::PinType::Relay));
+        page.replace("%LEAK_DINPUT_USED_JSON%", stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput)
+                                                           : web.globalUsedPortsJson_(PortIO::PinType::DInput));
+        page.replace("%LEAK_RELAY_USED_JSON%", stack_view ? web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay)
+                                                          : web.globalUsedPortsJson_(PortIO::PinType::Relay));
         page.replace("%LEAK_ROWS%", buildRows_(web, node_id, stack_view, (size_t)page_idx * page_size, page_size));
         String leak_form_action = stack_view ? leakRedirectPath_(node_id, true) : String("/leak");
         if (stack_view)
@@ -210,7 +216,10 @@ void LeakHandler::handleLeakSave(WebInterface &web, AsyncWebServerRequest *reque
         {
             if (stack_view)
             {
-                web._leak_status = "not migrated";
+                const bool sent = sendStackLeakSet_(web, node_id, nullptr, true);
+                if (sent)
+                    requestStackLeak_(web, node_id);
+                web._leak_status = sent ? WebUiRu::Leak::kAckDone : "Stack send failed";
             }
             else
             {
@@ -327,7 +336,13 @@ void LeakHandler::handleLeakSave(WebInterface &web, AsyncWebServerRequest *reque
 
         if (stack_view)
         {
-            web._leak_status = "not migrated";
+            const bool sent = sendStackLeakSet_(web, node_id, &stack_zones, false);
+            if (sent)
+            {
+                requestStackLeak_(web, node_id);
+                web.refreshStackPorts_(node_id);
+            }
+            web._leak_status = sent ? WebUiRu::Common::kUpdated : "Stack send failed";
             web.sendRedirect_(request, leakRedirectPath_(node_id, true), set_cookie);
             return;
         }
@@ -418,14 +433,19 @@ String LeakHandler::stackLeakStatusText_(WebInterface &web, uint32_t node_id) {
         if (snapshot.leak_alert > 0)
             return "ALARM";
         return WebUiRu::kStatusOk;
-    }
+}
 
 bool LeakHandler::sendStackLeakSet_(WebInterface &web, uint32_t node_id, JsonArray *zones, bool ack_all) {
-        (void)web;
-        (void)node_id;
-        (void)zones;
-        (void)ack_all;
-        return false;
+        if (!web.network() || node_id == 0)
+            return false;
+        DynamicJsonDocument doc(4096);
+        JsonObject root = doc.to<JsonObject>();
+        if (ack_all)
+            root["ack_all"] = true;
+        if (zones)
+            root["items"].set(*zones);
+        return web.network()->stackRoute().sendEventSelected(ConfigsManagerIface::StackPayloadMode::Json, node_id,
+                                                             "leak", "set", &doc);
     }
 
 String LeakHandler::paramName_(const char *prefix, size_t id) {
@@ -515,7 +535,7 @@ String LeakHandler::buildRows_(WebInterface &web, uint32_t node_id, bool stack_v
             return String("<div class=\"tile tile-empty\">") + WebUiRu::Leak::kNoLeakZones + "</div>";
 
         String rows;
-        rows.reserve(cache.leak_count * 900u);
+        rows.reserve(cache.leak_count * 1400u);
         const size_t page_limit = (limit == 0) ? SIZE_MAX : limit;
         size_t rendered = 0;
         size_t visible_idx = 0;
@@ -547,40 +567,65 @@ String LeakHandler::buildRows_(WebInterface &web, uint32_t node_id, bool stack_v
             rows += WebUiRu::Leak::kBadgeLatch;
             rows += item.alarm_latched ? "1" : "0";
             rows += "</span></div></div><div class=\"tile-grid\">";
+
             rows += "<div class=\"field-row full\"><label class=\"field-label\">";
             rows += WebUiRu::Leak::kLabelName;
-            rows += "</label><input type=\"text\" readonly value=\"";
-            if (item.name[0])
-                web.appendHtmlEscaped_(rows, item.name);
-            else
-            {
-                String fallback = String(WebUiRu::Leak::kLabelZonePrefix) + String((unsigned)item.id);
-                web.appendHtmlEscaped_(rows, fallback.c_str());
-            }
+            rows += "</label><input type=\"text\" maxlength=\"28\" name=\"leak_name_";
+            rows += String((unsigned)item.id);
+            rows += "\" value=\"";
+            web.appendHtmlEscaped_(rows, item.name);
             rows += "\"></div>";
+
             rows += "<div class=\"field-row\"><label class=\"field-label\">";
             rows += WebUiRu::Leak::kLabelSensor;
-            rows += "</label><input type=\"text\" readonly value=\"";
-            rows += item.sensor_port == LeakController::kInvalidPort ? "-" : String((unsigned)item.sensor_port);
-            rows += "\"></div>";
+            rows += "</label><select class=\"leak-select\" data-type=\"dinput\" data-selected=\"";
+            rows += portValue_(item.sensor_port);
+            rows += "\" name=\"leak_sensor_";
+            rows += String((unsigned)item.id);
+            rows += "\"></select></div>";
+
             rows += "<div class=\"field-row\"><label class=\"field-label\">";
             rows += WebUiRu::Leak::kLabelValve;
-            rows += "</label><input type=\"text\" readonly value=\"";
-            rows += item.valve_port == LeakController::kInvalidPort ? "-" : String((unsigned)item.valve_port);
-            rows += "\"></div>";
+            rows += "</label><select class=\"leak-select\" data-type=\"relay\" data-selected=\"";
+            rows += portValue_(item.valve_port);
+            rows += "\" name=\"leak_valve_";
+            rows += String((unsigned)item.id);
+            rows += "\"></select></div>";
+
             rows += "<div class=\"field-row\"><label class=\"field-label\">";
             rows += WebUiRu::Leak::kLabelAlarm;
-            rows += "</label><input type=\"text\" readonly value=\"";
-            rows += item.alarm_port == LeakController::kInvalidPort ? "-" : String((unsigned)item.alarm_port);
-            rows += "\"></div>";
-            rows += "<div class=\"field-row\"><label class=\"field-label\">";
+            rows += "</label><select class=\"leak-select\" data-type=\"relay\" data-selected=\"";
+            rows += portValue_(item.alarm_port);
+            rows += "\" name=\"leak_alarm_";
+            rows += String((unsigned)item.id);
+            rows += "\"></select></div>";
+
+            rows += "<div class=\"checks\">";
+            rows += "<label><input type=\"checkbox\" name=\"leak_en_";
+            rows += String((unsigned)item.id);
+            rows += "\"";
+            rows += checked_(item.enabled);
+            rows += "> ";
+            rows += WebUiRu::Leak::kToggleOn;
+            rows += "</label>";
+
+            rows += "<label><input type=\"checkbox\" name=\"leak_pwr_";
+            rows += String((unsigned)item.id);
+            rows += "\"";
+            rows += checked_(item.power_on);
+            rows += "> ";
             rows += WebUiRu::Leak::kTogglePower;
-            rows += "</label><input type=\"text\" readonly value=\"";
-            rows += item.power_on ? "on" : "off";
-            rows += "\"></div>";
-            rows += "<div class=\"field-row\"><label class=\"field-label\">State</label><input type=\"text\" readonly value=\"";
-            rows += alert ? "alarm" : "dry";
-            rows += "\"></div></div></div>";
+            rows += "</label>";
+
+            rows += "<label><input type=\"checkbox\" name=\"leak_al_";
+            rows += String((unsigned)item.id);
+            rows += "\"";
+            rows += checked_(item.sensor_active_low);
+            rows += "> ";
+            rows += WebUiRu::Leak::kToggleActiveLow;
+            rows += "</label>";
+
+            rows += "</div></div></div>";
             ++rendered;
         });
         return rows.length() ? rows : String("<div class=\"tile tile-empty\">") + WebUiRu::Leak::kNoLeakZones + "</div>";

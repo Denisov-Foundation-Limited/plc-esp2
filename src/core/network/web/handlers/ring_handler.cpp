@@ -33,6 +33,8 @@ void RingHandler::handleRing(WebInterface &web, AsyncWebServerRequest *request) 
             return;
         }
         const bool stack_view = web.isStackRingView_(node_id);
+        if (stack_view)
+            web.requestStackPorts_(node_id);
         String page = FPSTR(kWebInterfaceRingHtml);
         page.reserve(page.length() + 1024);
         page.replace("%NAV%", web.navHtml_());
@@ -60,22 +62,42 @@ void RingHandler::handleRing(WebInterface &web, AsyncWebServerRequest *request) 
         }
         const RingController &ring = web._controllers->ring();
         auto ring_guard = ring.lockGuard();
-        const auto &cfg = ring.config();
-        const String status = stack_view ? String(WebUiRu::Ring::kStackControlSlave) : web._ring_status;
+        auto cfg = ring.config();
+        String status = stack_view ? String(WebUiRu::Ring::kStackControlSlave) : web._ring_status;
+        if (stack_view && web.network())
+        {
+            DynamicJsonDocument req(32);
+            web.network()->stackRoute().sendRequestSelected(ConfigsManagerIface::StackPayloadMode::Json, node_id,
+                                                            "ring", "snapshot_req", &req, true);
+            StackUnitSnapshot::State snapshot{};
+            if (web.network()->stackIndexState(node_id, snapshot))
+            {
+                cfg.enabled = snapshot.ring_enabled;
+                cfg.button_port = snapshot.ring_button_port;
+                cfg.relay_port = snapshot.ring_relay_port;
+                StackDeviceRegistry::DeviceInfo device{};
+                if (web.network()->stackDeviceSnapshotByNodeId(node_id, device) && device.name[0])
+                    status = String(device.name);
+            }
+        }
         page.replace("%RING_STATUS%", status);
         page.replace("%SAVE_TEXT%", WebUiRu::kSave);
         if (stack_view)
         {
-            page.replace("%RING_ENABLED_CHECKED%", "");
-            page.replace("%RING_ENABLED_LABEL%", "");
-            page.replace("%RING_BUTTON_SELECTED%", "");
-            page.replace("%RING_RELAY_SELECTED%", "");
-            page.replace("%RING_DINPUT_JSON%", "[]");
-            page.replace("%RING_RELAY_JSON%", "[]");
-            page.replace("%RING_DINPUT_USED_JSON%", "[]");
-            page.replace("%RING_RELAY_USED_JSON%", "[]");
-            page.replace("%RING_FORM_DISABLED%", "disabled");
-            page.replace("%RING_SAVE_DISABLED%", "disabled");
+            page.replace("%RING_ENABLED_CHECKED%", cfg.enabled ? "checked" : "");
+            page.replace("%RING_ENABLED_LABEL%", cfg.enabled ? WebUiRu::ControllersPage::kEnabledNeut
+                                                              : WebUiRu::ControllersPage::kDisabledNeut);
+            page.replace("%RING_BUTTON_SELECTED%",
+                         cfg.button_port != RingController::kInvalidPort ? String(cfg.button_port) : String());
+            page.replace("%RING_RELAY_SELECTED%",
+                         cfg.relay_port != RingController::kInvalidPort ? String(cfg.relay_port) : String());
+            page.replace("%RING_DINPUT_JSON%", web.stackPortOptionsJson_(node_id, PortIO::PinType::DInput));
+            page.replace("%RING_RELAY_JSON%", web.stackPortOptionsJson_(node_id, PortIO::PinType::Relay));
+            page.replace("%RING_DINPUT_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::DInput));
+            page.replace("%RING_RELAY_USED_JSON%", web.stackUsedPortsJson_(node_id, PortIO::PinType::Relay));
+            const bool can_edit = web.webSessionIsAdmin_();
+            page.replace("%RING_FORM_DISABLED%", can_edit ? "" : "disabled");
+            page.replace("%RING_SAVE_DISABLED%", can_edit ? "" : "disabled");
         }
         else
         {
@@ -135,7 +157,22 @@ void RingHandler::handleRingSave(WebInterface &web, AsyncWebServerRequest *reque
         }
         if (stack_view)
         {
-            web._ring_status = WebUiRu::Ring::kLocalOnlySettings;
+            DynamicJsonDocument doc(256);
+            doc["enabled"] = request->hasParam("ring_enabled", true);
+            String button_str = web.paramValue_(request, "ring_button");
+            String relay_str = web.paramValue_(request, "ring_relay");
+            uint8_t button_port = RingController::kInvalidPort;
+            uint8_t relay_port = RingController::kInvalidPort;
+            if (web.parseSocketPort_(button_str, button_port))
+                doc["button"] = button_port;
+            if (web.parseSocketPort_(relay_str, relay_port))
+                doc["relay"] = relay_port;
+            const bool sent = web.network() &&
+                              web.network()->stackRoute().sendEventSelected(ConfigsManagerIface::StackPayloadMode::Json,
+                                                                            node_id, "ring", "set", &doc);
+            if (sent)
+                web.refreshStackPorts_(node_id);
+            web._ring_status = sent ? WebUiRu::Common::kUpdated : "Stack send failed";
             const String path = String("/ring?node=") + String((unsigned long)node_id) + "&unit=stack";
             web.sendRedirect_(request, path.c_str(), set_cookie);
             return;

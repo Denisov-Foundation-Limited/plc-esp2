@@ -2567,6 +2567,7 @@ bool encodeWebIndexState_(JsonVariantConst value, std::vector<uint8_t> &out)
     const char *relay_bits = value["relay_used_bits"] | "";
     const char *dinput_bits = value["dinput_used_bits"] | "";
     const char *sensor_bits = value["sensor_used_bits"] | "";
+    const char *available_bits = value["port_available_bits"] | "";
     for (size_t i = 0; i < StackUnitSnapshot::kPortMaskBytes; ++i)
     {
         auto hexByte = [](const char *s, size_t idx) -> uint8_t {
@@ -2623,6 +2624,25 @@ bool encodeWebIndexState_(JsonVariantConst value, std::vector<uint8_t> &out)
             return (uint8_t)((nibble(s[off]) << 4) | nibble(s[off + 1u]));
         };
         appendU8_(out, hexByte(sensor_bits, i));
+    }
+    for (size_t i = 0; i < StackUnitSnapshot::kPortMaskBytes; ++i)
+    {
+        auto hexByte = [](const char *s, size_t idx) -> uint8_t {
+            auto nibble = [](char c) -> uint8_t {
+                if (c >= '0' && c <= '9')
+                    return (uint8_t)(c - '0');
+                if (c >= 'a' && c <= 'f')
+                    return (uint8_t)(10 + (c - 'a'));
+                if (c >= 'A' && c <= 'F')
+                    return (uint8_t)(10 + (c - 'A'));
+                return 0;
+            };
+            const size_t off = idx * 2u;
+            if (!s || strlen(s) < off + 2u)
+                return 0;
+            return (uint8_t)((nibble(s[off]) << 4) | nibble(s[off + 1u]));
+        };
+        appendU8_(out, hexByte(available_bits, i));
     }
     return true;
 }
@@ -2689,11 +2709,16 @@ bool decodeWebIndexState_(const uint8_t *data, size_t size, DynamicJsonDocument 
         out[key] = hex;
         return true;
     };
-    if (left == StackUnitSnapshot::kPortMaskBytes * 3u)
+    if (left == StackUnitSnapshot::kPortMaskBytes * 4u || left == StackUnitSnapshot::kPortMaskBytes * 3u)
     {
         if (!appendHexString("relay_used_bits") || !appendHexString("dinput_used_bits") ||
             !appendHexString("sensor_used_bits"))
             return false;
+        if (left == StackUnitSnapshot::kPortMaskBytes)
+        {
+            if (!appendHexString("port_available_bits"))
+                return false;
+        }
     }
     return left == 0;
 }

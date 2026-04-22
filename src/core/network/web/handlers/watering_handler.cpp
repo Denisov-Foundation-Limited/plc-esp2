@@ -263,7 +263,131 @@ void WateringHandler::handleWateringSave(WebInterface &web, AsyncWebServerReques
                     back += String((unsigned)pv);
                 }
             }
-            web._watering_status = "not migrated";
+            DynamicJsonDocument doc(4096);
+            JsonArray items = doc.createNestedArray("items");
+            for (size_t id = 1; id <= WateringController::kRuleCount; ++id)
+            {
+                const String idx = String((unsigned)id);
+                const String prefix = String("w") + idx + "_";
+                const String en_key = prefix + "en";
+                const String status_key = prefix + "status";
+                const String name_key = prefix + "name";
+                const String port_key = prefix + "port";
+                const String tank_key = prefix + "tank";
+                const String time_key = prefix + "time";
+                const String time2_key = prefix + "time2";
+                const String time3_key = prefix + "time3";
+                const String dur_key = prefix + "dur";
+                const String dur2_key = prefix + "dur2";
+                const String dur3_key = prefix + "dur3";
+                const String resume_key = prefix + "resume";
+                const String resume_level_key = prefix + "resume_level";
+                const bool has_any = request->hasParam(en_key, true) ||
+                                     request->hasParam(status_key, true) ||
+                                     request->hasParam(name_key, true) ||
+                                     request->hasParam(port_key, true) ||
+                                     request->hasParam(tank_key, true) ||
+                                     request->hasParam(time_key, true) ||
+                                     request->hasParam(time2_key, true) ||
+                                     request->hasParam(time3_key, true) ||
+                                     request->hasParam(dur_key, true) ||
+                                     request->hasParam(dur2_key, true) ||
+                                     request->hasParam(dur3_key, true) ||
+                                     request->hasParam(resume_key, true) ||
+                                     request->hasParam(resume_level_key, true);
+                if (!has_any)
+                    continue;
+                if (!web.webAclCanControlItem_(UsersRegistry::AclController::Watering, (uint16_t)id, node_id))
+                {
+                    web._watering_status = String("ACL deny item: ") + idx;
+                    web.sendRedirect_(request, back, set_cookie);
+                    return;
+                }
+
+                JsonObject item = items.add<JsonObject>();
+                item["id"] = (uint8_t)id;
+                item["enabled"] = paramChecked_(request, en_key);
+                item["status"] = request->hasParam(status_key, true);
+
+                String name = web.paramValue_(request, name_key);
+                name.trim();
+                item["name"] = name;
+
+                uint8_t port = WateringController::kInvalidPort;
+                if (parsePort_(web.paramValue_(request, port_key), port))
+                    item["port"] = port;
+
+                uint8_t tank_id = 0;
+                if (parseTank_(web.paramValue_(request, tank_key), tank_id))
+                    item["tank"] = tank_id;
+                else
+                    item["tank"] = 0;
+
+                uint8_t weekdays_mask = 0;
+                for (uint8_t dow = 1; dow <= 7; ++dow)
+                {
+                    const String key = prefix + "d" + String((unsigned)dow);
+                    if (request->hasParam(key, true))
+                        weekdays_mask |= (uint8_t)(1u << (dow - 1u));
+                }
+                item["weekdays_mask"] = weekdays_mask;
+
+                auto fillSlot = [&](uint8_t slot_index, const String &time_value, const String &dur_value,
+                                    const String &enabled_name) {
+                    uint8_t hour = 0xFF;
+                    uint8_t minute = 0xFF;
+                    if (!parseTime_(time_value, hour, minute))
+                    {
+                        hour = 0xFF;
+                        minute = 0xFF;
+                    }
+                    uint32_t dur_min = 0;
+                    parseDuration_(dur_value, dur_min);
+                    const uint32_t dur_sec = (hour == 0xFF || minute == 0xFF) ? 0u : (dur_min * 60u);
+                    const bool slot_enabled = request->hasParam(enabled_name, true);
+                    if (slot_index == 0)
+                    {
+                        item["hour"] = hour;
+                        item["minute"] = minute;
+                        item["duration_s"] = dur_sec;
+                        item["slot1_enabled"] = slot_enabled;
+                    }
+                    else if (slot_index == 1)
+                    {
+                        item["hour2"] = hour;
+                        item["minute2"] = minute;
+                        item["duration2_s"] = dur_sec;
+                        item["slot2_enabled"] = slot_enabled;
+                    }
+                    else
+                    {
+                        item["hour3"] = hour;
+                        item["minute3"] = minute;
+                        item["duration3_s"] = dur_sec;
+                        item["slot3_enabled"] = slot_enabled;
+                    }
+                };
+
+                fillSlot(0, web.paramValue_(request, time_key), web.paramValue_(request, dur_key), prefix + "time_en");
+                fillSlot(1, web.paramValue_(request, time2_key), web.paramValue_(request, dur2_key), prefix + "time2_en");
+                fillSlot(2, web.paramValue_(request, time3_key), web.paramValue_(request, dur3_key), prefix + "time3_en");
+
+                item["resume"] = request->hasParam(resume_key, true);
+                uint8_t resume_level = 0;
+                if (parseResumeLevel_(web.paramValue_(request, resume_level_key), resume_level))
+                    item["resume_level"] = resume_level;
+            }
+
+            const bool sent = web.network() &&
+                              web.network()->stackRoute().sendEventSelected(ConfigsManagerIface::StackPayloadMode::Json,
+                                                                            node_id, "watering", "set", &doc);
+            if (sent)
+            {
+                web.requestStackWatering_(node_id);
+                web.requestStackTanks_(node_id);
+                web.refreshStackPorts_(node_id);
+            }
+            web._watering_status = sent ? WebUiRu::Common::kUpdated : "Stack send failed";
             web.sendRedirect_(request, back, set_cookie);
             return;
         }

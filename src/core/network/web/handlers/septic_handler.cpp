@@ -290,7 +290,32 @@ void SepticHandler::handleSepticSave(WebInterface &web, AsyncWebServerRequest *r
                     back += String((unsigned)pv);
                 }
             }
-            web._septic_status = "not migrated";
+            DynamicJsonDocument doc(768);
+            doc["id"] = 1;
+            doc["enabled"] = request->hasParam("sep1_en", true);
+            doc["monitor"] = request->hasParam("sep1_mon", true);
+            String name = web.paramValue_(request, "sep1_name");
+            name.trim();
+            doc["name"] = name;
+            doc["group_id"] = web.parseGroupIdParam_(request, "sep1_group");
+            uint8_t port = SepticController::kInvalidPort;
+            if (web.parseSocketPort_(web.paramValue_(request, "sep1_warn"), port))
+                doc["warning"] = port;
+            if (web.parseSocketPort_(web.paramValue_(request, "sep1_alarm"), port))
+                doc["alarm"] = port;
+            if (web.parseSocketPort_(web.paramValue_(request, "sep1_relay_warn"), port))
+                doc["relay_warn"] = port;
+            if (web.parseSocketPort_(web.paramValue_(request, "sep1_relay_alarm"), port))
+                doc["relay_alarm"] = port;
+            const bool sent = web.network() &&
+                              web.network()->stackRoute().sendEventSelected(ConfigsManagerIface::StackPayloadMode::Json,
+                                                                            node_id, "septic", "set", &doc);
+            if (sent)
+            {
+                web.requestStackSeptic_(node_id);
+                web.refreshStackPorts_(node_id);
+            }
+            web._septic_status = sent ? WebUiRu::Common::kUpdated : "Stack send failed";
             web.sendRedirect_(request, back, set_cookie);
             return;
         }

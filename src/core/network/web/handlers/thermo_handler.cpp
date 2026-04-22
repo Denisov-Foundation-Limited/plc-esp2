@@ -134,6 +134,8 @@ void ThermoHandler::handleThermo(WebInterface &web, AsyncWebServerRequest *reque
             pagination += "</div>";
         }
         page.replace("%NAV%", web.navHtml_());
+        if (stack_view)
+            web.requestStackPorts_(node_id);
         const String initial_html = stack_view
                                         ? web.listStackThermoHtml_(node_id, groups_available ? 0u : (size_t)page_idx * page_size,
                                                                    groups_available ? SIZE_MAX : page_size)

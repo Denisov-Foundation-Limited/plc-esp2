@@ -35,37 +35,28 @@ void SecurityHandler::handleSecurityState(WebInterface &web, AsyncWebServerReque
         if (stack_view)
         {
             StackUnitSnapshot::State snapshot{};
-            if (web.network() && web.network()->stackIndexState(node_id, snapshot))
+            StackUnitSnapshot::CacheState cache{};
+            if (web.network() && web.network()->stackIndexState(node_id, snapshot) &&
+                web.network()->stackIndexCacheState(node_id, cache))
             {
                 doc["enabled"] = snapshot.security_enabled;
                 doc["armed"] = snapshot.security_armed;
                 doc["alarm"] = snapshot.security_alarm;
-                if (web._controllers)
+                StackUnitSnapshot::SecurityItem page[StackUnitSnapshot::kPageSize]{};
+                for (uint8_t offset = 0; offset < cache.security_count;
+                     offset = (uint8_t)(offset + StackUnitSnapshot::kPageSize))
                 {
-                    SecurityController &sec = web._controllers->security();
-                    const size_t count = sec.remoteDetectCount(node_id);
-                    for (size_t i = 0; i < count; ++i)
+                    uint8_t page_count = 0;
+                    if (!web.network()->stackIndexSecurityPage(node_id, offset, page, StackUnitSnapshot::kPageSize,
+                                                               page_count) ||
+                        page_count == 0)
+                        break;
+                    for (uint8_t i = 0; i < page_count; ++i)
                     {
-                        SecurityController::RemoteDetect remote{};
-                        if (!sec.remoteDetectAt(i, remote, node_id))
-                            continue;
                         JsonObject o = items.add<JsonObject>();
-                        o["id"] = remote.sensor_id;
-                        o["enabled"] = true;
-                        o["detect"] = remote.active;
-                    }
-                    if (count == 0 && snapshot.security_detected > 0)
-                    {
-                        for (uint8_t i = 0; i < snapshot.security_detect_preview_count; ++i)
-                        {
-                            const auto &preview = snapshot.security_detect_preview[i];
-                            if (preview.id == 0)
-                                continue;
-                            JsonObject o = items.add<JsonObject>();
-                            o["id"] = preview.id;
-                            o["enabled"] = true;
-                            o["detect"] = true;
-                        }
+                        o["id"] = page[i].id;
+                        o["enabled"] = page[i].enabled;
+                        o["detect"] = page[i].active || page[i].detect;
                     }
                 }
                 doc["pending"] = false;
@@ -117,6 +108,8 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
         String page = FPSTR(kWebInterfaceSecurityHtml);
         const uint8_t page_size = 8u;
         const bool stack_view = web.isStackSecurityView_(node_id);
+        if (stack_view)
+            web.requestStackPorts_(node_id);
         const bool groups_available = stack_view ? web.hasGroups_(node_id) : web.hasGroups_();
         const String page_str = web.paramValueAny_(request, "page");
         uint8_t page_idx = 0;
@@ -250,7 +243,7 @@ void SecurityHandler::handleSecurity(WebInterface &web, AsyncWebServerRequest *r
         page.replace("%SECURITY_SENSORS_TITLE%", stack_view ? web.stackSecurityTitle_(node_id) : String(WebUiRu::Security::kText));
         page.replace("%SECURITY_SENSORS_PAGINATION_STYLE%", (!groups_available && max_pages > 1) ? "" : "style=\"display:none\"");
         page.replace("%SECURITY_SAVE_BTN%",
-                     (stack_view || !web.webSessionIsAdmin_()) ? String("") : (String("<button class=\"primary\" name=\"action\" value=\"save\">") + WebUiRu::kSave + "</button>"));
+                     !web.webSessionIsAdmin_() ? String("") : (String("<button class=\"primary\" name=\"action\" value=\"save\">") + WebUiRu::kSave + "</button>"));
         page.replace("%SECURITY_DEVICE_SELECT%",
                      web.composeTopFiltersHtml_(web.securityDeviceSelectHtml_(node_id, stack_view),
                                                 groups_available ? web.groupFilterHtml_("security-group-filter", stack_view ? node_id : 0u) : String("")));
@@ -310,20 +303,79 @@ void SecurityHandler::handleSecuritySave(WebInterface &web, AsyncWebServerReques
         const uint32_t node_id = web.parseStackNodeIdParam_(request);
         if (web.isStackSecurityView_(node_id))
         {
-            StaticJsonDocument<128> doc;
             const String action = web.paramValue_(request, "action");
+            DynamicJsonDocument doc(4096);
+            JsonObject root = doc.to<JsonObject>();
             if (action == "arm")
-                doc["armed"] = true;
+                root["armed"] = true;
             else if (action == "disarm")
-                doc["armed"] = false;
+                root["armed"] = false;
             else if (action == "clear")
-                doc["clear"] = true;
+                root["clear"] = true;
+            else
+            {
+                root["enabled"] = request->hasParam("security_enabled", true);
+                String siren_str = web.paramValue_(request, "security_siren");
+                siren_str.trim();
+                if (siren_str == "none")
+                    root["siren"] = SecurityController::kInvalidPort;
+                else
+                {
+                    uint8_t siren_port = SecurityController::kInvalidPort;
+                    if (web.parseSocketPort_(siren_str, siren_port))
+                        root["siren"] = siren_port;
+                }
+                JsonArray items = root.createNestedArray("items");
+                for (size_t id = 1; id <= SecurityController::kSensorCount; ++id)
+                {
+                    const String idx = String((unsigned)id);
+                    const String prefix = String("sec") + idx + "_";
+                    const String en_key = prefix + "en";
+                    const String name_key = prefix + "name";
+                    const String type_key = prefix + "type";
+                    const String port_key = prefix + "port";
+                    const String silent_key = prefix + "silent";
+                    const String group_key = prefix + "group";
+                    const bool has_any = request->hasParam(en_key, true) ||
+                                         request->hasParam(name_key, true) ||
+                                         request->hasParam(type_key, true) ||
+                                         request->hasParam(port_key, true) ||
+                                         request->hasParam(group_key, true) ||
+                                         request->hasParam(silent_key, true);
+                    if (!has_any)
+                        continue;
+                    if (!web.webAclCanControlItem_(UsersRegistry::AclController::Security, (uint16_t)id, node_id))
+                    {
+                        web._security_status = String("ACL deny item: ") + idx;
+                        web.sendRedirect_(request, String("/security?unit=stack&node=") + String((unsigned long)node_id),
+                                          set_cookie);
+                        return;
+                    }
+                    JsonObject item = items.add<JsonObject>();
+                    item["id"] = (uint8_t)id;
+                    item["enabled"] = request->hasParam(en_key, true);
+                    String name = web.paramValue_(request, name_key);
+                    name.trim();
+                    item["name"] = name;
+                    item["group_id"] = web.parseGroupIdParam_(request, group_key);
+                    SecurityController::SensorType type = SecurityController::SensorType::Pir;
+                    if (!web.parseSecurityType_(web.paramValue_(request, type_key), type))
+                        type = SecurityController::SensorType::Pir;
+                    item["type_id"] = (uint8_t)type;
+                    uint8_t port = SecurityController::kInvalidPort;
+                    if (web.parseSocketPort_(web.paramValue_(request, port_key), port))
+                        item["port"] = port;
+                    item["silent"] = request->hasParam(silent_key, true);
+                }
+            }
             const bool sent = web.network() &&
-                              web.network()->stackRoute().sendEventSelected(web.stackPayloadMode(), node_id, "security",
-                                                                            "set", &doc);
+                              web.network()->stackRoute().sendEventSelected(ConfigsManagerIface::StackPayloadMode::Json,
+                                                                            node_id, "security", "set", &doc);
             if (sent && web.network())
-                web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "controllers",
-                                                                "summary_req", nullptr, true);
+            {
+                web.requestStackSecurity_(node_id);
+                web.refreshStackPorts_(node_id);
+            }
             String back = String("/security?unit=stack&node=") + String((unsigned long)node_id);
             const String page_str = web.paramValueAny_(request, "page");
             if (page_str.length())
@@ -335,7 +387,7 @@ void SecurityHandler::handleSecuritySave(WebInterface &web, AsyncWebServerReques
                     back += String((unsigned)pv);
                 }
             }
-            web._security_status = sent ? "Updated" : "Stack send failed";
+            web._security_status = sent ? WebUiRu::Common::kUpdated : "Stack send failed";
             web.sendRedirect_(request, back, set_cookie);
             return;
         }

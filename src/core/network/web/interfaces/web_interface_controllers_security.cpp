@@ -104,23 +104,16 @@ String WebInterfaceControllersSecurityHelper::stackSecurityStatusText_(const Web
         StackUnitSnapshot::State snapshot{};
         if (!web.network()->stackIndexState(node_id, snapshot))
             return WebUiRu::kNoDataFromSlave;
-        String out = snapshot.security_enabled ? (snapshot.security_armed ? String("Armed") : String("Disarmed"))
-                                               : String("Disabled");
+        String out = snapshot.security_enabled
+                         ? (snapshot.security_armed ? String(WebUiRu::Security::kArmedOn)
+                                                    : String(WebUiRu::Security::kArmedOff))
+                         : String(WebUiRu::ControllersPage::kDisabledNeut);
         if (snapshot.security_alarm)
             out += ", alarm";
         if (snapshot.security_detected > 0)
         {
             out += ", detect: ";
             out += String((unsigned)snapshot.security_detected);
-        }
-        else if (web._controllers)
-        {
-            const size_t active = web._controllers->security().remoteDetectCount(node_id);
-            if (active > 0)
-            {
-                out += ", detect: ";
-                out += String((unsigned)active);
-            }
         }
         return out;
     }
@@ -153,8 +146,35 @@ bool WebInterfaceControllersSecurityHelper::isStackSecurityView_(const WebInterf
 bool WebInterfaceControllersSecurityHelper::requestStackSecurity_(WebInterface &web, uint32_t node_id) {
         if (!web.network() || node_id == 0)
             return false;
-        return web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "controllers",
-                                                               "summary_req", nullptr, true);
+        const uint32_t now = millis();
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        const bool has_snapshot = web.network()->stackIndexState(node_id, snapshot);
+        const bool has_cache = web.network()->stackIndexCacheState(node_id, cache);
+        if (!has_snapshot || snapshot.updated_ms == 0 || (uint32_t)(now - snapshot.updated_ms) > 5000u ||
+            !has_cache || (cache.security_count == 0 && snapshot.security_sensors_enabled > 0))
+        {
+            if (!web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Security, node_id, now, 0, 4000u))
+                return false;
+            DynamicJsonDocument req(64);
+            req["offset"] = 0;
+            req["limit"] = StackUnitSnapshot::kPageSize;
+            return web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "security",
+                                                                   "snapshot_req", &req, true);
+        }
+        if (snapshot.security_sensors_enabled > 0 && cache.security_count < snapshot.security_sensors_enabled)
+        {
+            const uint16_t next_offset = cache.security_count;
+            if (!web.network()->prepareStackPageRequest(StackUnitSnapshot::PageKind::Security, node_id, now, next_offset,
+                                                        4000u))
+                return true;
+            DynamicJsonDocument req(64);
+            req["offset"] = next_offset;
+            req["limit"] = StackUnitSnapshot::kPageSize;
+            return web.network()->stackRoute().sendRequestSelected(web.stackPayloadMode(), node_id, "security",
+                                                                   "snapshot_req", &req, true);
+        }
+        return true;
     }
 
 String WebInterfaceControllersSecurityHelper::listSecuritySensorsHtml_(WebInterface &web) {
@@ -393,124 +413,154 @@ String WebInterfaceControllersSecurityHelper::listSecuritySensorsTiles_(WebInter
     }
 
 size_t WebInterfaceControllersSecurityHelper::stackSecurityVisibleCount_(const WebInterface &web, uint32_t node_id) {
-        if (!web._controllers || node_id == 0)
-            return 0;
-        const size_t remote_count = web._controllers->security().remoteDetectCount(node_id);
-        if (remote_count > 0)
-            return remote_count;
-        if (!web.network())
+        if (!web.network() || node_id == 0)
             return 0;
         StackUnitSnapshot::State snapshot{};
-        if (!web.network()->stackIndexState(node_id, snapshot))
+        StackUnitSnapshot::CacheState cache{};
+        if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache))
             return 0;
-        return summarySecurityVisibleCount_(snapshot);
+        return cache.security_count > 0 ? cache.security_count : summarySecurityVisibleCount_(snapshot);
     }
 
 String WebInterfaceControllersSecurityHelper::listStackSecuritySensorsTiles_(WebInterface &web, uint32_t node_id, size_t offset, size_t limit) {
-        if (!web._controllers || node_id == 0 || !web.network())
+        if (node_id == 0 || !web.network())
             return WebUiRu::Security::kText9;
-        SecurityController &sec = web._controllers->security();
-        const size_t total = sec.remoteDetectCount(node_id);
+        StackUnitSnapshot::State snapshot{};
+        StackUnitSnapshot::CacheState cache{};
+        if (!web.network()->stackIndexState(node_id, snapshot) || !web.network()->stackIndexCacheState(node_id, cache))
+            return WebUiRu::kNoDataFromSlave;
+        if (cache.security_count == 0)
+            return snapshot.security_sensors_enabled > 0 ? String("Данные загружаются") : String(WebUiRu::Security::kText9);
         String items;
-        items.reserve(8192);
-
-        if (total > 0)
+        items.reserve(16384);
+        const size_t page_limit = (limit == 0) ? SIZE_MAX : limit;
+        const bool has_groups = web.hasGroups_(node_id);
+        size_t rendered = 0;
+        size_t visible_idx = 0;
+        StackUnitSnapshot::SecurityItem page[StackUnitSnapshot::kPageSize]{};
+        for (uint8_t page_offset = 0; page_offset < cache.security_count && rendered < page_limit;
+             page_offset = (uint8_t)(page_offset + StackUnitSnapshot::kPageSize))
         {
-            const size_t start = offset;
-            const size_t end = (limit == 0) ? total : ((offset + limit > total) ? total : (offset + limit));
-            for (size_t i = start; i < end; ++i)
+            uint8_t page_count = 0;
+            if (!web.network()->stackIndexSecurityPage(node_id, page_offset, page, StackUnitSnapshot::kPageSize, page_count) ||
+                page_count == 0)
+                break;
+            for (uint8_t i = 0; i < page_count && rendered < page_limit; ++i)
             {
-                SecurityController::RemoteDetect item{};
-                if (!sec.remoteDetectAt(i, item, node_id))
+                const auto &cfg = page[i];
+                if (!web.webAclCanViewItem_(UsersRegistry::AclController::Security, cfg.id, node_id))
                     continue;
-                items += "<div class=\"tile js-group-item\" data-group-id=\"0\" data-sensor-id=\"";
-                items += String((unsigned)item.sensor_id);
-                items += "\"><div class=\"sock-visual\"><span class=\"badge\">#";
-                items += String((unsigned)item.sensor_id);
-                items += "</span><svg class=\"sock-icon ";
-                items += item.silent ? "on" : "alert";
-                items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
-                items += "<circle cx=\"32\" cy=\"24\" r=\"6\" fill=\"currentColor\"/>";
-                items += "<path d=\"M14 48c6-10 12-14 18-14s12 4 18 14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"4\" stroke-linecap=\"round\"/>";
-                items += "<path d=\"M8 20c6-6 12-10 18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
-                items += "<path d=\"M56 20c-6-6-12-10-18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
-                items += "</svg></div><div><div class=\"tile-head\"><strong>";
-                if (item.sensor_name.length())
-                    web.appendHtmlEscaped_(items, item.sensor_name.c_str());
-                else
-                    items += String(WebUiRu::Security::kNum) + String((unsigned)item.sensor_id);
-                items += "</strong></div>";
-                items += "<div class=\"status-line\"><span class=\"status-dot ";
-                items += item.silent ? "status-on" : "status-bad";
-                items += "\"></span><span class=\"status-text\">";
-                items += item.silent ? "Silent detect" : WebUiRu::Security::kText6;
-                items += "</span></div>";
-                items += "<div class=\"form-grid\">";
-                items += "<div class=\"form-row\"><label>Unit</label><input class=\"field\" type=\"text\" readonly value=\"";
-                web.appendHtmlEscaped_(items,
-                                       item.unit_name.length() ? item.unit_name.c_str() : web.stackNodeIdHex_(item.node_id).c_str());
-                items += "\"></div>";
-                items += "<div class=\"form-row\"><label>Sensor</label><input class=\"field\" type=\"text\" readonly value=\"";
-                items += String((unsigned)item.sensor_id);
-                items += "\"></div>";
-                items += "<div class=\"form-row\"><label>Mode</label><input class=\"field\" type=\"text\" readonly value=\"";
-                items += item.silent ? "silent" : "alarm";
-                items += "\"></div>";
-                items += "</div></div></div>";
-            }
-        }
-        else
-        {
-            StackUnitSnapshot::State snapshot{};
-            if (!web.network()->stackIndexState(node_id, snapshot) || snapshot.security_detected == 0)
-                return "<div class=\"tile empty\">No active remote detections</div>";
-            const size_t total_summary = summarySecurityVisibleCount_(snapshot);
-            const size_t start = offset;
-            const size_t end = (limit == 0) ? total_summary : ((offset + limit > total_summary) ? total_summary : (offset + limit));
-            for (size_t i = start; i < end; ++i)
-            {
-                if (i < snapshot.security_detect_preview_count)
+                if (!web.webSessionIsAdmin_() && !cfg.enabled)
+                    continue;
+                if (visible_idx < offset)
                 {
-                    const auto &preview = snapshot.security_detect_preview[i];
-                    items += "<div class=\"tile js-group-item\" data-group-id=\"0\" data-sensor-id=\"";
-                    items += String((unsigned)preview.id);
-                    items += "\"><div class=\"sock-visual\"><span class=\"badge\">#";
-                    items += String((unsigned)preview.id);
-                    items += "</span><svg class=\"sock-icon alert\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+                    ++visible_idx;
+                    continue;
+                }
+                ++visible_idx;
+                const bool detected = cfg.active || cfg.detect;
+                const bool is_reed = cfg.type == (uint8_t)SecurityController::SensorType::Reed;
+                items += "<div class=\"tile js-group-item";
+                if (!cfg.enabled)
+                    items += " disabled";
+                items += "\" data-group-id=\"";
+                items += String((unsigned)cfg.group_id);
+                items += "\"";
+                items += web.groupVisibilityStyleAttr_(cfg.group_id);
+                items += " data-sensor-id=\"";
+                items += String((unsigned)cfg.id);
+                items += "\"><div class=\"sock-visual\"><span class=\"badge\">#";
+                items += String((unsigned)cfg.id);
+                items += "</span><svg class=\"sock-icon ";
+                if (!cfg.enabled)
+                    items += "off";
+                else if (detected)
+                    items += "alert";
+                else
+                    items += "on";
+                items += "\" viewBox=\"0 0 64 64\" aria-hidden=\"true\">";
+                if (is_reed)
+                {
+                    items += "<rect x=\"6\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
+                    items += "<rect x=\"44\" y=\"18\" width=\"14\" height=\"28\" rx=\"3\" fill=\"currentColor\"/>";
+                    items += "<rect x=\"22\" y=\"30\" width=\"20\" height=\"4\" rx=\"2\" fill=\"currentColor\"/>";
+                }
+                else
+                {
                     items += "<circle cx=\"32\" cy=\"24\" r=\"6\" fill=\"currentColor\"/>";
                     items += "<path d=\"M14 48c6-10 12-14 18-14s12 4 18 14\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"4\" stroke-linecap=\"round\"/>";
                     items += "<path d=\"M8 20c6-6 12-10 18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
                     items += "<path d=\"M56 20c-6-6-12-10-18-12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"/>";
-                    items += "</svg></div><div><div class=\"tile-head\"><strong>";
-                    if (preview.name[0] != '\0')
-                        web.appendHtmlEscaped_(items, preview.name);
-                    else
-                        items += String(WebUiRu::Security::kNum) + String((unsigned)preview.id);
-                    items += "</strong></div>";
-                    items += "<div class=\"status-line\"><span class=\"status-dot status-bad\"></span><span class=\"status-text\">";
-                    items += WebUiRu::Security::kText6;
-                    items += "</span></div>";
-                    items += "<div class=\"form-grid\">";
-                    items += "<div class=\"form-row\"><label>Unit</label><input class=\"field\" type=\"text\" readonly value=\"";
-                    web.appendHtmlEscaped_(items, web.stackNodeIdHex_(node_id).c_str());
-                    items += "\"></div>";
-                    items += "<div class=\"form-row\"><label>Source</label><input class=\"field\" type=\"text\" readonly value=\"summary\"></div>";
-                    items += "</div></div></div>";
                 }
+                items += "</svg></div><div><div class=\"tile-head\"><strong>";
+                if (cfg.name[0])
+                    web.appendHtmlEscaped_(items, cfg.name);
                 else
-                {
-                    const size_t more = snapshot.security_detected > snapshot.security_detect_preview_count
-                                            ? (snapshot.security_detected - snapshot.security_detect_preview_count)
-                                            : 0u;
-                    if (more == 0)
-                        continue;
-                    items += "<div class=\"tile empty\">More active sensors: ";
-                    items += String((unsigned)more);
-                    items += "</div>";
-                }
+                    items += String(WebUiRu::Security::kNum) + String((unsigned)cfg.id);
+                items += "</strong><label class=\"switch\"><input type=\"checkbox\" name=\"sec";
+                items += String((unsigned)cfg.id);
+                items += "_en\"";
+                if (cfg.enabled)
+                    items += " checked";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+                items += String("<div class=\"form-row\"><label>") + WebUiRu::Security::kLabelName +
+                         "</label><input class=\"field name\" type=\"text\" name=\"sec";
+                items += String((unsigned)cfg.id);
+                items += "_name\" value=\"";
+                web.appendHtmlEscaped_(items, cfg.name);
+                items += "\"></div>";
+                items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel +
+                         "</label><select class=\"field mini\" name=\"sec";
+                items += String((unsigned)cfg.id);
+                items += "_group\"";
+                if (!has_groups)
+                    items += " disabled";
+                items += ">";
+                items += web.groupOptionsHtml_(cfg.group_id, true, true, node_id);
+                items += "</select></div>";
+                items += "<div class=\"status-line\"><span class=\"status-dot ";
+                if (!cfg.enabled)
+                    items += "status-off";
+                else if (detected)
+                    items += "status-bad";
+                else
+                    items += "status-on";
+                items += "\"></span><span class=\"status-text\">";
+                if (!cfg.enabled)
+                    items += WebUiRu::Security::kText5;
+                else if (detected)
+                    items += WebUiRu::Security::kText6;
+                else
+                    items += WebUiRu::Security::kText7;
+                items += "</span></div>";
+                items += "<div class=\"form-grid\">";
+                items += WebUiRu::Security::kSelectClassFieldMiniNameSec;
+                items += String((unsigned)cfg.id);
+                items += "_type\">";
+                items += "<option value=\"pir\"";
+                if (!is_reed)
+                    items += " selected";
+                items += ">pir</option><option value=\"reed\"";
+                if (is_reed)
+                    items += " selected";
+                items += ">reed</option></select></div>";
+                items += WebUiRu::Security::kSelectClassFieldMiniSecurityPortData;
+                if (cfg.port != SecurityController::kInvalidPort)
+                    items += String((unsigned)cfg.port);
+                items += "\" name=\"sec";
+                items += String((unsigned)cfg.id);
+                items += "_port\"></select></div>";
+                items += WebUiRu::Security::kInputTypeCheckboxNameSec;
+                items += String((unsigned)cfg.id);
+                items += "_silent\"";
+                if (cfg.silent)
+                    items += " checked";
+                items += "><span class=\"track\"><span class=\"knob\"></span></span></label></div>";
+                items += "</div></div></div>";
+                ++rendered;
             }
         }
-        return items.length() ? items : String("<div class=\"tile empty\">No active remote detections</div>");
+        return items.length() ? items : WebUiRu::Security::kText9;
     }
 
 String WebInterfaceControllersSecurityHelper::securityPortOptionsJson_(const WebInterface &web) {

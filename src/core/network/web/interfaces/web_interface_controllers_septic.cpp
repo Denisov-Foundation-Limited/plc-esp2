@@ -202,32 +202,71 @@ String WebInterfaceControllersSepticHelper::listStackSepticHtml_(WebInterface &w
                 items += " <span class=\"badge\">выкл</span>";
             items += "</div></div>";
 
-            items += String("<div class=\"form-row\"><label>") + WebUiRu::Septic::kLabelName + "</label><input class=\"field name\" type=\"text\" readonly value=\"";
-            web.appendHtmlEscaped_(items, snapshot.septic_name);
-            items += "\"></div>";
+            if (can_control)
+            {
+                items += String("<div class=\"form-row\"><label>") + WebUiRu::Septic::kLabelName +
+                         "</label><input class=\"field name\" type=\"text\" name=\"sep1_name\" value=\"";
+                web.appendHtmlEscaped_(items, snapshot.septic_name);
+                items += "\"></div>";
 
-            items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel + "</label><select class=\"field mini\" disabled>";
-            items += web.groupOptionsHtml_(snapshot.septic_group_id, true, true, node_id);
-            items += "</select></div>";
+                items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel +
+                         "</label><select class=\"field mini\" name=\"sep1_group\"";
+                if (!has_groups)
+                    items += " disabled";
+                items += ">";
+                items += web.groupOptionsHtml_(snapshot.septic_group_id, true, true, node_id);
+                items += "</select></div>";
 
-            items += "<div class=\"form-grid\">";
-            items += "<div class=\"form-row\"><label>Предупр.</label><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
-            if (snapshot.septic_warning_port != SepticController::kInvalidPort)
-                items += String((unsigned)snapshot.septic_warning_port);
-            items += "\" disabled></select></div>";
-            items += "<div class=\"form-row\"><label>Тревога</label><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
-            if (snapshot.septic_alarm_port != SepticController::kInvalidPort)
-                items += String((unsigned)snapshot.septic_alarm_port);
-            items += "\" disabled></select></div>";
-            items += "<div class=\"form-row\"><label>Реле предупр.</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
-            if (snapshot.septic_relay_warning_port != SepticController::kInvalidPort)
-                items += String((unsigned)snapshot.septic_relay_warning_port);
-            items += "\" disabled></select></div>";
-            items += "<div class=\"form-row\"><label>Реле тревоги</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
-            if (snapshot.septic_relay_alarm_port != SepticController::kInvalidPort)
-                items += String((unsigned)snapshot.septic_relay_alarm_port);
-            items += "\" disabled></select></div>";
-            items += "</div>";
+                items += "<div class=\"form-grid\">";
+                items += "<div class=\"form-row\"><label>Предупр.</label><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
+                if (snapshot.septic_warning_port != SepticController::kInvalidPort)
+                    items += String((unsigned)snapshot.septic_warning_port);
+                items += "\" name=\"sep1_warn\"></select></div>";
+                items += "<div class=\"form-row\"><label>Тревога</label><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
+                if (snapshot.septic_alarm_port != SepticController::kInvalidPort)
+                    items += String((unsigned)snapshot.septic_alarm_port);
+                items += "\" name=\"sep1_alarm\"></select></div>";
+                items += "<div class=\"form-row\"><label>Реле предупр.</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
+                if (snapshot.septic_relay_warning_port != SepticController::kInvalidPort)
+                    items += String((unsigned)snapshot.septic_relay_warning_port);
+                items += "\" name=\"sep1_relay_warn\"></select></div>";
+                items += "<div class=\"form-row\"><label>Реле тревоги</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
+                if (snapshot.septic_relay_alarm_port != SepticController::kInvalidPort)
+                    items += String((unsigned)snapshot.septic_relay_alarm_port);
+                items += "\" name=\"sep1_relay_alarm\"></select></div>";
+                items += "</div>";
+            }
+            else
+            {
+                items += String("<div class=\"form-row\"><label>") + WebUiRu::Septic::kLabelName +
+                         "</label><input class=\"field name\" type=\"text\" readonly value=\"";
+                web.appendHtmlEscaped_(items, snapshot.septic_name);
+                items += "\"></div>";
+
+                items += String("<div class=\"form-row\" style=\"margin-top:8px\"><label>") + WebUiRu::GroupsPage::kLabel +
+                         "</label><select class=\"field mini\" disabled>";
+                items += web.groupOptionsHtml_(snapshot.septic_group_id, true, true, node_id);
+                items += "</select></div>";
+
+                items += "<div class=\"form-grid\">";
+                items += "<div class=\"form-row\"><label>Предупр.</label><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
+                if (snapshot.septic_warning_port != SepticController::kInvalidPort)
+                    items += String((unsigned)snapshot.septic_warning_port);
+                items += "\" disabled></select></div>";
+                items += "<div class=\"form-row\"><label>Тревога</label><select class=\"field mini septic-select\" data-type=\"dinput\" data-selected=\"";
+                if (snapshot.septic_alarm_port != SepticController::kInvalidPort)
+                    items += String((unsigned)snapshot.septic_alarm_port);
+                items += "\" disabled></select></div>";
+                items += "<div class=\"form-row\"><label>Реле предупр.</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
+                if (snapshot.septic_relay_warning_port != SepticController::kInvalidPort)
+                    items += String((unsigned)snapshot.septic_relay_warning_port);
+                items += "\" disabled></select></div>";
+                items += "<div class=\"form-row\"><label>Реле тревоги</label><select class=\"field mini septic-select\" data-type=\"relay\" data-selected=\"";
+                if (snapshot.septic_relay_alarm_port != SepticController::kInvalidPort)
+                    items += String((unsigned)snapshot.septic_relay_alarm_port);
+                items += "\" disabled></select></div>";
+                items += "</div>";
+            }
 
             items += "<div class=\"status-grid\"><div class=\"status-line\"><span class=\"status-dot ";
             items += warn ? "status-on" : "status-off";
