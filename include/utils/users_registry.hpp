@@ -15,6 +15,8 @@
 #include <ArduinoJson.h>
 #include <array>
 
+#include "utils/rtos_lock.hpp"
+
 class UsersRegistry
 {
 public:
@@ -75,10 +77,67 @@ public:
         String rfid_key;
         std::array<uint8_t, kAclBytes> acl_bits{};
 
-        void clearAcl();void grantAllAcl();bool controllerAllowed(uint8_t unit, AclController ctrl) const;bool canViewItem(uint8_t unit, AclController ctrl, uint16_t item_id) const;bool itemViewAllowedRaw(uint8_t unit, AclController ctrl, uint16_t item_id) const;bool canControlItem(uint8_t unit, AclController ctrl, uint16_t item_id) const;bool itemControlAllowedRaw(uint8_t unit, AclController ctrl, uint16_t item_id) const;bool setControllerAllowed(uint8_t unit, AclController ctrl, bool allow);bool setItemView(uint8_t unit, AclController ctrl, uint16_t item_id, bool allow);bool setItemControl(uint8_t unit, AclController ctrl, uint16_t item_id, bool allow);bool hasWebPassword() const;bool setWebPassword(const String &password);bool checkWebPassword(const String &password) const;void clearWebPassword();};
+        void clearAcl();
+        void grantAllAcl();
+        bool controllerAllowed(uint8_t unit, AclController ctrl) const;
+        bool canViewItem(uint8_t unit, AclController ctrl, uint16_t item_id) const;
+        bool itemViewAllowedRaw(uint8_t unit, AclController ctrl, uint16_t item_id) const;
+        bool canControlItem(uint8_t unit, AclController ctrl, uint16_t item_id) const;
+        bool itemControlAllowedRaw(uint8_t unit, AclController ctrl, uint16_t item_id) const;
+        bool setControllerAllowed(uint8_t unit, AclController ctrl, bool allow);
+        bool setItemView(uint8_t unit, AclController ctrl, uint16_t item_id, bool allow);
+        bool setItemControl(uint8_t unit, AclController ctrl, uint16_t item_id, bool allow);
+        bool hasWebPassword() const;
+        bool setWebPassword(const String &password);
+        bool checkWebPassword(const String &password) const;
+        void clearWebPassword();
+    };
 
-    UsersRegistry();size_t size() const;const User &user(size_t idx) const;User &user(size_t idx);void clear();bool applyFromJson(JsonArrayConst arr);void serializeToJson(JsonArray out) const;static String normalizeTgUsername(String user);static String normalizeUsername(String user);static String normalizeHex(const String &in, size_t max_len);static String normalizePhone(const String &in);private:
-    static String sha256HexSalted_(const String &password, const String &salt_hex);static String bytesToHex_(const uint8_t *data, size_t len);static uint32_t rand32_();static String generateSaltHex_(size_t bytes);friend struct User;
+    using Guard = RtosRecursiveLock::Guard;
 
-    static size_t controllerItemsCount_(AclController ctrl);static size_t controllerItemsOffset_(AclController ctrl);static size_t controllerBitIndex_(uint8_t unit, AclController ctrl);static bool itemViewBitIndex_(uint8_t unit, AclController ctrl, uint16_t item_id, size_t &out);static bool itemControlBitIndex_(uint8_t unit, AclController ctrl, uint16_t item_id, size_t &out);static bool getAclBit_(const std::array<uint8_t, kAclBytes> &bits, size_t bit_index);static bool setAclBit_(std::array<uint8_t, kAclBytes> &bits, size_t bit_index, bool value);static char b64Char_(uint8_t v);static int8_t b64Index_(char c);static String encodeAclBase64(const std::array<uint8_t, kAclBytes> &bits);static bool decodeAclBase64(const char *src, std::array<uint8_t, kAclBytes> &out);std::array<User, kMaxUsers> _users{};
+    UsersRegistry();
+    size_t size() const;
+    // Raw accessors require an external guard() held by the caller.
+    const User &user(size_t idx) const;
+    User &user(size_t idx);
+    bool copyUser(size_t idx, User &out) const;
+    template <typename FnT>
+    bool updateUser(size_t idx, FnT fn)
+    {
+        if (idx >= kMaxUsers)
+            return false;
+        const auto g = guard();
+        fn(_users[idx]);
+        return true;
+    }
+    Guard guard() const;
+    void clear();
+    bool applyFromJson(JsonArrayConst arr);
+    void serializeToJson(JsonArray out) const;
+    static String normalizeTgUsername(String user);
+    static String normalizeUsername(String user);
+    static String normalizeHex(const String &in, size_t max_len);
+    static String normalizePhone(const String &in);
+
+private:
+    static String sha256HexSalted_(const String &password, const String &salt_hex);
+    static String bytesToHex_(const uint8_t *data, size_t len);
+    static uint32_t rand32_();
+    static String generateSaltHex_(size_t bytes);
+    friend struct User;
+
+    static size_t controllerItemsCount_(AclController ctrl);
+    static size_t controllerItemsOffset_(AclController ctrl);
+    static size_t controllerBitIndex_(uint8_t unit, AclController ctrl);
+    static bool itemViewBitIndex_(uint8_t unit, AclController ctrl, uint16_t item_id, size_t &out);
+    static bool itemControlBitIndex_(uint8_t unit, AclController ctrl, uint16_t item_id, size_t &out);
+    static bool getAclBit_(const std::array<uint8_t, kAclBytes> &bits, size_t bit_index);
+    static bool setAclBit_(std::array<uint8_t, kAclBytes> &bits, size_t bit_index, bool value);
+    static char b64Char_(uint8_t v);
+    static int8_t b64Index_(char c);
+    static String encodeAclBase64(const std::array<uint8_t, kAclBytes> &bits);
+    static bool decodeAclBase64(const char *src, std::array<uint8_t, kAclBytes> &out);
+
+    std::array<User, kMaxUsers> _users{};
+    mutable RtosRecursiveLock _lock;
 };

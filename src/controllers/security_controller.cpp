@@ -205,6 +205,7 @@ void SecurityController::applyKeys(JsonArrayConst keys){
     auto guard = _lock.guard();
     if (!_users)
         return;
+    const auto users_guard = _users->guard();
     for (size_t i = 0; i < _users->size(); ++i)
         _users->user(i).ibutton_key = "";
     size_t idx = 0;
@@ -250,6 +251,7 @@ void SecurityController::applyRfidKeys(JsonArrayConst keys){
     auto guard = _lock.guard();
     if (!_users)
         return;
+    const auto users_guard = _users->guard();
     for (size_t i = 0; i < _users->size(); ++i)
         _users->user(i).rfid_key = "";
     size_t idx = 0;
@@ -295,6 +297,7 @@ void SecurityController::applyPhones(JsonArrayConst phones){
     auto guard = _lock.guard();
     if (!_users)
         return;
+    const auto users_guard = _users->guard();
     for (size_t i = 0; i < _users->size(); ++i)
     {
         _users->user(i).gsm_phone = "";
@@ -381,6 +384,7 @@ void SecurityController::serializeKeys(JsonArray out) const{
     auto guard = _lock.guard();
     if (!_users)
         return;
+    const auto users_guard = _users->guard();
     for (size_t i = 0; i < _users->size(); ++i)
     {
         const auto &u = _users->user(i);
@@ -401,6 +405,7 @@ void SecurityController::serializeRfidKeys(JsonArray out) const{
     auto guard = _lock.guard();
     if (!_users)
         return;
+    const auto users_guard = _users->guard();
     for (size_t i = 0; i < _users->size(); ++i)
     {
         const auto &u = _users->user(i);
@@ -421,6 +426,7 @@ void SecurityController::serializePhones(JsonArray out) const{
     auto guard = _lock.guard();
     if (!_users)
         return;
+    const auto users_guard = _users->guard();
     for (size_t i = 0; i < _users->size(); ++i)
     {
         const auto &u = _users->user(i);
@@ -1048,6 +1054,7 @@ bool SecurityController::addKey(const uint8_t addr[8], const String &name){
     auto guard = _lock.guard();
     if (!addr || !_users)
         return false;
+    const auto users_guard = _users->guard();
     char hex[17] = {};
     IButton::toHex(addr, hex);
     const String serial = UsersRegistry::normalizeHex(hex, 16);
@@ -1073,6 +1080,7 @@ bool SecurityController::removeKey(const uint8_t addr[8]){
     auto guard = _lock.guard();
     if (!addr || !_users)
         return false;
+    const auto users_guard = _users->guard();
     char hex[17] = {};
     IButton::toHex(addr, hex);
     const String serial = UsersRegistry::normalizeHex(hex, 16);
@@ -1091,6 +1099,7 @@ void SecurityController::clearKeys(){
     auto guard = _lock.guard();
     if (!_users)
         return;
+    const auto users_guard = _users->guard();
     for (size_t i = 0; i < _users->size(); ++i)
         _users->user(i).ibutton_key = "";
 }
@@ -1104,6 +1113,7 @@ bool SecurityController::setPhone(size_t idx, const String &number){
     auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     _users->user(idx).gsm_phone = UsersRegistry::normalizePhone(number);
     return true;
 }
@@ -1112,6 +1122,7 @@ bool SecurityController::setPhoneName(size_t idx, const String &name){
     auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     _users->user(idx).username = name;
     return true;
 }
@@ -1120,6 +1131,7 @@ bool SecurityController::setPhoneNotify(size_t idx, bool notify){
     auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     _users->user(idx).gsm_sms = notify;
     return true;
 }
@@ -1128,6 +1140,7 @@ bool SecurityController::setPhoneCall(size_t idx, bool call){
     auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     _users->user(idx).gsm_call = call;
     return true;
 }
@@ -1136,6 +1149,7 @@ bool SecurityController::setPhoneEnabled(size_t idx, bool enabled){
     auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     _users->user(idx).enabled = enabled;
     return true;
 }
@@ -1144,6 +1158,7 @@ bool SecurityController::phoneSlot(size_t idx, String &number, bool &enabled) co
     auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     const auto &u = _users->user(idx);
     number = u.gsm_phone;
     enabled = u.enabled;
@@ -1155,7 +1170,9 @@ const String &SecurityController::phoneByIndex(size_t idx) const{
     static const String empty;
     if (!_users || idx >= _users->size())
         return empty;
-    return _users->user(idx).gsm_phone;
+    const auto users_guard = _users->guard();
+    _user_phone_cache = _users->user(idx).gsm_phone;
+    return _user_phone_cache.length() ? _user_phone_cache : empty;
 }
 
 const String &SecurityController::phoneNameByIndex(size_t idx) const{
@@ -1163,13 +1180,16 @@ const String &SecurityController::phoneNameByIndex(size_t idx) const{
     static const String empty;
     if (!_users || idx >= _users->size())
         return empty;
-    return _users->user(idx).username;
+    const auto users_guard = _users->guard();
+    _user_phone_name_cache = _users->user(idx).username;
+    return _user_phone_name_cache.length() ? _user_phone_name_cache : empty;
 }
 
 bool SecurityController::phoneNotifyByIndex(size_t idx) const{
     auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     return _users->user(idx).gsm_sms;
 }
 
@@ -1177,6 +1197,7 @@ bool SecurityController::phoneCallByIndex(size_t idx) const{
     auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     return _users->user(idx).gsm_call;
 }
 
@@ -1185,6 +1206,7 @@ size_t SecurityController::keyCount() const{
     size_t count = 0;
     if (!_users)
         return 0;
+    const auto users_guard = _users->guard();
     for (size_t i = 0; i < _users->size(); ++i)
     {
         const auto &u = _users->user(i);
@@ -1200,6 +1222,7 @@ bool SecurityController::keyByIndex(size_t idx, uint8_t out[8]) const{
     auto guard = _lock.guard();
     if (!out || !_users)
         return false;
+    const auto users_guard = _users->guard();
     size_t seen = 0;
     for (size_t i = 0; i < _users->size(); ++i)
     {
@@ -1223,6 +1246,7 @@ const String &SecurityController::keyNameByIndex(size_t idx) const{
     static const String empty;
     if (!_users)
         return empty;
+    const auto users_guard = _users->guard();
     size_t seen = 0;
     for (size_t i = 0; i < _users->size(); ++i)
     {
@@ -1231,8 +1255,8 @@ const String &SecurityController::keyNameByIndex(size_t idx) const{
             continue;
         if (seen == idx)
         {
-            const String &name = u.username;
-            return name.length() ? name : empty;
+            _user_key_name_cache = u.username;
+            return _user_key_name_cache.length() ? _user_key_name_cache : empty;
         }
         ++seen;
     }
@@ -1243,6 +1267,7 @@ bool SecurityController::setKeyNameByAddr(const uint8_t addr[8], const String &n
     auto guard = _lock.guard();
     if (!addr || !_users)
         return false;
+    const auto users_guard = _users->guard();
     char hex[17] = {};
     IButton::toHex(addr, hex);
     const String serial = UsersRegistry::normalizeHex(hex, 16);
@@ -1261,6 +1286,7 @@ bool SecurityController::keySlot(size_t idx, uint8_t out[8], bool &enabled) cons
     auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     const String serial = _users->user(idx).ibutton_key;
     enabled = serial.length() > 0;
     if (out)
@@ -1291,6 +1317,7 @@ bool SecurityController::setKeySlot(size_t idx, const uint8_t addr[8], bool enab
     auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     UsersRegistry::User &u = _users->user(idx);
     if (enabled)
     {
@@ -1310,6 +1337,7 @@ bool SecurityController::rfidKeySlot(size_t idx, uint8_t out[10], uint8_t &len, 
     auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     const String serial = _users->user(idx).rfid_key;
     enabled = serial.length() > 0;
     len = 0;
@@ -1335,6 +1363,7 @@ const String &SecurityController::rfidKeyNameByIndex(size_t idx) const{
     static const String empty;
     if (!_users)
         return empty;
+    const auto users_guard = _users->guard();
     size_t seen = 0;
     for (size_t i = 0; i < _users->size(); ++i)
     {
@@ -1343,8 +1372,8 @@ const String &SecurityController::rfidKeyNameByIndex(size_t idx) const{
             continue;
         if (seen == idx)
         {
-            const String &name = u.username;
-            return name.length() ? name : empty;
+            _user_rfid_name_cache = u.username;
+            return _user_rfid_name_cache.length() ? _user_rfid_name_cache : empty;
         }
         ++seen;
     }
@@ -1355,6 +1384,7 @@ bool SecurityController::setRfidKeySlot(size_t idx, const uint8_t *bytes, uint8_
     auto guard = _lock.guard();
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     UsersRegistry::User &u = _users->user(idx);
     if (enabled && bytes && len > 0)
         u.rfid_key = UsersRegistry::normalizeHex(rfidUidToString_(bytes, len), 20);
@@ -1432,6 +1462,7 @@ void SecurityController::reset_(){
 void SecurityController::clearKeys_(){
     if (_users)
     {
+        const auto users_guard = _users->guard();
         for (size_t i = 0; i < _users->size(); ++i)
             _users->user(i).ibutton_key = "";
     }
@@ -1442,6 +1473,7 @@ void SecurityController::clearKeys_(){
 void SecurityController::clearRfidKeys_(){
     if (_users)
     {
+        const auto users_guard = _users->guard();
         for (size_t i = 0; i < _users->size(); ++i)
             _users->user(i).rfid_key = "";
     }
@@ -1453,6 +1485,7 @@ void SecurityController::clearRfidKeys_(){
 bool SecurityController::setRfidKeySlot_(size_t idx, const PN532::UID &uid, bool enabled, const String &name){
     if (!_users || idx >= _users->size())
         return false;
+    const auto users_guard = _users->guard();
     UsersRegistry::User &u = _users->user(idx);
     if (enabled)
     {
@@ -1471,6 +1504,7 @@ bool SecurityController::setRfidKeySlot_(size_t idx, const PN532::UID &uid, bool
 void SecurityController::clearPhones_(){
     if (!_users)
         return;
+    const auto users_guard = _users->guard();
     for (size_t i = 0; i < _users->size(); ++i)
     {
         auto &u = _users->user(i);
@@ -1755,6 +1789,7 @@ void SecurityController::owIButtonUnlockCb_(void *ctx)
 bool SecurityController::isAllowedKey_(const uint8_t addr[8]) const{
     if (!_users)
         return false;
+    const auto users_guard = _users->guard();
     char hex[17] = {};
     IButton::toHex(addr, hex);
     const String serial = UsersRegistry::normalizeHex(hex, 16);
@@ -2209,6 +2244,7 @@ bool SecurityController::isAllowedPhone_(const String &number) const{
         return false;
     if (UsersRegistry::normalizePhone(number).length() == 0)
         return false;
+    const auto users_guard = _users->guard();
     for (size_t i = 0; i < _users->size(); ++i)
     {
         const auto &u = _users->user(i);
@@ -2227,6 +2263,7 @@ bool SecurityController::matchPhone_(const String &number, String &user) const{
         return false;
     if (UsersRegistry::normalizePhone(number).length() == 0)
         return false;
+    const auto users_guard = _users->guard();
     for (size_t i = 0; i < _users->size(); ++i)
     {
         const auto &u = _users->user(i);
@@ -2246,6 +2283,7 @@ bool SecurityController::matchPhone_(const String &number, String &user) const{
 void SecurityController::sendSmsNotify_(const SecurityController::SensorConfig &cfg){
     if (!_gsm || !_users)
         return;
+    const auto users_guard = _users->guard();
     String msg = F("ALARM sensor ");
     msg += String((unsigned)cfg.id);
     if (cfg.name.length())
@@ -2298,6 +2336,7 @@ void SecurityController::sendSmsNotify_(const SecurityController::SensorConfig &
 void SecurityController::sendSmsNotify_(uint8_t sensor_id, const String &name){
     if (!_gsm || !_users)
         return;
+    const auto users_guard = _users->guard();
     String msg = F("ALARM sensor ");
     msg += String((unsigned)sensor_id);
     if (name.length())
@@ -2350,6 +2389,7 @@ void SecurityController::sendSmsNotify_(uint8_t sensor_id, const String &name){
 bool SecurityController::matchKey_(const uint8_t addr[8], String &user) const{
     if (!_users)
         return false;
+    const auto users_guard = _users->guard();
     char hex[17] = {};
     IButton::toHex(addr, hex);
     const String serial = UsersRegistry::normalizeHex(hex, 16);
@@ -2371,6 +2411,7 @@ bool SecurityController::matchKey_(const uint8_t addr[8], String &user) const{
 bool SecurityController::matchRfidKey_(const PN532::UID &uid, String &user) const{
     if (uid.len == 0 || uid.len > 10 || !_users)
         return false;
+    const auto users_guard = _users->guard();
     const String serial = UsersRegistry::normalizeHex(rfidUidToString_(uid.bytes, uid.len), 20);
     for (size_t i = 0; i < _users->size(); ++i)
     {

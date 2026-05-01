@@ -595,6 +595,7 @@ bool CloudClient::enqueueEvent_(const String &kind, const String &reason, const 
 {
     if (kind.length() == 0 || reason.length() == 0)
         return false;
+    const auto guard = _event_queue_lock.guard();
     if (tryCoalesceQueuedEvent_(kind, reason, data_json, unit, node_id))
         return true;
     if (_event_count >= kMaxQueuedEvents)
@@ -698,7 +699,8 @@ bool CloudClient::sendEvent_(const String &kind, const String &reason, const Str
         if (unit == "stack" && !data["unit_name"].is<const char *>())
             data["unit_name"] = source_name;
     }
-    sendJson_(doc);
+    if (!sendJson_(doc))
+        return false;
     logEvent_(F("Notify send"), kind, reason, unit, node_id);
     return true;
 }
@@ -745,18 +747,29 @@ void CloudClient::logEvent_(const __FlashStringHelper *stage, const String &kind
 
 void CloudClient::flushQueuedEvents_()
 {
-    if (!_session_id.length() || _event_count == 0)
+    if (!_session_id.length())
         return;
-    while (_event_count)
+    for (;;)
     {
-        QueuedEvent &slot = _event_queue[_event_head];
+        QueuedEvent slot;
+        {
+            const auto guard = _event_queue_lock.guard();
+            if (_event_count == 0)
+                return;
+            slot = _event_queue[_event_head];
+        }
+
         const bool ok = sendEvent_(slot.kind, slot.reason, slot.data_json,
                                    slot.unit, slot.node_id);
-        slot = QueuedEvent{};
+        if (!ok)
+            return;
+
+        const auto guard = _event_queue_lock.guard();
+        if (_event_count == 0)
+            return;
+        _event_queue[_event_head] = QueuedEvent{};
         _event_head = (uint8_t)((_event_head + 1u) % kMaxQueuedEvents);
         --_event_count;
-        if (!ok)
-            break;
     }
 }
 void CloudClient::sendPong_(const String &reply_to, JsonVariantConst payload)
@@ -2380,7 +2393,9 @@ void CloudClient::fillAuthzInfo_(JsonObject out)
     JsonObject users = out["users"].to<JsonObject>();
     for (size_t i = 0; i < _users->size(); ++i)
     {
-        const auto &u = _users->user(i);
+        UsersRegistry::User u;
+        if (!_users->copyUser(i, u))
+            continue;
         if (!u.enabled || u.username.length() == 0)
             continue;
 
@@ -3875,19 +3890,21 @@ String CloudClient::nextWsId_()
     static uint32_t seq = 0;
     return String("ws") + String(++seq);
 }
-void CloudClient::sendJson_(JsonDocument &doc)
+bool CloudClient::sendJson_(JsonDocument &doc)
 {
     String out;
     serializeJson(doc, out);
     if (out.length())
     {
         if (!_transport || !_transport->sendText(out))
+        {
             _log.warn(F("CLOUD"), F("Transport tx failed"));
+            return false;
+        }
+        return true;
     }
-    else
-    {
-        _log.warn(F("CLOUD"), F("WS tx skipped: empty json"));
-    }
+    _log.warn(F("CLOUD"), F("WS tx skipped: empty json"));
+    return false;
 }
 String CloudClient::sanitizeUtf8_(const String &in)
 {
@@ -4008,7 +4025,9 @@ bool CloudClient::resolveActor_(CloudClient::ActorInfo &actor) const
         return false;
     for (size_t i = 0; i < _users->size(); ++i)
     {
-        const auto &u = _users->user(i);
+        UsersRegistry::User u;
+        if (!_users->copyUser(i, u))
+            continue;
         if (!u.enabled || u.username.length() == 0)
             continue;
         if (UsersRegistry::normalizeUsername(u.username) != key)
@@ -4094,7 +4113,9 @@ bool CloudClient::aclCanControl_(const ActorInfo &actor, const String &ctrl, con
 {
     if (!_users || actor.resolved_idx == 0xFF)
         return false;
-    const auto &u = _users->user(actor.resolved_idx);
+    UsersRegistry::User u;
+    if (!_users->copyUser(actor.resolved_idx, u))
+        return false;
     if (!u.enabled)
         return false;
     if (actor.is_admin)

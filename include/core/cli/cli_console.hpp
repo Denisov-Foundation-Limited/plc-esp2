@@ -329,6 +329,7 @@ private:
     String _line;
     String _user_input;
     int16_t _session_user_idx = -1;
+    mutable UsersRegistry::User _session_user_cache{};
     State _state = State::NeedUser;
     Mode _mode = Mode::Enable;
     uint8_t _admin_hash[32] = {};

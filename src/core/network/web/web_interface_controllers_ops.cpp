@@ -1013,7 +1013,9 @@ sendRedirect_(request, "/", set_cookie);
             return false;
         for (size_t i = 0; i < _users->size(); ++i)
         {
-            const auto &u = _users->user(i);
+            UsersRegistry::User u;
+            if (!_users->copyUser(i, u))
+                continue;
             if (!u.enabled)
                 continue;
             if (u.username.length() == 0)
@@ -1051,7 +1053,9 @@ sendRedirect_(request, "/", set_cookie);
             return false;
         for (size_t i = 0; i < _users->size(); ++i)
         {
-            const auto &u = _users->user(i);
+            UsersRegistry::User u;
+            if (!_users->copyUser(i, u))
+                continue;
             if (!u.enabled)
                 continue;
             if (u.username.length() == 0 || !u.hasWebPassword())
@@ -1192,15 +1196,21 @@ sendRedirect_(request, "/", set_cookie);
 
     const UsersRegistry::User *WebInterfaceControllersOps::sessionUser_() const
 {
+        return sessionUserCopy_(_session_user_cache) ? &_session_user_cache : nullptr;
+    }
+
+
+
+    bool WebInterfaceControllersOps::sessionUserCopy_(UsersRegistry::User &out) const
+{
         if (!_users || _session_user_idx < 0)
-            return nullptr;
+            return false;
         const size_t idx = (size_t)_session_user_idx;
-        if (idx >= _users->size())
-            return nullptr;
-        const auto &u = _users->user(idx);
-        if (!u.enabled)
-            return nullptr;
-        return &u;
+        if (!_users->copyUser(idx, out))
+            return false;
+        if (!out.enabled)
+            return false;
+        return true;
     }
 
 

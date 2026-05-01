@@ -69,7 +69,9 @@ public:
         _c._io->println(F("  id  en  username            phone"));
         for (size_t i = 0; i < _c._users.size(); ++i)
         {
-            const auto &u = _c._users.user(i);
+            UsersRegistry::User u;
+            if (!_c._users.copyUser(i, u))
+                continue;
             _c._io->print(F("  "));
             _c._io->print(String((unsigned)(i + 1)));
             if (i + 1 < 10)
@@ -87,22 +89,22 @@ public:
 
     void showUser(uint8_t id) const
     {
-        const auto *u = userById_(id);
-        if (!u)
+        UsersRegistry::User u;
+        if (!userByIdCopy_(id, u))
         {
             _c._io->println(F("Invalid user id"));
             return;
         }
         _c._io->println(F("User:"));
         _c._io->println(String(F("  id: ")) + String((unsigned)id));
-        _c._io->println(String(F("  enabled: ")) + (u->enabled ? F("true") : F("false")));
-        _c._io->println(String(F("  username: ")) + u->username);
-        _c._io->println(String(F("  web_password: ")) + (u->hasWebPassword() ? F("***") : F("")));
-        _c._io->println(String(F("  gsm_phone: ")) + u->gsm_phone);
-        _c._io->println(String(F("  gsm_sms: ")) + (u->gsm_sms ? F("true") : F("false")));
-        _c._io->println(String(F("  gsm_call: ")) + (u->gsm_call ? F("true") : F("false")));
-        _c._io->println(String(F("  ibutton: ")) + u->ibutton_key);
-        _c._io->println(String(F("  rfid: ")) + u->rfid_key);
+        _c._io->println(String(F("  enabled: ")) + (u.enabled ? F("true") : F("false")));
+        _c._io->println(String(F("  username: ")) + u.username);
+        _c._io->println(String(F("  web_password: ")) + (u.hasWebPassword() ? F("***") : F("")));
+        _c._io->println(String(F("  gsm_phone: ")) + u.gsm_phone);
+        _c._io->println(String(F("  gsm_sms: ")) + (u.gsm_sms ? F("true") : F("false")));
+        _c._io->println(String(F("  gsm_call: ")) + (u.gsm_call ? F("true") : F("false")));
+        _c._io->println(String(F("  ibutton: ")) + u.ibutton_key);
+        _c._io->println(String(F("  rfid: ")) + u.rfid_key);
     }
 
     bool handleContext(const String &line)
@@ -140,8 +142,10 @@ public:
                 _c._io->println(F("Invalid user id"));
             else
             {
-                _c._users.user((size_t)(id - 1)).enabled = enabled;
-                _c._io->println(F("OK"));
+                if (_c._users.updateUser((size_t)(id - 1), [enabled](UsersRegistry::User &u) { u.enabled = enabled; }))
+                    _c._io->println(F("OK"));
+                else
+                    _c._io->println(F("Invalid user id"));
             }
             _c.printPrompt_();
             return true;
@@ -202,8 +206,10 @@ private:
             _c._io->println(F("Invalid user id"));
             return true;
         }
-        fn(_c._users.user((size_t)(id - 1)), value);
-        _c._io->println(F("OK"));
+        if (_c._users.updateUser((size_t)(id - 1), [&](UsersRegistry::User &u) { fn(u, value); }))
+            _c._io->println(F("OK"));
+        else
+            _c._io->println(F("Invalid user id"));
         return true;
     }
 
@@ -235,8 +241,10 @@ private:
             _c._io->println(F("Invalid value"));
         else
         {
-            fn(_c._users.user((size_t)(id - 1)), on);
-            _c._io->println(F("OK"));
+            if (_c._users.updateUser((size_t)(id - 1), [&](UsersRegistry::User &u) { fn(u, on); }))
+                _c._io->println(F("OK"));
+            else
+                _c._io->println(F("Invalid user id"));
         }
         return true;
     }
@@ -260,10 +268,19 @@ private:
             _c._io->println(F("Invalid user id"));
             return;
         }
-        auto &u = _c._users.user((size_t)(id - 1));
-        if (value == "clear" || value == "none")
-            u.clearWebPassword();
-        else if (!u.setWebPassword(value))
+        bool password_ok = true;
+        const bool ok = _c._users.updateUser((size_t)(id - 1), [&](UsersRegistry::User &u) {
+            if (value == "clear" || value == "none")
+                u.clearWebPassword();
+            else
+                password_ok = u.setWebPassword(value);
+        });
+        if (!ok)
+        {
+            _c._io->println(F("Invalid user id"));
+            return;
+        }
+        if (value != "clear" && value != "none" && !password_ok)
         {
             _c._io->println(F("Failed"));
             return;
@@ -323,19 +340,25 @@ private:
                 _c._io->println(F("Invalid unit"));
                 return;
             }
-            auto &u = _c._users.user((size_t)(id - 1));
             const uint8_t unit_idx = (uint8_t)(unit - 1);
-            for (uint8_t ctrl_i = 0; ctrl_i < (uint8_t)UsersRegistry::kAclControllerCount; ++ctrl_i)
-            {
-                const auto ctrl = (UsersRegistry::AclController)ctrl_i;
-                const bool allow = (op == "grant");
-                u.setControllerAllowed(unit_idx, ctrl, allow);
-                const uint16_t max_id = UsersRegistry::kAclItemsPerController[ctrl_i];
-                for (uint16_t item = 1; item <= max_id; ++item)
+            const bool updated = _c._users.updateUser((size_t)(id - 1), [&](UsersRegistry::User &u) {
+                for (uint8_t ctrl_i = 0; ctrl_i < (uint8_t)UsersRegistry::kAclControllerCount; ++ctrl_i)
                 {
-                    u.setItemView(unit_idx, ctrl, item, allow);
-                    u.setItemControl(unit_idx, ctrl, item, allow);
+                    const auto ctrl = (UsersRegistry::AclController)ctrl_i;
+                    const bool allow = (op == "grant");
+                    u.setControllerAllowed(unit_idx, ctrl, allow);
+                    const uint16_t max_id = UsersRegistry::kAclItemsPerController[ctrl_i];
+                    for (uint16_t item = 1; item <= max_id; ++item)
+                    {
+                        u.setItemView(unit_idx, ctrl, item, allow);
+                        u.setItemControl(unit_idx, ctrl, item, allow);
+                    }
                 }
+            });
+            if (!updated)
+            {
+                _c._io->println(F("Invalid user id"));
+                return;
             }
             _c._io->println(F("OK"));
             return;
@@ -364,7 +387,6 @@ private:
             _c._io->println(F("Invalid controller"));
             return;
         }
-        auto &u = _c._users.user((size_t)(id - 1));
         const uint8_t unit_idx = (uint8_t)(unit - 1);
         if (op == "controller")
         {
@@ -374,7 +396,11 @@ private:
                 _c._io->println(F("Invalid value"));
                 return;
             }
-            u.setControllerAllowed(unit_idx, ctrl, on);
+            if (!_c._users.updateUser((size_t)(id - 1), [&](UsersRegistry::User &u) { u.setControllerAllowed(unit_idx, ctrl, on); }))
+            {
+                _c._io->println(F("Invalid user id"));
+                return;
+            }
             _c._io->println(F("OK"));
             return;
         }
@@ -395,13 +421,20 @@ private:
             _c._io->println(F("Invalid value"));
             return;
         }
-        if (op == "view")
-            u.setItemView(unit_idx, ctrl, item, on);
-        else if (op == "control")
-            u.setItemControl(unit_idx, ctrl, item, on);
-        else
+        if (op != "view" && op != "control")
         {
             _c._io->println(F("Unknown acl op"));
+            return;
+        }
+        const bool updated = _c._users.updateUser((size_t)(id - 1), [&](UsersRegistry::User &u) {
+            if (op == "view")
+                u.setItemView(unit_idx, ctrl, item, on);
+            else
+                u.setItemControl(unit_idx, ctrl, item, on);
+        });
+        if (!updated)
+        {
+            _c._io->println(F("Invalid user id"));
             return;
         }
         _c._io->println(F("OK"));
@@ -409,7 +442,12 @@ private:
 
     void showAcl_(uint8_t user_id, uint8_t unit_no) const
     {
-        const auto &u = _c._users.user((size_t)(user_id - 1));
+        UsersRegistry::User u;
+        if (!_c._users.copyUser((size_t)(user_id - 1), u))
+        {
+            _c._io->println(F("Invalid user id"));
+            return;
+        }
         const uint8_t unit_idx = (uint8_t)(unit_no - 1);
         _c._io->println(String(F("ACL user: ")) + String((unsigned)user_id) + F(" unit: ") + String((unsigned)unit_no));
         for (uint8_t ctrl_i = 0; ctrl_i < (uint8_t)UsersRegistry::kAclControllerCount; ++ctrl_i)
@@ -536,11 +574,11 @@ private:
         return unit >= 1 && unit <= UsersRegistry::kAclUnitCount;
     }
 
-    const UsersRegistry::User *userById_(uint8_t id) const
+    bool userByIdCopy_(uint8_t id, UsersRegistry::User &out) const
     {
         if (!validUserId_(id))
-            return nullptr;
-        return &_c._users.user((size_t)(id - 1));
+            return false;
+        return _c._users.copyUser((size_t)(id - 1), out);
     }
 
     ConsoleT &_c;

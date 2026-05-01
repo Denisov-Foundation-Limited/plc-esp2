@@ -2015,12 +2015,16 @@ bool CliConsole::parseUint_(const String &s, uint16_t &out)
 }
 const UsersRegistry::User *CliConsole::sessionUser_() const
 {
-    if (_session_user_idx < 0 || (size_t)_session_user_idx >= _users.size())
+    if (_session_user_idx < 0)
+        return nullptr;
+    const auto users_guard = _users.guard();
+    if ((size_t)_session_user_idx >= _users.size())
         return nullptr;
     const auto &u = _users.user((size_t)_session_user_idx);
     if (!u.enabled)
         return nullptr;
-    return &u;
+    _session_user_cache = u;
+    return &_session_user_cache;
 }
 bool CliConsole::cliSessionIsAdmin_() const
 {
@@ -2300,6 +2304,7 @@ void CliConsole::handleLogin_(const String &line)
     {
         int matched_idx = -1;
         const String normalized = UsersRegistry::normalizeUsername(_user_input);
+        const auto users_guard = _users.guard();
         for (size_t i = 0; i < _users.size(); ++i)
         {
             const auto &u = _users.user(i);

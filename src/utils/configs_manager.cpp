@@ -506,7 +506,9 @@ bool ConfigsManager::save(const JsonDocument &doc){
 bool ConfigsManager::hasAnyWebLoginUser_() const{
     for (size_t i = 0; i < _users.size(); ++i)
     {
-        const auto &u = _users.user(i);
+        UsersRegistry::User u;
+        if (!_users.copyUser(i, u))
+            continue;
         if (!u.enabled)
             continue;
         if (u.username.length() == 0)
@@ -520,11 +522,12 @@ bool ConfigsManager::hasAnyWebLoginUser_() const{
 
 void ConfigsManager::ensureDefaultUsers_(){
     _users.clear();
-    auto &u = _users.user(0);
-    u.enabled = true;
-    u.username = "admin";
-    u.tg_admin = true;
-    u.setWebPassword("1234");
+    _users.updateUser(0, [](UsersRegistry::User &u) {
+        u.enabled = true;
+        u.username = "admin";
+        u.tg_admin = true;
+        u.setWebPassword("1234");
+    });
     saveUsersToFs_();
 }
 
@@ -693,10 +696,16 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
                     if (obj["enabled"].is<bool>())
                         enabled = obj["enabled"].as<bool>();
                     if (obj["name"].is<const char *>())
-                        _users.user(idx).username = obj["name"].as<const char *>();
+                    {
+                        const String name = obj["name"].as<const char *>();
+                        _users.updateUser(idx, [&](UsersRegistry::User &u) { u.username = name; });
+                    }
                 }
                 if (serial && enabled)
-                    _users.user(idx).ibutton_key = UsersRegistry::normalizeHex(serial, 16);
+                {
+                    const String normalized = UsersRegistry::normalizeHex(serial, 16);
+                    _users.updateUser(idx, [&](UsersRegistry::User &u) { u.ibutton_key = normalized; });
+                }
                 ++idx;
             }
         }
@@ -724,10 +733,16 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
                     if (obj["enabled"].is<bool>())
                         enabled = obj["enabled"].as<bool>();
                     if (obj["name"].is<const char *>())
-                        _users.user(idx).username = obj["name"].as<const char *>();
+                    {
+                        const String name = obj["name"].as<const char *>();
+                        _users.updateUser(idx, [&](UsersRegistry::User &u) { u.username = name; });
+                    }
                 }
                 if (serial && enabled)
-                    _users.user(idx).rfid_key = UsersRegistry::normalizeHex(serial, 20);
+                {
+                    const String normalized = UsersRegistry::normalizeHex(serial, 20);
+                    _users.updateUser(idx, [&](UsersRegistry::User &u) { u.rfid_key = normalized; });
+                }
                 ++idx;
             }
         }
@@ -770,19 +785,24 @@ void ConfigsManager::applyConfig_(const JsonDocument &doc){
                         call = obj["call"].as<bool>();
                     if (obj["name"].is<const char *>())
                     {
-                        if (_users.user(idx).username.length() == 0)
-                            _users.user(idx).username = obj["name"].as<const char *>();
+                        const String name = obj["name"].as<const char *>();
+                        _users.updateUser(idx, [&](UsersRegistry::User &u) {
+                            if (u.username.length() == 0)
+                                u.username = name;
+                        });
                     }
                 }
-                auto &u = _users.user(idx);
-                if (u.gsm_phone.length() == 0 && number && enabled)
-                    u.gsm_phone = UsersRegistry::normalizePhone(number);
-                if (!u.gsm_sms)
-                    u.gsm_sms = sms;
-                if (!u.gsm_call)
-                    u.gsm_call = call;
-                if (u.gsm_phone.length() && !u.enabled)
-                    u.enabled = enabled;
+                const String normalized_phone = (number && enabled) ? UsersRegistry::normalizePhone(number) : String();
+                _users.updateUser(idx, [&](UsersRegistry::User &u) {
+                    if (u.gsm_phone.length() == 0 && normalized_phone.length())
+                        u.gsm_phone = normalized_phone;
+                    if (!u.gsm_sms)
+                        u.gsm_sms = sms;
+                    if (!u.gsm_call)
+                        u.gsm_call = call;
+                    if (u.gsm_phone.length() && !u.enabled)
+                        u.enabled = enabled;
+                });
                 ++idx;
             }
         }

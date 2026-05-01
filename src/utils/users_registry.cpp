@@ -125,6 +125,7 @@ void UsersRegistry::User::clearWebPassword(){
     }
 
 UsersRegistry::UsersRegistry(){
+    const auto guard = _lock.guard();
     for (size_t i = 0; i < kMaxUsers; ++i)
     {
         _users[i].id = (uint8_t)(i + 1);
@@ -138,7 +139,22 @@ const UsersUser &UsersRegistry::user(size_t idx) const{ return _users[idx]; }
 
 UsersUser &UsersRegistry::user(size_t idx){ return _users[idx]; }
 
+bool UsersRegistry::copyUser(size_t idx, User &out) const
+{
+    if (idx >= kMaxUsers)
+        return false;
+    const auto guard = _lock.guard();
+    out = _users[idx];
+    return true;
+}
+
+UsersRegistry::Guard UsersRegistry::guard() const
+{
+    return _lock.guard();
+}
+
 void UsersRegistry::clear(){
+    const auto guard = _lock.guard();
     for (size_t i = 0; i < kMaxUsers; ++i)
     {
         User &u = _users[i];
@@ -150,6 +166,7 @@ void UsersRegistry::clear(){
 }
 
 bool UsersRegistry::applyFromJson(JsonArrayConst arr){
+    const auto guard = _lock.guard();
     clear();
     size_t seq = 0;
     for (JsonVariantConst v : arr)
@@ -225,6 +242,7 @@ bool UsersRegistry::applyFromJson(JsonArrayConst arr){
 }
 
 void UsersRegistry::serializeToJson(JsonArray out) const{
+    const auto guard = _lock.guard();
     for (size_t i = 0; i < kMaxUsers; ++i)
     {
         const User &u = _users[i];

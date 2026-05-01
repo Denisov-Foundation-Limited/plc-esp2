@@ -65,7 +65,6 @@ void UsersHandler::handleUsersSave(WebInterface &web, AsyncWebServerRequest *req
         }
         for (size_t i = 0; i < web._users->size(); ++i)
         {
-            auto &u = web._users->user(i);
             const String p = String((unsigned)i);
             const String k_enabled = String("u") + p + "_enabled";
             const String k_username = String("u") + p + "_username";
@@ -75,18 +74,20 @@ void UsersHandler::handleUsersSave(WebInterface &web, AsyncWebServerRequest *req
             const String k_gsm_call = String("u") + p + "_gsm_call";
             const String k_ibutton = String("u") + p + "_ibutton";
             const String k_rfid = String("u") + p + "_rfid";
-            u.enabled = request->hasParam(k_enabled, true);
-            u.username = web.paramValue_(request, k_username);
-            String web_pass = web.paramValue_(request, k_web_password);
-            web_pass.trim();
-            const bool masked_unchanged = u.hasWebPassword() && web_pass == "********";
-            if (web_pass.length() > 0 && !masked_unchanged)
-                u.setWebPassword(web_pass);
-            u.gsm_phone = UsersRegistry::normalizePhone(web.paramValue_(request, k_gsm_phone));
-            u.gsm_sms = request->hasParam(k_gsm_sms, true);
-            u.gsm_call = request->hasParam(k_gsm_call, true);
-            u.ibutton_key = UsersRegistry::normalizeHex(web.paramValue_(request, k_ibutton), 16);
-            u.rfid_key = UsersRegistry::normalizeHex(web.paramValue_(request, k_rfid), 20);
+            web._users->updateUser(i, [&](UsersRegistry::User &u) {
+                u.enabled = request->hasParam(k_enabled, true);
+                u.username = web.paramValue_(request, k_username);
+                String web_pass = web.paramValue_(request, k_web_password);
+                web_pass.trim();
+                const bool masked_unchanged = u.hasWebPassword() && web_pass == "********";
+                if (web_pass.length() > 0 && !masked_unchanged)
+                    u.setWebPassword(web_pass);
+                u.gsm_phone = UsersRegistry::normalizePhone(web.paramValue_(request, k_gsm_phone));
+                u.gsm_sms = request->hasParam(k_gsm_sms, true);
+                u.gsm_call = request->hasParam(k_gsm_call, true);
+                u.ibutton_key = UsersRegistry::normalizeHex(web.paramValue_(request, k_ibutton), 16);
+                u.rfid_key = UsersRegistry::normalizeHex(web.paramValue_(request, k_rfid), 20);
+            });
         }
         if (web._configs_manager && !web._configs_manager->save())
             web._users_status = WebUiRu::Common::kSaveFailed;
@@ -107,11 +108,17 @@ void UsersHandler::handleUsersAcl(WebInterface &web, AsyncWebServerRequest *requ
             web.sendRedirect_(request, "/users", set_cookie);
             return;
         }
-
         size_t user_idx = 0;
         uint8_t unit = 0;
         parseAclRouteParams_(web, request, user_idx, unit);
         const bool read_only = (web.stackRole_() == ConfigsManagerIface::StackRole::Slave);
+        UsersRegistry::User acl_user;
+        if (!web._users->copyUser(user_idx, acl_user))
+        {
+            web._users_status = WebUiRu::Users::kRegistryUnavailable;
+            web.sendRedirect_(request, "/users", set_cookie);
+            return;
+        }
 
         String page;
         page.reserve(12288);
@@ -201,7 +208,7 @@ void UsersHandler::handleUsersAcl(WebInterface &web, AsyncWebServerRequest *requ
         page += WebUiRu::Users::kClearAll;
         page += "</button></div>";
         page += "<div class=\"tiles\">";
-        page += aclTiles_(web, web._users->user(user_idx), unit, read_only);
+        page += aclTiles_(web, acl_user, unit, read_only);
         page += "</div><button class=\"btn\" type=\"submit\"";
         if (read_only)
             page += " disabled";
@@ -233,23 +240,22 @@ void UsersHandler::handleUsersAclSave(WebInterface &web, AsyncWebServerRequest *
             web.sendRedirect_(request, "/users", set_cookie);
             return;
         }
-
         size_t user_idx = 0;
         uint8_t unit = 0;
         parseAclRouteParams_(web, request, user_idx, unit);
-        auto &u = web._users->user(user_idx);
+        web._users->updateUser(user_idx, [&](UsersRegistry::User &u) {
+            forEachAclController_([&](UsersRegistry::AclController ctrl) {
+                const size_t ci = (size_t)ctrl;
+                const String controller_key = String("c_") + String((unsigned)ci);
+                const bool allow_controller = request->hasParam(controller_key, true);
+                u.setControllerAllowed(unit, ctrl, allow_controller);
 
-        forEachAclController_([&](UsersRegistry::AclController ctrl) {
-            const size_t ci = (size_t)ctrl;
-            const String controller_key = String("c_") + String((unsigned)ci);
-            const bool allow_controller = request->hasParam(controller_key, true);
-            u.setControllerAllowed(unit, ctrl, allow_controller);
-
-            forEachAclItem_(web, unit, ctrl, [&](uint16_t item_id, const String &) {
-                const String rv_key = String("rv_") + String((unsigned)ci) + "_" + String((unsigned)item_id);
-                const String rw_key = String("rw_") + String((unsigned)ci) + "_" + String((unsigned)item_id);
-                u.setItemView(unit, ctrl, item_id, request->hasParam(rv_key, true));
-                u.setItemControl(unit, ctrl, item_id, request->hasParam(rw_key, true));
+                forEachAclItem_(web, unit, ctrl, [&](uint16_t item_id, const String &) {
+                    const String rv_key = String("rv_") + String((unsigned)ci) + "_" + String((unsigned)item_id);
+                    const String rw_key = String("rw_") + String((unsigned)ci) + "_" + String((unsigned)item_id);
+                    u.setItemView(unit, ctrl, item_id, request->hasParam(rv_key, true));
+                    u.setItemControl(unit, ctrl, item_id, request->hasParam(rw_key, true));
+                });
             });
         });
 
@@ -268,7 +274,6 @@ void UsersHandler::handleUsersAclSave(WebInterface &web, AsyncWebServerRequest *
 String UsersHandler::usersCards_(WebInterface &web, bool read_only) {
         if (!web._users)
             return String("<div class=\"tile empty\"><strong>") + WebUiRu::Users::kRegistryUnavailable + "</strong></div>";
-
         String out;
         out.reserve(16384);
         const String disabled = read_only ? " disabled" : "";
@@ -279,7 +284,8 @@ String UsersHandler::usersCards_(WebInterface &web, bool read_only) {
             int last_enabled = -1;
             for (size_t i = 0; i < web._users->size(); ++i)
             {
-                if (web._users->user(i).enabled)
+                UsersRegistry::User user;
+                if (web._users->copyUser(i, user) && user.enabled)
                     last_enabled = (int)i;
             }
             if (last_enabled < 0)
@@ -296,7 +302,9 @@ String UsersHandler::usersCards_(WebInterface &web, bool read_only) {
 
         for (size_t i = 0; i < render_count; ++i)
         {
-            const auto &u = web._users->user(i);
+            UsersRegistry::User u;
+            if (!web._users->copyUser(i, u))
+                continue;
             const String p = String((unsigned)i);
 
             out += "<div class=\"tile";
@@ -453,7 +461,6 @@ bool UsersHandler::parseAclRouteParams_(WebInterface &web, AsyncWebServerRequest
         unit = 0;
         if (!web._users || web._users->size() == 0)
             return false;
-
         String uid = web.paramValue_(request, "uid");
         if (!uid.length())
             uid = web.paramValueAny_(request, "uid");

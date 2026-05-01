@@ -2533,10 +2533,8 @@ uint32_t WebInterface::rand32_()
         if (!_users)
             return false;
         const size_t idx = (size_t)_session_user_idx;
-        if (idx >= _users->size())
-            return false;
-        const auto &u = _users->user(idx);
-        return u.enabled;
+        UsersRegistry::User u;
+        return _users->copyUser(idx, u) && u.enabled;
     }
 
 

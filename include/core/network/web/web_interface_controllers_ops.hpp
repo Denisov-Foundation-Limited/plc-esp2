@@ -100,6 +100,7 @@ public:
     bool checkAuthApi_(AsyncWebServerRequest *request, bool *set_cookie);
 
     const UsersRegistry::User *sessionUser_() const;
+    bool sessionUserCopy_(UsersRegistry::User &out) const;
 
     uint8_t aclUnitByNodeId_(uint32_t node_id) const;
 
@@ -210,4 +211,5 @@ public:
 
 private:
     WebInterface &_web;
+    mutable UsersRegistry::User _session_user_cache{};
 };

@@ -193,6 +193,10 @@ private:
     bool _rfid_ready = false;
     bool _rfid_disabled_startup_missing = false;
     UsersRegistry *_users = nullptr;
+    mutable String _user_phone_cache;
+    mutable String _user_phone_name_cache;
+    mutable String _user_key_name_cache;
+    mutable String _user_rfid_name_cache;
     RfidUidHandler _rfid_uid_cb = nullptr;
     void *_rfid_uid_ctx = nullptr;
     IButtonSerialHandler _ibutton_serial_cb = nullptr;

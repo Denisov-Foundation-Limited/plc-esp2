@@ -164,6 +164,7 @@ private:
     QueuedEvent _event_queue[kMaxQueuedEvents] = {};
     uint8_t _event_head = 0;
     uint8_t _event_count = 0;
+    mutable RtosRecursiveLock _event_queue_lock;
     mutable ScratchBuffer *_scratch = nullptr;
     mutable RtosRecursiveLock _scratch_lock;
     CameraCloudItem _camera_cloud[4] = {};
@@ -330,5 +331,5 @@ private:
 
     String nextWsId_();
 
-    void sendJson_(JsonDocument &doc);
+    bool sendJson_(JsonDocument &doc);
 };
